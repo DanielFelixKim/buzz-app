@@ -368,6 +368,7 @@ export async function notesFixture() {
     sam,
     origin,
     channels,
+    profiles,
     heads,
     revisions,
     accepted,

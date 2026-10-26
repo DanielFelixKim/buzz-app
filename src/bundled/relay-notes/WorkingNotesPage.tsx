@@ -490,6 +490,7 @@ function NewNoteDialog({
   const [agents, setAgents] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [unverified, setUnverified] = useState<string[]>([]);
   return (
     <Dialog
       open
@@ -510,7 +511,11 @@ function NewNoteDialog({
           type="submit"
           disabled={busy || !title.trim()}
         >
-          {busy ? "Creating…" : "Create note"}
+          {busy
+            ? "Creating…"
+            : unverified.length && agents
+              ? "Create with verified agents"
+              : "Create note"}
         </Button>
       }
     >
@@ -521,9 +526,19 @@ function NewNoteDialog({
           event.preventDefault();
           setBusy(true);
           setError("");
-          void workspace
-            .create({ id, title, markdown, agents })
-            .then(onCreated)
+          void (async () => {
+            if (agents && !unverified.length) {
+              const access = await workspace.agentAccess();
+              if (access.unverified.length) {
+                setUnverified(access.unverified);
+                return undefined;
+              }
+            }
+            return workspace.create({ id, title, markdown, agents });
+          })()
+            .then((note) => {
+              if (note) onCreated(note);
+            })
             .catch((error: unknown) => setError(errorText(error)))
             .finally(() => setBusy(false));
         }}
@@ -557,6 +572,22 @@ function NewNoteDialog({
             : "Only you have access until you share it."}
         </p>
         {error && <p role="alert">{error}</p>}
+        {agents && unverified.length > 0 && (
+          <p role="status">
+            These agents could not be verified and will not receive access:{" "}
+            {unverified
+              .map(
+                (key) =>
+                  workspace.session.agentChoices
+                    .snapshot()
+                    .selectable.find((agent) => agent.pubkey === key)?.name ??
+                  key,
+              )
+              .join(", ")}
+            . You can create with verified agents, or turn off agent sharing to
+            create privately.
+          </p>
+        )}
       </form>
     </Dialog>
   );

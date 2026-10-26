@@ -115,6 +115,16 @@ Object.assign(window, {
     plan,
     research,
     sam: f.sam.pubkey,
+    unverifyCarl() {
+      f.profiles.push(
+        signed(f.carl, {
+          kind: 0,
+          content: "{}",
+          tags: [],
+          created_at: 2_000_000_000,
+        }),
+      );
+    },
     makeAdministrator(address: NoteAddress) {
       const channel = f.channels.get(address.channel);
       if (!channel) throw new Error("Missing channel");

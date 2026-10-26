@@ -184,6 +184,28 @@ describe("connected note revisions", () => {
 });
 
 describe("channel orchestration", () => {
+  it("checks each latest profile independently and excludes unverified identities without blocking verified siblings", async () => {
+    const f = await fixture();
+    f.profiles.push(
+      signed(f.carl, {
+        kind: 0,
+        content: "{}",
+        tags: [],
+        created_at: 2_000_000_000,
+      }),
+    );
+    const access = await f.workspace.agentAccess();
+    expect(access.unverified).toEqual([f.carl.pubkey]);
+    expect(access.verified).toEqual([f.ned.pubkey]);
+    const note = await f.workspace.create({
+      id: crypto.randomUUID(),
+      title: "Plan",
+      markdown: "Work",
+      agents: true,
+    });
+    expect(f.channels.get(note.channel)?.roles[f.carl.pubkey]).toBeUndefined();
+    expect(f.channels.get(note.channel)?.roles[f.ned.pubkey]).toBe("bot");
+  });
   it("does not regrant access after automatic sharing changes on another client", async () => {
     const f = await fixture(),
       note = f.seed("Plan", "Selected access");

@@ -168,7 +168,7 @@ export function createNotesWorkspace(session: RelaySession) {
         "This storage contains other documents. Create a separate working copy before sharing this note.",
       );
   }
-  async function ownedAgents(caller?: AbortSignal) {
+  async function agentAccess(caller?: AbortSignal) {
     session.agentChoices.ensure(true, true);
     if (
       !session.agentChoices.snapshot().complete ||
@@ -183,17 +183,16 @@ export function createNotesWorkspace(session: RelaySession) {
       );
     const keys = [...new Set(choices.selectable.map((agent) => agent.pubkey))];
     const verified: string[] = [];
-    for (let offset = 0; offset < keys.length; offset += NOTE_PAGE) {
-      const batch = keys.slice(offset, offset + NOTE_PAGE);
+    const unverified: string[] = [];
+    for (let offset = 0; offset < keys.length; offset += 3) {
+      const batch = keys.slice(offset, offset + 3);
       const profiles = await snapshot(
-        [
-          {
-            kinds: [0],
-            authors: batch,
-            limit: batch.length,
-            consistency: "strong",
-          },
-        ],
+        batch.map((key) => ({
+          kinds: [0],
+          authors: [key],
+          limit: 1,
+          consistency: "strong",
+        })),
         caller,
       );
       for (const key of batch) {
@@ -201,15 +200,15 @@ export function createNotesWorkspace(session: RelaySession) {
           (event) =>
             event.kind === 0 && event.pubkey === key && hasEventProof(event),
         );
-        if (!profile || (await attestedOwner(profile)) !== session.viewer)
-          throw new Error(
-            "An agent’s ownership could not be verified. Refresh your agents before sharing.",
-          );
-        verified.push(key);
+        if (profile && (await attestedOwner(profile)) === session.viewer)
+          verified.push(key);
+        else unverified.push(key);
       }
     }
-    return verified;
+    return { verified, unverified };
   }
+  const ownedAgents = async (caller?: AbortSignal) =>
+    (await agentAccess(caller)).verified;
   const syncing = new Map<string, Promise<void>>();
   async function reconcile(address: NoteAddress, caller?: AbortSignal) {
     const prior = syncing.get(address.channel);
@@ -498,6 +497,7 @@ export function createNotesWorkspace(session: RelaySession) {
     authority,
     sharing,
     ownedAgents,
+    agentAccess,
     reconcile,
     setMember,
     setAudience,

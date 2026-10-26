@@ -103,6 +103,7 @@ test("creates, deletes and restores a working note through the editor", async ({
   const errors = watchPageErrors(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/tests/fixtures/working-notes.html");
+  await page.evaluate(() => window.workingNotesFixture.unverifyCarl());
   await page.getByRole("button", { name: "New note", exact: true }).click();
   const create = page.getByRole("dialog", { name: "New working note" });
   await create
@@ -113,6 +114,11 @@ test("creates, deletes and restores a working note through the editor", async ({
     .fill("A durable finding.");
   await create
     .getByRole("button", { name: "Create note", exact: true })
+    .click();
+  await expect(create).toContainText("These agents could not be verified");
+  await expect(create).toContainText("Carl");
+  await create
+    .getByRole("button", { name: "Create with verified agents" })
     .click();
   const document = page.getByRole("article", { name: "Research draft" });
   await expect(
