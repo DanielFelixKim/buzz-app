@@ -13,6 +13,9 @@ UUID `d`, its home channel `h`, and Markdown content. `note=1` identifies this
 app’s editable payload version. Saves are complete snapshots with a required
 `prev` for updates, deletion and restoration. The relay’s accepted head defines
 the current version, including a deletion head; event timestamps do not choose it.
+The optional `root` is a conversation anchor in the home channel, never a note
+revision ID. Standalone notes omit it; edits, deletion and restoration preserve
+an existing anchor. Only `prev` links the artifact's revisions.
 Unknown payload versions remain readable, and unrelated tags survive edits.
 Deletion publishes only the artifact envelope; history restoration preserves the
 chosen revision’s annotations. Titles are limited to 512 UTF-8 bytes and bodies

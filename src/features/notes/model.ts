@@ -187,12 +187,8 @@ export function noteTemplate(
       : (source?.event.tags ?? previous?.event.tags ?? [])
           .filter(([key]) => key && !envelope.has(key))
           .map((tag) => [...tag]);
-  const root = previous
-    ? (noteTag(previous.event, "root") ??
-      (noteTag(previous.event, "op") === "create"
-        ? previous.revision
-        : undefined))
-    : undefined;
+  // A root anchors a conversation; only prev links artifact revisions.
+  const root = previous ? noteTag(previous.event, "root") : undefined;
   const tags = [
     ["ar", "1"],
     ["d", address.id],

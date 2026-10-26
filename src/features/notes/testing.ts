@@ -250,6 +250,22 @@ export async function notesFixture() {
         (!prior && noteTag(event, "op") !== "create")
       )
         throw new PublishRejected("conflict: stale revision");
+      // NIP-AR roots are conversation anchors, not artifact revision IDs.
+      const root = noteTag(event, "root"),
+        oldRoot = prior ? noteTag(prior, "root") : undefined;
+      if (noteTag(event, "op") === "delete" && root !== oldRoot)
+        throw new PublishRejected("invalid: delete preserves root");
+      if (root && (!prior || root !== oldRoot)) {
+        const anchor = accepted.find((item) => item.id === root);
+        if (
+          !anchor ||
+          noteTag(anchor, "h") !== id ||
+          ![9, 40002, 45001, 45003].includes(anchor.kind)
+        )
+          throw new PublishRejected(
+            "invalid: root must be an existing conversation anchor in home",
+          );
+      }
       heads.set(d, event);
       revisions.push(event);
       if (loseArtifactReceipt) {

@@ -4,6 +4,7 @@ import {
   NOTE_KIND,
   NoteConflict,
   noteMarkdownLink,
+  noteTag,
   noteTemplate,
   noteUrl,
   parseNote,
@@ -31,6 +32,82 @@ async function fixture() {
 }
 
 describe("connected note revisions", () => {
+  it.each([false, true])(
+    "preserves the conversation anchor through the note lifecycle (anchored=%s)",
+    async (anchored) => {
+      const f = await fixture();
+      let original = f.seed("Plan", "Original");
+      let root: string | undefined;
+      if (anchored) {
+        const anchor = signed(f.viewer, {
+          kind: 9,
+          tags: [["h", original.channel]],
+          content: "Conversation anchor",
+        });
+        root = anchor.id;
+        f.accepted.push(anchor);
+        const event = signed(f.viewer, {
+          ...original.event,
+          tags: [...original.event.tags.map((tag) => [...tag]), ["root", root]],
+        });
+        const note = parseNote(event);
+        if (!note) throw new Error("Expected anchored note");
+        original = note;
+        f.heads.set(note.id, event);
+        f.revisions.splice(0, 1, event);
+        // Losing an unchanged anchor later must not prevent editing the note.
+        f.accepted.splice(f.accepted.indexOf(anchor), 1);
+      }
+      const updated = await f.workspace.save(original, {
+        title: "Plan",
+        markdown: "Human edit",
+      });
+      await f.edit(f.carl, updated, { title: "Plan", markdown: "Agent edit" });
+      const current = await readNote(f.workspace.read, original);
+      const deleted = await f.workspace.save(
+        current,
+        { title: "Plan", markdown: "" },
+        "delete",
+      );
+      const restored = await f.workspace.save(
+        deleted,
+        { title: "Plan", markdown: original.markdown, restoreFrom: original },
+        "restore",
+      );
+      expect(restored.markdown).toBe("Original");
+      expect(f.revisions).toHaveLength(5);
+      for (const event of f.revisions)
+        expect(noteTag(event, "root")).toBe(root);
+      for (const [index, event] of f.revisions.entries())
+        expect(noteTag(event, "prev")).toBe(f.revisions[index - 1]?.id);
+    },
+  );
+  it("rejects an artifact revision used as a conversation anchor without advancing the head", async () => {
+    const f = await fixture(),
+      original = f.seed("Plan", "Original");
+    f.accepted.push(
+      signed(f.viewer, {
+        ...original.event,
+        tags: original.event.tags.map((tag) => [...tag]),
+      }),
+    );
+    const template = noteTemplate(
+      original,
+      { title: "Plan", markdown: "Edit" },
+      original,
+    );
+    await expect(
+      f.client(f.viewer).publish({
+        ...template,
+        tags: [
+          ...template.tags.filter(([key]) => key !== "root"),
+          ["root", original.revision],
+        ],
+      }),
+    ).rejects.toThrow("root must be an existing conversation anchor in home");
+    expect(f.heads.get(original.id)?.id).toBe(original.revision);
+    expect(f.revisions).toHaveLength(1);
+  });
   it("reports a competing save accepted between preflight and publication", async () => {
     const f = await fixture(),
       note = f.seed("Plan", "Original");
