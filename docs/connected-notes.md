@@ -99,7 +99,13 @@ the retained snapshots and whether more remain.
 
 ## Document editing
 
-Editing reveals an inline title and formatting toolbar above a document body.
+The Viewing/Editing selector controls the document mode. Editing reveals the
+formatting list directly, without a formatting toggle. Both modes keep the same
+title and body alignment; the body has no additional editor border or padding.
+The toolbar retains its space in Viewing, and the hidden editor retains its
+selection and undo state. Viewing previews unsaved text without publishing it.
+A large, full-width prominent Save action stays at the bottom while modified;
+Discard changes restores the saved revision. Clean documents show no Save action.
 `NoteEditor` reuses `EditableInput`, `ComposerFormattingTools`, `ComposerLinkDialog`
 and the composer's ProseMirror schema/commands. Enter inserts a newline; saving
 remains explicit. There are no chat send, recipient or attachment controls.

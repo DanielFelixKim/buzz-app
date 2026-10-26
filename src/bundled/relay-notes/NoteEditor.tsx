@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EditableInput } from "../../features/messages/EditableInput";
 import { ComposerFormattingTools } from "../../features/messages/ComposerFormattingTools";
 import { ComposerLinkDialog } from "../../features/messages/ComposerLinkDialog";
@@ -19,6 +19,8 @@ const noDecorations = () => [];
 /** A document body using the composer's editing engine, without chat behavior. */
 export function NoteEditor({
   value,
+  editing,
+  children,
   onChange,
   disabled,
   notes,
@@ -28,6 +30,8 @@ export function NoteEditor({
   onSave,
 }: {
   value: string;
+  editing: boolean;
+  children: ReactNode;
   onChange(value: string): void;
   disabled: boolean;
   notes: readonly Note[];
@@ -63,11 +67,16 @@ export function NoteEditor({
   };
   return (
     <div className={styles.stack}>
-      <div className={styles.editorToolbar}>
+      <div
+        className={styles.editorToolbar}
+        data-viewing={!editing || undefined}
+        inert={!editing}
+        aria-hidden={!editing || undefined}
+      >
         {!source && (
           <ComposerFormattingTools
-            defaultOpen
-            disabled={disabled}
+            persistent
+            disabled={disabled || !editing}
             activeFormats={formats}
             toggleFormat={(format) => input.current?.toggleFormat(format)}
             editLink={() => editLink()}
@@ -80,87 +89,96 @@ export function NoteEditor({
           variant="ghost"
           aria-pressed={source}
           onClick={() => setSource(!source)}
-          disabled={disabled}
+          disabled={disabled || !editing}
         >
           {source ? "Formatted text" : "Markdown source"}
         </Button>
       </div>
-      {source ? (
-        <Textarea
-          aria-label="Markdown"
-          value={value}
-          rows={18}
-          variant="code"
-          disabled={disabled}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              onSave();
-            }
-          }}
-          onChange={(event) => {
-            emitted.current = event.target.value;
-            onChange(event.target.value);
-            setDraft(noteEditorDraft(event.target.value));
-          }}
-        />
-      ) : (
-        <div className={`${styles.editorBody} text-body`}>
-          <EditableInput
-            ref={input}
-            draft={draft}
-            value={draft.text}
-            disabled={disabled}
-            placeholder="Write your document…"
-            aria-label="Document body"
-            maxLength={MAX_NOTE_BYTES}
-            decorationsFor={noDecorations}
-            onDraftChange={(next) => {
-              setDraft(next);
-              const markdown = composerMarkdown(next);
-              emitted.current = markdown;
-              onChange(markdown);
-            }}
-            onFormatsChange={setFormats}
-            onEditLink={editLink}
-            onKeyDown={(event) => {
-              if (
-                !event.defaultPrevented &&
-                (event.metaKey || event.ctrlKey) &&
-                !event.altKey &&
-                !event.shiftKey &&
-                event.key.toLowerCase() === "k"
-              ) {
-                event.preventDefault();
-                editLink();
-              }
+      <section className={styles.editorBody} aria-label="Document content">
+        <div hidden={!editing}>
+          {source ? (
+            <Textarea
+              aria-label="Markdown"
+              value={value}
+              rows={18}
+              variant="code"
+              disabled={disabled || !editing}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  onSave();
+                }
+              }}
+              onChange={(event) => {
+                emitted.current = event.target.value;
+                onChange(event.target.value);
+                setDraft(noteEditorDraft(event.target.value));
+              }}
+            />
+          ) : (
+            <div className="text-body">
+              <EditableInput
+                ref={input}
+                draft={draft}
+                value={draft.text}
+                disabled={disabled || !editing}
+                placeholder="Write your document…"
+                aria-label="Document body"
+                maxLength={MAX_NOTE_BYTES}
+                decorationsFor={noDecorations}
+                onDraftChange={(next) => {
+                  setDraft(next);
+                  const markdown = composerMarkdown(next);
+                  emitted.current = markdown;
+                  onChange(markdown);
+                }}
+                onFormatsChange={setFormats}
+                onEditLink={editLink}
+                onKeyDown={(event) => {
+                  if (
+                    !event.defaultPrevented &&
+                    (event.metaKey || event.ctrlKey) &&
+                    !event.altKey &&
+                    !event.shiftKey &&
+                    event.key.toLowerCase() === "k"
+                  ) {
+                    event.preventDefault();
+                    editLink();
+                  }
 
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                event.preventDefault();
-                onSave();
-              }
-              if (
-                event.key === "[" &&
-                input.current?.value[input.current.selectionStart - 1] === "["
-              ) {
-                event.preventDefault();
-                const start = input.current.selectionStart - 1;
-                input.current.setSelectionRange(
-                  start,
-                  input.current.selectionEnd,
-                );
-                const next = input.current.editLink();
-                if (next) editLink({ ...next, text: "" });
-              }
-            }}
-          />
+                  if (
+                    (event.metaKey || event.ctrlKey) &&
+                    event.key === "Enter"
+                  ) {
+                    event.preventDefault();
+                    onSave();
+                  }
+                  if (
+                    event.key === "[" &&
+                    input.current?.value[input.current.selectionStart - 1] ===
+                      "["
+                  ) {
+                    event.preventDefault();
+                    const start = input.current.selectionStart - 1;
+                    input.current.setSelectionRange(
+                      start,
+                      input.current.selectionEnd,
+                    );
+                    const next = input.current.editLink();
+                    if (next) editLink({ ...next, text: "" });
+                  }
+                }}
+              />
+            </div>
+          )}
         </div>
-      )}
-      {linkOpen && link && (
+        {!editing && children}
+      </section>
+      {editing && linkOpen && link && (
         <ComposerLinkDialog
           edit={link}
           input={input}
-          disabled={disabled}
+          disabled={disabled || !editing}
           destinations={notes
             .filter((note) => !note.deleted)
             .map((note) => ({

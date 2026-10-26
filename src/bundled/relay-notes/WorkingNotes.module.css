@@ -237,14 +237,23 @@
   gap: var(--space-2);
   flex-wrap: wrap;
 }
-.editorBody {
-  min-height: 20rem;
-  padding: var(--space-3);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-}
-.editorBody > [role="textbox"] {
-  min-height: 20rem;
+.editorBody [role="textbox"] {
   max-height: none;
   overflow: visible;
+}
+
+.editorToolbar[data-viewing] {
+  visibility: hidden;
+}
+
+.saveBar {
+  position: sticky;
+  inset-block-end: 0;
+  margin-block-start: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-block-start: var(--space-3);
+  background: var(--surface-panel);
+  flex-shrink: 0;
 }

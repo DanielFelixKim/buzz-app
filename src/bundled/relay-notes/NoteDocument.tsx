@@ -19,7 +19,6 @@ import {
 import {
   ArrowsClockwiseIcon,
   DotsThreeIcon,
-  PencilSimpleIcon,
   ShareIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -33,6 +32,7 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
+import { Select } from "../../shared/design-system/ui/Select";
 import { NoteHistory, NoteSharing } from "./NoteDialogs";
 import { NoteEditor } from "./NoteEditor";
 import styles from "./WorkingNotes.module.css";
@@ -257,7 +257,7 @@ export function NoteDocument({
   const exportMarkdown = () => {
     if (!note) return;
     const url = URL.createObjectURL(
-      new Blob([editing ? markdown : note.markdown], {
+      new Blob([editing || dirty ? markdown : note.markdown], {
         type: "text/markdown;charset=utf-8",
       }),
     );
@@ -279,13 +279,15 @@ export function NoteDocument({
       aria-label={!unavailable && note ? note.title : "Working note"}
     >
       <div className={styles.documentHeading}>
-        {note && editing ? (
+        {note && canEdit && !unavailable && !note.deleted ? (
           <Field label="Title" labelVisibility="hidden">
             <Input
               appearance="title"
               value={title}
               onValueChange={setTitle}
               disabled={busy}
+              readOnly={!editing}
+              tabIndex={editing ? undefined : -1}
             />
           </Field>
         ) : (
@@ -294,14 +296,25 @@ export function NoteDocument({
           </h1>
         )}
         <div className={styles.actions}>
-          {note && canEdit && !note.deleted && !editing && (
-            <IconButton
-              aria-label="Edit note"
-              title="Edit note"
-              icon={<PencilSimpleIcon size={16} />}
-              onClick={() => {
+          {note && canEdit && !note.deleted && (
+            <Select
+              label="Document mode"
+              variant="compact"
+              size="sm"
+              value={editing ? "editing" : "viewing"}
+              disabled={busy}
+              groups={[
+                {
+                  label: "Document mode",
+                  options: [
+                    { value: "viewing", label: "Viewing" },
+                    { value: "editing", label: "Editing" },
+                  ],
+                },
+              ]}
+              onValueChange={(mode) => {
                 setStatus("");
-                setEditing(true);
+                setEditing(mode === "editing");
               }}
             />
           )}
@@ -383,16 +396,11 @@ export function NoteDocument({
           )}
         </div>
       )}
-      {note && editing ? (
-        <form
-          className={styles.stack}
-          onSubmit={(event) => {
-            event.preventDefault();
-            save();
-          }}
-        >
+      {note && (editing || (!unavailable && !note.deleted)) && (
+        <div className={styles.stack}>
           <NoteEditor
             value={markdown}
+            editing={editing}
             onChange={setMarkdown}
             disabled={busy}
             notes={catalogue}
@@ -400,36 +408,14 @@ export function NoteDocument({
             linkOpen={dialog === "link"}
             onLinkOpenChange={(open) => setDialog(open ? "link" : undefined)}
             onSave={save}
-          />
-          <div className={styles.actions}>
-            <Button type="submit" disabled={busy || !!conflict || !canEdit}>
-              {note.deleted ? "Restore note" : "Save note"}
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busy}
-              onClick={() => {
-                adopt(note);
-                setEditing(false);
-              }}
-            >
-              Cancel editing
-            </Button>
-            {dirty && (
-              <span className="text-caption text-subtle">Unsaved changes</span>
-            )}
-          </div>
-        </form>
-      ) : (
-        note &&
-        !unavailable &&
-        !note.deleted && (
-          <NoteMarkdown
-            text={note.markdown}
-            community={community}
-            onOpen={onOpen}
-          />
-        )
+          >
+            <NoteMarkdown
+              text={markdown}
+              community={community}
+              onOpen={onOpen}
+            />
+          </NoteEditor>
+        </div>
       )}
       {note && !unavailable && !note.deleted && (
         <section className={styles.stack} aria-label="Backlinks">
@@ -455,6 +441,30 @@ export function NoteDocument({
             </p>
           )}
         </section>
+      )}
+      {note && (dirty || restoreFrom) && (
+        <div className={styles.saveBar}>
+          <Button
+            variant="prominent"
+            size="lg"
+            loading={busy}
+            disabled={busy || !!conflict || !canEdit}
+            onClick={save}
+          >
+            {note.deleted ? "Restore note" : "Save"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => {
+              adopt(note);
+              setEditing(false);
+            }}
+          >
+            Discard changes
+          </Button>
+        </div>
       )}
       {note && dialog === "share" && (
         <NoteSharing

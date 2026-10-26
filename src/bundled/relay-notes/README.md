@@ -11,7 +11,10 @@ Access includes retained revisions. Editors can also delete and restore the
 document; channel administrators manage access.
 
 The browser searches its loaded collection. **Load more notes** continues
-discovery. Open notes in right-sidebar tabs. Editing reveals the formatting bar; **Link**,
+discovery. Open notes in right-sidebar tabs. Choose **Editing** from the
+**Viewing/Editing** dropdown to show the formatting list. The document stays in
+place, and **Save** appears at the bottom when modified. **Viewing** previews the
+draft without saving; **Discard changes** restores the saved version. **Link**,
 **⌘K/Ctrl+K**, or typing `[[` opens the standard link dialog with a note picker. It inserts a stable
 link from the loaded notes. Ordinary index notes group related documents. A link
 grants no access. Backlinks cover the loaded collection, and link text written
