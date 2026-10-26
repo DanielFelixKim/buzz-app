@@ -36,6 +36,12 @@ can be removed; changing an owned agent to read-only or removing it disables the
 automatic policy first. Disabling automatic sharing preserves existing members
 until an explicit membership change.
 
+Ownership checks query each agent's latest signed profile independently. An
+unattested agent is excluded without blocking verified siblings. Before creating
+with agent sharing, the dialog names unverified agents and requires an explicit
+"Create with verified agents" confirmation; disabling agent sharing creates a
+private note. No profile or attestation is repaired or overwritten by this flow.
+
 Channel read permission covers current content and retained history. Contents
 are plaintext to the relay operator. Encryption and selective-history permissions
 are outside this format. Links and index notes confer no access. Written titles
@@ -96,9 +102,19 @@ the retained snapshots and whether more remain.
 `buzz://note?community=<https-origin>&channel=<uuid>&id=<uuid>` binds a document
 to its community and stable identity. The shared parser is used by chat,
 Markdown and OS ingress. The ordinary Notes page hosts the same editor used by
-the channel’s right-pane panel. Pane navigation retains previous views/drafts
-and provides Back; browser document tabs retain drafts and confirm dismissal.
-No new foundation navigation/panel contract is introduced.
+the channel’s right-pane panel. Both use the existing browser-history driver.
+Notes-page destinations record the selected note, committed search, deleted-note
+filter, editing mode, share/link/delete/history dialog, selected revision and
+history page. New-note destinations contain a draft identifier. Conversation
+destinations optionally carry the same note presentation; Back/Forward restores
+linked notes and pane dismissal without navigating away from the conversation.
+The host applies note restoration after restoring its conversation tab visit.
+
+History contains addresses and presentation only, never draft titles or bodies.
+Unsaved document drafts and new-note drafts survive Back/Forward in the current
+session; refreshing or restarting is not offline draft persistence. Replaying a
+destination reads current permissions and does not repeat a save, share, delete
+or restore. Legacy note addresses remain accepted.
 
 Legacy NIP-23 routes continue to open the existing reader. Copying is a deliberate
 new-document operation with an explicit audience. Original events and links stay

@@ -274,19 +274,30 @@ export function NoteHistory({
   canEdit,
   onUse,
   onClose,
+  selection,
+  onSelection,
+  onPage,
 }: {
   note: Note;
   workspace: NotesWorkspace;
   canEdit: boolean;
   onUse(revision: Note): void;
   onClose(): void;
+  selection?: { revision?: string; offset?: number } | undefined;
+  onSelection?(revision: string): void;
+  onPage?(offset: number): void;
 }) {
   const [revisions, setRevisions] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
   const [limited, setLimited] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [selected, setSelected] = useState<Note>();
+  const [localSelected, setSelected] = useState<Note>();
+  const [localOffset, setOffset] = useState(0);
+  const offset = selection ? (selection.offset ?? 0) : localOffset;
+  const selected = selection
+    ? revisions.find((revision) => revision.revision === selection.revision)
+    : localSelected;
   const load = useCallback(
     async (offset: number, signal?: AbortSignal) => {
       setBusy(true);
@@ -294,9 +305,7 @@ export function NoteHistory({
       try {
         const page = await workspace.history(note, offset, signal);
         signal?.throwIfAborted();
-        setRevisions((old) =>
-          offset ? [...old, ...page.revisions] : page.revisions,
-        );
+        setRevisions(page.revisions);
         setMore(page.more);
         setLimited(page.limited);
       } catch (error) {
@@ -309,9 +318,9 @@ export function NoteHistory({
   );
   useEffect(() => {
     const controller = new AbortController();
-    void load(0, controller.signal);
+    void load(offset, controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [load, offset]);
   return (
     <Dialog
       open
@@ -330,7 +339,10 @@ export function NoteHistory({
             <li key={revision.revision}>
               <SurfaceButton
                 className={styles.revision}
-                onClick={() => setSelected(revision)}
+                onClick={() => {
+                  setSelected(revision);
+                  onSelection?.(revision.revision);
+                }}
               >
                 <span>{revision.deleted ? "Deleted" : revision.title}</span>
                 <span className="text-caption text-subtle">
@@ -345,7 +357,8 @@ export function NoteHistory({
           <Button
             disabled={busy}
             onClick={() => {
-              void load(revisions.length);
+              setOffset(offset + 100);
+              onPage?.(offset + 100);
             }}
           >
             Load older revisions
@@ -355,6 +368,17 @@ export function NoteHistory({
           <p role="status">
             More retained history exceeds this app’s page limit.
           </p>
+        )}
+        {offset > 0 && (
+          <Button
+            disabled={busy}
+            onClick={() => {
+              setOffset(Math.max(0, offset - 100));
+              onPage?.(Math.max(0, offset - 100));
+            }}
+          >
+            Newer revisions
+          </Button>
         )}
         {selected && (
           <section aria-label="Selected revision" className={styles.stack}>

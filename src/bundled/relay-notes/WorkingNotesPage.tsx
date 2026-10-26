@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import type { Navigation } from "../../features/navigation/controller";
+import { targetKey } from "../../features/navigation/targets";
 import {
   noteKey,
+  noteAddress,
+  noteUrl,
   parseNoteUrl,
   type Note,
   type NoteAddress,
 } from "../../features/notes/model";
-import { notePageRoute } from "../../features/notes/target";
 import type {
   NotesPage as CollectionPage,
   NotesWorkspace,
@@ -47,8 +56,20 @@ import { NotesPage } from "./NotesPage";
 import { notesRoute } from "./routes";
 import { noteTitle as legacyTitle } from "./collection";
 import styles from "./WorkingNotes.module.css";
+import {
+  workingRoute,
+  workingTarget,
+  type WorkingRoute,
+} from "./working-route";
 
 export type NotesOwner = (session: RelaySession) => NotesWorkspace;
+type NewDraft = {
+  id: string;
+  title: string;
+  markdown: string;
+  copy?: boolean;
+  agents?: boolean;
+};
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Notes could not be read.";
 
@@ -117,7 +138,11 @@ export function WorkingNotesCommunity({
     : undefined;
   const route =
     request?.target.kind === "page" ? request.target.route?.params : undefined;
-  const initial = useMemo(() => notePageRoute(route), [route]);
+  const destination = useMemo(() => workingRoute(route), [route]);
+  const initial = useMemo(
+    () => (destination?.view === "note" ? noteAddress(destination) : undefined),
+    [destination],
+  );
   const [legacy, setLegacy] = useState(!!notesRoute(route));
   const [collection, setCollection] = useState<CollectionPage>({
     notes: [],
@@ -126,13 +151,10 @@ export function WorkingNotesCommunity({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [sharingError, setSharingError] = useState("");
-  const [query, setQuery] = useState("");
-  const [trash, setTrash] = useState(false);
-  const [creating, setCreating] = useState<{
-    title: string;
-    markdown: string;
-    copy?: boolean;
-  }>();
+  const [query, setQuery] = useState(destination?.query ?? "");
+  const [trash, setTrash] = useState(destination?.trash ?? false);
+  const [creating, setCreating] = useState<NewDraft>();
+  const drafts = useRef(new Map<string, NewDraft>());
   const [opened, setOpened] = useState<NoteAddress[]>(() =>
     initial ? [initial] : [],
   );
@@ -187,7 +209,7 @@ export function WorkingNotesCommunity({
       loadId.current++;
     };
   }, [load]);
-  const open = useCallback((address: NoteAddress) => {
+  const reveal = useCallback((address: NoteAddress) => {
     setOpened((old) =>
       old.some((item) => noteKey(item) === noteKey(address))
         ? old
@@ -195,10 +217,58 @@ export function WorkingNotesCommunity({
     );
     setSelected(noteKey(address));
   }, []);
+  const visit = useCallback(
+    (next: WorkingRoute) => {
+      if (
+        !navigator ||
+        !request ||
+        request.signal.aborted ||
+        request.target.kind !== "page" ||
+        navigator.snapshot().entry.id !== request.entryId
+      )
+        return;
+      const target = workingTarget(request.target, next);
+      if (targetKey(target) === targetKey(navigator.snapshot().entry.target))
+        return;
+      void navigator.open(target, {
+        focus: "preserve",
+      });
+    },
+    [navigator, request],
+  );
+  const open = (address: NoteAddress) => {
+    reveal(address);
+    visit({ view: "note", ...noteAddress(address), query, trash });
+  };
+  const browse = () => {
+    setSelected("browse");
+    setCreating(undefined);
+    visit({ view: "browse", query, trash });
+  };
+  const newNote = (draft: Omit<NewDraft, "id">) => {
+    const next = { ...draft, id: crypto.randomUUID() };
+    drafts.current.set(next.id, next);
+    setCreating(next);
+    visit({ view: "new", draft: next.id, query, trash });
+  };
   useEffect(() => {
-    if (initial) open(initial);
+    if (initial) reveal(initial);
+    else if (destination) setSelected("browse");
+    if (destination) {
+      setQuery(destination.query ?? "");
+      setTrash(destination.trash ?? false);
+      setCreating(
+        destination.view === "new" && destination.draft
+          ? (drafts.current.get(destination.draft) ?? {
+              id: destination.draft,
+              title: "",
+              markdown: "",
+            })
+          : undefined,
+      );
+    }
     setLegacy(!!notesRoute(route));
-  }, [initial, route, open]);
+  }, [initial, route, destination, reveal]);
   useEffect(() => {
     if (agentKeys === undefined || choices.pending) return;
     const controller = new AbortController();
@@ -237,7 +307,7 @@ export function WorkingNotesCommunity({
       return;
     }
     setOpened((old) => old.filter((item) => noteKey(item) !== key));
-    if (selected === key) setSelected("browse");
+    if (selected === key) browse();
   };
   const visible = collection.notes.filter(
     (note) =>
@@ -250,7 +320,8 @@ export function WorkingNotesCommunity({
     <NewNoteDialog
       workspace={workspace}
       initial={creating}
-      onClose={() => setCreating(undefined)}
+      onDraftChange={(draft) => drafts.current.set(draft.id, draft)}
+      onClose={browse}
       onCreated={(note) => {
         changed(note);
         open(note);
@@ -282,7 +353,7 @@ export function WorkingNotesCommunity({
           navigator={navigator}
           panels={panels}
           onConvert={(note) =>
-            setCreating({
+            newNote({
               title: legacyTitle(note),
               markdown: note.content,
               copy: true,
@@ -298,7 +369,13 @@ export function WorkingNotesCommunity({
         main
         label="Working notes"
         value={selected}
-        select={setSelected}
+        select={(key) => {
+          if (key === "browse") browse();
+          else {
+            const address = opened.find((item) => noteKey(item) === key);
+            if (address) open(address);
+          }
+        }}
         items={[
           {
             id: "browse",
@@ -312,10 +389,23 @@ export function WorkingNotesCommunity({
                     placeholder="Search loaded notes…"
                     value={query}
                     onValueChange={setQuery}
+                    onBlur={() =>
+                      visit({
+                        ...(destination ?? { view: "browse" }),
+                        query,
+                        trash,
+                      })
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter")
+                        visit({
+                          ...(destination ?? { view: "browse" }),
+                          query,
+                          trash,
+                        });
+                    }}
                   />
-                  <Button
-                    onClick={() => setCreating({ title: "", markdown: "" })}
-                  >
+                  <Button onClick={() => newNote({ title: "", markdown: "" })}>
                     <PlusIcon size={16} /> New note
                   </Button>
                   <IconButton
@@ -332,10 +422,27 @@ export function WorkingNotesCommunity({
                   <Checkbox
                     label="Show deleted notes"
                     checked={trash}
-                    onCheckedChange={setTrash}
+                    onCheckedChange={(value) => {
+                      setTrash(value);
+                      visit({
+                        ...(destination ?? { view: "browse" }),
+                        query,
+                        trash: value,
+                      });
+                    }}
                   />
                   {relay && (
-                    <Button variant="ghost" onClick={() => setLegacy(true)}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setLegacy(true);
+                        if (request?.target.kind === "page" && navigator)
+                          void navigator.open({
+                            ...request.target,
+                            route: { version: 1, params: { author: "" } },
+                          });
+                      }}
+                    >
                       Existing shared notes
                     </Button>
                   )}
@@ -422,6 +529,24 @@ export function WorkingNotesCommunity({
                   workspace={workspace}
                   catalogue={collection.notes}
                   partial={collection.more}
+                  active={selected === key && !legacy}
+                  view={
+                    selected === key && destination?.view === "note"
+                      ? destination
+                      : undefined
+                  }
+                  onViewChange={
+                    selected === key
+                      ? (view) =>
+                          visit({
+                            view: "note",
+                            ...noteAddress(address),
+                            query,
+                            trash,
+                            ...view,
+                          })
+                      : undefined
+                  }
                   onOpen={open}
                   onUnavailable={(missing) =>
                     setCollection((old) => ({
@@ -478,19 +603,32 @@ function NewNoteDialog({
   initial,
   onCreated,
   onClose,
+  onDraftChange,
 }: {
   workspace: NotesWorkspace;
-  initial: { title: string; markdown: string; copy?: boolean };
+  initial: NewDraft;
+  onDraftChange(draft: NewDraft): void;
   onCreated(note: Note): void;
   onClose(): void;
 }) {
-  const [id] = useState(() => crypto.randomUUID());
+  const [id] = useState(initial.id);
   const [title, setTitle] = useState(initial.title);
   const [markdown, setMarkdown] = useState(initial.markdown);
-  const [agents, setAgents] = useState(true);
+  const [agents, setAgents] = useState(initial.agents ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [unverified, setUnverified] = useState<string[]>([]);
+  const draftCallback = useRef(onDraftChange);
+  draftCallback.current = onDraftChange;
+  useEffect(() => {
+    draftCallback.current({
+      id,
+      title,
+      markdown,
+      agents,
+      ...(initial.copy ? { copy: true } : {}),
+    });
+  }, [id, title, markdown, agents, initial.copy]);
   return (
     <Dialog
       open
@@ -598,7 +736,13 @@ export function WorkingNotePanel({
   target,
   relay,
   getWorkspace,
-}: PanelProps & { relay: RelayData; getWorkspace: NotesOwner }) {
+  navigator,
+  context,
+}: PanelProps & {
+  relay: RelayData;
+  getWorkspace: NotesOwner;
+  navigator: Navigation;
+}) {
   const connection = useRelayConnection(relay);
   const initial = useMemo(() => parseNoteUrl(target), [target]);
   if (
@@ -616,6 +760,8 @@ export function WorkingNotePanel({
       key={`${connection.scope}:${connection.generation}`}
       initial={initial}
       workspace={getWorkspace(connection.session)}
+      navigator={navigator}
+      context={context}
     />
   );
 }
@@ -623,20 +769,33 @@ export function WorkingNotePanel({
 function NotePanelContents({
   initial,
   workspace,
+  navigator,
+  context,
 }: {
   initial: NoteAddress;
   workspace: NotesWorkspace;
+  navigator: Navigation;
+  context: PanelProps["context"];
 }) {
-  const [views, setViews] = useState<NoteAddress[]>([initial]);
-  const [trail, setTrail] = useState<string[]>([noteKey(initial)]);
-  const [selected, setSelected] = useState(0);
+  const navigation = useSyncExternalStore(
+    navigator.subscribe,
+    navigator.snapshot,
+    navigator.snapshot,
+  );
+  const route = navigation.entry.target;
+  const view =
+    route.kind === "conversation" &&
+    route.note &&
+    noteKey(route.note) === noteKey(initial)
+      ? route.note
+      : undefined;
   const [catalogue, setCatalogue] = useState<CollectionPage>({
     notes: [],
     more: false,
   });
   const [error, setError] = useState("");
   const title =
-    catalogue.notes.find((note) => noteKey(note) === trail[selected])?.title ??
+    catalogue.notes.find((note) => noteKey(note) === noteKey(initial))?.title ??
     "Note";
   usePanelTabTitle(title);
   useEffect(() => {
@@ -668,20 +827,25 @@ function NotePanelContents({
     [],
   );
   const open = (address: NoteAddress) => {
-    const key = noteKey(address);
-    setViews((old) =>
-      old.some((item) => noteKey(item) === key)
-        ? old
-        : [...old, { id: address.id, channel: address.channel }],
+    const communityOrigin = workspace.session.scope.replace(
+      /:[0-9a-f]{64}$/,
+      "",
     );
-    setTrail((old) => [...old.slice(0, selected + 1), key]);
-    setSelected(selected + 1);
+    if (context?.open(noteUrl(address, communityOrigin))) return;
+    void navigator.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.relay-notes",
+      pageId: "notes",
+      scope: { viewer: workspace.session.viewer ?? "", communityOrigin },
+      route: { version: 1, params: { view: "note", ...noteAddress(address) } },
+    });
   };
   return (
     <div className={styles.page}>
-      {selected > 0 && (
+      {navigation.canGoBack && (
         <div className={styles.actions}>
-          <Button variant="ghost" onClick={() => setSelected(selected - 1)}>
+          <Button variant="ghost" onClick={() => navigator.back()}>
             <ArrowLeftIcon size={16} /> Back
           </Button>
         </div>
@@ -691,18 +855,22 @@ function NotePanelContents({
           Related notes could not be loaded. {error}
         </p>
       )}
-      {views.map((address) => (
-        <div
-          className={
-            noteKey(address) === trail[selected] ? styles.page : styles.hidden
-          }
-          key={noteKey(address)}
-        >
+      {[initial].map((address) => (
+        <div className={styles.page} key={noteKey(address)}>
           <NoteDocument
             address={address}
             workspace={workspace}
             catalogue={catalogue.notes}
             partial={catalogue.more}
+            active={route.kind !== "conversation" || !!view}
+            view={view}
+            onViewChange={(next) => {
+              if (route.kind === "conversation" && view)
+                void navigator.open(
+                  { ...route, note: { ...noteAddress(address), ...next } },
+                  { focus: "preserve" },
+                );
+            }}
             onChange={changed}
             onUnavailable={(missing) =>
               setCatalogue((old) => ({

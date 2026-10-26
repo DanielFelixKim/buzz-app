@@ -1,6 +1,157 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+test("Back and Forward restore note navigation, filters, drafts, dialogs and conversation panes", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/working-notes.html");
+  const search = page.getByRole("searchbox", { name: "Search working notes" });
+  await search.fill("Storage");
+  await search.press("Enter");
+  await page
+    .getByRole("button", { name: /Storage research.*Findings/ })
+    .click();
+  let document = page.getByRole("article", {
+    name: "Storage research",
+    exact: true,
+  });
+  await document
+    .getByRole("button", { name: "Edit note", exact: true })
+    .click();
+  await document
+    .getByRole("textbox", { name: "Markdown", exact: true })
+    .fill("Keep my unsaved research");
+  await page.goBack();
+  await expect(
+    document.getByRole("button", { name: "Edit note", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(
+    document.getByRole("textbox", { name: "Markdown", exact: true }),
+  ).toHaveValue("Keep my unsaved research");
+  await document.getByRole("button", { name: "Cancel editing" }).click();
+  await document
+    .getByRole("button", { name: "Share note", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Share Storage research" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    page.getByRole("dialog", { name: "Share Storage research" }),
+  ).toHaveCount(0);
+  await page.goForward();
+  await expect(
+    page.getByRole("dialog", { name: "Share Storage research" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await document.getByRole("button", { name: "Note actions" }).click();
+  await page.getByRole("menuitem", { name: "Revision history" }).click();
+  const history = page.getByRole("dialog", { name: "Revision history" });
+  await history.getByRole("button", { name: /Storage research/ }).click();
+  await expect(
+    history.getByRole("region", { name: "Selected revision" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    history.getByRole("region", { name: "Selected revision" }),
+  ).toHaveCount(0);
+  await page.goForward();
+  await expect(
+    history.getByRole("region", { name: "Selected revision" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("tab", { name: "Notes", exact: true }).click();
+  await expect(search).toHaveValue("Storage");
+  await page.getByRole("button", { name: "New note", exact: true }).click();
+  const create = page.getByRole("dialog", { name: "New working note" });
+  await create
+    .getByRole("textbox", { name: "Title", exact: true })
+    .fill("Draft survives history");
+  await page.goBack();
+  await expect(create).toHaveCount(0);
+  await page.goForward();
+  await expect(
+    create.getByRole("textbox", { name: "Title", exact: true }),
+  ).toHaveValue("Draft survives history");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Existing shared notes" }).click();
+  await expect(
+    page.getByRole("button", { name: "Back to working notes" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    page.getByRole("button", { name: "New note", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Conversation", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Connected notes plan", exact: true })
+    .click();
+  document = page.getByRole("article", {
+    name: "Connected notes plan",
+    exact: true,
+  });
+  await expect(document).toBeVisible();
+  await document
+    .getByRole("link", { name: "Storage research", exact: true })
+    .click();
+  await expect(
+    page.getByRole("article", { name: "Storage research", exact: true }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(document).toBeVisible();
+  await page.goForward();
+  await expect(
+    page.getByRole("article", { name: "Storage research", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /message/i })).toBeVisible();
+  const research = page.getByRole("article", {
+    name: "Storage research",
+    exact: true,
+  });
+  await research
+    .getByRole("button", { name: "Edit note", exact: true })
+    .click();
+  await research
+    .getByRole("textbox", { name: "Markdown", exact: true })
+    .fill("Unsaved pane research");
+  await page.goBack();
+  await expect(
+    research.getByRole("button", { name: "Edit note", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(
+    research.getByRole("textbox", { name: "Markdown", exact: true }),
+  ).toHaveValue("Unsaved pane research");
+  await research.getByRole("button", { name: "Cancel editing" }).click();
+  await research
+    .getByRole("button", { name: "Share note", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Share Storage research" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    page.getByRole("dialog", { name: "Share Storage research" }),
+  ).toHaveCount(0);
+  await page.goForward();
+  await expect(
+    page.getByRole("dialog", { name: "Share Storage research" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  expect(page.url()).not.toContain("Unsaved");
+  await page
+    .getByRole("button", { name: "Toggle tab pane", exact: true })
+    .click();
+  await expect(research).not.toBeVisible();
+  await page.goBack();
+  await expect(research).toBeVisible();
+  await page.goForward();
+  await expect(research).not.toBeVisible();
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("human and agents edit, link, share and export the same working note", async ({
   page,
 }, testInfo) => {

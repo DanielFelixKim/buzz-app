@@ -37,6 +37,7 @@ import {
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { NoteHistory, NoteLinkPicker, NoteSharing } from "./NoteDialogs";
 import styles from "./WorkingNotes.module.css";
+import type { DocumentView } from "./working-route";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "The note could not be read.";
@@ -51,6 +52,9 @@ export function NoteDocument({
   onChange = nothing,
   onDirty = nothing,
   onUnavailable = nothing,
+  view,
+  onViewChange,
+  active = true,
 }: {
   address: NoteAddress;
   workspace: NotesWorkspace;
@@ -60,21 +64,46 @@ export function NoteDocument({
   onChange?(note: Note): void;
   onDirty?(dirty: boolean): void;
   onUnavailable?(address: NoteAddress): void;
+  view?: DocumentView | undefined;
+  onViewChange?: ((view: DocumentView) => void) | undefined;
+  active?: boolean;
 }) {
-  const [note, setNote] = useState<Note>();
-  const [title, setTitle] = useState("");
-  const [markdown, setMarkdown] = useState("");
-  const [editing, setEditing] = useState(false);
+  const cachedDraft = useRef(workspace.drafts.get(noteKey(address))).current;
+  const [note, setNote] = useState<Note | undefined>(cachedDraft?.base);
+  const [title, setTitle] = useState(cachedDraft?.title ?? "");
+  const [markdown, setMarkdown] = useState(cachedDraft?.markdown ?? "");
+  const [localEditing, setLocalEditing] = useState(!!cachedDraft);
+  const editing = view ? !!view.edit : localEditing;
   const [canEdit, setCanEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
-  const [unavailable, setUnavailable] = useState(false);
+  const [unavailable, setUnavailable] = useState(!!cachedDraft);
   const [conflict, setConflict] = useState<Note>();
-  const [restoreFrom, setRestoreFrom] = useState<Note>();
-  const [dialog, setDialog] = useState<
+  const [restoreFrom, setRestoreFrom] = useState<Note | undefined>(
+    cachedDraft?.restoreFrom,
+  );
+  const [localDialog, setLocalDialog] = useState<
     "share" | "history" | "link" | "delete" | undefined
   >();
+  const dialog = active ? (view ? view.dialog : localDialog) : undefined;
+  const presentation = useRef({ view, onViewChange, editing });
+  presentation.current = { view, onViewChange, editing };
+  const setEditing = useCallback((edit: boolean) => {
+    setLocalEditing(edit);
+    const current = presentation.current;
+    if (current.editing !== edit)
+      current.onViewChange?.({ ...current.view, edit });
+  }, []);
+  const setDialog = useCallback((next: DocumentView["dialog"]) => {
+    setLocalDialog(next);
+    const current = presentation.current;
+    if (current.view?.dialog !== next)
+      current.onViewChange?.({
+        edit: current.editing,
+        ...(next ? { dialog: next } : {}),
+      });
+  }, []);
   const editor = useRef<HTMLTextAreaElement>(null);
   const selection = useRef({ start: 0, end: 0 });
   const latest = useRef({ note, editing, title, markdown });
@@ -82,8 +111,18 @@ export function NoteDocument({
   const callbacks = useRef({ onChange, onDirty, onUnavailable });
   callbacks.current = { onChange, onDirty, onUnavailable };
   const community = workspace.session.scope.replace(/:[0-9a-f]{64}$/, "");
-  const dirty =
-    !!note && editing && (title !== note.title || markdown !== note.markdown);
+  const dirty = !!note && (title !== note.title || markdown !== note.markdown);
+  useEffect(() => {
+    const key = noteKey(address);
+    if (note && dirty)
+      workspace.drafts.set(key, {
+        base: note,
+        title,
+        markdown,
+        ...(restoreFrom ? { restoreFrom } : {}),
+      });
+    else workspace.drafts.delete(key);
+  }, [workspace, address, note, dirty, title, markdown, restoreFrom]);
   useEffect(() => {
     callbacks.current.onDirty(dirty);
   }, [dirty]);
@@ -117,12 +156,13 @@ export function NoteDocument({
         );
         const previous = latest.current;
         if (
-          previous.editing &&
+          (previous.editing || workspace.drafts.has(noteKey(address))) &&
           previous.note &&
           previous.note.revision !== current.revision
         )
           setConflict(current);
-        else if (!previous.editing) adopt(current);
+        else if (!previous.editing && !workspace.drafts.has(noteKey(address)))
+          adopt(current);
         callbacks.current.onChange(current);
       } catch (error) {
         if (!signal?.aborted) {
@@ -137,7 +177,7 @@ export function NoteDocument({
         if (!signal?.aborted) setBusy(false);
       }
     },
-    [workspace, address, adopt],
+    [workspace, address, adopt, setDialog],
   );
   useEffect(() => {
     const controller = new AbortController();
@@ -450,13 +490,26 @@ export function NoteDocument({
           note={note}
           workspace={workspace}
           canEdit={canEdit}
+          selection={view}
+          onSelection={(revision) =>
+            presentation.current.onViewChange?.({
+              ...presentation.current.view,
+              revision,
+            })
+          }
+          onPage={(offset) => {
+            const { revision: _revision, ...rest } =
+              presentation.current.view ?? {};
+            presentation.current.onViewChange?.({ ...rest, offset });
+          }}
           onClose={() => setDialog(undefined)}
           onUse={(revision) => {
             setRestoreFrom(note.deleted ? revision : undefined);
             setTitle(revision.title);
             setMarkdown(revision.markdown);
-            setEditing(true);
-            setDialog(undefined);
+            setLocalEditing(true);
+            setLocalDialog(undefined);
+            presentation.current.onViewChange?.({ edit: true });
           }}
         />
       )}
@@ -518,7 +571,7 @@ export function NoteDocument({
           }
         />
       )}
-      {conflict && (
+      {conflict && active && (
         <Dialog
           open
           onOpenChange={() => {}}

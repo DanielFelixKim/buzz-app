@@ -5,10 +5,10 @@ import {
 } from "../../features/notes/workspace";
 import { noteTools } from "../../features/notes/tools";
 import { parseNoteUrl } from "../../features/notes/model";
-import { notePageRoute } from "../../features/notes/target";
 import type { RelaySession } from "../../features/relay/session";
 import { WorkingNotePanel, WorkingNotesPage } from "./WorkingNotesPage";
 import { notesRoute } from "./routes";
+import { workingRoute } from "./working-route";
 
 export const inject = ["pages", "relay", "navigation", "panels", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -56,6 +56,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         {...props}
         relay={relay}
         getWorkspace={getWorkspace}
+        navigator={ctx.navigation}
       />
     ),
   });
@@ -67,7 +68,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     placement: "topbar",
     route: {
       version: 1,
-      validate: (params) => !!notesRoute(params) || !!notePageRoute(params),
+      validate: (params) => !!notesRoute(params) || !!workingRoute(params),
     },
     component: (props) => (
       <WorkingNotesPage

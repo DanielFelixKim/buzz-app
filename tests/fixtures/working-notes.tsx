@@ -1,7 +1,13 @@
 // Production plugin, document UI, channel workspace, sessions and outboxes.
 // Only the upstream relay/identity inventory is replaced with disposable keys.
 import { Context } from "@deepseek-ai/cordis";
-import { StrictMode, useState, useSyncExternalStore } from "react";
+import {
+  StrictMode,
+  useState,
+  useSyncExternalStore,
+  useLayoutEffect,
+  useEffect,
+} from "react";
 import { createRoot } from "react-dom/client";
 import * as notes from "../../src/bundled/relay-notes";
 import { ConversationService } from "../../src/features/conversation/service";
@@ -20,6 +26,9 @@ import type {
 } from "../../src/features/relay/service";
 import { message, signed } from "../../src/features/relay/testing";
 import type { AddedTool } from "../../src/buzz-mcp/session-tools";
+import type { PageNavigation } from "../../src/features/navigation/service";
+import type { PageProps } from "../../src/features/pages/service";
+import type { ComponentType } from "react";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { ChannelWorkspaceFixture } from "./channel-workspace";
 import "../../src/shared/styles/globals.css";
@@ -188,8 +197,46 @@ Object.assign(window, {
   },
 });
 
+const notesTarget = {
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.relay-notes",
+  pageId: "notes",
+  scope: { viewer: f.viewer.pubkey, communityOrigin: f.origin },
+} as const;
+function RoutedNotes({ Entry }: { Entry: ComponentType<PageProps> }) {
+  const state = useSyncExternalStore(
+    host.navigation.subscribe,
+    host.navigation.snapshot,
+  );
+  const [request, setRequest] = useState<PageNavigation>();
+  useLayoutEffect(() => {
+    if (
+      state.entry.target.kind !== "page" ||
+      state.entry.target.pluginId !== "buzz.relay-notes"
+    )
+      return;
+    const binding = host.request(state.attempt, {
+      valid: () => true,
+      subscribe: () => () => {},
+    });
+    setRequest(binding.request);
+    binding.request.complete({ status: "opened" });
+    return binding.dispose;
+  }, [state.attempt, state.entry.target]);
+  return <Entry navigation={request} />;
+}
 function Fixture() {
-  const [selected, select] = useState("notes");
+  const navigation = useSyncExternalStore(
+    host.navigation.subscribe,
+    host.navigation.snapshot,
+  );
+  const selected =
+    navigation.entry.target.kind === "conversation" ? "conversation" : "notes";
+  useEffect(() => {
+    if (host.navigation.snapshot().entry.target.kind === "home")
+      void host.navigation.open(notesTarget, { replace: true });
+  }, []);
   const entries = useSyncExternalStore(pages.subscribe, pages.snapshot);
   const Entry = entries.find((entry) => entry.id === "notes")?.component;
   return (
@@ -207,16 +254,31 @@ function Fixture() {
           aria-label="Fixture navigation"
           style={{ display: "flex", gap: "1rem" }}
         >
-          <button type="button" onClick={() => select("notes")}>
+          <button
+            type="button"
+            onClick={() => {
+              void host.navigation.open(notesTarget);
+            }}
+          >
             Notes browser
           </button>
-          <button type="button" onClick={() => select("conversation")}>
+          <button
+            type="button"
+            onClick={() => {
+              void host.navigation.open({
+                version: 1,
+                kind: "conversation",
+                scope: notesTarget.scope,
+                channelId: general,
+              });
+            }}
+          >
             Conversation
           </button>
         </nav>
         <main style={{ flex: 1, minHeight: 0 }}>
           <div hidden={selected !== "notes"} style={{ height: "100%" }}>
-            {Entry && <Entry />}
+            {Entry && <RoutedNotes Entry={Entry} />}
           </div>
           <div hidden={selected !== "conversation"} style={{ height: "100%" }}>
             <ChannelWorkspaceFixture

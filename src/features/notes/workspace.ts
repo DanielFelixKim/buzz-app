@@ -42,6 +42,11 @@ const documentLabel = (id: string) => `${NOTE_LABEL}.${id}`;
 /** Feature-owned orchestration; the session and host retain all signing/access authority. */
 export function createNotesWorkspace(session: RelaySession) {
   const lifetime = new AbortController();
+  // Unsaved work belongs to this identity/session, never a URL or relay record.
+  const drafts = new Map<
+    string,
+    { base: Note; title: string; markdown: string; restoreFrom?: Note }
+  >();
   const signal = (caller?: AbortSignal) =>
     AbortSignal.any([
       lifetime.signal,
@@ -498,6 +503,7 @@ export function createNotesWorkspace(session: RelaySession) {
     sharing,
     ownedAgents,
     agentAccess,
+    drafts,
     reconcile,
     setMember,
     setAudience,
@@ -513,7 +519,10 @@ export function createNotesWorkspace(session: RelaySession) {
     ) => saveNote(read, publish, base, draft, op, caller),
     history: (address: NoteAddress, offset = 0, caller?: AbortSignal) =>
       readNoteHistory(read, address, offset, caller),
-    dispose: () => lifetime.abort(),
+    dispose: () => {
+      lifetime.abort();
+      drafts.clear();
+    },
   };
 }
 export type NotesWorkspace = ReturnType<typeof createNotesWorkspace>;
