@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { MemberAuthority } from "../../features/channel-members/administration-protocol";
-import { AGENTS_LABEL, noteKey, type Note } from "../../features/notes/model";
+import { AGENTS_LABEL, type Note } from "../../features/notes/model";
 import type { NotesWorkspace } from "../../features/notes/workspace";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
-import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -17,58 +16,6 @@ const message = (error: unknown) =>
   error instanceof Error
     ? error.message
     : "The operation could not be completed.";
-
-export function NoteLinkPicker({
-  notes,
-  onSelect,
-  onClose,
-}: {
-  notes: readonly Note[];
-  onSelect(note: Note): void;
-  onClose(): void;
-}) {
-  const available = notes.filter((note) => !note.deleted);
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      title="Link a note"
-      size="compact"
-    >
-      <Combobox.Root
-        items={available}
-        itemToStringLabel={(note: Note) => note.title}
-        itemToStringValue={noteKey}
-        autoHighlight
-        defaultOpen
-        onValueChange={(note) => {
-          if (note) onSelect(note);
-        }}
-      >
-        <Combobox.Control
-          label="Note"
-          triggerLabel="Browse notes"
-          placeholder="Search loaded notes…"
-          autoFocus
-        />
-        <Combobox.Popup empty="No accessible notes match.">
-          <Combobox.List>
-            {(note: Note) => (
-              <Combobox.Item key={noteKey(note)} value={note}>
-                {note.title}
-              </Combobox.Item>
-            )}
-          </Combobox.List>
-        </Combobox.Popup>
-      </Combobox.Root>
-      <p className="text-caption text-subtle">
-        This link uses the note’s stable identity. It does not change access.
-      </p>
-    </Dialog>
-  );
-}
 
 export function NoteSharing({
   note,

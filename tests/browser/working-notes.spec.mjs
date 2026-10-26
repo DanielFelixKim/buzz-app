@@ -7,6 +7,12 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
   const search = page.getByRole("searchbox", { name: "Search working notes" });
+  const firstCard = page.getByRole("button", {
+    name: /Connected notes plan.*working plan/,
+  });
+  const cardBounds = await firstCard.boundingBox();
+  expect(Math.abs(cardBounds.width - cardBounds.height)).toBeLessThan(2);
+
   await search.fill("Storage");
   await search.press("Enter");
   await page
@@ -28,7 +34,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     .getByRole("button", { name: "Edit note", exact: true })
     .click();
   await document
-    .getByRole("textbox", { name: "Markdown", exact: true })
+    .getByRole("textbox", { name: "Document body", exact: true })
     .fill("Keep my unsaved research");
   await page.goBack();
   await expect(
@@ -36,8 +42,8 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   ).toBeVisible();
   await page.goForward();
   await expect(
-    document.getByRole("textbox", { name: "Markdown", exact: true }),
-  ).toHaveValue("Keep my unsaved research");
+    document.getByRole("textbox", { name: "Document body", exact: true }),
+  ).toHaveText("Keep my unsaved research");
   await document.getByRole("button", { name: "Cancel editing" }).click();
   await document
     .getByRole("button", { name: "Share note", exact: true })
@@ -124,7 +130,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     .getByRole("button", { name: "Edit note", exact: true })
     .click();
   await research
-    .getByRole("textbox", { name: "Markdown", exact: true })
+    .getByRole("textbox", { name: "Document body", exact: true })
     .fill("Unsaved pane research");
   await page.goBack();
   await expect(
@@ -132,8 +138,8 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   ).toBeVisible();
   await page.goForward();
   await expect(
-    research.getByRole("textbox", { name: "Markdown", exact: true }),
-  ).toHaveValue("Unsaved pane research");
+    research.getByRole("textbox", { name: "Document body", exact: true }),
+  ).toHaveText("Unsaved pane research");
   await research.getByRole("button", { name: "Cancel editing" }).click();
   await research
     .getByRole("button", { name: "Share note", exact: true })
@@ -185,13 +191,86 @@ test("human and agents edit, link, share and export the same working note", asyn
     .getByRole("button", { name: "Edit note", exact: true })
     .click();
   await document
-    .getByRole("textbox", { name: "Markdown", exact: true })
+    .getByRole("textbox", { name: "Document body", exact: true })
+    .focus();
+  await document
+    .getByRole("textbox", { name: "Document body", exact: true })
+    .press("ControlOrMeta+k");
+  await expect(page.getByRole("dialog", { name: "Add link" })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("dialog", { name: "Add link" })).toHaveCount(0);
+  await page.goForward();
+  await expect(page.getByRole("dialog", { name: "Add link" })).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Note", exact: true })
+    .fill("Delivery plan");
+  await page
+    .getByRole("option", { name: "Delivery plan", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Add link" })
+    .getByRole("button", { name: "Save", exact: true })
+    .click();
+  await document
+    .getByRole("button", { name: "Save note", exact: true })
+    .click();
+  await expect(document.getByText("Saved", { exact: true })).toBeVisible();
+  await document
+    .getByRole("link", { name: "Delivery plan", exact: true })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Delivery plan", exact: true }),
+  ).toHaveCount(1);
+  await expect(document.getByRole("alert")).toHaveCount(0);
+
+  await document
+    .getByRole("button", { name: "Edit note", exact: true })
+    .click();
+  await document
+    .getByRole("textbox", { name: "Document body", exact: true })
     .fill("# Taylor’s revision\n\nReady for another agent.");
-  await document.getByRole("button", { name: "Insert note link" }).click();
+  const body = document.getByRole("textbox", {
+    name: "Document body",
+    exact: true,
+  });
+  await expect(
+    document.getByRole("group", { name: "Formatting options" }),
+  ).toBeVisible();
+  await body.evaluate((element) => {
+    const start = element.value.indexOf("Ready");
+    element.setSelectionRange(start, start + 5);
+  });
+  await document.getByRole("button", { name: "Bold", exact: true }).click();
+  await expect(body.locator("strong")).toHaveText("Ready");
+  await document
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(
+    document.getByRole("textbox", { name: "Markdown", exact: true }),
+  ).toHaveValue(/\*\*Ready\*\*/);
+  await document
+    .getByRole("button", { name: "Formatted text", exact: true })
+    .click();
+  await expect(body.locator("strong")).toHaveText("Ready");
+  await body.press("ArrowRight");
+  await body.press("ControlOrMeta+End");
+  await page.screenshot({ path: testInfo.outputPath("document-editing.png") });
+
+  await body.press("[");
+  await body.press("[");
+  await expect(
+    page
+      .getByRole("dialog", { name: "Add link" })
+      .getByRole("textbox", { name: "Text", exact: true }),
+  ).toHaveValue("");
   await page
     .getByRole("combobox", { name: "Note", exact: true })
     .fill("Storage research");
   await page.getByRole("option", { name: "Storage research" }).click();
+  await page
+    .getByRole("dialog", { name: "Add link" })
+    .getByRole("button", { name: "Save", exact: true })
+    .click();
   await document.getByRole("button", { name: "Save note" }).click();
   await expect(document.getByText("Saved", { exact: true })).toBeVisible();
   expect(
@@ -403,7 +482,7 @@ test("preserves a conflicting draft and opens note links in the conversation’s
     .getByRole("button", { name: "Edit note", exact: true })
     .click();
   await document
-    .getByRole("textbox", { name: "Markdown", exact: true })
+    .getByRole("textbox", { name: "Document body", exact: true })
     .fill("My unsaved draft");
   await page.evaluate(() =>
     window.workingNotesFixture.agentEdit(
@@ -420,8 +499,8 @@ test("preserves a conflicting draft and opens note links in the conversation’s
     .getByRole("button", { name: "I’ve compared; keep my draft" })
     .click();
   await expect(
-    document.getByRole("textbox", { name: "Markdown", exact: true }),
-  ).toHaveValue("My unsaved draft");
+    document.getByRole("textbox", { name: "Document body", exact: true }),
+  ).toHaveText("My unsaved draft");
   await document.getByRole("button", { name: "Save note" }).click();
   await expect(document.getByText("Saved", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Conversation", exact: true }).click();

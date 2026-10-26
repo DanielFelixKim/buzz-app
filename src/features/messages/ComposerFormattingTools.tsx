@@ -74,8 +74,11 @@ export function ComposerFormattingTools({
   toggleFormat,
   editLink,
   trailing,
+  defaultOpen = false,
 }: {
   children: ReactNode;
+  /** Document editors reveal formatting as soon as editing starts. */
+  defaultOpen?: boolean;
   /** Conversation controls that follow the tools on the same row. */
   trailing?: ReactNode;
   disabled: boolean;
@@ -84,7 +87,7 @@ export function ComposerFormattingTools({
   toggleFormat(format: ComposerFormat): void;
   editLink(): void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const reduceMotion = useReducedMotion();
   const [keyboardToggle, setKeyboardToggle] = useState(false);
   const instant = reduceMotion || keyboardToggle;

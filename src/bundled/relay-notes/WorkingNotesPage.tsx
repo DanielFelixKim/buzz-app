@@ -55,7 +55,7 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { NoteDocument } from "./NoteDocument";
 import { NotesPage } from "./NotesPage";
 import { notesRoute } from "./routes";
-import { noteTitle as legacyTitle } from "./collection";
+import { workingNotePreview, noteTitle as legacyTitle } from "./collection";
 import styles from "./WorkingNotes.module.css";
 import {
   workingRoute,
@@ -313,6 +313,16 @@ export function WorkingNotesCommunity({
     setOpened((old) => old.filter((item) => noteKey(item) !== key));
     if (selected === key) browse();
   };
+  const previews = useMemo(
+    () =>
+      new Map(
+        collection.notes.map((note) => [
+          noteKey(note),
+          workingNotePreview(note.markdown),
+        ]),
+      ),
+    [collection.notes],
+  );
   const visible = collection.notes.filter(
     (note) =>
       (trash || !note.deleted) &&
@@ -485,15 +495,21 @@ export function WorkingNotesCommunity({
                 <SurfaceButton
                   key={noteKey(note)}
                   className={styles.card}
+                  aria-current={selected === noteKey(note) ? "true" : undefined}
                   onClick={() => open(note)}
                 >
-                  <span className="text-label">{note.title}</span>
+                  <span
+                    className={`${styles.cardTitle} text-label`}
+                    title={note.title}
+                  >
+                    {note.title}
+                  </span>
                   <span
                     className={`${styles.preview} text-body-sm text-subtle`}
                   >
                     {note.deleted
                       ? "Deleted · retained history available"
-                      : note.markdown.slice(0, 240) || "Empty note"}
+                      : previews.get(noteKey(note)) || "Empty note"}
                   </span>
                 </SurfaceButton>
               ))}

@@ -97,6 +97,26 @@ Markdown and a community-bound link. For a deleted document use `note_delete`
 with `restore=true`; `note_set` updates a live document. History results include
 the retained snapshots and whether more remain.
 
+## Document editing
+
+Editing reveals an inline title and formatting toolbar above a document body.
+`NoteEditor` reuses `EditableInput`, `ComposerFormattingTools`, `ComposerLinkDialog`
+and the composer's ProseMirror schema/commands. Enter inserts a newline; saving
+remains explicit. There are no chat send, recipient or attachment controls.
+The standard Link action and Mod-K accept a URL or a loaded note; `[[` uses the
+same dialog. Note destinations retain their stable community/channel/document URL.
+
+Markdown remains the persisted format. The note-owned importer restores supported
+inline formatting, lists, quotes and code into the existing schema. Unsupported
+blocks, including headings and tables, remain editable Markdown source rather
+than being discarded. Markdown source is also available explicitly. An untouched
+editor does not normalize the original document. Rich edits use the shared
+serializer; source spelling of supported constructs may normalize.
+
+Browser cards follow the original reader's square aspect ratio, container-based
+columns, clipped preview and bottom fade. Previews show plain text without link
+destinations; selection remains distinct from hover.
+
 ## Navigation and compatibility
 
 `buzz://note?community=<https-origin>&channel=<uuid>&id=<uuid>` binds a document

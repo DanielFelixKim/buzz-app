@@ -1,3 +1,7 @@
+import {
+  MAX_MARKDOWN_LENGTH,
+  scanMarkdown,
+} from "../../features/relay/message-content";
 import type { ReadOptions } from "../../features/relay/reader";
 import type { RelaySession } from "../../features/relay/session";
 import type { EventData, ReadFilter } from "../../features/relay/events";
@@ -73,4 +77,27 @@ export async function readNotePage(
       : previous.cursor,
     done,
   };
+}
+
+/** Plain preview text keeps destinations and markup out of document cards. */
+export function workingNotePreview(markdown: string): string {
+  if (markdown.length > MAX_MARKDOWN_LENGTH) return markdown.slice(0, 600);
+  const { tree, tooDeep } = scanMarkdown(markdown);
+  if (tooDeep) return markdown.slice(0, 600);
+  const pending = [tree];
+  let text = "";
+  while (pending.length && text.length < 600) {
+    const node = pending.pop();
+    if (!node || node.type === "definition" || node.type === "html") continue;
+    if (
+      ["paragraph", "heading", "listItem", "blockquote", "code"].includes(
+        node.type,
+      ) &&
+      text
+    )
+      text += "\n";
+    if (node.value) text += node.value;
+    if (node.children) pending.push(...node.children.slice().reverse());
+  }
+  return text.slice(0, 600).trim();
 }

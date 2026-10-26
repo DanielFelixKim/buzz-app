@@ -4,7 +4,6 @@ import remarkGfm from "remark-gfm";
 import {
   NoteConflict,
   noteKey,
-  noteMarkdownLink,
   noteTag,
   noteUrl,
   parseNoteUrl,
@@ -34,8 +33,8 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
-import { NoteHistory, NoteLinkPicker, NoteSharing } from "./NoteDialogs";
+import { NoteHistory, NoteSharing } from "./NoteDialogs";
+import { NoteEditor } from "./NoteEditor";
 import styles from "./WorkingNotes.module.css";
 import type { DocumentView } from "./working-route";
 
@@ -104,8 +103,6 @@ export function NoteDocument({
         ...(next ? { dialog: next } : {}),
       });
   }, []);
-  const editor = useRef<HTMLTextAreaElement>(null);
-  const selection = useRef({ start: 0, end: 0 });
   const latest = useRef({ note, editing, title, markdown });
   latest.current = { note, editing, title, markdown };
   const callbacks = useRef({ onChange, onDirty, onUnavailable });
@@ -239,14 +236,6 @@ export function NoteDocument({
         setStatus("Saved");
       });
   };
-  const startLink = () => {
-    const input = editor.current;
-    selection.current = {
-      start: input?.selectionStart ?? markdown.length,
-      end: input?.selectionEnd ?? markdown.length,
-    };
-    setDialog("link");
-  };
   const backlinks = useMemo(
     () =>
       catalogue.filter(
@@ -290,16 +279,30 @@ export function NoteDocument({
       aria-label={!unavailable && note ? note.title : "Working note"}
     >
       <div className={styles.documentHeading}>
-        <h1 className="text-title">
-          {!unavailable && note ? note.title : "Working note"}
-        </h1>
+        {note && editing ? (
+          <Field label="Title" labelVisibility="hidden">
+            <Input
+              appearance="title"
+              value={title}
+              onValueChange={setTitle}
+              disabled={busy}
+            />
+          </Field>
+        ) : (
+          <h1 className="text-title">
+            {!unavailable && note ? note.title : "Working note"}
+          </h1>
+        )}
         <div className={styles.actions}>
           {note && canEdit && !note.deleted && !editing && (
             <IconButton
               aria-label="Edit note"
               title="Edit note"
               icon={<PencilSimpleIcon size={16} />}
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                setStatus("");
+                setEditing(true);
+              }}
             />
           )}
           <IconButton
@@ -388,44 +391,19 @@ export function NoteDocument({
             save();
           }}
         >
-          <Field label="Title">
-            <Input value={title} onValueChange={setTitle} disabled={busy} />
-          </Field>
-          <Field label="Markdown">
-            <Textarea
-              value={markdown}
-              variant="code"
-              rows={18}
-              ref={editor}
-              disabled={busy}
-              onChange={(event) => setMarkdown(event.target.value)}
-              onKeyDown={(event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                  event.preventDefault();
-                  save();
-                }
-                if (
-                  event.key === "[" &&
-                  event.currentTarget.value[
-                    event.currentTarget.selectionStart - 1
-                  ] === "["
-                ) {
-                  event.preventDefault();
-                  selection.current = {
-                    start: event.currentTarget.selectionStart - 1,
-                    end: event.currentTarget.selectionEnd,
-                  };
-                  setDialog("link");
-                }
-              }}
-            />
-          </Field>
+          <NoteEditor
+            value={markdown}
+            onChange={setMarkdown}
+            disabled={busy}
+            notes={catalogue}
+            community={community}
+            linkOpen={dialog === "link"}
+            onLinkOpenChange={(open) => setDialog(open ? "link" : undefined)}
+            onSave={save}
+          />
           <div className={styles.actions}>
             <Button type="submit" disabled={busy || !!conflict || !canEdit}>
               {note.deleted ? "Restore note" : "Save note"}
-            </Button>
-            <Button disabled={busy} onClick={startLink}>
-              Insert note link
             </Button>
             <Button
               variant="ghost"
@@ -510,25 +488,6 @@ export function NoteDocument({
             setLocalEditing(true);
             setLocalDialog(undefined);
             presentation.current.onViewChange?.({ edit: true });
-          }}
-        />
-      )}
-      {dialog === "link" && (
-        <NoteLinkPicker
-          notes={catalogue}
-          onClose={() => setDialog(undefined)}
-          onSelect={(target) => {
-            const link = noteMarkdownLink(target, community),
-              { start, end } = selection.current;
-            setMarkdown((old) => old.slice(0, start) + link + old.slice(end));
-            setDialog(undefined);
-            requestAnimationFrame(() => {
-              editor.current?.focus();
-              editor.current?.setSelectionRange(
-                start + link.length,
-                start + link.length,
-              );
-            });
           }}
         />
       )}
