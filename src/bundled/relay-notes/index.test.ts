@@ -13,7 +13,7 @@ import { provideNavigation } from "../../features/navigation/service";
 import { PanelsService } from "../../features/panels/service";
 import { PagesService } from "../../features/pages/service";
 
-it("registers only the reader page and leaves built-in agent tools unchanged", async () => {
+it("owns the working-note tools and panel while preserving legacy note tools", async () => {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
     isActive: () => true,
@@ -26,9 +26,9 @@ it("registers only the reader page and leaves built-in agent tools unchanged", a
     memoryStorage(),
   );
   const pages = new PagesService(ctx);
-  new PanelsService(ctx);
+  const panels = new PanelsService(ctx);
   provideNavigation(ctx, undefined);
-  ctx.provide("relay", fakeRelay());
+  ctx.provide("relay", fakeRelay().relay);
   let scope: ReturnType<Context["plugin"]> | undefined;
   try {
     const before = addedKey(service.tools());
@@ -43,26 +43,38 @@ it("registers only the reader page and leaves built-in agent tools unchanged", a
       .extend({ pluginOwner: { id: "buzz.relay-notes", revision: "bundled" } })
       .plugin({ inject, apply });
     await scope;
-    expect(service.tools()).toEqual([]);
+    const added = service.tools().map((tool) => tool.name);
+    expect(added).toEqual([
+      "note_get",
+      "note_set",
+      "note_history",
+      "note_delete",
+      "note_share",
+    ]);
     expect(pages.snapshot()).toMatchObject([
       {
         id: "notes",
-        title: "Shared notes",
+        title: "Notes",
         layout: "workspace",
         primary: true,
         placement: "topbar",
       },
     ]);
-    expect(addedKey(service.tools())).toBe(before);
-    expect(sessionTools(service.tools()).map((tool) => tool.name)).toEqual(
-      builtins,
-    );
+    expect(panels.snapshot()).toMatchObject([
+      { id: "note", keepOpen: true, channelPlacement: "tab" },
+    ]);
+    expect(addedKey(service.tools())).not.toBe(before);
+    expect(sessionTools(service.tools()).map((tool) => tool.name)).toEqual([
+      ...builtins,
+      ...added,
+    ]);
     expect(
       sessionTools(service.tools()).some((tool) => tool.name === "note"),
     ).toBe(false);
     await scope.dispose();
     expect(service.tools()).toEqual([]);
     expect(pages.snapshot()).toEqual([]);
+    expect(panels.snapshot()).toEqual([]);
     expect(addedKey(service.tools())).toBe(before);
     expect(sessionTools(service.tools()).map((tool) => tool.name)).toEqual(
       builtins,

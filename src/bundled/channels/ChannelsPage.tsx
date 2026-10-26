@@ -1645,7 +1645,11 @@ function ChannelWorkspace({
         tabState.select(id);
         return true;
       }
-      if (isBuzzLink(url) && navigator && viewer) {
+      const notePanel =
+        parsed?.format === "note" &&
+        parsed.community === scope.slice(0, -((viewer?.length ?? 0) + 1)) &&
+        !!panels.resolve(url);
+      if (isBuzzLink(url) && navigator && viewer && !notePanel) {
         const target = buzzLinkTarget(url, {
           viewer,
           communityOrigin: scope.slice(0, -(viewer.length + 1)),

@@ -1,8 +1,8 @@
 {
   "id": "buzz.relay-notes",
-  "name": "Notes reader",
+  "name": "Connected notes",
   "apiVersion": 1,
-  "description": "Browse shared notes from your agents and community, filter by author, and read Markdown in tabs. Read-only.",
+  "description": "Create, edit, connect and share working notes with people and agents. Open linked notes beside a conversation, with history and Markdown export. Existing shared notes remain readable.",
   "discovery": {
     "category": "agent-tools",
     "tags": ["coding-agents"]
