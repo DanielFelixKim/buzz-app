@@ -26,6 +26,7 @@ import {
   PanelWorkspace,
   usePanelTabTitle,
 } from "../../features/panels/PanelWorkspace";
+import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import type { PanelProps, Panels } from "../../features/panels/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -143,6 +144,8 @@ export function WorkingNotesCommunity({
     () => (destination?.view === "note" ? noteAddress(destination) : undefined),
     [destination],
   );
+  const split = usePanelSplit(448, 320);
+  const searchRef = useRef<HTMLElement>(null);
   const [legacy, setLegacy] = useState(!!notesRoute(route));
   const [collection, setCollection] = useState<CollectionPage>({
     notes: [],
@@ -244,6 +247,7 @@ export function WorkingNotesCommunity({
     setSelected("browse");
     setCreating(undefined);
     visit({ view: "browse", query, trash });
+    requestAnimationFrame(() => searchRef.current?.focus());
   };
   const newNote = (draft: Omit<NewDraft, "id">) => {
     const next = { ...draft, id: crypto.randomUUID() };
@@ -363,210 +367,229 @@ export function WorkingNotesCommunity({
         {creation}
       </div>
     );
+  const readerOpen = selected !== "browse" && opened.length > 0;
   return (
-    <Panel>
-      <PanelWorkspace
-        main
-        label="Working notes"
-        value={selected}
-        select={(key) => {
-          if (key === "browse") browse();
-          else {
-            const address = opened.find((item) => noteKey(item) === key);
-            if (address) open(address);
-          }
-        }}
-        items={[
-          {
-            id: "browse",
-            label: "Notes",
-            icon: <NoteIcon size={16} />,
-            content: (
-              <div className={styles.browser}>
-                <div className={styles.tools}>
-                  <SearchField
-                    label="Search working notes"
-                    placeholder="Search loaded notes…"
-                    value={query}
-                    onValueChange={setQuery}
-                    onBlur={() =>
-                      visit({
-                        ...(destination ?? { view: "browse" }),
-                        query,
-                        trash,
-                      })
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter")
-                        visit({
-                          ...(destination ?? { view: "browse" }),
-                          query,
-                          trash,
-                        });
-                    }}
-                  />
-                  <Button onClick={() => newNote({ title: "", markdown: "" })}>
-                    <PlusIcon size={16} /> New note
-                  </Button>
-                  <IconButton
-                    aria-label="Refresh notes"
-                    title="Refresh notes"
-                    icon={<ArrowsClockwiseIcon size={16} />}
-                    disabled={loading}
-                    onClick={() => {
-                      void load();
-                    }}
-                  />
-                </div>
-                <div className={styles.actions}>
-                  <Checkbox
-                    label="Show deleted notes"
-                    checked={trash}
-                    onCheckedChange={(value) => {
-                      setTrash(value);
-                      visit({
-                        ...(destination ?? { view: "browse" }),
-                        query,
-                        trash: value,
+    <div
+      className={styles.split}
+      ref={split.ref}
+      data-side={readerOpen || undefined}
+    >
+      <div className={styles.main}>
+        <Panel>
+          <PanelHeader
+            title={
+              <PanelHeaderLabel title="Notes" icon={<NoteIcon size={16} />} />
+            }
+          />
+          <div className={styles.browser}>
+            <div className={styles.tools}>
+              <SearchField
+                inputRef={searchRef}
+                label="Search working notes"
+                placeholder="Search loaded notes…"
+                value={query}
+                onValueChange={setQuery}
+                onBlur={() =>
+                  visit({
+                    ...(destination ?? { view: "browse" }),
+                    query,
+                    trash,
+                  })
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter")
+                    visit({
+                      ...(destination ?? { view: "browse" }),
+                      query,
+                      trash,
+                    });
+                }}
+              />
+              <Button onClick={() => newNote({ title: "", markdown: "" })}>
+                <PlusIcon size={16} /> New note
+              </Button>
+              <IconButton
+                aria-label="Refresh notes"
+                title="Refresh notes"
+                icon={<ArrowsClockwiseIcon size={16} />}
+                disabled={loading}
+                onClick={() => {
+                  void load();
+                }}
+              />
+            </div>
+            <div className={styles.actions}>
+              <Checkbox
+                label="Show deleted notes"
+                checked={trash}
+                onCheckedChange={(value) => {
+                  setTrash(value);
+                  visit({
+                    ...(destination ?? { view: "browse" }),
+                    query,
+                    trash: value,
+                  });
+                }}
+              />
+              {relay && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setLegacy(true);
+                    if (request?.target.kind === "page" && navigator)
+                      void navigator.open({
+                        ...request.target,
+                        route: { version: 1, params: { author: "" } },
                       });
-                    }}
-                  />
-                  {relay && (
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setLegacy(true);
-                        if (request?.target.kind === "page" && navigator)
-                          void navigator.open({
-                            ...request.target,
-                            route: { version: 1, params: { author: "" } },
-                          });
-                      }}
-                    >
-                      Existing shared notes
-                    </Button>
-                  )}
-                </div>
-                {loading && (
-                  <p role="status" className="text-caption text-subtle">
-                    Reading notes…
-                  </p>
-                )}
-                {error && <p role="alert">{error}</p>}
-                {sharingError && (
-                  <p role="alert">
-                    Automatic agent access needs attention: {sharingError}
-                  </p>
-                )}
-                {!loading && !error && !visible.length && (
-                  <EmptyState
-                    icon={<NoteIcon size={24} />}
-                    title={query ? "No matching notes" : "Your working notes"}
-                    description={
-                      query
-                        ? "Search covers the notes loaded below."
-                        : "Create a plan, research note or guide to work on with your agents."
-                    }
-                  />
-                )}
-                {parseNoteUrl(query)?.community ===
-                  workspace.session.scope.replace(/:[0-9a-f]{64}$/, "") && (
-                  <Button
-                    onClick={() => {
-                      const target = parseNoteUrl(query);
-                      if (target) open(target);
-                    }}
-                  >
-                    Open linked note
-                  </Button>
-                )}
-                <div className={styles.cards}>
-                  {visible.map((note) => (
-                    <SurfaceButton
-                      key={noteKey(note)}
-                      className={styles.card}
-                      onClick={() => open(note)}
-                    >
-                      <span className="text-label">{note.title}</span>
-                      <span
-                        className={`${styles.preview} text-body-sm text-subtle`}
-                      >
-                        {note.deleted
-                          ? "Deleted · retained history available"
-                          : note.markdown.slice(0, 240) || "Empty note"}
-                      </span>
-                    </SurfaceButton>
-                  ))}
-                </div>
-                {collection.more && (
-                  <Button
-                    disabled={loading}
-                    onClick={() => {
-                      void load(true);
-                    }}
-                  >
-                    Load more notes
-                  </Button>
-                )}
-                <p className="text-caption text-subtle">
-                  Share each note with people and agents. Access includes
-                  retained history.
-                </p>
-              </div>
-            ),
-          },
-          ...opened.map((address) => {
-            const key = noteKey(address);
-            return {
-              id: key,
-              label:
-                collection.notes.find((note) => noteKey(note) === key)?.title ??
-                "Note",
-              close: () => close(key),
-              content: (
-                <NoteDocument
-                  address={address}
-                  workspace={workspace}
-                  catalogue={collection.notes}
-                  partial={collection.more}
-                  active={selected === key && !legacy}
-                  view={
-                    selected === key && destination?.view === "note"
-                      ? destination
-                      : undefined
-                  }
-                  onViewChange={
-                    selected === key
-                      ? (view) =>
-                          visit({
-                            view: "note",
-                            ...noteAddress(address),
-                            query,
-                            trash,
-                            ...view,
-                          })
-                      : undefined
-                  }
-                  onOpen={open}
-                  onUnavailable={(missing) =>
-                    setCollection((old) => ({
-                      ...old,
-                      notes: old.notes.filter(
-                        (note) => noteKey(note) !== noteKey(missing),
-                      ),
-                    }))
-                  }
-                  onChange={changed}
-                  onDirty={(value) => {
-                    if (value) dirty.current.add(key);
-                    else dirty.current.delete(key);
                   }}
-                />
-              ),
-            };
-          }),
-        ]}
-      />
+                >
+                  Existing shared notes
+                </Button>
+              )}
+            </div>
+            {loading && (
+              <p role="status" className="text-caption text-subtle">
+                Reading notes…
+              </p>
+            )}
+            {error && <p role="alert">{error}</p>}
+            {sharingError && (
+              <p role="alert">
+                Automatic agent access needs attention: {sharingError}
+              </p>
+            )}
+            {!loading && !error && !visible.length && (
+              <EmptyState
+                icon={<NoteIcon size={24} />}
+                title={query ? "No matching notes" : "Your working notes"}
+                description={
+                  query
+                    ? "Search covers the notes loaded below."
+                    : "Create a plan, research note or guide to work on with your agents."
+                }
+              />
+            )}
+            {parseNoteUrl(query)?.community ===
+              workspace.session.scope.replace(/:[0-9a-f]{64}$/, "") && (
+              <Button
+                onClick={() => {
+                  const target = parseNoteUrl(query);
+                  if (target) open(target);
+                }}
+              >
+                Open linked note
+              </Button>
+            )}
+            <div className={styles.cards}>
+              {visible.map((note) => (
+                <SurfaceButton
+                  key={noteKey(note)}
+                  className={styles.card}
+                  onClick={() => open(note)}
+                >
+                  <span className="text-label">{note.title}</span>
+                  <span
+                    className={`${styles.preview} text-body-sm text-subtle`}
+                  >
+                    {note.deleted
+                      ? "Deleted · retained history available"
+                      : note.markdown.slice(0, 240) || "Empty note"}
+                  </span>
+                </SurfaceButton>
+              ))}
+            </div>
+            {collection.more && (
+              <Button
+                disabled={loading}
+                onClick={() => {
+                  void load(true);
+                }}
+              >
+                Load more notes
+              </Button>
+            )}
+            <p className="text-caption text-subtle">
+              Share each note with people and agents. Access includes retained
+              history.
+            </p>
+          </div>
+        </Panel>
+      </div>
+      <aside
+        className={styles.side}
+        aria-label="Note editor"
+        hidden={!readerOpen}
+      >
+        {split.handle}
+        <Panel>
+          <PanelWorkspace
+            label="Open working notes"
+            value={selected}
+            select={(key) => {
+              const address = opened.find((item) => noteKey(item) === key);
+              if (address) open(address);
+            }}
+            items={opened.map((address) => {
+              const key = noteKey(address);
+              return {
+                id: key,
+                label:
+                  collection.notes.find((note) => noteKey(note) === key)
+                    ?.title ?? "Note",
+                toolbar: (
+                  <IconButton
+                    aria-label="Back to notes"
+                    title="Back to notes"
+                    icon={<ArrowLeftIcon size={16} />}
+                    onClick={browse}
+                  />
+                ),
+                close: () => close(key),
+                content: (
+                  <NoteDocument
+                    address={address}
+                    workspace={workspace}
+                    catalogue={collection.notes}
+                    partial={collection.more}
+                    active={selected === key && !legacy}
+                    view={
+                      selected === key && destination?.view === "note"
+                        ? destination
+                        : undefined
+                    }
+                    onViewChange={
+                      selected === key
+                        ? (view) =>
+                            visit({
+                              view: "note",
+                              ...noteAddress(address),
+                              query,
+                              trash,
+                              ...view,
+                            })
+                        : undefined
+                    }
+                    onOpen={open}
+                    onUnavailable={(missing) =>
+                      setCollection((old) => ({
+                        ...old,
+                        notes: old.notes.filter(
+                          (note) => noteKey(note) !== noteKey(missing),
+                        ),
+                      }))
+                    }
+                    onChange={changed}
+                    onDirty={(value) => {
+                      if (value) dirty.current.add(key);
+                      else dirty.current.delete(key);
+                    }}
+                  />
+                ),
+              };
+            })}
+          />
+        </Panel>
+      </aside>
       {creation}
       {closing && (
         <Dialog
@@ -594,7 +617,7 @@ export function WorkingNotesCommunity({
           }
         />
       )}
-    </Panel>
+    </div>
   );
 }
 

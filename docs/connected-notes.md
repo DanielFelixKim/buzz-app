@@ -101,8 +101,11 @@ the retained snapshots and whether more remain.
 
 `buzz://note?community=<https-origin>&channel=<uuid>&id=<uuid>` binds a document
 to its community and stable identity. The shared parser is used by chat,
-Markdown and OS ingress. The ordinary Notes page hosts the same editor used by
-the channel’s right-pane panel. Both use the existing browser-history driver.
+Markdown and OS ingress. The Notes browser keeps its collection visible and opens documents in a
+resizable, tabbed right sidebar, following the original shared-notes viewer.
+On narrow screens the editor fills the workspace; Back to notes returns to the
+collection without discarding drafts. It uses the same editor as the channel’s
+right-pane panel. Both use the existing browser-history driver.
 Notes-page destinations record the selected note, committed search, deleted-note
 filter, editing mode, share/link/delete/history dialog, selected revision and
 history page. New-note destinations contain a draft identifier. Conversation

@@ -12,6 +12,14 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await page
     .getByRole("button", { name: /Storage research.*Findings/ })
     .click();
+  const sidebar = page.getByRole("complementary", { name: "Note editor" });
+  await expect(search).toBeVisible();
+  await expect(sidebar).toBeVisible();
+  const collectionBounds = await search.boundingBox();
+  const sidebarBounds = await sidebar.boundingBox();
+  expect(sidebarBounds.x).toBeGreaterThan(
+    collectionBounds.x + collectionBounds.width,
+  );
   let document = page.getByRole("article", {
     name: "Storage research",
     exact: true,
@@ -62,7 +70,9 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     history.getByRole("region", { name: "Selected revision" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.getByRole("tab", { name: "Notes", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Back to notes", exact: true })
+    .click();
   await expect(search).toHaveValue("Storage");
   await page.getByRole("button", { name: "New note", exact: true }).click();
   const create = page.getByRole("dialog", { name: "New working note" });
@@ -244,7 +254,48 @@ test("human and agents edit, link, share and export the same working note", asyn
   const download = page.waitForEvent("download");
   await page.getByRole("menuitem", { name: "Export Markdown" }).click();
   expect((await download).suggestedFilename()).toBe("Delivery plan.md");
-  await page.screenshot({ path: testInfo.outputPath("connected-notes.png") });
+  await page.keyboard.press("Escape");
+  const sidebar = page.getByRole("complementary", { name: "Note editor" });
+  const separator = page.getByRole("separator", {
+    name: "Resize main and secondary panels",
+  });
+  await separator.focus();
+  const originalWidth = (await sidebar.boundingBox()).width;
+  await separator.press("ArrowLeft");
+  await expect
+    .poll(async () => (await sidebar.boundingBox()).width)
+    .toBeGreaterThan(originalWidth);
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.classList.toggle("dark", value === "dark");
+    }, theme);
+    await page.screenshot({
+      path: testInfo.outputPath(`sidebar-${theme}.png`),
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "20px";
+    });
+    await expect(document).toBeVisible();
+    await expect(
+      page.getByRole("searchbox", { name: "Search working notes" }),
+    ).not.toBeVisible();
+    await page
+      .getByRole("button", { name: "Back to notes", exact: true })
+      .click();
+    await expect(
+      page.getByRole("searchbox", { name: "Search working notes" }),
+    ).toBeFocused();
+    await page.goBack();
+    await expect(document).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath(`sidebar-narrow-${theme}.png`),
+    });
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "";
+    });
+  }
   expect(errors.unexplained()).toEqual([]);
 });
 
@@ -272,6 +323,18 @@ test("creates, deletes and restores a working note through the editor", async ({
     .getByRole("button", { name: "Create with verified agents" })
     .click();
   const document = page.getByRole("article", { name: "Research draft" });
+  await expect(
+    page.getByRole("searchbox", { name: "Search working notes" }),
+  ).not.toBeVisible();
+  await page
+    .getByRole("button", { name: "Back to notes", exact: true })
+    .click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search working notes" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(document).toBeVisible();
+
   await expect(
     document.getByText("A durable finding.", { exact: true }),
   ).toBeVisible();
