@@ -47,6 +47,10 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function displayAddress(url: string): string {
+  return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
+
 function boundsFor(element: HTMLElement): BrowserBounds {
   const rectangle = element.getBoundingClientRect();
   const x = Math.max(0, rectangle.left);
@@ -119,11 +123,18 @@ export function BrowserHostView({
   const storage = builderlab?.storage ?? requestedStorage;
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef<string | undefined>(undefined);
+  const prepareControl = useRef<(() => Promise<void>) | undefined>(undefined);
+  const [controlError, setControlError] = useState<string>();
   const retryAttach = useRef<(() => void) | undefined>(undefined);
   // Where the guest last was, so a view whose guest was closed to make room
   // reopens there instead of at its starting URL.
   const resumeUrl = useRef(url);
   const editing = useRef(false);
+  const address = useRef<HTMLInputElement>(null);
+  const [addressEditing, setAddressEditing] = useState(false);
+  useLayoutEffect(() => {
+    if (addressEditing) address.current?.select();
+  }, [addressEditing]);
   const [controlAvailable, setControlAvailable] = useState(false);
   const [controlSession, setControlSession] = useState<string>();
   useEffect(() => {
@@ -189,6 +200,7 @@ export function BrowserHostView({
       | { bounds: BrowserBounds; visible: boolean }
       | undefined;
     let writingBounds = false;
+    let positioning: Promise<void> | undefined;
     const park = storage === undefined ? undefined : `${storage}\n${url}`;
 
     const visible = (bounds: BrowserBounds) =>
@@ -236,7 +248,7 @@ export function BrowserHostView({
       desiredPresentation = lastRequested;
       if (writingBounds) return;
       writingBounds = true;
-      void (async () => {
+      positioning = (async () => {
         while (
           !disposed &&
           session.current === sessionId &&
@@ -257,6 +269,30 @@ export function BrowserHostView({
         }
         writingBounds = false;
       })();
+    };
+
+    prepareControl.current = async () => {
+      // Menu completion precedes its final DOM removal. Wait for that commit,
+      // then join the existing native positioning queue before granting access.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      const sessionId = session.current;
+      if (
+        disposed ||
+        !sessionId ||
+        !sessions.owns(sessionId) ||
+        !visible(boundsFor(element))
+      )
+        throw new Error("Keep this browser visible to share it.");
+      syncBounds(true);
+      await positioning;
+      if (
+        disposed ||
+        session.current !== sessionId ||
+        !visible(boundsFor(element))
+      )
+        throw new Error("Browser sharing was cancelled.");
     };
 
     const poll = async () => {
@@ -385,6 +421,7 @@ export function BrowserHostView({
     return () => {
       disposed = true;
       retryAttach.current = undefined;
+      prepareControl.current = undefined;
       if (pollTimer) clearTimeout(pollTimer);
       resizeObserver.disconnect();
       mutationObserver.disconnect();
@@ -431,7 +468,6 @@ export function BrowserHostView({
 
   function navigate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    editing.current = false;
     const target = addressInputUrl(draft);
     void run((sessionId) =>
       platform.navigate(sessionId, target.url, target.fallbackToHttp),
@@ -446,7 +482,7 @@ export function BrowserHostView({
     void run((sessionId) => platform.action(sessionId, value));
   }
 
-  const error = localError ?? status.error;
+  const error = localError ?? status.error ?? controlError;
   return (
     <section className={styles.browser} aria-label="Browser">
       <div
@@ -456,21 +492,21 @@ export function BrowserHostView({
       >
         <IconButton
           size="toolbar"
-          variant="quiet"
+          variant="ghost"
           aria-label="Back"
           onClick={() => action("back")}
           icon={<CaretLeftIcon size={16} />}
         />
         <IconButton
           size="toolbar"
-          variant="quiet"
+          variant="ghost"
           aria-label="Forward"
           onClick={() => action("forward")}
           icon={<CaretRightIcon size={16} />}
         />
         <IconButton
           size="toolbar"
-          variant="quiet"
+          variant="ghost"
           aria-label="Reload"
           onClick={() => action("reload")}
           icon={
@@ -484,34 +520,39 @@ export function BrowserHostView({
         <form onSubmit={navigate}>
           <Input
             aria-label="Address"
-            value={draft}
+            ref={address}
+            title={status.url || url}
+            value={addressEditing ? draft : displayAddress(status.url || url)}
             onFocus={() => {
               editing.current = true;
+              setAddressEditing(true);
             }}
             onBlur={() => {
               editing.current = false;
+              setAddressEditing(false);
               setDraft(status.url || url);
             }}
             onChange={(event) => setDraft(event.target.value)}
           />
         </form>
-        {status.title ? (
-          <span className={styles.status} title={status.title}>
-            {status.title}
-          </span>
+        {controlAvailable && controlSession && platform.control ? (
+          <Suspense fallback={null}>
+            <BrowserAgentControl
+              key={controlSession}
+              host={agentControl}
+              conversation={conversation}
+              sessionId={controlSession}
+              status={status}
+              onError={setControlError}
+              prepare={async () => {
+                if (!prepareControl.current)
+                  throw new Error("Browser is not ready yet.");
+                await prepareControl.current();
+              }}
+            />
+          </Suspense>
         ) : null}
       </div>
-      {controlAvailable && controlSession && platform.control ? (
-        <Suspense fallback={null}>
-          <BrowserAgentControl
-            key={controlSession}
-            host={agentControl}
-            conversation={conversation}
-            sessionId={controlSession}
-            status={status}
-          />
-        </Suspense>
-      ) : null}
       {error ? (
         <div className={styles.error} role="alert">
           {error}
