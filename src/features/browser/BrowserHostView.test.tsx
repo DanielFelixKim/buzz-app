@@ -1043,3 +1043,30 @@ it("takes mouse back/forward requests for its page from app navigation", async (
     window.removeEventListener("buzz:history-forward", app);
   }
 });
+
+it("grants through the lazy preview controls and revokes when the view closes", async () => {
+  const platform = fakePlatform();
+  const control = {
+    available: vi.fn(async () => true),
+    grant: vi.fn(async () => ({ token: "native-grant", revision: 1 })),
+    revoke: vi.fn(async () => {}),
+    execute: vi.fn(),
+  };
+  platform.control = control;
+  const view = render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Allow agent control" }),
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Browser control token" }),
+  ).toHaveValue("native-grant");
+  expect(control.grant).toHaveBeenCalledWith("session-1");
+  view.unmount();
+  expect(control.revoke).toHaveBeenCalledWith("session-1");
+});
