@@ -374,14 +374,16 @@ export function createProfileDirectory(
         cancel: new AbortController(),
         work: Promise.resolve(),
       };
+      // A response over the read budget retries in halves from the same
+      // author, like AgentBrowse's catalog pages; one profile over it fails.
+      // Each part is kept as it lands, and a retry resumes at the failed part.
+      let at = 0,
+        size = authors.length;
+      const returned = new Set<string>();
       batch.work = retryRead(
         async (signal) => {
           attempts.set(signal, batch);
-          const result: RelayEvent[] = [];
-          filled = false;
-          // A response over the read budget retries in halves from the same
-          // author, like AgentBrowse's catalog pages; one profile over it fails.
-          for (let at = 0, size = authors.length; at < authors.length; ) {
+          while (at < authors.length) {
             const part = authors.slice(at, at + size);
             // A promotion during backoff applies to the next attempt instead.
             batch.reading = part;
@@ -390,7 +392,15 @@ export function createProfileDirectory(
                 [{ kinds: [0], authors: part, limit: PROFILE_PAGE }],
                 { signal, priority: batch.priority },
               );
-              result.push(...page);
+              if (!signal.aborted) {
+                const profiles = page.filter((event) =>
+                  part.includes(event.pubkey),
+                );
+                for (const event of profiles) returned.add(event.pubkey);
+                // A foreground reader that joined this read gets its names at
+                // once.
+                take(profiles, batch.priority === "background");
+              }
               // A page at the limit may have left out authors who do have one.
               if (page.length >= PROFILE_PAGE) filled = true;
               at += part.length;
@@ -408,25 +418,11 @@ export function createProfileDirectory(
             }
           }
           answered = true;
-          return result;
+          if (!signal.aborted && !filled)
+            missed(authors, returned, batch.priority === "background");
         },
         AbortSignal.any([signal, batch.cancel.signal]),
       )
-        .then((result) => {
-          if (signal.aborted || batch.cancel.signal.aborted) return;
-          // A foreground reader that joined this read gets its names at once.
-          const fold = batch.priority === "background";
-          const profiles = result.filter((event) =>
-            authors.includes(event.pubkey),
-          );
-          take(profiles, fold);
-          if (!filled)
-            missed(
-              authors,
-              new Set(profiles.map((event) => event.pubkey)),
-              fold,
-            );
-        })
         .catch((error: unknown) => {
           // A shrink cancels a background read quietly; evictions() tells its
           // requester to ask again.
