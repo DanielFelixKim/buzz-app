@@ -6255,7 +6255,8 @@ export class AgentsService extends Service implements Agents {
       else void this.readListings(origin, binding);
     }
     const native = this.native;
-    for (const identity of this.identities)
+    for (const identity of this.identities) {
+      if (!originOf(identity.relay)) continue;
       if (!identity.deleted)
         native
           ?.publishProfile(identity)
@@ -6269,6 +6270,7 @@ export class AgentsService extends Service implements Agents {
         const binding = this.bindingOf(identity);
         if (binding) this.cleanup(identity, binding);
       }
+    }
   }
   /** Starts the cleanup of a membership deleted under the old order, or
    * whose Delete or Remove stopped short of dropping it, unless one is
@@ -6351,7 +6353,8 @@ export class AgentsService extends Service implements Agents {
       origins.add(origin);
       // Its home keeps its config, which its Delete archives even after it
       // left there.
-      origins.add(homeOf(identity));
+      const home = originOf(homeOf(identity));
+      if (home) origins.add(home);
     }
     // Left, or left and joined again with a new session.
     for (const [origin, entry] of this.bound)
