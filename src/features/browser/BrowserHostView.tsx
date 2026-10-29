@@ -26,6 +26,7 @@ import {
   type BrowserStatus,
 } from "./platform";
 import type { BrowserSessions } from "./sessions";
+import type { BrowserInitialShare } from "./control-access";
 import type { BrowserAgentHost } from "./BrowserAgentControl";
 import styles from "./BrowserHostView.module.css";
 
@@ -114,11 +115,15 @@ export function BrowserHostView({
   pollInterval = 300,
   conversation,
   agentControl,
+  initialShare,
+  sessionKey,
 }: BrowserViewProps & {
   platform: BrowserPlatform;
   sessions: BrowserSessions;
   pollInterval?: number;
   agentControl?: BrowserAgentHost;
+  initialShare?: BrowserInitialShare | undefined;
+  sessionKey?: string | undefined;
 }) {
   const storage = builderlab?.storage ?? requestedStorage;
   const viewport = useRef<HTMLDivElement>(null);
@@ -180,7 +185,7 @@ export function BrowserHostView({
   const nameTab = tabHost?.title;
   const tabOwner = tabHost?.owner;
   // The last title the page had names it until it reports another.
-  const titleKey = `${storage ?? ""}\n${url}`;
+  const titleKey = `${storage ?? ""}\n${sessionKey ?? url}`;
   const tabLabel = status.title || sessions.title(titleKey) || label;
   useLayoutEffect(() => {
     if (!nameTab || !tabOwner || !tabLabel) return;
@@ -201,7 +206,7 @@ export function BrowserHostView({
       | undefined;
     let writingBounds = false;
     let positioning: Promise<void> | undefined;
-    const park = storage === undefined ? undefined : `${storage}\n${url}`;
+    const park = storage === undefined ? undefined : titleKey;
 
     const visible = (bounds: BrowserBounds) =>
       document.visibilityState === "visible" &&
@@ -539,6 +544,7 @@ export function BrowserHostView({
           <Suspense fallback={null}>
             <BrowserAgentControl
               key={controlSession}
+              initialShare={initialShare}
               host={agentControl}
               conversation={conversation}
               sessionId={controlSession}
