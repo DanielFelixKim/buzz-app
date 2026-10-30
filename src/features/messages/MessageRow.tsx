@@ -1029,7 +1029,10 @@ function MessageRowContent({
               (!(flat ? stackPrevious : stackNext) || avatarFocused) && (
                 <div className={styles.messageAvatar}>{avatar}</div>
               )}
-            <div className={styles.messageHeader}>
+            <div
+              className={styles.messageHeader}
+              data-message-action-header={stackPrevious ? undefined : ""}
+            >
               {!row.membership &&
                 !row.huddle &&
                 !renderMessage &&

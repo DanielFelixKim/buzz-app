@@ -14,6 +14,9 @@ import {
 
 const contentSelector =
   "[data-message-action-anchor], [data-message-attachments] > *";
+// The byline row also reveals actions, but never moves them: placement still
+// measures only painted content.
+const revealSelector = `${contentSelector}, [data-message-action-header]`;
 
 const floatingQuery = "(hover: hover) and (pointer: fine)";
 // One MediaQueryList for every row: `matchMedia` allocates and evaluates the
@@ -117,7 +120,7 @@ export function useFloatingActionBar(
     if (!floating || !row || !bar) return;
     const contentAt = (target: EventTarget | null) =>
       target instanceof Element && row.contains(target)
-        ? target.closest(contentSelector)
+        ? target.closest(revealSelector)
         : null;
     // The toolbar is clamped to the scroller, not the row, so a short bubble's
     // route can cross the scroller's empty gutter. It never crosses another row.
@@ -182,9 +185,9 @@ export function useFloatingActionBar(
       );
       return x >= left && x <= right;
     };
-    // The row includes empty space, bylines and accessories. Only painted
-    // message content and the top-layer toolbar reveal pointer actions.
-    const initialContent = row.querySelector(`:is(${contentSelector}):hover`);
+    // The row includes empty space and accessories. Only painted message
+    // content, its byline row and the top-layer toolbar reveal pointer actions.
+    const initialContent = row.querySelector(`:is(${revealSelector}):hover`);
     let hovered =
       (!!initialContent &&
         !row.querySelector(
