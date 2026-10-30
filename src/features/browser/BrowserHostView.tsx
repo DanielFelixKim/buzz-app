@@ -115,6 +115,7 @@ export function BrowserHostView({
   pollInterval = 300,
   conversation,
   agentControl,
+  allowAgentControl = false,
   initialShare,
   sessionKey,
 }: BrowserViewProps & {
@@ -122,6 +123,7 @@ export function BrowserHostView({
   sessions: BrowserSessions;
   pollInterval?: number;
   agentControl?: BrowserAgentHost;
+  allowAgentControl?: boolean;
   initialShare?: BrowserInitialShare | undefined;
   sessionKey?: string | undefined;
 }) {
@@ -144,6 +146,10 @@ export function BrowserHostView({
   const [controlSession, setControlSession] = useState<string>();
   useEffect(() => {
     let current = true;
+    if (!allowAgentControl) {
+      setControlAvailable(false);
+      return;
+    }
     void platform.control
       ?.available()
       .then((value) => {
@@ -153,7 +159,7 @@ export function BrowserHostView({
     return () => {
       current = false;
     };
-  }, [platform]);
+  }, [platform, allowAgentControl]);
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [draft, setDraft] = useState(url);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -540,7 +546,10 @@ export function BrowserHostView({
             onChange={(event) => setDraft(event.target.value)}
           />
         </form>
-        {controlAvailable && controlSession && platform.control ? (
+        {allowAgentControl &&
+        controlAvailable &&
+        controlSession &&
+        platform.control ? (
           <Suspense fallback={null}>
             <BrowserAgentControl
               key={controlSession}
