@@ -1,4 +1,6 @@
-import type { BrowserControlRequest } from "./platform";
+import type { BrowserControlRequest, BrowserStatus } from "./platform";
+import type { BrowserAccess, BrowserRecipient } from "./control-access";
+import type { browserToolbarUi } from "./toolbar-ui";
 import type { Context as ToolContext } from "../../buzz-mcp/client";
 import type { ComponentType } from "react";
 
@@ -15,12 +17,24 @@ export type BuilderlabViewerSession = Readonly<
   }
 >;
 
+export type BrowserToolbarProps = Readonly<{
+  sessionId: string;
+  status: BrowserStatus;
+  prepare(): Promise<void>;
+  onError(error: string | undefined): void;
+  ui: typeof browserToolbarUi;
+}>;
+
 export type BrowserViewProps = Readonly<{
   url: string;
   /** Bootstrap only the configured Builderlab tenant's app using its native viewer exchange. */
   builderlab?: BuilderlabViewerSession;
   /** Which polled destinations may reopen after guest eviction. Native auth still validates the destination. */
   canResumeUrl?: ((url: string) => boolean) | undefined;
+  /** A plugin contribution beside the address bar for the active session. */
+  toolbar?: ComponentType<BrowserToolbarProps> | undefined;
+  /** Distinguishes independent views with the same URL and storage. */
+  sessionKey?: string | undefined;
   /** Keeps the website's cookies and storage under this name between opens
    * and restarts (1-64 of a-z, 0-9, `-`, `_`, `.`), where the platform can hold
    * them apart from Buzz's own. Without it each open is a private session. */
@@ -28,10 +42,6 @@ export type BrowserViewProps = Readonly<{
   /** Names the view's tab until the website has a title, and while a hidden
    * tab has not opened it yet. */
   label?: string | undefined;
-  /** The conversation this website was opened beside. */
-  conversation?:
-    | Readonly<{ channel: string; root?: string | undefined }>
-    | undefined;
 }>;
 
 export interface Browser {
@@ -41,17 +51,9 @@ export interface Browser {
   readonly control?:
     | Readonly<{
         available(): Promise<boolean>;
-        /** Plugin-selected website view with explicit sharing controls. */
-        readonly Page: ComponentType<BrowserViewProps>;
-        readonly View: ComponentType<{
-          target: string;
-          conversation?: BrowserViewProps["conversation"];
-        }>;
-        open(
-          agent: string,
-          context: ToolContext,
-          options: Pick<BrowserViewProps, "url" | "storage">,
-        ): Promise<unknown>;
+        eligible(recipient: BrowserRecipient): boolean;
+        forRecipient: BrowserAccess["forRecipient"];
+        revokeRecipient: BrowserAccess["revokeRecipient"];
         execute(
           agent: string,
           context: ToolContext,
