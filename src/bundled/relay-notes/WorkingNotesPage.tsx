@@ -27,6 +27,8 @@ import {
   usePanelTabTitle,
 } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
+import { PanelDock } from "../../features/panels/PanelDock";
+import panelStyles from "../../features/panels/Panels.module.css";
 import type { PanelProps, Panels } from "../../features/panels/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -380,7 +382,7 @@ export function WorkingNotesCommunity({
   const readerOpen = selected !== "browse" && opened.length > 0;
   return (
     <div
-      className={styles.split}
+      className={`${styles.split} ${panelStyles.splitMotion}`}
       ref={split.ref}
       data-side={readerOpen || undefined}
     >
@@ -531,81 +533,83 @@ export function WorkingNotesCommunity({
           </div>
         </Panel>
       </div>
-      <aside
+      <PanelDock
+        open={readerOpen}
+        keepMounted
         className={styles.side}
-        aria-label="Note editor"
-        hidden={!readerOpen}
+        resizeHandle={split.handle}
       >
-        {split.handle}
-        <Panel>
-          <PanelWorkspace
-            label="Open working notes"
-            value={selected}
-            select={(key) => {
-              const address = opened.find((item) => noteKey(item) === key);
-              if (address) open(address);
-            }}
-            items={opened.map((address) => {
-              const key = noteKey(address);
-              return {
-                id: key,
-                label:
-                  collection.notes.find((note) => noteKey(note) === key)
-                    ?.title ?? "Note",
-                toolbar: (
-                  <IconButton
-                    aria-label="Back to notes"
-                    title="Back to notes"
-                    icon={<ArrowLeftIcon size={16} />}
-                    onClick={browse}
-                  />
-                ),
-                close: () => close(key),
-                content: (
-                  <NoteDocument
-                    address={address}
-                    workspace={workspace}
-                    catalogue={collection.notes}
-                    partial={collection.more}
-                    active={selected === key && !legacy}
-                    view={
-                      selected === key && destination?.view === "note"
-                        ? destination
-                        : undefined
-                    }
-                    onViewChange={
-                      selected === key
-                        ? (view) =>
-                            visit({
-                              view: "note",
-                              ...noteAddress(address),
-                              query,
-                              trash,
-                              ...view,
-                            })
-                        : undefined
-                    }
-                    onOpen={open}
-                    onUnavailable={(missing) =>
-                      setCollection((old) => ({
-                        ...old,
-                        notes: old.notes.filter(
-                          (note) => noteKey(note) !== noteKey(missing),
-                        ),
-                      }))
-                    }
-                    onChange={changed}
-                    onDirty={(value) => {
-                      if (value) dirty.current.add(key);
-                      else dirty.current.delete(key);
-                    }}
-                  />
-                ),
-              };
-            })}
-          />
-        </Panel>
-      </aside>
+        <aside aria-label="Note editor">
+          <Panel>
+            <PanelWorkspace
+              label="Open working notes"
+              value={selected}
+              select={(key) => {
+                const address = opened.find((item) => noteKey(item) === key);
+                if (address) open(address);
+              }}
+              items={opened.map((address) => {
+                const key = noteKey(address);
+                return {
+                  id: key,
+                  label:
+                    collection.notes.find((note) => noteKey(note) === key)
+                      ?.title ?? "Note",
+                  toolbar: (
+                    <IconButton
+                      aria-label="Back to notes"
+                      title="Back to notes"
+                      icon={<ArrowLeftIcon size={16} />}
+                      onClick={browse}
+                    />
+                  ),
+                  close: () => close(key),
+                  content: (
+                    <NoteDocument
+                      address={address}
+                      workspace={workspace}
+                      catalogue={collection.notes}
+                      partial={collection.more}
+                      active={selected === key && !legacy}
+                      view={
+                        selected === key && destination?.view === "note"
+                          ? destination
+                          : undefined
+                      }
+                      onViewChange={
+                        selected === key
+                          ? (view) =>
+                              visit({
+                                view: "note",
+                                ...noteAddress(address),
+                                query,
+                                trash,
+                                ...view,
+                              })
+                          : undefined
+                      }
+                      onOpen={open}
+                      onUnavailable={(missing) =>
+                        setCollection((old) => ({
+                          ...old,
+                          notes: old.notes.filter(
+                            (note) => noteKey(note) !== noteKey(missing),
+                          ),
+                        }))
+                      }
+                      onChange={changed}
+                      onDirty={(value) => {
+                        if (value) dirty.current.add(key);
+                        else dirty.current.delete(key);
+                      }}
+                    />
+                  ),
+                };
+              })}
+            />
+          </Panel>
+        </aside>
+      </PanelDock>
       {creation}
       {closing && (
         <Dialog

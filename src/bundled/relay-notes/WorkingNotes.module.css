@@ -1,13 +1,16 @@
 .split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0px);
+  grid-template-rows: minmax(0, 1fr);
+  position: relative;
+  overflow: clip;
   height: 100%;
   min-height: 0;
 }
-.split[data-side] {
+.split:has(> [data-panel-dock]:not([hidden], [data-closing])) {
   grid-template-columns: minmax(0, 1fr) minmax(
-      20rem,
-      var(--secondary-panel-width, 28rem)
+      0,
+      max(20rem, var(--secondary-panel-width, 28rem))
     );
 }
 .main,
@@ -16,8 +19,17 @@
   min-height: 0;
 }
 .side {
+  width: max(20rem, var(--secondary-panel-width, 28rem));
   position: relative;
   border-inline-start: 1px solid var(--border-standard);
+}
+.side > aside {
+  height: 100%;
+  min-height: 0;
+}
+.main,
+.side > * {
+  --secondary-panel-width: initial;
 }
 .page,
 .stack {
@@ -219,7 +231,8 @@
 }
 
 @media (max-width: 52rem) {
-  .split[data-side] {
+  .split,
+  .split:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
   }
   .split[data-side] > .main,
@@ -227,6 +240,10 @@
     display: none;
   }
   .side {
+    --panel-motion-distance: 100%;
+    position: absolute;
+    inset: 0;
+    width: 100%;
     border-inline-start: 0;
   }
 }

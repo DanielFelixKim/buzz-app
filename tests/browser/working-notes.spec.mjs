@@ -1,6 +1,19 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+async function settleNotePane(page) {
+  await page
+    .getByRole("complementary", { name: "Note editor" })
+    .evaluate(async (element) => {
+      const dock = element.closest("[data-panel-dock]");
+      await Promise.allSettled(
+        [...dock.getAnimations(), ...dock.parentElement.getAnimations()].map(
+          (animation) => animation.finished,
+        ),
+      );
+    });
+}
+
 test("Back and Forward restore note navigation, filters, drafts, dialogs and conversation panes", async ({
   page,
 }) => {
@@ -15,12 +28,48 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
 
   await search.fill("Storage");
   await search.press("Enter");
+  // Observe actual browser transitions; DOM-only tests cannot prove the reveal.
+  await page.evaluate(() => {
+    window.notePaneMotion = [];
+    document.addEventListener("transitionrun", (event) => {
+      if (
+        event.target instanceof HTMLElement &&
+        (event.target.hasAttribute("data-panel-dock") ||
+          event.target.querySelector(":scope > [data-panel-dock]"))
+      )
+        window.notePaneMotion.push(event.propertyName);
+    });
+  });
   await page
     .getByRole("button", { name: /Storage research.*Findings/ })
     .click();
   const sidebar = page.getByRole("complementary", { name: "Note editor" });
   await expect(search).toBeVisible();
   await expect(sidebar).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.notePaneMotion))
+    .toContain("transform");
+  await expect
+    .poll(() => page.evaluate(() => window.notePaneMotion))
+    .toContain("grid-template-columns");
+  await settleNotePane(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(
+    await sidebar.evaluate((element) => {
+      const dock = element.closest("[data-panel-dock]");
+      return {
+        transform: getComputedStyle(dock).transform,
+        properties: getComputedStyle(dock).transitionProperty,
+        splitProperties: getComputedStyle(dock.parentElement)
+          .transitionProperty,
+      };
+    }),
+  ).toEqual({
+    transform: "none",
+    properties: "opacity",
+    splitProperties: "none",
+  });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   const collectionBounds = await search.boundingBox();
   const sidebarBounds = await sidebar.boundingBox();
   expect(sidebarBounds.x).toBeGreaterThan(
@@ -239,6 +288,7 @@ test("human and agents edit, link, share and export the same working note", asyn
     exact: true,
   });
   await expect(mode).toContainText("Viewing");
+  await settleNotePane(page);
   const viewingBounds = await canvas.boundingBox();
   const viewingTitle = await document
     .getByRole("textbox", { name: "Title", exact: true })
