@@ -1,6 +1,6 @@
 # Connected working notes
 
-The bundled `buzz.relay-notes` plugin owns the Notes browser and contributes one
+The bundled `buzz.relay-notes` plugin owns one author-oriented Notes browser and contributes one
 document panel plus five agent tools. `features/notes` owns the shared protocol
 model and channel orchestration. Existing session reads, channel creation,
 membership operations, signing and panel routing retain their authority; there is
@@ -152,7 +152,12 @@ session; refreshing or restarting is not offline draft persistence. Replaying a
 destination reads current permissions and does not repeat a save, share, delete
 or restore. Legacy note addresses remain accepted.
 
-Legacy NIP-23 routes continue to open the existing reader. Copying is a deliberate
+Legacy NIP-23 routes open the same browser and sidebar as editable documents.
+The collection has one search, author folders, shared card renderer and tab host.
+Signed current-revision authors provide document bylines; this is not a new
+claim about the original creator after collaborative edits. Independent source
+pagination and read authority remain with their existing owners.
+Copying is a deliberate
 new-document operation with an explicit audience. Original events and links stay
 unchanged; retirement of legacy authoring is a later migration decision.
 

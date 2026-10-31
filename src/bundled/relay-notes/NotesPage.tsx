@@ -8,6 +8,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
   type Ref,
+  type RefObject,
+  type ComponentProps,
 } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -19,6 +21,13 @@ import {
   scanMarkdown,
 } from "../../features/relay/message-content";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
+import { PanelDock } from "../../features/panels/PanelDock";
+import panelStyles from "../../features/panels/Panels.module.css";
+import type { Note } from "../../features/notes/model";
+import { SearchField } from "../../shared/design-system/ui/SearchField";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { PlusIcon } from "../../shared/design-system/icons";
+import { workingRoute } from "./working-route";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import type { Profile } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
@@ -58,8 +67,10 @@ import {
   noteKey,
   noteTag,
   noteTitle,
+  workingNotePreview,
 } from "./collection";
 import styles from "./NotesPage.module.css";
+import layoutStyles from "./WorkingNotes.module.css";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import type { PageProps } from "../../features/pages/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -69,7 +80,31 @@ import { profileTarget } from "../../features/profiles/target";
 const noSubscribe = () => () => {};
 const noPanels: readonly RegisteredPanel[] = [];
 const emptyPanels = () => noPanels;
+/** The editable documents share this browser and tab host with published notes. */
+export type WorkingNotesExtension = {
+  entries: readonly Note[];
+  open(note: Note): void;
+  items: ComponentProps<typeof PanelWorkspace>["items"];
+  selected: string;
+  query: string;
+  trash: boolean;
+  searchRef: RefObject<HTMLElement | null>;
+  loading: boolean;
+  more: boolean;
+  error: string;
+  sharingError: string;
+  search(query: string, commit?: boolean): void;
+  showDeleted(value: boolean): void;
+  create(): void;
+  refresh(): void;
+  loadMore(): void;
+  select(key: string): void;
+  close(key: string, fallback: string): void;
+  dismiss(key: string, fallback: string): void;
+  visit(route: NotesRoute): void;
+};
 type NotesNavigation = Pick<PageProps, "navigation"> & {
+  working?: WorkingNotesExtension | undefined;
   navigator?: Navigation | undefined;
   panels?: Panels | undefined;
   onConvert?: ((note: EventData) => void) | undefined;
@@ -80,19 +115,21 @@ function NotesPanel({
   refresh,
   refreshRef,
   loading = false,
+  working,
 }: {
+  working?: WorkingNotesExtension | undefined;
   children: ReactNode;
   refresh?: (() => void) | undefined;
   refreshRef?: Ref<HTMLButtonElement>;
   loading?: boolean;
 }) {
   return (
-    <Panel aria-label="Shared notes">
+    <Panel aria-label={working ? "Notes" : "Shared notes"}>
       <div className={styles.page}>
         <PanelHeader
           title={
             <PanelHeaderLabel
-              title="Shared notes"
+              title={working ? "Notes" : "Shared notes"}
               icon={<NoteIcon size="1rem" />}
             >
               <PopoverRoot>
@@ -102,28 +139,49 @@ function NotesPanel({
                       size="sm"
                       variant="ghost"
                       icon={<InfoIcon size="1rem" aria-hidden="true" />}
-                      aria-label="About shared notes"
-                      title="About shared notes"
+                      aria-label={
+                        working ? "About notes" : "About shared notes"
+                      }
+                      title={working ? "About notes" : "About shared notes"}
                     />
                   }
                 />
                 <PopoverPopup>
-                  <PopoverTitle>About shared notes</PopoverTitle>
+                  <PopoverTitle>
+                    {working ? "About notes" : "About shared notes"}
+                  </PopoverTitle>
                   <PopoverDescription
                     render={<div className={styles.description} />}
                   >
-                    <p>
-                      Shared notes are reusable documents saved by your agents
-                      and other agents in this community—recipes, prompts,
-                      research and guides you can return to across
-                      conversations. Ask the agent who saved a note to update
-                      it, or ask your agent to save its own copy.
-                    </p>
-                    <p>
-                      Anyone with access to this community’s relay can read
-                      shared notes. Don’t include secrets or private
-                      information.
-                    </p>
+                    {working ? (
+                      <p>
+                        Notes from you and agents live together here. Open any
+                        note in the sidebar. Edit when you have access, or make
+                        an editable copy of a published agent note.
+                      </p>
+                    ) : (
+                      <p>
+                        Shared notes are reusable documents saved by your agents
+                        and other agents in this community—recipes, prompts,
+                        research and guides you can return to across
+                        conversations. Ask the agent who saved a note to update
+                        it, or ask your agent to save its own copy.
+                      </p>
+                    )}
+                    {working ? (
+                      <p>
+                        Each document has its own sharing settings. Published
+                        agent notes are readable by people with access to this
+                        community’s relay. The relay operator can read note
+                        contents. Don’t include secrets.
+                      </p>
+                    ) : (
+                      <p>
+                        Anyone with access to this community’s relay can read
+                        shared notes. Don’t include secrets or private
+                        information.
+                      </p>
+                    )}
                   </PopoverDescription>
                 </PopoverPopup>
               </PopoverRoot>
@@ -132,6 +190,14 @@ function NotesPanel({
           actions={
             refresh && (
               <>
+                {working && (
+                  <IconButton
+                    aria-label="New note"
+                    title="New note"
+                    icon={<PlusIcon size={16} />}
+                    onClick={working.create}
+                  />
+                )}
                 {loading && (
                   <span role="status" className="text-caption text-subtle">
                     Reading notes…
@@ -163,6 +229,7 @@ export function NotesPage({
   navigator,
   panels,
   onConvert,
+  working,
 }: { relay: RelayData } & NotesNavigation) {
   const connection = useRelayConnection(relay);
   const request = useMemo(
@@ -198,6 +265,7 @@ export function NotesPage({
         navigator={navigator}
         panels={panels}
         onConvert={onConvert}
+        working={working}
       />
     );
   return (
@@ -223,6 +291,7 @@ export function NotesCommunity({
   navigator,
   panels,
   onConvert,
+  working,
 }: { session: RelaySession } & NotesNavigation) {
   const choices = useAgentChoices(session);
   const resolveName = useIdentityNames(session.names);
@@ -250,6 +319,7 @@ export function NotesCommunity({
       navigator={navigator}
       panels={panels}
       onConvert={onConvert}
+      working={working}
       authors={authors}
       agents={agents}
       pending={choices.pending}
@@ -274,6 +344,7 @@ function NoteCollection({
   navigator,
   panels,
   onConvert,
+  working,
 }: NotesNavigation & {
   session: RelaySession;
   authors: string;
@@ -287,6 +358,9 @@ function NoteCollection({
   inventoryError: string | undefined;
   refreshAgents(): void;
 }) {
+  const combined = !!working;
+  const workingRef = useRef(working);
+  workingRef.current = working;
   const [request, setRequest] = useState({ version: 0, more: false });
   const pages = useRef({ owned: emptyNotePage(), shared: emptyNotePage() });
   const sharedAgents = useRef(new Map<string, Profile>());
@@ -301,15 +375,53 @@ function NoteCollection({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
+  const documentAuthors = [
+    ...new Set(working?.entries.map((note) => note.event.pubkey) ?? []),
+  ]
+    .sort()
+    .join(":");
+  useEffect(() => {
+    const authors = documentAuthors ? documentAuthors.split(":") : [];
+    const controller = new AbortController();
+    void (async () => {
+      for (
+        let offset = 0;
+        offset < authors.length && !controller.signal.aborted;
+        offset += NOTE_LIMIT
+      )
+        await session.profiles.ensure(
+          authors.slice(offset, offset + NOTE_LIMIT),
+          "background",
+        );
+    })().catch(() => {});
+    return () => controller.abort();
+  }, [session, documentAuthors]);
   const resolveName = useIdentityNames(session.names);
   const agents = useMemo(() => {
-    const others = [...new Set(result.notes.map((note) => note.pubkey))].filter(
+    const others = [
+      ...new Set([
+        ...result.notes.map((note) => note.pubkey),
+        ...(documentAuthors ? documentAuthors.split(":") : []),
+      ]),
+    ].filter(
       (pubkey) =>
+        pubkey !== (combined ? session.viewer : undefined) &&
         !ownedAgents.some((agent) => agent.pubkey === pubkey) &&
-        sharedAgents.current.has(pubkey),
+        (sharedAgents.current.has(pubkey) ||
+          documentAuthors.split(":").includes(pubkey)),
     );
     const candidates = [...ownedAgents.map((agent) => agent.pubkey), ...others];
     return [
+      ...(combined && session.viewer
+        ? [
+            {
+              pubkey: session.viewer,
+              name: "You",
+              owned: true,
+              picture: profiles.get(session.viewer)?.picture,
+            },
+          ]
+        : []),
       ...ownedAgents.map((agent) => ({ ...agent, owned: true })),
       ...others.map((pubkey) => ({
         pubkey,
@@ -331,7 +443,15 @@ function NoteCollection({
           numeric: true,
         }) || a.pubkey.localeCompare(b.pubkey),
     );
-  }, [ownedAgents, result.notes, profiles, resolveName]);
+  }, [
+    ownedAgents,
+    result.notes,
+    profiles,
+    resolveName,
+    combined,
+    session.viewer,
+    documentAuthors,
+  ]);
   const [author, setAuthor] = useState("");
   const [opened, setOpened] = useState<EventData[]>([]);
   const [selected, setSelected] = useState("");
@@ -351,7 +471,11 @@ function NoteCollection({
     panels?.subscribe ?? noSubscribe,
     panels?.snapshot ?? emptyPanels,
   );
-  const profileAddress = profileTarget(profile, { agent: true });
+  const isAgent = (pubkey: string) =>
+    ownedAgents.some((agent) => agent.pubkey === pubkey) ||
+    profiles.get(pubkey)?.isAgent === true ||
+    sharedAgents.current.has(pubkey);
+  const profileAddress = profileTarget(profile, { agent: isAgent(profile) });
   const profilePanel = profileAddress
     ? panels?.resolve(profileAddress)
     : undefined;
@@ -360,9 +484,19 @@ function NoteCollection({
     ? selected
     : noteKeyOrEmpty(opened[0]);
   const active =
-    profilePanel && (selected === profileKey || !noteActive)
+    working?.selected ??
+    (profilePanel && (selected === profileKey || !noteActive)
       ? profileKey
-      : noteActive;
+      : noteActive);
+  useEffect(() => {
+    if (working?.selected === profileKey && profile && !profilePanel) {
+      setProfile("");
+      workingRef.current?.dismiss(
+        profileKey,
+        noteActive || workingRef.current.items[0]?.id || "browse",
+      );
+    }
+  }, [working?.selected, profileKey, profile, profilePanel, noteActive]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -447,7 +581,12 @@ function NoteCollection({
               : undefined,
         });
         setAuthor((current) =>
-          notes.some((note) => note.pubkey === current) ? current : "",
+          notes.some((note) => note.pubkey === current) ||
+          workingRef.current?.entries.some(
+            (note) => note.event.pubkey === current,
+          )
+            ? current
+            : "",
         );
         setOpened((old) =>
           old.map(
@@ -463,6 +602,10 @@ function NoteCollection({
   const restored = useRef<string | undefined>(undefined);
   const [routeError, setRouteError] = useState("");
   const visit = (route: NotesRoute, replace = false) => {
+    if (working) {
+      working.visit(route);
+      return;
+    }
     if (
       !navigation ||
       !navigator ||
@@ -488,10 +631,22 @@ function NoteCollection({
       pending
     )
       return;
-    const route =
+    const params =
       navigation.target.kind === "page"
-        ? notesRoute(navigation.target.route?.params)
+        ? navigation.target.route?.params
         : undefined;
+    const combined = workingRoute(params);
+    const route =
+      notesRoute(params) ??
+      (combined
+        ? {
+            author: combined.author ?? "",
+            ...(combined.view === "shared" ? { note: combined.shared } : {}),
+            ...(combined.view === "profile"
+              ? { profile: combined.profile }
+              : {}),
+          }
+        : undefined);
     setRouteError("");
     if (
       route?.author &&
@@ -549,11 +704,17 @@ function NoteCollection({
   const closeProfile = () => {
     setProfile("");
     setSelected(noteActive);
-    visit({ author, note: noteActive }, true);
+    if (working)
+      working.dismiss(
+        profileKey,
+        noteActive || working.items[0]?.id || "browse",
+      );
+    else visit({ author, note: noteActive }, true);
   };
   const canProfile = (pubkey: string) =>
-    !!panels?.resolve(profileTarget(pubkey, { agent: true }) ?? "");
+    !!panels?.resolve(profileTarget(pubkey, { agent: isAgent(pubkey) }) ?? "");
   const refresh = () => {
+    working?.refresh();
     setRequest((old) => ({ version: old.version + 1, more: false }));
   };
   const close = (key: string) => {
@@ -562,12 +723,22 @@ function NoteCollection({
       active === key
         ? opened.find((note) => noteKey(note) !== key)
         : opened.find((note) => noteKey(note) === active);
-    visit(
-      active === profileKey && profilePanel
-        ? { author, profile }
-        : { author, note: noteKeyOrEmpty(next) },
-      true,
-    );
+    if (working) {
+      working.dismiss(
+        key,
+        active === key
+          ? next
+            ? noteKey(next)
+            : (working.items[0]?.id ?? "browse")
+          : active,
+      );
+    } else
+      visit(
+        active === profileKey && profilePanel
+          ? { author, profile }
+          : { author, note: noteKeyOrEmpty(next) },
+        true,
+      );
     if (opened.length === 1 && !profilePanel)
       requestAnimationFrame(() => {
         (origin.current?.isConnected
@@ -578,14 +749,34 @@ function NoteCollection({
   };
   const name = (note: EventData) =>
     agents.find((agent) => agent.pubkey === note.pubkey)?.name ?? note.pubkey;
-  const visible = result.notes.filter((note) => note.pubkey === author);
+  const query = working?.query.toLowerCase() ?? "";
+  const matches = (note: EventData) =>
+    `${noteTitle(note)}\n${note.content}\n${name(note)}`
+      .toLowerCase()
+      .includes(query);
+  const visible = result.notes.filter(
+    (note) => note.pubkey === author && matches(note),
+  );
   const ownedNotes = result.notes.filter((note) =>
     ownedAgents.some((agent) => agent.pubkey === note.pubkey),
   );
   const folders = agents.flatMap((agent) => {
     const notes = result.notes.filter((note) => note.pubkey === agent.pubkey);
-    return notes.length
-      ? [{ ...agent, count: notes.length, latest: notes[0]?.created_at ?? 0 }]
+    const documents =
+      working?.entries.filter((note) => note.event.pubkey === agent.pubkey) ??
+      [];
+    const count = notes.length + documents.length;
+    return count
+      ? [
+          {
+            ...agent,
+            count,
+            latest: Math.max(
+              notes[0]?.created_at ?? 0,
+              ...documents.map((note) => note.event.created_at),
+            ),
+          },
+        ]
       : [];
   });
   const folder = folders.find((agent) => agent.pubkey === author);
@@ -595,7 +786,9 @@ function NoteCollection({
       ...(active === profileKey && profilePanel
         ? { profile }
         : active
-          ? { note: active }
+          ? active === "browse"
+            ? {}
+            : { note: active }
           : {}),
     });
     setAuthor(pubkey);
@@ -607,76 +800,176 @@ function NoteCollection({
           ?.focus();
     });
   };
-  const renderNoteGrid = (notes: readonly EventData[]) => (
-    <div className={styles.notes}>
-      {notes.map((note) => (
-        <article key={noteKey(note)} className={styles.noteItem}>
-          <SurfaceButton
-            className={styles.noteCard}
-            aria-label={`Open ${noteTitle(note)} by ${name(note)}`}
-            aria-current={active === noteKey(note) ? "true" : undefined}
-            aria-pressed={opened.some(
-              (item) => noteKey(item) === noteKey(note),
-            )}
-            onClick={(event) => {
-              origin.current = event.currentTarget;
-              if (opened.some((item) => noteKey(item) === noteKey(note))) {
-                close(noteKey(note));
-              } else {
-                setOpened((old) => [...old, note]);
-                setSelected(noteKey(note));
-                visit({ author, note: noteKey(note) }, true);
-              }
-            }}
-          >
-            <span className={styles.noteHeading}>
-              <span
-                className={`${styles.noteTitle} text-label`}
-                title={noteTitle(note)}
-              >
-                {noteTitle(note)}
-              </span>
-              <span className="text-caption text-secondary">
-                <NoteIdentifier note={note} separator={false} />
-              </span>
-            </span>
-            <span className={`${styles.summary} text-body-sm text-subtle`}>
-              {noteTag(note, "summary") ||
-                note.content.slice(0, 600).replace(/[#*_`]/g, "")}
-            </span>
-          </SurfaceButton>
-          <span className={`${styles.byline} text-caption text-secondary`}>
-            <NoteAuthor
-              name={name(note)}
-              picture={avatarMedia(
-                agents.find((agent) => agent.pubkey === note.pubkey)?.picture,
-                session.media,
-              )}
-              open={
-                canProfile(note.pubkey)
-                  ? () => openProfile(note.pubkey)
-                  : undefined
-              }
-            />{" "}
-            · <NoteTime note={note} />
-          </span>
-        </article>
-      ))}
-    </div>
-  );
-  const readerOpen = !!opened.length || !!profilePanel;
+  const renderNoteGrid = (
+    notes: readonly EventData[],
+    group?: "you" | "agents" | "others",
+  ) => {
+    const rows = [
+      ...(working?.entries ?? [])
+        .filter(
+          (note) =>
+            (!author || note.event.pubkey === author) &&
+            (!group ||
+              (group === "you"
+                ? note.event.pubkey === session.viewer
+                : group === "agents"
+                  ? ownedAgents.some(
+                      (agent) => agent.pubkey === note.event.pubkey,
+                    )
+                  : note.event.pubkey !== session.viewer &&
+                    !ownedAgents.some(
+                      (agent) => agent.pubkey === note.event.pubkey,
+                    ))),
+        )
+        .map((note) => ({
+          key: `${note.channel}:${note.id}`,
+          title: note.title,
+          identifier: "",
+          summary: note.deleted
+            ? "Deleted · retained history available"
+            : workingNotePreview(note.markdown) || "Empty note",
+          author: note.event.pubkey,
+          event: note.event,
+          document: note,
+        })),
+      ...notes.map((note) => ({
+        key: noteKey(note),
+        title: noteTitle(note),
+        identifier: noteTag(note, "d"),
+        summary: noteTag(note, "summary") || workingNotePreview(note.content),
+        author: note.pubkey,
+        event: note,
+        published: note,
+      })),
+    ];
+    return (
+      <div className={styles.notes}>
+        {rows
+          .filter((row) =>
+            `${row.title}\n${row.summary}\n${"document" in row ? row.document.markdown : row.published.content}\n${agents.find((agent) => agent.pubkey === row.author)?.name ?? ""}`
+              .toLowerCase()
+              .includes(query),
+          )
+          .sort(
+            (a, b) =>
+              b.event.created_at - a.event.created_at ||
+              a.event.id.localeCompare(b.event.id),
+          )
+          .map((row) => {
+            const agent = agents.find((agent) => agent.pubkey === row.author);
+            const caption = agent?.name ?? row.author;
+            const picture = avatarMedia(agent?.picture, session.media);
+            const isOpen =
+              opened.some((note) => noteKey(note) === row.key) ||
+              !!working?.items.some((item) => item.id === row.key);
+            return (
+              <article key={row.key} className={styles.noteItem}>
+                <SurfaceButton
+                  className={styles.noteCard}
+                  aria-label={`Open ${row.title} by ${caption}`}
+                  aria-current={active === row.key ? "true" : undefined}
+                  aria-pressed={isOpen}
+                  onClick={(event) => {
+                    origin.current = event.currentTarget;
+                    if ("document" in row) {
+                      if (isOpen)
+                        working?.close(
+                          row.key,
+                          working.items.find((item) => item.id !== row.key)
+                            ?.id ?? (opened[0] ? noteKey(opened[0]) : "browse"),
+                        );
+                      else working?.open(row.document);
+                    } else if (isOpen) close(row.key);
+                    else {
+                      setOpened((old) => [...old, row.published]);
+                      setSelected(row.key);
+                      visit({ author, note: row.key }, true);
+                    }
+                  }}
+                >
+                  <span className={styles.noteHeading}>
+                    <span
+                      className={`${styles.noteTitle} text-label`}
+                      title={row.title}
+                    >
+                      {row.title}
+                    </span>
+                    {row.identifier && (
+                      <span className="text-caption text-secondary">
+                        <NoteIdentifier note={row.event} separator={false} />
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={`${styles.summary} text-body-sm text-subtle`}
+                  >
+                    {row.summary}
+                  </span>
+                </SurfaceButton>
+                <span
+                  className={`${styles.byline} text-caption text-secondary`}
+                >
+                  <NoteAuthor
+                    name={caption}
+                    picture={picture}
+                    open={
+                      canProfile(row.author)
+                        ? () => openProfile(row.author)
+                        : undefined
+                    }
+                  />{" "}
+                  · <NoteTime note={row.event} />
+                </span>
+              </article>
+            );
+          })}
+      </div>
+    );
+  };
+  const readerOpen = working
+    ? active !== "browse" &&
+      !!(opened.length || working.items.length || profilePanel)
+    : !!opened.length || !!profilePanel;
   return (
     <div
-      className={styles.split}
+      className={`${layoutStyles.split} ${panelStyles.splitMotion}`}
       ref={split.ref}
       data-side={readerOpen ? "" : undefined}
     >
-      <div className={styles.main}>
+      <div className={layoutStyles.main}>
         <NotesPanel
           refresh={refresh}
           refreshRef={refreshRef}
-          loading={result.loading}
+          loading={result.loading || !!working?.loading}
+          working={working}
         >
+          {working && (
+            <>
+              <SearchField
+                inputRef={working.searchRef}
+                label="Search notes"
+                placeholder="Search loaded notes…"
+                value={working.query}
+                onValueChange={(value) => working.search(value)}
+                onBlur={() => working.search(working.query, true)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter")
+                    working.search(working.query, true);
+                }}
+              />
+              <Checkbox
+                label="Show deleted notes"
+                checked={working.trash}
+                onCheckedChange={working.showDeleted}
+              />
+              {working.error && <p role="alert">{working.error}</p>}
+              {working.sharingError && (
+                <p role="alert">
+                  Automatic agent access needs attention: {working.sharingError}
+                </p>
+              )}
+            </>
+          )}
           {author && (
             <div className={styles.folderHeader}>
               <IconButton
@@ -733,6 +1026,7 @@ function NoteCollection({
             !inventoryError &&
             !result.loading &&
             !result.error &&
+            !working?.entries.length &&
             !(author ? visible.length : folders.length) && (
               <EmptyState
                 icon={<NoteIcon size="1.5rem" />}
@@ -744,91 +1038,143 @@ function NoteCollection({
                 }
               />
             )}
-          {!author ? (
+          {!author && !query ? (
             <section
               className={styles.folderGroups}
               aria-label="Agent folders"
               ref={folderGrid}
             >
               {[
+                ...(working ? [{ owned: true, label: "You" }] : []),
                 { owned: true, label: "Your agents" },
-                { owned: false, label: "Other agents" },
+                { owned: false, label: working ? "Others" : "Other agents" },
               ].map((group) => {
                 const items = folders.filter(
-                  (agent) => agent.owned === group.owned,
+                  (agent) =>
+                    agent.owned === group.owned &&
+                    (!working ||
+                      (group.label === "You"
+                        ? agent.pubkey === session.viewer
+                        : agent.pubkey !== session.viewer)),
                 );
                 // Folders start in alphabetical order; retain that order for ties.
                 if (!group.owned) items.sort((a, b) => b.latest - a.latest);
-                return items.length ? (
+                return items.length || (group.owned && working) ? (
                   <Fragment key={group.label}>
-                    <section aria-label={group.label}>
-                      <h2 className="text-label">{group.label}</h2>
-                      <div className={styles.folders}>
-                        {items.map((agent) => (
-                          <SurfaceButton
-                            key={agent.pubkey}
-                            className={styles.folderCard}
-                            aria-label={`Open ${agent.name} folder`}
-                            data-agent={agent.pubkey}
-                            onClick={() => openFolder(agent.pubkey)}
-                          >
-                            <span className={styles.folderAvatar}>
-                              <Avatar
-                                src={avatarMedia(agent.picture, session.media)}
-                                alt=""
-                                fallback={agent.name}
-                                size="fill"
-                                shape="squircle"
-                              />
-                            </span>
-                            <span className={`${styles.folderName} text-label`}>
-                              {agent.name}
-                            </span>
-                            <span className="text-caption text-subtle">
-                              {agent.count}{" "}
-                              {agent.count === 1
-                                ? "shared note"
-                                : "shared notes"}
-                            </span>
-                          </SurfaceButton>
-                        ))}
-                      </div>
-                    </section>
-                    {group.owned && renderNoteGrid(ownedNotes)}
+                    {items.length > 0 && (
+                      <section aria-label={group.label}>
+                        <h2 className="text-label">{group.label}</h2>
+                        <div className={styles.folders}>
+                          {items.map((agent) => (
+                            <SurfaceButton
+                              key={agent.pubkey}
+                              className={styles.folderCard}
+                              aria-label={`Open ${agent.name} folder`}
+                              data-agent={agent.pubkey}
+                              onClick={() => openFolder(agent.pubkey)}
+                            >
+                              <span className={styles.folderAvatar}>
+                                <Avatar
+                                  src={avatarMedia(
+                                    agent.picture,
+                                    session.media,
+                                  )}
+                                  alt=""
+                                  fallback={agent.name}
+                                  size="fill"
+                                  shape="squircle"
+                                />
+                              </span>
+                              <span
+                                className={`${styles.folderName} text-label`}
+                              >
+                                {agent.name}
+                              </span>
+                              <span className="text-caption text-subtle">
+                                {agent.count}{" "}
+                                {working
+                                  ? agent.count === 1
+                                    ? "note"
+                                    : "notes"
+                                  : agent.count === 1
+                                    ? "shared note"
+                                    : "shared notes"}
+                              </span>
+                            </SurfaceButton>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                    {group.owned &&
+                      renderNoteGrid(
+                        working
+                          ? ownedNotes.filter((note) =>
+                              group.label === "You"
+                                ? note.pubkey === session.viewer
+                                : note.pubkey !== session.viewer,
+                            )
+                          : ownedNotes,
+                        working
+                          ? group.label === "You"
+                            ? "you"
+                            : "agents"
+                          : undefined,
+                      )}
+                    {working &&
+                      !group.owned &&
+                      renderNoteGrid(
+                        result.notes.filter(
+                          (note) =>
+                            !ownedAgents.some(
+                              (agent) => agent.pubkey === note.pubkey,
+                            ),
+                        ),
+                        "others",
+                      )}
                   </Fragment>
                 ) : null;
               })}
             </section>
           ) : (
-            renderNoteGrid(visible)
+            renderNoteGrid(author ? visible : result.notes)
           )}
-          {result.partial && (
+          {(result.partial || working?.more) && (
             <div>
               <Button
                 size="sm"
                 ref={preserveControlFocus}
-                loading={result.loading}
-                onClick={() =>
-                  setRequest((old) => ({
-                    version: old.version + 1,
-                    more: true,
-                  }))
-                }
+                loading={result.loading || !!working?.loading}
+                onClick={() => {
+                  if (working?.more) working.loadMore();
+                  if (result.partial)
+                    setRequest((old) => ({
+                      version: old.version + 1,
+                      more: true,
+                    }));
+                }}
               >
-                Load older notes
+                {working ? "Load more notes" : "Load older notes"}
               </Button>
             </div>
           )}
         </NotesPanel>
       </div>
-      {readerOpen && (
-        <aside className={styles.side} aria-label="Note reader">
-          {split.handle}
+      <PanelDock
+        open={readerOpen}
+        keepMounted
+        className={layoutStyles.side}
+        resizeHandle={split.handle}
+      >
+        <aside aria-label={working ? "Note editor" : "Note reader"}>
           <Panel aria-label="Note details">
             <PanelWorkspace
               label="Open notes"
               value={active}
               select={(key) => {
+                if (working) {
+                  working.select(key);
+                  return;
+                }
                 setSelected(key);
                 visit(
                   key === profileKey
@@ -838,9 +1184,32 @@ function NoteCollection({
                 );
               }}
               items={[
+                ...(working?.items ?? []).map((item) => ({
+                  ...item,
+                  close: () =>
+                    working?.close(
+                      item.id,
+                      opened[0]
+                        ? noteKey(opened[0])
+                        : (working.items.find((next) => next.id !== item.id)
+                            ?.id ?? "browse"),
+                    ),
+                })),
                 ...opened.map((note) => ({
                   id: noteKey(note),
                   label: noteTitle(note),
+                  ...(working
+                    ? {
+                        toolbar: (
+                          <IconButton
+                            aria-label="Back to notes"
+                            title="Back to notes"
+                            icon={<ArrowLeftIcon size={16} />}
+                            onClick={() => working.select("browse")}
+                          />
+                        ),
+                      }
+                    : {}),
                   icon: (
                     <Avatar
                       src={avatarMedia(
@@ -892,7 +1261,7 @@ function NoteCollection({
             />
           </Panel>
         </aside>
-      )}
+      </PanelDock>
     </div>
   );
 }
@@ -904,7 +1273,7 @@ function NoteIdentifier({
   note,
   separator = true,
 }: {
-  note: EventData;
+  note: { readonly tags: readonly (readonly string[])[] };
   separator?: boolean;
 }) {
   const identifier = noteTag(note, "d");
@@ -921,7 +1290,7 @@ function NoteIdentifier({
   ) : null;
 }
 
-function NoteTime({ note }: { note: EventData }) {
+function NoteTime({ note }: { note: Pick<EventData, "created_at"> }) {
   const date = new Date(note.created_at * 1000);
   const days = Math.floor((Date.now() / 1000 - note.created_at) / 86400);
   // The shared recency ladder switches to calendar dates after a week; notes
@@ -963,8 +1332,8 @@ function NoteBody({
     note.content.length > MAX_MARKDOWN_LENGTH ||
     scanMarkdown(note.content).tooDeep;
   return (
-    <article className={styles.document}>
-      <h2 className="text-heading">{noteTitle(note)}</h2>
+    <article className={styles.document} aria-label={noteTitle(note)}>
+      <h2 className="text-title">{noteTitle(note)}</h2>
       <p className={`${styles.byline} text-caption text-secondary`}>
         <NoteAuthor name={author} picture={picture} open={openProfile} /> ·
         Updated <NoteTime note={note} />
@@ -972,7 +1341,7 @@ function NoteBody({
       </p>
       {onConvert && (
         <div>
-          <Button onClick={onConvert}>Copy as working note</Button>
+          <Button onClick={onConvert}>Make editable copy</Button>
         </div>
       )}
       <div className={styles.markdown}>

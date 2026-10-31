@@ -121,6 +121,21 @@ const tool = (name: string) => {
 Object.assign(window, {
   workingNotesFixture: {
     navigation: () => host.navigation.snapshot(),
+    openLegacyLink: () =>
+      host.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.relay-notes",
+        pageId: "notes",
+        scope: { viewer: f.viewer.pubkey, communityOrigin: f.origin },
+        route: {
+          version: 1,
+          params: {
+            author: f.carl.pubkey,
+            note: `30023:${f.carl.pubkey}:old-research`,
+          },
+        },
+      }),
     legacy: () => f.accepted.filter((event) => event.kind === 30023),
     plan,
     research,

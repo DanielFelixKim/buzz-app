@@ -9,11 +9,14 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
-  createNavigationController,
-  type Navigation,
-} from "../../features/navigation/controller";
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+  useState,
+  useRef,
+} from "react";
+import { createNavigationController } from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
 import type { PageNavigation } from "../../features/navigation/service";
 import { Context } from "@deepseek-ai/cordis";
@@ -317,8 +320,6 @@ it.each(["icons", "", "two\nlines"])(
           entryId: snapshot.entry.id,
           target: snapshot.entry.target,
           signal: snapshot.attempt.signal,
-          position: () => undefined,
-          savePosition() {},
           forSession: () => request,
           resolve: () => false,
           complete: (result) => controller.complete(snapshot.attempt, result),
@@ -390,60 +391,104 @@ it.each(["icons", "", "two\nlines"])(
   },
 );
 
-it("opens the registered author profile beside notes and retires it with its plugin", async () => {
-  const user = userEvent.setup();
-  const f = fixture([note("Icons")]);
-  const ctx = new Context();
-  ctx.provide("pluginStatus", {
-    isActive: () => true,
-    subscribe: () => () => {},
-  });
-  const panels = new PanelsService(ctx);
-  const scope = ctx
-    .extend({ pluginOwner: { id: "test.profile", revision: "1" } })
-    .plugin((owner) => {
-      owner.panels.register({
-        id: "profile",
-        title: "Profile",
-        matches: (target) => target === `buzz:agent-profile:${carl}`,
-        component: ({ target }) => <p>Profile for {target}</p>,
+it.each([false, true])(
+  "opens the registered author profile and retires it with its plugin, combined=%s",
+  async (combined) => {
+    const user = userEvent.setup();
+    const f = fixture([note("Icons")]);
+    const ctx = new Context();
+    ctx.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const panels = new PanelsService(ctx);
+    const scope = ctx
+      .extend({ pluginOwner: { id: "test.profile", revision: "1" } })
+      .plugin((owner) => {
+        owner.panels.register({
+          id: "profile",
+          title: "Profile",
+          matches: (target) => target === `buzz:agent-profile:${carl}`,
+          component: ({ target }) => <p>Profile for {target}</p>,
+        });
       });
-    });
-  await scope;
-  const view = render(<NotesCommunity session={f.session} panels={panels} />);
-  try {
-    await enterFolder();
-    await user.click(
-      screen.getByRole("button", { name: "Open Icons by Carl" }),
-    );
-    await user.click(
-      within(screen.getByRole("complementary")).getByRole("button", {
-        name: "View Carl profile",
-      }),
-    );
-    expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Carl · Profile" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(
-      screen.getByText(`Profile for buzz:agent-profile:${carl}`),
-    ).toBeVisible();
-    await act(async () => {
-      await scope.dispose();
-    });
-    expect(
-      screen.queryByRole("tab", { name: "Carl · Profile" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Icons" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-  } finally {
-    view.unmount();
-    await ctx.fiber.dispose();
-  }
-});
+    await scope;
+    function Host() {
+      const [selected, select] = useState("browse");
+      const searchRef = useRef<HTMLElement>(null);
+      const noop = () => {};
+      return (
+        <NotesCommunity
+          session={f.session}
+          panels={panels}
+          working={
+            combined
+              ? {
+                  entries: [],
+                  items: [],
+                  selected,
+                  query: "",
+                  trash: false,
+                  searchRef,
+                  loading: false,
+                  more: false,
+                  error: "",
+                  sharingError: "",
+                  search: noop,
+                  showDeleted: noop,
+                  create: noop,
+                  refresh: noop,
+                  loadMore: noop,
+                  open: noop,
+                  select,
+                  close: (_key, fallback) => select(fallback),
+                  dismiss: (_key, fallback) => select(fallback),
+                  visit: (route) =>
+                    select(
+                      route.profile
+                        ? `profile:${route.profile}`
+                        : route.note || "browse",
+                    ),
+                }
+              : undefined
+          }
+        />
+      );
+    }
+    const view = render(<Host />);
+    try {
+      await enterFolder();
+      await user.click(
+        screen.getByRole("button", { name: "Open Icons by Carl" }),
+      );
+      await user.click(
+        within(screen.getByRole("complementary")).getByRole("button", {
+          name: "View Carl profile",
+        }),
+      );
+      expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
+      expect(
+        screen.getByRole("tab", { name: "Carl · Profile" }),
+      ).toHaveAttribute("aria-selected", "true");
+      expect(
+        screen.getByText(`Profile for buzz:agent-profile:${carl}`),
+      ).toBeVisible();
+      await act(async () => {
+        await scope.dispose();
+      });
+      expect(
+        screen.queryByRole("tab", { name: "Carl · Profile" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Icons" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    } finally {
+      view.unmount();
+      await ctx.fiber.dispose();
+    }
+  },
+);
 
 it("validates route shapes without turning locators into author scope", () => {
   expect(
@@ -694,128 +739,6 @@ it("renders note content as Markdown without executable HTML or unsafe links", a
     "rel",
     "noopener noreferrer",
   );
-});
-
-/** A full session whose channel links name a joined #Release. */
-function withReleaseChannel(session: RelaySession) {
-  const channels = { status: "ready", channels: [] };
-  return {
-    ...session,
-    unread: undefined,
-    channels: {
-      list: () => channels,
-      get: () => undefined,
-      describe: () => ({
-        state: "found",
-        name: "Release",
-        channelType: "stream",
-        private: false,
-        hidden: false,
-        archived: false,
-        joined: true,
-      }),
-      refer: () => () => {},
-      subscribeList: () => () => {},
-    },
-  } as unknown as RelaySession;
-}
-
-it("opens Buzz message and channel links in the app, naming a raw channel link", async () => {
-  const user = userEvent.setup();
-  const root = "a".repeat(64);
-  const f = fixture([
-    {
-      ...note("Blockers"),
-      content: `Summarised from [the blockers thread](buzz://message?channel=release&id=${root}) in <buzz://channel/release>.`,
-    },
-  ]);
-  const session = withReleaseChannel(f.session);
-  const open = vi.fn(async () => {});
-  const connection = {
-    status: "ready",
-    generation: 1,
-    scope: `https://relay.example:${other}`,
-    viewer: other,
-    session,
-  } as RelaySnapshot;
-  const relay = {
-    snapshot: () => connection,
-    subscribe: () => () => {},
-    retry: vi.fn(),
-    disconnect: vi.fn(),
-    clearCache: vi.fn(async () => {}),
-  } as RelayData;
-  render(
-    <NotesPage relay={relay} navigator={{ open } as unknown as Navigation} />,
-  );
-  await enterFolder();
-  await user.click(
-    screen.getByRole("button", { name: "Open Blockers by Carl" }),
-  );
-  const reader = screen.getByRole("complementary");
-  const message = within(reader).getByRole("link", {
-    name: "the blockers thread",
-  });
-  await user.hover(message);
-  expect(await screen.findByLabelText("Message preview")).toBeInTheDocument();
-  const scope = { viewer: other, communityOrigin: "https://relay.example" };
-  await user.click(message);
-  expect(open).toHaveBeenLastCalledWith({
-    version: 1,
-    kind: "conversation",
-    scope,
-    channelId: "release",
-    messageId: root,
-  });
-  await user.click(within(reader).getByRole("link", { name: "#Release" }));
-  expect(open).toHaveBeenLastCalledWith({
-    version: 1,
-    kind: "conversation",
-    scope,
-    channelId: "release",
-  });
-  expect(open).toHaveBeenCalledTimes(2);
-});
-
-it("keeps a formatted label on a Buzz channel link", async () => {
-  const user = userEvent.setup();
-  const f = fixture([
-    {
-      ...note("Launch"),
-      content: "Meet in [the **release** room](buzz://channel/release).",
-    },
-  ]);
-  render(<NotesCommunity session={withReleaseChannel(f.session)} />);
-  await enterFolder();
-  await user.click(screen.getByRole("button", { name: "Open Launch by Carl" }));
-  const link = within(screen.getByRole("complementary")).getByRole("link", {
-    name: "the release room",
-  });
-  expect(link).toHaveTextContent("the release room");
-  expect(link.querySelector("strong")).toHaveTextContent("release");
-});
-
-it("explains that a Buzz link can't be opened without a scope or navigator", async () => {
-  const user = userEvent.setup();
-  const f = fixture([
-    {
-      ...note("Launch"),
-      content: "Meet in [the release room](buzz://channel/release).",
-    },
-  ]);
-  render(<NotesCommunity session={f.session} />);
-  await enterFolder();
-  await user.click(screen.getByRole("button", { name: "Open Launch by Carl" }));
-  const reader = screen.getByRole("complementary");
-  expect(
-    within(reader).queryByText("This Buzz link couldn’t be opened here."),
-  ).not.toBeInTheDocument();
-  await user.click(
-    within(reader).getByRole("link", { name: "the release room" }),
-  );
-  expect(
-    within(reader).getByText("This Buzz link couldn’t be opened here."),
-  ).toBeInTheDocument();
 });
 
 it("shows the saved identifier separately from the display title in row and reader metadata", async () => {

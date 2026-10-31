@@ -26,6 +26,13 @@ it("round-trips browser, editor, dialog, revision and new-draft addresses withou
       offset: 100,
     },
     { view: "new", draft: id },
+    { view: "browse", author: "b".repeat(64), query: "Research" },
+    {
+      view: "shared",
+      shared: `30023:${"b".repeat(64)}:two\nlines`,
+      query: "Research",
+    },
+    { view: "profile", profile: "b".repeat(64) },
   ]) {
     const route = workingRoute(value as JsonValue);
     expect(route).toEqual(value);
@@ -35,6 +42,13 @@ it("round-trips browser, editor, dialog, revision and new-draft addresses withou
     });
   }
   expect(workingRoute({ id, channel })).toEqual({ view: "note", id, channel });
+  expect(
+    workingRoute({ author: "b".repeat(64), note: `30023:${"b".repeat(64)}:` }),
+  ).toEqual({
+    view: "shared",
+    author: "b".repeat(64),
+    shared: `30023:${"b".repeat(64)}:`,
+  });
 });
 it.each([
   { view: "note", id, channel, markdown: "private draft" },
@@ -43,6 +57,10 @@ it.each([
   { view: "new", draft: "bad" },
   { view: "browse", edit: true },
   { view: "browse", query: "x".repeat(513) },
+  { view: "shared", shared: "" },
+  { view: "shared", shared: `30023:${"b".repeat(64)}:note`, edit: true },
+  { view: "profile", profile: "bad" },
+  { view: "note", id, channel, shared: `30023:${"b".repeat(64)}:note` },
 ])("rejects malformed or content-bearing presentation: %o", (value) => {
   expect(workingRoute(value)).toBeUndefined();
 });

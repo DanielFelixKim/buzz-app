@@ -1,6 +1,6 @@
 # Connected notes
 
-Create, edit, connect and share working documents with people and your agents.
+Browse notes from you and agents together. Create, edit, connect and share documents with people and your agents.
 
 ## Getting started
 
@@ -31,8 +31,8 @@ per note and plaintext relay access control; the relay operator can read content
 Encryption, selective history access, filesystem sync and offline editing are
 outside this version.
 
-**Existing shared notes** opens the earlier reader. **Copy as working note**
-creates an editable document with your chosen audience and keeps the original.
+Published agent notes appear in the same browser and sidebar. **Make editable copy**
+creates a separate document with your chosen audience and keeps the original.
 
 ---
 
@@ -51,23 +51,27 @@ themselves. The owner’s app maintains verified automatic agent membership; an 
 does not borrow owner authority to share. See [the storage and tool
 contract](../../../docs/connected-notes.md).
 
-## Existing shared notes
+## Notes from you and agents
 
-**Existing shared notes** opens the earlier NIP-23 reader. Its routes and original
-notes remain readable. **Copy as working note** explicitly creates a new NIP-AR
-document with your chosen audience; the original remains untouched. Old links
-continue to open the original. There is no automatic migration or deletion.
+The browser groups loaded notes by their signed author: **You**, **Your agents**
+and **Others**. Notes use the same cards, search and sidebar tabs. Selecting
+an author filters the collection while retaining open documents; **Back to folders**
+returns to the index. Click an open note’s card again to close its tab. Author
+names/avatars open the existing Profile panel when available. The author byline
+on editable documents identifies the signed writer of the current revision.
 
-Browse recipes, reference material and other reusable Markdown saved as shared notes in your community.
+Published agent notes remain readable through their original links. They are
+read-only here; ask their author to update them, or choose **Make editable copy**.
+Copying explicitly creates a separate document with the selected audience and
+never changes or deletes the original. Agent-authored documents with edit access
+use the same editor as your documents. There is no automatic migration.
 
-### Browsing existing shared notes
+Discovery keeps the existing independent cursors, accepted agent classification
+and retry behavior. **Load more notes** advances whichever source still has pages;
+counts and search cover loaded notes. Refresh starts from the newest records.
+Folders organize authors and do not change access. Archived agents’ published
+notes remain available, subject to relay access.
 
-1. Open **Existing shared notes** from Notes. Agents can already save and read these legacy shared notes without enabling the plugin.
-2. Ask an agent to save a recipe as a shared note, giving it a title and a stable identifier such as `icon-recipe`.
-3. Browse your agents’ notes sorted newest first, above Other agents. Agent folders show avatars, names and note counts; selecting one filters the card collection to that agent. Browse notes as cards with a title and subtle preview, then select a note to read it in a side-pane tab. **Back to folders** returns to the folder collection while keeping your open notes in the reader. Browse another folder to open notes alongside them; each tab shows its author avatar and can be closed independently. Click an open note’s card again to close its tab.
-4. Use Back/Forward to revisit folders. Reader tab changes update the current visit without adding history entries. Click an author’s avatar/name to open the existing Profile panel alongside your note tabs.
-5. Refresh after saving or updating a note. You can also ask an agent to find and read a saved note.
-
-The reader is read-only and includes archived agents’ notes. Your agents appear first, with Other agents below. Other-agent discovery uses their signed profile’s agent marker. Folders include only agents with loaded notes; counts reflect the loaded collection. Use **Load older notes** to continue beyond the first page. Your agents folders sort A–Z. Other agents folders sort by their most recently updated loaded note; notes also sort by most recently updated. Refresh starts over from the newest notes. Notes are shared with people who have access through this community’s relay. Folders don’t change access.
-
-Agents use the built-in `notes_get`, `notes_set` and `notes_rm` tools to read, publish and delete their own notes. Each agent writes under its own identity; it can read other authors' notes when the relay permits it. Notes are shared relay content—keep secrets in private storage. Reading a recipe does not run image generation.
+Agents retain their built-in `notes_get`, `notes_set` and `notes_rm` tools for
+published notes and the singular tools above for editable documents. Neither
+reading a note nor following a link executes its instructions or grants access.

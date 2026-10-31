@@ -5,15 +5,19 @@ import type {
 } from "../../features/navigation/targets";
 import { PUBKEY, UUID } from "../../features/notes/model";
 import { notePageRoute } from "../../features/notes/target";
+import { notesRoute } from "./routes";
 
 export type DocumentView = Omit<NoteDestination, "id" | "channel">;
 export type WorkingRoute = DocumentView & {
-  view: "browse" | "note" | "new";
+  view: "browse" | "note" | "shared" | "profile" | "new";
   id?: string;
   channel?: string;
   draft?: string;
   query?: string;
   trash?: boolean;
+  author?: string;
+  shared?: string;
+  profile?: string;
 };
 const keys = new Set([
   "view",
@@ -26,6 +30,9 @@ const keys = new Set([
   "dialog",
   "revision",
   "offset",
+  "author",
+  "shared",
+  "profile",
 ]);
 
 /** Addresses and presentation only. Draft text never enters browser history. */
@@ -33,6 +40,14 @@ export function workingRoute(
   value: JsonValue | undefined,
 ): WorkingRoute | undefined {
   if (value === undefined) return { view: "browse" };
+  const shared = notesRoute(value);
+  if (shared)
+    return {
+      view: shared.profile ? "profile" : shared.note ? "shared" : "browse",
+      author: shared.author,
+      ...(shared.note ? { shared: shared.note } : {}),
+      ...(shared.profile ? { profile: shared.profile } : {}),
+    };
   const old = notePageRoute(value);
   if (old) return { view: "note", ...old };
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
@@ -40,7 +55,21 @@ export function workingRoute(
   if (
     Object.keys(row).some((key) => !keys.has(key)) ||
     typeof row.view !== "string" ||
-    !["browse", "note", "new"].includes(row.view)
+    !["browse", "note", "shared", "profile", "new"].includes(row.view)
+  )
+    return;
+  if (
+    (row.author !== undefined &&
+      (typeof row.author !== "string" ||
+        (row.author !== "" && !PUBKEY.test(row.author)))) ||
+    (row.view === "shared"
+      ? typeof row.shared !== "string" ||
+        !row.shared ||
+        !notesRoute({ author: "", note: row.shared })
+      : row.shared !== undefined) ||
+    (row.view === "profile"
+      ? typeof row.profile !== "string" || !PUBKEY.test(row.profile)
+      : row.profile !== undefined)
   )
     return;
   if (

@@ -7,8 +7,10 @@ import type { RelaySession } from "../../features/relay/session";
 import type { EventData, ReadFilter } from "../../features/relay/events";
 
 export const NOTE_LIMIT = 100;
-export const noteTag = (event: EventData, tag: string) =>
-  event.tags.find(([key]) => key === tag)?.[1] ?? "";
+export const noteTag = (
+  event: { readonly tags: readonly (readonly string[])[] },
+  tag: string,
+) => event.tags.find(([key]) => key === tag)?.[1] ?? "";
 export const noteKey = (event: EventData) =>
   `30023:${event.pubkey}:${noteTag(event, "d")}`;
 export const noteTitle = (event: EventData) =>

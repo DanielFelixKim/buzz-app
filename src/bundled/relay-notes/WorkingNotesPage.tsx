@@ -22,27 +22,15 @@ import type {
   NotesWorkspace,
 } from "../../features/notes/workspace";
 import type { PageProps } from "../../features/pages/service";
-import {
-  PanelWorkspace,
-  usePanelTabTitle,
-} from "../../features/panels/PanelWorkspace";
-import { usePanelSplit } from "../../features/panels/usePanelSplit";
-import { PanelDock } from "../../features/panels/PanelDock";
-import panelStyles from "../../features/panels/Panels.module.css";
+import { usePanelTabTitle } from "../../features/panels/PanelWorkspace";
 import type { PanelProps, Panels } from "../../features/panels/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  ArrowLeftIcon,
-  ArrowsClockwiseIcon,
-  NoteIcon,
-  PlusIcon,
-} from "../../shared/design-system/icons";
+import { ArrowLeftIcon, NoteIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -51,13 +39,10 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { SearchField } from "../../shared/design-system/ui/SearchField";
-import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { NoteDocument } from "./NoteDocument";
 import { NotesPage } from "./NotesPage";
-import { notesRoute } from "./routes";
-import { workingNotePreview, noteTitle as legacyTitle } from "./collection";
+import { noteTitle as legacyTitle } from "./collection";
 import styles from "./WorkingNotes.module.css";
 import {
   workingRoute,
@@ -146,9 +131,7 @@ export function WorkingNotesCommunity({
     () => (destination?.view === "note" ? noteAddress(destination) : undefined),
     [destination],
   );
-  const split = usePanelSplit(448, 320);
   const searchRef = useRef<HTMLElement>(null);
-  const [legacy, setLegacy] = useState(!!notesRoute(route));
   const [collection, setCollection] = useState<CollectionPage>({
     notes: [],
     more: false,
@@ -166,7 +149,7 @@ export function WorkingNotesCommunity({
   const [selected, setSelected] = useState(
     initial ? noteKey(initial) : "browse",
   );
-  const [closing, setClosing] = useState<string>();
+  const [closing, setClosing] = useState<{ key: string; fallback: string }>();
   const dirty = useRef(new Set<string>());
   const reconciled = useRef(new Map<string, string>());
   const choices = useAgentChoices(workspace.session, true, true);
@@ -243,7 +226,13 @@ export function WorkingNotesCommunity({
   );
   const open = (address: NoteAddress) => {
     reveal(address);
-    visit({ view: "note", ...noteAddress(address), query, trash });
+    visit({
+      view: "note",
+      ...noteAddress(address),
+      query,
+      trash,
+      ...(destination?.author ? { author: destination.author } : {}),
+    });
   };
   const browse = () => {
     setSelected("browse");
@@ -273,8 +262,11 @@ export function WorkingNotesCommunity({
           : undefined,
       );
     }
-    setLegacy(!!notesRoute(route));
-  }, [initial, route, destination, reveal]);
+    if (destination?.view === "shared")
+      setSelected(destination.shared ?? "browse");
+    if (destination?.view === "profile")
+      setSelected(`profile:${destination.profile}`);
+  }, [initial, destination, reveal]);
   useEffect(() => {
     if (agentKeys === undefined || choices.pending) return;
     const controller = new AbortController();
@@ -307,31 +299,74 @@ export function WorkingNotesCommunity({
           },
     );
   }, []);
-  const close = (key: string) => {
+  const selectionRoute = (
+    key: string,
+    author = destination?.author,
+  ): WorkingRoute => {
+    const filter = { query, trash, ...(author ? { author } : {}) };
+    const address = opened.find((item) => noteKey(item) === key);
+    return {
+      ...filter,
+      ...(address
+        ? { view: "note", ...noteAddress(address) }
+        : key.startsWith("profile:")
+          ? { view: "profile", profile: key.slice(8) }
+          : key.startsWith("30023:")
+            ? { view: "shared", shared: key }
+            : { view: "browse" }),
+    };
+  };
+  const select = (key: string) => {
+    if (key === "browse") {
+      browse();
+      return;
+    }
+    setSelected(key);
+    visit(selectionRoute(key));
+  };
+  const dismiss = (key: string, fallback: string) => {
+    setSelected(fallback);
+    if (
+      !navigator ||
+      !request ||
+      request.signal.aborted ||
+      request.target.kind !== "page"
+    )
+      return;
+    const scope = request.target.scope;
+    navigator.dismiss(
+      (target) => {
+        if (
+          target.kind !== "page" ||
+          target.pluginId !== "buzz.relay-notes" ||
+          target.pageId !== "notes" ||
+          target.scope?.viewer !== scope?.viewer ||
+          target.scope?.communityOrigin !== scope?.communityOrigin
+        )
+          return false;
+        const next = workingRoute(target.route?.params);
+        return (
+          (next?.view === "note" && next.id && next.channel
+            ? noteKey({ id: next.id, channel: next.channel })
+            : next?.view === "shared"
+              ? next.shared
+              : next?.view === "profile"
+                ? `profile:${next.profile}`
+                : undefined) === key
+        );
+      },
+      workingTarget(request.target, selectionRoute(fallback)),
+    );
+  };
+  const close = (key: string, fallback = "browse") => {
     if (dirty.current.has(key)) {
-      setClosing(key);
+      setClosing({ key, fallback });
       return;
     }
     setOpened((old) => old.filter((item) => noteKey(item) !== key));
-    if (selected === key) browse();
+    dismiss(key, selected === key ? fallback : selected);
   };
-  const previews = useMemo(
-    () =>
-      new Map(
-        collection.notes.map((note) => [
-          noteKey(note),
-          workingNotePreview(note.markdown),
-        ]),
-      ),
-    [collection.notes],
-  );
-  const visible = collection.notes.filter(
-    (note) =>
-      (trash || !note.deleted) &&
-      `${note.title}\n${note.markdown}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
-  );
+  const visible = collection.notes.filter((note) => trash || !note.deleted);
   const creation = creating && (
     <NewNoteDialog
       workspace={workspace}
@@ -342,27 +377,12 @@ export function WorkingNotesCommunity({
         changed(note);
         open(note);
         setCreating(undefined);
-        setLegacy(false);
       }}
     />
   );
-  if (legacy && relay)
-    return (
-      <div className={styles.page}>
-        <div className={styles.actions}>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setLegacy(false);
-              if (request?.target.kind === "page" && navigator) {
-                const { route: _route, ...target } = request.target;
-                void navigator.open(target);
-              }
-            }}
-          >
-            Back to working notes
-          </Button>
-        </div>
+  return (
+    <>
+      {relay && (
         <NotesPage
           relay={relay}
           navigation={navigation}
@@ -375,241 +395,115 @@ export function WorkingNotesCommunity({
               copy: true,
             })
           }
+          working={{
+            selected,
+            query,
+            trash,
+            searchRef,
+            loading,
+            more: collection.more,
+            error,
+            sharingError,
+            search: (value, commit) => {
+              setQuery(value);
+              if (commit)
+                visit({
+                  ...(destination ?? { view: "browse" }),
+                  query: value,
+                  trash,
+                });
+            },
+            showDeleted: (value) => {
+              setTrash(value);
+              visit({
+                ...(destination ?? { view: "browse" }),
+                query,
+                trash: value,
+              });
+            },
+            create: () => newNote({ title: "", markdown: "" }),
+            refresh: () => {
+              void load();
+            },
+            loadMore: () => {
+              void load(true);
+            },
+            select,
+            close,
+            dismiss,
+            visit: (next) => {
+              const key = next.profile
+                ? `profile:${next.profile}`
+                : (next.note ?? selected);
+              setSelected(key || "browse");
+              visit(selectionRoute(key, next.author));
+            },
+            entries: visible,
+            open,
+            items: opened.map((address) => {
+              const key = noteKey(address);
+              return {
+                id: key,
+                label:
+                  collection.notes.find((note) => noteKey(note) === key)
+                    ?.title ?? "Note",
+                toolbar: (
+                  <IconButton
+                    aria-label="Back to notes"
+                    title="Back to notes"
+                    icon={<ArrowLeftIcon size={16} />}
+                    onClick={browse}
+                  />
+                ),
+                close: () => close(key),
+                content: (
+                  <NoteDocument
+                    address={address}
+                    workspace={workspace}
+                    catalogue={collection.notes}
+                    partial={collection.more}
+                    active={selected === key}
+                    view={
+                      selected === key && destination?.view === "note"
+                        ? destination
+                        : undefined
+                    }
+                    onViewChange={
+                      selected === key
+                        ? (view) =>
+                            visit({
+                              view: "note",
+                              ...noteAddress(address),
+                              query,
+                              trash,
+                              ...view,
+                              ...(destination?.author
+                                ? { author: destination.author }
+                                : {}),
+                            })
+                        : undefined
+                    }
+                    onOpen={open}
+                    onUnavailable={(missing) =>
+                      setCollection((old) => ({
+                        ...old,
+                        notes: old.notes.filter(
+                          (note) => noteKey(note) !== noteKey(missing),
+                        ),
+                      }))
+                    }
+                    onChange={changed}
+                    onDirty={(value) => {
+                      if (value) dirty.current.add(key);
+                      else dirty.current.delete(key);
+                    }}
+                  />
+                ),
+              };
+            }),
+          }}
         />
-        {creation}
-      </div>
-    );
-  const readerOpen = selected !== "browse" && opened.length > 0;
-  return (
-    <div
-      className={`${styles.split} ${panelStyles.splitMotion}`}
-      ref={split.ref}
-      data-side={readerOpen || undefined}
-    >
-      <div className={styles.main}>
-        <Panel>
-          <PanelHeader
-            title={
-              <PanelHeaderLabel title="Notes" icon={<NoteIcon size={16} />} />
-            }
-          />
-          <div className={styles.browser}>
-            <div className={styles.tools}>
-              <SearchField
-                inputRef={searchRef}
-                label="Search working notes"
-                placeholder="Search loaded notes…"
-                value={query}
-                onValueChange={setQuery}
-                onBlur={() =>
-                  visit({
-                    ...(destination ?? { view: "browse" }),
-                    query,
-                    trash,
-                  })
-                }
-                onKeyDown={(event) => {
-                  if (event.key === "Enter")
-                    visit({
-                      ...(destination ?? { view: "browse" }),
-                      query,
-                      trash,
-                    });
-                }}
-              />
-              <Button onClick={() => newNote({ title: "", markdown: "" })}>
-                <PlusIcon size={16} /> New note
-              </Button>
-              <IconButton
-                aria-label="Refresh notes"
-                title="Refresh notes"
-                icon={<ArrowsClockwiseIcon size={16} />}
-                disabled={loading}
-                onClick={() => {
-                  void load();
-                }}
-              />
-            </div>
-            <div className={styles.actions}>
-              <Checkbox
-                label="Show deleted notes"
-                checked={trash}
-                onCheckedChange={(value) => {
-                  setTrash(value);
-                  visit({
-                    ...(destination ?? { view: "browse" }),
-                    query,
-                    trash: value,
-                  });
-                }}
-              />
-              {relay && (
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setLegacy(true);
-                    if (request?.target.kind === "page" && navigator)
-                      void navigator.open({
-                        ...request.target,
-                        route: { version: 1, params: { author: "" } },
-                      });
-                  }}
-                >
-                  Existing shared notes
-                </Button>
-              )}
-            </div>
-            {loading && (
-              <p role="status" className="text-caption text-subtle">
-                Reading notes…
-              </p>
-            )}
-            {error && <p role="alert">{error}</p>}
-            {sharingError && (
-              <p role="alert">
-                Automatic agent access needs attention: {sharingError}
-              </p>
-            )}
-            {!loading && !error && !visible.length && (
-              <EmptyState
-                icon={<NoteIcon size={24} />}
-                title={query ? "No matching notes" : "Your working notes"}
-                description={
-                  query
-                    ? "Search covers the notes loaded below."
-                    : "Create a plan, research note or guide to work on with your agents."
-                }
-              />
-            )}
-            {parseNoteUrl(query)?.community ===
-              workspace.session.scope.replace(/:[0-9a-f]{64}$/, "") && (
-              <Button
-                onClick={() => {
-                  const target = parseNoteUrl(query);
-                  if (target) open(target);
-                }}
-              >
-                Open linked note
-              </Button>
-            )}
-            <div className={styles.cards}>
-              {visible.map((note) => (
-                <SurfaceButton
-                  key={noteKey(note)}
-                  className={styles.card}
-                  aria-current={selected === noteKey(note) ? "true" : undefined}
-                  onClick={() => open(note)}
-                >
-                  <span
-                    className={`${styles.cardTitle} text-label`}
-                    title={note.title}
-                  >
-                    {note.title}
-                  </span>
-                  <span
-                    className={`${styles.preview} text-body-sm text-subtle`}
-                  >
-                    {note.deleted
-                      ? "Deleted · retained history available"
-                      : previews.get(noteKey(note)) || "Empty note"}
-                  </span>
-                </SurfaceButton>
-              ))}
-            </div>
-            {collection.more && (
-              <Button
-                disabled={loading}
-                onClick={() => {
-                  void load(true);
-                }}
-              >
-                Load more notes
-              </Button>
-            )}
-            <p className="text-caption text-subtle">
-              Share each note with people and agents. Access includes retained
-              history.
-            </p>
-          </div>
-        </Panel>
-      </div>
-      <PanelDock
-        open={readerOpen}
-        keepMounted
-        className={styles.side}
-        resizeHandle={split.handle}
-      >
-        <aside aria-label="Note editor">
-          <Panel>
-            <PanelWorkspace
-              label="Open working notes"
-              value={selected}
-              select={(key) => {
-                const address = opened.find((item) => noteKey(item) === key);
-                if (address) open(address);
-              }}
-              items={opened.map((address) => {
-                const key = noteKey(address);
-                return {
-                  id: key,
-                  label:
-                    collection.notes.find((note) => noteKey(note) === key)
-                      ?.title ?? "Note",
-                  toolbar: (
-                    <IconButton
-                      aria-label="Back to notes"
-                      title="Back to notes"
-                      icon={<ArrowLeftIcon size={16} />}
-                      onClick={browse}
-                    />
-                  ),
-                  close: () => close(key),
-                  content: (
-                    <NoteDocument
-                      address={address}
-                      workspace={workspace}
-                      catalogue={collection.notes}
-                      partial={collection.more}
-                      active={selected === key && !legacy}
-                      view={
-                        selected === key && destination?.view === "note"
-                          ? destination
-                          : undefined
-                      }
-                      onViewChange={
-                        selected === key
-                          ? (view) =>
-                              visit({
-                                view: "note",
-                                ...noteAddress(address),
-                                query,
-                                trash,
-                                ...view,
-                              })
-                          : undefined
-                      }
-                      onOpen={open}
-                      onUnavailable={(missing) =>
-                        setCollection((old) => ({
-                          ...old,
-                          notes: old.notes.filter(
-                            (note) => noteKey(note) !== noteKey(missing),
-                          ),
-                        }))
-                      }
-                      onChange={changed}
-                      onDirty={(value) => {
-                        if (value) dirty.current.add(key);
-                        else dirty.current.delete(key);
-                      }}
-                    />
-                  ),
-                };
-              })}
-            />
-          </Panel>
-        </aside>
-      </PanelDock>
+      )}
       {creation}
       {closing && (
         <Dialog
@@ -626,8 +520,9 @@ export function WorkingNotesCommunity({
               </Button>
               <Button
                 onClick={() => {
-                  dirty.current.delete(closing);
-                  close(closing);
+                  dirty.current.delete(closing.key);
+                  workspace.drafts.delete(closing.key);
+                  close(closing.key, closing.fallback);
                   setClosing(undefined);
                 }}
               >
@@ -637,7 +532,7 @@ export function WorkingNotesCommunity({
           }
         />
       )}
-    </div>
+    </>
   );
 }
 
@@ -675,10 +570,10 @@ function NewNoteDialog({
   return (
     <Dialog
       open
-      title="New working note"
+      title="New note"
       description={
         initial.copy
-          ? "Create a separate working copy. The original shared note stays readable."
+          ? "Create a separate editable copy. The original note stays readable."
           : undefined
       }
       size="wide"

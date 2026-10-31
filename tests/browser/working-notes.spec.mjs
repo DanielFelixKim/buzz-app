@@ -19,9 +19,9 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
-  const search = page.getByRole("searchbox", { name: "Search working notes" });
+  const search = page.getByRole("searchbox", { name: "Search notes" });
   const firstCard = page.getByRole("button", {
-    name: /Connected notes plan.*working plan/,
+    name: /Open Connected notes plan by/,
   });
   const cardBounds = await firstCard.boundingBox();
   expect(Math.abs(cardBounds.width - cardBounds.height)).toBeLessThan(2);
@@ -40,9 +40,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
         window.notePaneMotion.push(event.propertyName);
     });
   });
-  await page
-    .getByRole("button", { name: /Storage research.*Findings/ })
-    .click();
+  await page.getByRole("button", { name: /Open Storage research by/ }).click();
   const sidebar = page.getByRole("complementary", { name: "Note editor" });
   await expect(search).toBeVisible();
   await expect(sidebar).toBeVisible();
@@ -131,7 +129,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     .click();
   await expect(search).toHaveValue("Storage");
   await page.getByRole("button", { name: "New note", exact: true }).click();
-  const create = page.getByRole("dialog", { name: "New working note" });
+  const create = page.getByRole("dialog", { name: "New note" });
   await create
     .getByRole("textbox", { name: "Title", exact: true })
     .fill("Draft survives history");
@@ -142,9 +140,16 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     create.getByRole("textbox", { name: "Title", exact: true }),
   ).toHaveValue("Draft survives history");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Existing shared notes" }).click();
+  await search.fill("Legacy");
+  await search.press("Enter");
+  await page
+    .getByRole("button", { name: "Open Legacy research by Carl", exact: true })
+    .click();
   await expect(
-    page.getByRole("button", { name: "Back to working notes" }),
+    page.getByRole("tab", { name: "Legacy research", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: "Storage research", exact: true }),
   ).toBeVisible();
   await page.goBack();
   await expect(
@@ -275,9 +280,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   await page
     .getByRole("button", { name: "Refresh notes", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: /Delivery plan.*Written by Carl/ })
-    .click();
+  await page.getByRole("button", { name: /Open Delivery plan by/ }).click();
   const document = page.getByRole("article", { name: "Delivery plan" });
   const canvas = document.getByRole("region", {
     name: "Document content",
@@ -514,13 +517,13 @@ test("human and agents edit, link, share and export the same working note", asyn
     });
     await expect(document).toBeVisible();
     await expect(
-      page.getByRole("searchbox", { name: "Search working notes" }),
+      page.getByRole("searchbox", { name: "Search notes" }),
     ).not.toBeVisible();
     await page
       .getByRole("button", { name: "Back to notes", exact: true })
       .click();
     await expect(
-      page.getByRole("searchbox", { name: "Search working notes" }),
+      page.getByRole("searchbox", { name: "Search notes" }),
     ).toBeFocused();
     await page.goBack();
     await expect(document).toBeVisible();
@@ -543,7 +546,7 @@ test("creates, deletes and restores a working note through the editor", async ({
   await page.goto("/tests/fixtures/working-notes.html");
   await page.evaluate(() => window.workingNotesFixture.unverifyCarl());
   await page.getByRole("button", { name: "New note", exact: true }).click();
-  const create = page.getByRole("dialog", { name: "New working note" });
+  const create = page.getByRole("dialog", { name: "New note" });
   await create
     .getByRole("textbox", { name: "Title", exact: true })
     .fill("Research draft");
@@ -560,13 +563,13 @@ test("creates, deletes and restores a working note through the editor", async ({
     .click();
   const document = page.getByRole("article", { name: "Research draft" });
   await expect(
-    page.getByRole("searchbox", { name: "Search working notes" }),
+    page.getByRole("searchbox", { name: "Search notes" }),
   ).not.toBeVisible();
   await page
     .getByRole("button", { name: "Back to notes", exact: true })
     .click();
   await expect(
-    page.getByRole("searchbox", { name: "Search working notes" }),
+    page.getByRole("searchbox", { name: "Search notes" }),
   ).toBeVisible();
   await page.goBack();
   await expect(document).toBeVisible();
@@ -609,18 +612,61 @@ test("copies a legacy shared note deliberately while keeping the original readab
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
-  await page.getByRole("button", { name: "Existing shared notes" }).click();
-  await page.getByRole("button", { name: "Open Carl folder" }).click();
-  await page.getByRole("button", { name: /Legacy research/ }).click();
-  await page.getByRole("button", { name: "Copy as working note" }).click();
-  const copy = page.getByRole("dialog", { name: "New working note" });
-  await expect(copy).toContainText("The original shared note stays readable.");
+  await expect(
+    page.getByRole("region", { name: "You", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Your agents", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Open You folder" }).click();
+  await page
+    .getByRole("button", { name: /Open Connected notes plan by You/ })
+    .click();
+  await page.getByRole("button", { name: "Back to folders" }).click();
+  await page.evaluate(() => window.workingNotesFixture.openLegacyLink());
+  await expect(
+    page.getByRole("heading", { name: "Carl", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: "Connected notes plan", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("article", { name: "Legacy research", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Note editor" }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Existing shared notes" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("combobox", { name: "Document mode", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Make editable copy" }).click();
+  const copy = page.getByRole("dialog", { name: "New note" });
+  await expect(copy).toContainText("The original note stays readable.");
   await copy.getByRole("button", { name: "Create note", exact: true }).click();
   await expect(
     page
       .getByRole("article", { name: "Legacy research" })
       .getByRole("combobox", { name: "Document mode", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "You", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Open You folder" }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Open Legacy research by You",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Open Legacy research by Carl",
+      exact: true,
+    }),
+  ).toHaveCount(0);
   expect(
     (await page.evaluate(() => window.workingNotesFixture.legacy())).map(
       (note) => note.content,
@@ -635,7 +681,7 @@ test("preserves a conflicting draft and opens note links in the conversation’s
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
   await page
-    .getByRole("button", { name: /Connected notes plan.*A working plan/ })
+    .getByRole("button", { name: /Open Connected notes plan by/ })
     .click();
   const document = page.getByRole("article", { name: "Connected notes plan" });
   await document
@@ -688,7 +734,7 @@ test("reader access hides editing while preserving history", async ({
     window.workingNotesFixture.makeReader(window.workingNotesFixture.plan),
   );
   await page
-    .getByRole("button", { name: /Connected notes plan.*A working plan/ })
+    .getByRole("button", { name: /Open Connected notes plan by/ })
     .click();
   const document = page.getByRole("article", { name: "Connected notes plan" });
   await expect(document.getByText("You have read access.")).toBeVisible();

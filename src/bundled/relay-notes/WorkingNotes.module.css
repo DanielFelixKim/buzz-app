@@ -84,59 +84,6 @@
   flex: 1;
   min-width: 12rem;
 }
-.cards {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-4);
-  padding: var(--space-1);
-}
-@container working-notes-collection (min-width: 24rem) {
-  .cards {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@container working-notes-collection (min-width: 42rem) {
-  .cards {
-    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
-  }
-}
-.card {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  aspect-ratio: 1;
-  text-align: start;
-  gap: var(--space-4);
-  padding: var(--space-5);
-  padding-block-end: 0;
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-panel);
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-.card[aria-current] {
-  border-color: var(--border-prominent);
-}
-.cardTitle {
-  flex-shrink: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.preview {
-  flex: 1;
-  min-height: 0;
-  mask-image: linear-gradient(
-    to bottom,
-    black calc(100% - var(--space-6)),
-    transparent
-  );
-  overflow: hidden;
-  white-space: pre-line;
-  overflow-wrap: anywhere;
-}
 .members,
 .history {
   list-style: none;
