@@ -1029,10 +1029,7 @@ function MessageRowContent({
               (!(flat ? stackPrevious : stackNext) || avatarFocused) && (
                 <div className={styles.messageAvatar}>{avatar}</div>
               )}
-            <div
-              className={styles.messageHeader}
-              data-message-action-header={stackPrevious ? undefined : ""}
-            >
+            <div className={styles.messageHeader}>
               {!row.membership &&
                 !row.huddle &&
                 !renderMessage &&
@@ -1043,6 +1040,7 @@ function MessageRowContent({
                 className={
                   stackPrevious ? "sr-only select-none" : styles.byline
                 }
+                data-message-byline={stackPrevious ? undefined : ""}
               >
                 {row.workflowOwnerId && workflowOwnerName ? (
                   <WorkflowByline
