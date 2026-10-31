@@ -291,6 +291,12 @@ test("human and agents edit, link, share and export the same working note", asyn
     exact: true,
   });
   await expect(mode).toContainText("Viewing");
+  await expect(document).toContainText("Carl");
+  await expect(document).toContainText("Updated");
+  await expect(document.locator("time")).toHaveAttribute(
+    "datetime",
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/,
+  );
   await settleNotePane(page);
   const viewingBounds = await canvas.boundingBox();
   const viewingTitle = await document
@@ -489,6 +495,23 @@ test("human and agents edit, link, share and export the same working note", asyn
   await page.getByRole("option", { name: "Can edit", exact: true }).click();
   await expect(samAccess).toContainText("Can edit");
   await page.keyboard.press("Escape");
+  // Capture the browser clipboard boundary without writing to the host clipboard.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          window.noteCopiedLink = text;
+        },
+      },
+    });
+  });
+  await document.getByRole("button", { name: "Note actions" }).click();
+  await page.getByRole("menuitem", { name: "Copy note link" }).click();
+  await expect(
+    document.getByText("Note link copied", { exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => window.noteCopiedLink)).toBe(created.link);
   await document.getByRole("button", { name: "Note actions" }).click();
   const download = page.waitForEvent("download");
   await page.getByRole("menuitem", { name: "Export Markdown" }).click();
@@ -622,6 +645,19 @@ test("copies a legacy shared note deliberately while keeping the original readab
   await page
     .getByRole("button", { name: /Open Connected notes plan by You/ })
     .click();
+  const plan = page.getByRole("article", { name: "Connected notes plan" });
+  await expect(plan).toContainText("Updated");
+  await expect(plan).toContainText("You");
+  const readerSpacing = await plan.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [style.padding, style.gap, style.overflowY];
+  });
+  const titleTypography = await plan
+    .getByRole("textbox", { name: "Title", exact: true })
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.fontSize, style.fontWeight, style.lineHeight];
+    });
   await page.getByRole("button", { name: "Back to folders" }).click();
   await page.evaluate(() => window.workingNotesFixture.openLegacyLink());
   await expect(
@@ -633,6 +669,29 @@ test("copies a legacy shared note deliberately while keeping the original readab
   await expect(
     page.getByRole("article", { name: "Legacy research", exact: true }),
   ).toBeVisible();
+  const published = page.getByRole("article", {
+    name: "Legacy research",
+    exact: true,
+  });
+  await expect(published).toContainText("Carl");
+  await expect(published).toContainText("Updated");
+  await expect(
+    published.getByText("old-research", { exact: true }),
+  ).toBeVisible();
+  expect(
+    await published.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.padding, style.gap, style.overflowY];
+    }),
+  ).toEqual(readerSpacing);
+  expect(
+    await published
+      .getByRole("heading", { name: "Legacy research", exact: true })
+      .evaluate((element) => {
+        const style = getComputedStyle(element);
+        return [style.fontSize, style.fontWeight, style.lineHeight];
+      }),
+  ).toEqual(titleTypography);
   await expect(
     page.getByRole("complementary", { name: "Note editor" }),
   ).toHaveCount(1);

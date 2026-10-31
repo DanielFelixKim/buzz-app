@@ -125,6 +125,10 @@ serializer; source spelling of supported constructs may normalize.
 Browser cards follow the original reader's square aspect ratio, container-based
 columns, clipped preview and bottom fade. Previews show plain text without link
 destinations; selection remains distinct from hover.
+Both kinds of note use the shared reader's heading, author/avatar and update
+byline, document spacing, scrollport and Markdown styles. Published notes retain
+their saved identifiers; editable documents retain access notices, sharing,
+revision history, backlinks and draft actions alongside that common presentation.
 
 ## Navigation and compatibility
 

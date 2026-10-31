@@ -19,6 +19,10 @@
 }
 .document {
   height: 100%;
+  overflow-wrap: anywhere;
+}
+.document > * {
+  flex-shrink: 0;
 }
 .document > h2,
 .document > p,
@@ -141,6 +145,16 @@
 .markdown ul,
 .markdown ol {
   padding-inline-start: var(--space-6);
+}
+.markdown ul {
+  list-style-type: disc;
+}
+.markdown ol {
+  list-style-type: decimal;
+}
+.markdown a {
+  color: var(--text-link);
+  text-decoration: underline;
 }
 
 .folders {

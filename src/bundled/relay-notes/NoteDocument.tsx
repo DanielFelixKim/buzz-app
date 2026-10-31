@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -11,6 +18,10 @@ import {
   type NoteAddress,
 } from "../../features/notes/model";
 import type { NotesWorkspace } from "../../features/notes/workspace";
+import { useIdentityNames } from "../../features/identity-names/react";
+import { avatarMedia } from "../../shared/avatar-source";
+import { writeClipboardText } from "../../shared/clipboard";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import {
   MAX_MARKDOWN_LENGTH,
   safeLinkUrl,
@@ -26,6 +37,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
   MenuItem,
   MenuPopup,
@@ -35,6 +47,8 @@ import {
 import { Select } from "../../shared/design-system/ui/Select";
 import { NoteHistory, NoteSharing } from "./NoteDialogs";
 import { NoteEditor } from "./NoteEditor";
+import { NoteByline } from "./NoteMetadata";
+import readerStyles from "./NotesPage.module.css";
 import styles from "./WorkingNotes.module.css";
 import type { DocumentView } from "./working-route";
 
@@ -194,6 +208,17 @@ export function NoteDocument({
     });
   }, [workspace, address, refresh]);
   const currentRevision = note?.revision;
+  const profiles = useSyncExternalStore(
+    workspace.session.profiles.subscribe,
+    workspace.session.profiles.snapshot,
+  );
+  const resolveName = useIdentityNames(workspace.session.names);
+  const author = note?.event.pubkey ?? "";
+  const profile = profiles.get(author);
+  const authorName =
+    author === workspace.session.viewer
+      ? "You"
+      : resolveName(author, profile?.name ?? formatPublicKey(author) ?? author);
   useEffect(
     () =>
       workspace.session.subscribeLive(({ events }) => {
@@ -269,101 +294,106 @@ export function NoteDocument({
   };
   const copyLink = () => {
     void run(async () => {
-      await navigator.clipboard.writeText(noteUrl(address, community));
+      await writeClipboardText(noteUrl(address, community));
       setStatus("Note link copied");
     });
   };
   return (
     <article
-      className={styles.document}
+      className={readerStyles.document}
       aria-label={!unavailable && note ? note.title : "Working note"}
     >
-      <div className={styles.documentHeading}>
-        {note && canEdit && !unavailable && !note.deleted ? (
-          <Field label="Title" labelVisibility="hidden">
-            <Input
-              appearance="title"
-              value={title}
-              onValueChange={setTitle}
-              disabled={busy}
-              readOnly={!editing}
-              tabIndex={editing ? undefined : -1}
-            />
-          </Field>
-        ) : (
-          <h1 className="text-title">
-            {!unavailable && note ? note.title : "Working note"}
-          </h1>
-        )}
-        <div className={styles.actions}>
-          {note && canEdit && !note.deleted && (
-            <Select
-              label="Document mode"
-              variant="compact"
-              size="sm"
-              value={editing ? "editing" : "viewing"}
-              disabled={busy}
-              groups={[
-                {
-                  label: "Document mode",
-                  options: [
-                    { value: "viewing", label: "Viewing" },
-                    { value: "editing", label: "Editing" },
-                  ],
-                },
-              ]}
-              onValueChange={(mode) => {
-                setStatus("");
-                setEditing(mode === "editing");
-              }}
-            />
-          )}
-          <IconButton
-            aria-label="Refresh note"
-            title="Refresh note"
-            icon={<ArrowsClockwiseIcon size={16} />}
+      {note && canEdit && !unavailable && !note.deleted ? (
+        <Field label="Title" labelVisibility="hidden">
+          <Input
+            appearance="heading"
+            value={title}
+            onValueChange={setTitle}
             disabled={busy}
-            onClick={() => {
-              void refresh();
+            readOnly={!editing}
+            tabIndex={editing ? undefined : -1}
+          />
+        </Field>
+      ) : (
+        <h2 className="text-heading">
+          {!unavailable && note ? note.title : "Working note"}
+        </h2>
+      )}
+      {note && !unavailable && (
+        <NoteByline
+          note={note.event}
+          author={authorName}
+          picture={avatarMedia(profile?.picture, workspace.session.media)}
+        />
+      )}
+      <div className={styles.actions}>
+        {note && canEdit && !note.deleted && (
+          <Select
+            label="Document mode"
+            variant="compact"
+            size="sm"
+            value={editing ? "editing" : "viewing"}
+            disabled={busy}
+            groups={[
+              {
+                label: "Document mode",
+                options: [
+                  { value: "viewing", label: "Viewing" },
+                  { value: "editing", label: "Editing" },
+                ],
+              },
+            ]}
+            onValueChange={(mode) => {
+              setStatus("");
+              setEditing(mode === "editing");
             }}
           />
-          {note && !unavailable && (
-            <>
-              <IconButton
-                aria-label="Share note"
-                title="Share note"
-                icon={<ShareIcon size={16} />}
-                onClick={() => setDialog("share")}
+        )}
+        <IconButton
+          aria-label="Refresh note"
+          title="Refresh note"
+          icon={<ArrowsClockwiseIcon size={16} />}
+          disabled={busy}
+          onClick={() => {
+            void refresh();
+          }}
+        />
+        {note && !unavailable && (
+          <>
+            <IconButton
+              aria-label="Share note"
+              title="Share note"
+              icon={<ShareIcon size={16} />}
+              onClick={() => setDialog("share")}
+            />
+            <MenuRoot>
+              <MenuTrigger
+                render={
+                  <IconButton
+                    aria-label="Note actions"
+                    title="Note actions"
+                    icon={<DotsThreeIcon size={16} />}
+                  />
+                }
               />
-              <MenuRoot>
-                <MenuTrigger
-                  render={
-                    <IconButton
-                      aria-label="Note actions"
-                      title="Note actions"
-                      icon={<DotsThreeIcon size={16} />}
-                    />
-                  }
-                />
-                <MenuPopup>
-                  <MenuItem onClick={copyLink}>Copy note link</MenuItem>
-                  <MenuItem onClick={() => setDialog("history")}>
-                    Revision history
+              <MenuPopup>
+                <MenuItem onClick={copyLink}>Copy note link</MenuItem>
+                <MenuItem onClick={() => setDialog("history")}>
+                  Revision history
+                </MenuItem>
+                <MenuItem onClick={exportMarkdown}>Export Markdown</MenuItem>
+                {canEdit && !note.deleted && (
+                  <MenuItem
+                    disabled={busy || dirty}
+                    onClick={() => setDialog("delete")}
+                  >
+                    Delete note
                   </MenuItem>
-                  <MenuItem onClick={exportMarkdown}>Export Markdown</MenuItem>
-                  {canEdit && !note.deleted && (
-                    <MenuItem
-                      disabled={busy || dirty}
-                      onClick={() => setDialog("delete")}
-                    >
-                      Delete note
-                    </MenuItem>
-                  )}
-                </MenuPopup>
-              </MenuRoot>
-            </>
-          )}
-        </div>
+                )}
+              </MenuPopup>
+            </MenuRoot>
+          </>
+        )}
       </div>
       {busy && (
         <p role="status" className="text-caption text-subtle">
@@ -419,7 +449,7 @@ export function NoteDocument({
       )}
       {note && !unavailable && !note.deleted && (
         <section className={styles.stack} aria-label="Backlinks">
-          <h2 className="text-label">Linked from</h2>
+          <InlineHeader title="Linked from" />
           {backlinks.map((source) => (
             <Button
               key={noteKey(source)}
@@ -597,9 +627,13 @@ export function NoteMarkdown({
     [text],
   );
   if (!scanned || scanned.tooDeep)
-    return <pre className={styles.source}>{text}</pre>;
+    return (
+      <div className={readerStyles.markdown}>
+        <pre>{text}</pre>
+      </div>
+    );
   return (
-    <div className={styles.markdown}>
+    <div className={readerStyles.markdown}>
       <Markdown
         remarkPlugins={[remarkGfm]}
         skipHtml

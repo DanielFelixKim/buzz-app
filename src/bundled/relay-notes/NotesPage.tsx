@@ -58,7 +58,12 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { avatarMedia } from "../../shared/avatar-source";
-import { relativeTimestamp } from "../../shared/relative-timestamp";
+import {
+  NoteAuthor,
+  NoteByline,
+  NoteIdentifier,
+  NoteTime,
+} from "./NoteMetadata";
 import {
   NOTE_LIMIT,
   emptyNotePage,
@@ -1269,52 +1274,6 @@ function NoteCollection({
 const noteKeyOrEmpty = (note: EventData | undefined) =>
   note ? noteKey(note) : "";
 
-function NoteIdentifier({
-  note,
-  separator = true,
-}: {
-  note: { readonly tags: readonly (readonly string[])[] };
-  separator?: boolean;
-}) {
-  const identifier = noteTag(note, "d");
-  return identifier ? (
-    <>
-      {separator && " · "}
-      <code
-        className={`${styles.identifier} text-mono font-mono`}
-        title={`Saved as ${identifier}`}
-      >
-        {identifier}
-      </code>
-    </>
-  ) : null;
-}
-
-function NoteTime({ note }: { note: Pick<EventData, "created_at"> }) {
-  const date = new Date(note.created_at * 1000);
-  const days = Math.floor((Date.now() / 1000 - note.created_at) / 86400);
-  // The shared recency ladder switches to calendar dates after a week; notes
-  // keep older timestamps relative too, with the exact date in the title.
-  const label =
-    days >= 7
-      ? new Intl.RelativeTimeFormat(undefined, { numeric: "always" }).format(
-          -days,
-          "day",
-        )
-      : relativeTimestamp(note.created_at);
-  return (
-    <time
-      dateTime={date.toISOString()}
-      title={date.toLocaleString(undefined, {
-        dateStyle: "full",
-        timeStyle: "long",
-      })}
-    >
-      {label}
-    </time>
-  );
-}
-
 function NoteBody({
   note,
   author,
@@ -1333,12 +1292,13 @@ function NoteBody({
     scanMarkdown(note.content).tooDeep;
   return (
     <article className={styles.document} aria-label={noteTitle(note)}>
-      <h2 className="text-title">{noteTitle(note)}</h2>
-      <p className={`${styles.byline} text-caption text-secondary`}>
-        <NoteAuthor name={author} picture={picture} open={openProfile} /> ·
-        Updated <NoteTime note={note} />
-        <NoteIdentifier note={note} />
-      </p>
+      <h2 className="text-heading">{noteTitle(note)}</h2>
+      <NoteByline
+        note={note}
+        author={author}
+        picture={picture}
+        openProfile={openProfile}
+      />
       {onConvert && (
         <div>
           <Button onClick={onConvert}>Make editable copy</Button>
@@ -1373,40 +1333,5 @@ function NoteBody({
         )}
       </div>
     </article>
-  );
-}
-
-function NoteAuthor({
-  name,
-  picture,
-  open,
-}: {
-  name: string;
-  picture?: string | undefined;
-  open?: (() => void) | undefined;
-}) {
-  const identity = (
-    <>
-      <Avatar
-        src={picture}
-        alt=""
-        fallback={name}
-        size="compact"
-        shape="squircle"
-      />
-      <span>{name}</span>
-    </>
-  );
-  return open ? (
-    <Button
-      variant="plain"
-      size="inline"
-      aria-label={`View ${name} profile`}
-      onClick={open}
-    >
-      {identity}
-    </Button>
-  ) : (
-    <span className={styles.byline}>{identity}</span>
   );
 }
