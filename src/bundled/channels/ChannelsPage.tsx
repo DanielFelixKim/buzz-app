@@ -998,7 +998,8 @@ function ChannelWorkspace({
       )
         return false;
       const note = parseNoteUrl(href);
-      if (!note || note.community !== target.scope.communityOrigin) return false;
+      if (!note || note.community !== target.scope.communityOrigin)
+        return false;
       const { note: _note, panel: _panel, detail: _detail, ...base } = target;
       tabState.leaveVisit();
       void navigator.open(
@@ -1074,18 +1075,18 @@ function ChannelWorkspace({
       ...(note
         ? { note: { id: note.id, channel: note.channel } }
         : detail
-        ? {
-            detail: {
-              target: detail.target,
-              ...(detail.rootId ? { rootId: detail.rootId } : {}),
-            },
-          }
-        : thread?.kind === "thread"
           ? {
-              messageId: thread.messageId,
-              threadRootId: rootOfTab(thread),
+              detail: {
+                target: detail.target,
+                ...(detail.rootId ? { rootId: detail.rootId } : {}),
+              },
             }
-          : {}),
+          : thread?.kind === "thread"
+            ? {
+                messageId: thread.messageId,
+                threadRootId: rootOfTab(thread),
+              }
+            : {}),
     };
   };
   const keptTabReturn = useRef<{

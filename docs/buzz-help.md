@@ -324,6 +324,13 @@ that agent in Buzz; they do not notify the external app through this connection.
   before allowing a fresh participation invitation; failed checks keep the original.
   If the original invitation was applied and the person was later removed, Retry
   clears the old row without re-adding them. Use **Add** in People to invite them again.
+- **Working notes**, when the Notes plugin and relay support are available,
+  are shared documents with retained revisions. Choose **Editing** to reveal
+  formatting, then **Save** to publish changes. **Link** accepts a URL or a loaded
+  note; linking grants no access. Sharing a note includes its retained history.
+  Notes are readable by the relay operator. In a conversation, Back/Forward can
+  revisit a note; closing its tab retires those visits. Collapsing the tab pane
+  only hides it.
 - **Open links in your browser**: on desktop, ⌘-click (Ctrl-click on Windows
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose

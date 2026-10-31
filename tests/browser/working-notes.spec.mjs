@@ -159,14 +159,55 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   ).toBeVisible();
   await page.keyboard.press("Escape");
   expect(page.url()).not.toContain("Unsaved");
+  const address = () =>
+    page.evaluate(() => window.workingNotesFixture.navigation());
+  const researchVisit = (await address()).entry.id;
   await page
     .getByRole("button", { name: "Toggle tab pane", exact: true })
     .click();
   await expect(research).not.toBeVisible();
-  await page.goBack();
+  // Collapsing the pane changes layout, without inventing a history visit.
+  expect((await address()).entry.id).toBe(researchVisit);
+  await page
+    .getByRole("button", { name: "Toggle tab pane", exact: true })
+    .click();
   await expect(research).toBeVisible();
-  await page.goForward();
+  await page
+    .getByRole("button", { name: "Close Storage research tab", exact: true })
+    .click();
+  await expect(document).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("textbox", { name: /message/i })).toBeVisible();
   await expect(research).not.toBeVisible();
+  await page.goForward();
+  await expect(document).toBeVisible();
+  await expect(research).not.toBeVisible();
+  // Reopening is a fresh visit; closing an inactive sibling keeps it selected.
+  await document
+    .getByRole("link", { name: "Storage research", exact: true })
+    .click();
+  await expect(research).toBeVisible();
+  const reopened = (await address()).entry.id;
+  expect(reopened).not.toBe(researchVisit);
+  await page
+    .getByRole("button", {
+      name: "Close Connected notes plan tab",
+      exact: true,
+    })
+    .click();
+  await expect(research).toBeVisible();
+  expect((await address()).entry.id).toBe(reopened);
+  await page
+    .getByRole("tab", { name: "Storage research", exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close all tabs", exact: true })
+    .click();
+  await expect(research).not.toBeVisible();
+  await expect
+    .poll(async () => (await address()).entry.target.note)
+    .toBeUndefined();
+  expect((await address()).canGoForward).toBe(false);
   expect(errors.unexplained()).toEqual([]);
 });
 

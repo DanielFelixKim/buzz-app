@@ -139,8 +139,12 @@ Notes-page destinations record the selected note, committed search, deleted-note
 filter, editing mode, share/link/delete/history dialog, selected revision and
 history page. New-note destinations contain a draft identifier. Conversation
 destinations optionally carry the same note presentation; Back/Forward restores
-linked notes and pane dismissal without navigating away from the conversation.
+linked notes and their editor state without leaving the conversation.
 The host applies note restoration after restoring its conversation tab visit.
+Conversation note tabs use the same visit-retirement owner as Profile/GitHub
+tabs: Back/Forward retains a return path, while closing a tab or closing all/other
+tabs retires the closed notes' visits. Closing an inactive note preserves the
+selected tab. Collapsing the tab pane changes layout without creating a visit.
 
 History contains addresses and presentation only, never draft titles or bodies.
 Unsaved document drafts and new-note drafts survive Back/Forward in the current

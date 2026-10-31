@@ -311,6 +311,7 @@ export async function notesFixture() {
   );
   const client = (key = carl): BuzzClient => ({
     pubkey: key.pubkey,
+    key: key.pubkey,
     owner: viewer.pubkey,
     relayAuthor: relay.pubkey,
     query: (filters: readonly Filter[]) =>

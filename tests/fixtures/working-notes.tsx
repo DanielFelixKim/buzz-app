@@ -120,6 +120,7 @@ const tool = (name: string) => {
 };
 Object.assign(window, {
   workingNotesFixture: {
+    navigation: () => host.navigation.snapshot(),
     legacy: () => f.accepted.filter((event) => event.kind === 30023),
     plan,
     research,
