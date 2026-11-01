@@ -129,6 +129,8 @@ Both kinds of note use the shared reader's heading, author/avatar and update
 byline, document spacing, scrollport and Markdown styles. Published notes retain
 their saved identifiers; editable documents retain access notices, sharing,
 revision history, backlinks and draft actions alongside that common presentation.
+Backlinks appear in **Note actions → Linked notes** as a submenu of source titles,
+with empty and partial-collection guidance inside the submenu.
 
 ## Navigation and compatibility
 

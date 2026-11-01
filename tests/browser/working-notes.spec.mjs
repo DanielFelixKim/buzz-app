@@ -298,6 +298,30 @@ test("human and agents edit, link, share and export the same working note", asyn
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/,
   );
   await settleNotePane(page);
+  await expect(document.getByRole("region", { name: "Backlinks" })).toHaveCount(
+    0,
+  );
+  await expect(document.getByText("Linked from", { exact: true })).toHaveCount(
+    0,
+  );
+  await document.getByRole("button", { name: "Note actions" }).click();
+  const linkedNotes = page.getByRole("menuitem", {
+    name: "Linked notes",
+    exact: true,
+  });
+  await linkedNotes.focus();
+  await linkedNotes.press("ArrowRight");
+  const linkedMenu = page.getByRole("menu", {
+    name: "Linked notes",
+    exact: true,
+  });
+  await expect(linkedMenu).toContainText("No links from the loaded notes.");
+  await page.keyboard.press("Escape");
+  await expect(linkedNotes).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    document.getByRole("button", { name: "Note actions" }),
+  ).toBeFocused();
   const viewingBounds = await canvas.boundingBox();
   const viewingTitle = await document
     .getByRole("textbox", { name: "Title", exact: true })
@@ -453,12 +477,18 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(
     page.getByRole("article", { name: "Storage research" }),
   ).toBeVisible();
-  await expect(
-    page
-      .getByRole("article", { name: "Storage research" })
-      .getByRole("button", { name: "Delivery plan", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("tab", { name: "Delivery plan" }).click();
+  await page
+    .getByRole("article", { name: "Storage research" })
+    .getByRole("button", { name: "Note actions" })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Linked notes", exact: true })
+    .click();
+  await page
+    .getByRole("menu", { name: "Linked notes", exact: true })
+    .getByRole("menuitem", { name: "Delivery plan", exact: true })
+    .click();
+  await expect(document).toBeVisible();
   await document
     .getByRole("button", { name: "Share note", exact: true })
     .click();

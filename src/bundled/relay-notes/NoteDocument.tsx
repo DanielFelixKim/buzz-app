@@ -37,11 +37,14 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
   MenuItem,
+  MenuNote,
   MenuPopup,
   MenuRoot,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -378,6 +381,30 @@ export function NoteDocument({
               />
               <MenuPopup>
                 <MenuItem onClick={copyLink}>Copy note link</MenuItem>
+                {!note.deleted && (
+                  <MenuSubmenu>
+                    <MenuSubmenuTrigger>Linked notes</MenuSubmenuTrigger>
+                    <MenuSubmenuPopup aria-label="Linked notes">
+                      {backlinks.map((source) => (
+                        <MenuItem
+                          key={noteKey(source)}
+                          onClick={() => onOpen(source)}
+                        >
+                          {source.title}
+                        </MenuItem>
+                      ))}
+                      {!backlinks.length && (
+                        <MenuNote>No links from the loaded notes.</MenuNote>
+                      )}
+                      {partial && (
+                        <MenuNote>
+                          More notes are available in the browser. Linked notes
+                          cover the loaded notes.
+                        </MenuNote>
+                      )}
+                    </MenuSubmenuPopup>
+                  </MenuSubmenu>
+                )}
                 <MenuItem onClick={() => setDialog("history")}>
                   Revision history
                 </MenuItem>
@@ -446,31 +473,6 @@ export function NoteDocument({
             />
           </NoteEditor>
         </div>
-      )}
-      {note && !unavailable && !note.deleted && (
-        <section className={styles.stack} aria-label="Backlinks">
-          <InlineHeader title="Linked from" />
-          {backlinks.map((source) => (
-            <Button
-              key={noteKey(source)}
-              variant="ghost"
-              onClick={() => onOpen(source)}
-            >
-              {source.title}
-            </Button>
-          ))}
-          {!backlinks.length && (
-            <p className="text-caption text-subtle">
-              No links from the loaded notes.
-            </p>
-          )}
-          {partial && (
-            <p className="text-caption text-subtle">
-              More notes are available in the browser. Backlinks cover the
-              loaded notes.
-            </p>
-          )}
-        </section>
       )}
       {note && (dirty || restoreFrom) && (
         <div className={styles.saveBar}>
