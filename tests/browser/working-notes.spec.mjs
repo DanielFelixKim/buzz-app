@@ -14,6 +14,18 @@ async function settleNotePane(page) {
     });
 }
 
+function floatingPaint(element) {
+  const style = getComputedStyle(element);
+  return {
+    background: style.backgroundColor,
+    border: style.borderTopWidth,
+    borderColor: style.borderTopColor,
+    radius: style.borderTopLeftRadius,
+    shadow: style.boxShadow,
+    blur: style.backdropFilter,
+  };
+}
+
 test("Back and Forward restore note navigation, filters, drafts, dialogs and conversation panes", async ({
   page,
 }) => {
@@ -318,11 +330,30 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(linkedMenu).toContainText("No links from the loaded notes.");
   await page.keyboard.press("Escape");
   await expect(linkedNotes).toBeVisible();
+  const menuPaint = await page
+    .getByRole("menu", { name: "Note actions", exact: true })
+    .evaluate(floatingPaint);
   await page.keyboard.press("Escape");
   await expect(
     document.getByRole("button", { name: "Note actions" }),
   ).toBeFocused();
   const viewingBounds = await canvas.boundingBox();
+  const scrollport = document.getByRole("region", {
+    name: "Note contents",
+    exact: true,
+  });
+  const toolbar = document.getByRole("group", {
+    name: "Document formatting",
+    exact: true,
+  });
+  await expect(toolbar).toHaveCount(0);
+  const modeBounds = await mode.boundingBox();
+  const sectionGap = await scrollport.evaluate((element) =>
+    parseFloat(getComputedStyle(element).rowGap),
+  );
+  expect(
+    Math.abs(viewingBounds.y - modeBounds.y - modeBounds.height - sectionGap),
+  ).toBeLessThan(1);
   const viewingTitle = await document
     .getByRole("textbox", { name: "Title", exact: true })
     .boundingBox();
@@ -335,6 +366,27 @@ test("human and agents edit, link, share and export the same working note", asyn
     .click();
   await page.getByRole("option", { name: "Editing", exact: true }).click();
 
+  await expect(toolbar).toBeVisible();
+  const toolbarBounds = await toolbar.boundingBox();
+  const paneBounds = await document.boundingBox();
+  const paneInset = await scrollport.evaluate((element) =>
+    parseFloat(getComputedStyle(element).paddingInlineStart),
+  );
+  expect(
+    Math.abs(
+      paneBounds.y +
+        paneBounds.height -
+        toolbarBounds.y -
+        toolbarBounds.height -
+        paneInset,
+    ),
+  ).toBeLessThan(1);
+  expect(await toolbar.evaluate(floatingPaint)).toEqual(menuPaint);
+  expect(
+    await toolbar.evaluate((element) =>
+      parseFloat(getComputedStyle(element).paddingLeft),
+    ),
+  ).toBeGreaterThan(0);
   const editingBounds = await canvas.boundingBox();
   const editingTitle = await document
     .getByRole("textbox", { name: "Title", exact: true })
@@ -390,6 +442,30 @@ test("human and agents edit, link, share and export the same working note", asyn
     .getByRole("combobox", { name: "Document mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Editing", exact: true }).click();
+  const longBody = document.getByRole("textbox", {
+    name: "Document body",
+    exact: true,
+  });
+  await longBody.fill(
+    Array.from({ length: 100 }, (_, index) => `Draft paragraph ${index}.`).join(
+      "\n\n",
+    ),
+  );
+  await scrollport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  const pinnedBounds = await toolbar.boundingBox();
+  await scrollport.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect
+    .poll(() => scrollport.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  expect(await toolbar.boundingBox()).toEqual(pinnedBounds);
+  const pinnedSave = await document
+    .getByRole("button", { name: "Save", exact: true })
+    .boundingBox();
+  expect(pinnedSave.y + pinnedSave.height).toBeLessThanOrEqual(pinnedBounds.y);
   await document
     .getByRole("textbox", { name: "Document body", exact: true })
     .fill("# Taylor’s revision\n\nReady for another agent.");
@@ -580,9 +656,29 @@ test("human and agents edit, link, share and export the same working note", asyn
     ).toBeFocused();
     await page.goBack();
     await expect(document).toBeVisible();
+    await mode.click();
+    await page.getByRole("option", { name: "Editing", exact: true }).click();
+    await expect(toolbar).toBeVisible();
+    const narrowPane = await document.boundingBox();
+    const narrowToolbar = await toolbar.boundingBox();
+    const narrowFormats = await document
+      .getByRole("group", { name: "Formatting options" })
+      .boundingBox();
+    const narrowSource = await document
+      .getByRole("button", { name: "Markdown source", exact: true })
+      .boundingBox();
+    expect(narrowSource.y).toBeGreaterThanOrEqual(
+      narrowFormats.y + narrowFormats.height,
+    );
+    expect(narrowToolbar.x).toBeGreaterThan(narrowPane.x);
+    expect(narrowToolbar.x + narrowToolbar.width).toBeLessThan(
+      narrowPane.x + narrowPane.width,
+    );
     await page.screenshot({
       path: testInfo.outputPath(`sidebar-narrow-${theme}.png`),
     });
+    await mode.click();
+    await page.getByRole("option", { name: "Viewing", exact: true }).click();
     await page.setViewportSize({ width: 1440, height: 950 });
     await page.evaluate(() => {
       document.documentElement.style.fontSize = "";
@@ -678,10 +774,12 @@ test("copies a legacy shared note deliberately while keeping the original readab
   const plan = page.getByRole("article", { name: "Connected notes plan" });
   await expect(plan).toContainText("Updated");
   await expect(plan).toContainText("You");
-  const readerSpacing = await plan.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return [style.padding, style.gap, style.overflowY];
-  });
+  const readerSpacing = await plan
+    .getByRole("region", { name: "Note contents", exact: true })
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.padding, style.gap, style.overflowY];
+    });
   const titleTypography = await plan
     .getByRole("textbox", { name: "Title", exact: true })
     .evaluate((element) => {

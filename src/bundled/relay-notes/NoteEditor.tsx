@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { EditableInput } from "../../features/messages/EditableInput";
 import { ComposerFormattingTools } from "../../features/messages/ComposerFormattingTools";
 import { ComposerLinkDialog } from "../../features/messages/ComposerLinkDialog";
@@ -28,6 +29,7 @@ export function NoteEditor({
   linkOpen,
   onLinkOpenChange,
   onSave,
+  toolbarTarget,
 }: {
   value: string;
   editing: boolean;
@@ -39,6 +41,7 @@ export function NoteEditor({
   linkOpen: boolean;
   onLinkOpenChange(open: boolean): void;
   onSave(): void;
+  toolbarTarget: HTMLElement | null;
 }) {
   const input = useRef<ComposerInputElement>(null);
   const [draft, setDraft] = useState(() => noteEditorDraft(value));
@@ -67,33 +70,36 @@ export function NoteEditor({
   };
   return (
     <div className={styles.stack}>
-      <div
-        className={styles.editorToolbar}
-        data-viewing={!editing || undefined}
-        inert={!editing}
-        aria-hidden={!editing || undefined}
-      >
-        {!source && (
-          <ComposerFormattingTools
-            persistent
-            disabled={disabled || !editing}
-            activeFormats={formats}
-            toggleFormat={(format) => input.current?.toggleFormat(format)}
-            editLink={() => editLink()}
+      {editing &&
+        toolbarTarget &&
+        createPortal(
+          <fieldset
+            className={styles.editorToolbar}
+            aria-label="Document formatting"
           >
-            {null}
-          </ComposerFormattingTools>
+            {!source && (
+              <ComposerFormattingTools
+                persistent
+                disabled={disabled || !editing}
+                activeFormats={formats}
+                toggleFormat={(format) => input.current?.toggleFormat(format)}
+                editLink={() => editLink()}
+              >
+                {null}
+              </ComposerFormattingTools>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-pressed={source}
+              onClick={() => setSource(!source)}
+              disabled={disabled || !editing}
+            >
+              {source ? "Formatted text" : "Markdown source"}
+            </Button>
+          </fieldset>,
+          toolbarTarget,
         )}
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-pressed={source}
-          onClick={() => setSource(!source)}
-          disabled={disabled || !editing}
-        >
-          {source ? "Formatted text" : "Markdown source"}
-        </Button>
-      </div>
       <section className={styles.editorBody} aria-label="Document content">
         <div hidden={!editing}>
           {source ? (

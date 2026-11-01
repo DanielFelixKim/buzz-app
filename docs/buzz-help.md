@@ -328,9 +328,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   one browser, organized by author, with one search and sidebar tabs. Published
   agent notes stay readable; **Make editable copy** creates a separate editable
   document without changing the original. Editable documents retain revisions.
-  Choose **Editing** to reveal
-  formatting, then **Save** to publish changes. **Link** accepts a URL or a loaded
-  note; linking grants no access. **Note actions → Linked notes** lists loaded
+  Choose **Editing** to reveal the formatting bar pinned at the bottom of the
+  pane, then **Save** to publish changes. **Link** accepts a URL or a loaded note;
+  linking grants no access. **Note actions → Linked notes** lists loaded
   notes that link to the current document. Sharing a note includes its retained
   history.
   Notes are readable by the relay operator. In a conversation, Back/Forward can

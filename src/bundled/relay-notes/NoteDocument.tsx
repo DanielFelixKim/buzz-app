@@ -92,6 +92,9 @@ export function NoteDocument({
   const editing = view ? !!view.edit : localEditing;
   const [canEdit, setCanEdit] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [unavailable, setUnavailable] = useState(!!cachedDraft);
@@ -303,314 +306,322 @@ export function NoteDocument({
   };
   return (
     <article
-      className={readerStyles.document}
+      className={styles.documentPane}
       aria-label={!unavailable && note ? note.title : "Working note"}
     >
-      {note && canEdit && !unavailable && !note.deleted ? (
-        <Field label="Title" labelVisibility="hidden">
-          <Input
-            appearance="heading"
-            value={title}
-            onValueChange={setTitle}
-            disabled={busy}
-            readOnly={!editing}
-            tabIndex={editing ? undefined : -1}
-          />
-        </Field>
-      ) : (
-        <h2 className="text-heading">
-          {!unavailable && note ? note.title : "Working note"}
-        </h2>
-      )}
-      {note && !unavailable && (
-        <NoteByline
-          note={note.event}
-          author={authorName}
-          picture={avatarMedia(profile?.picture, workspace.session.media)}
-        />
-      )}
-      <div className={styles.actions}>
-        {note && canEdit && !note.deleted && (
-          <Select
-            label="Document mode"
-            variant="compact"
-            size="sm"
-            value={editing ? "editing" : "viewing"}
-            disabled={busy}
-            groups={[
-              {
-                label: "Document mode",
-                options: [
-                  { value: "viewing", label: "Viewing" },
-                  { value: "editing", label: "Editing" },
-                ],
-              },
-            ]}
-            onValueChange={(mode) => {
-              setStatus("");
-              setEditing(mode === "editing");
-            }}
-          />
+      <section className={readerStyles.document} aria-label="Note contents">
+        {note && canEdit && !unavailable && !note.deleted ? (
+          <Field label="Title" labelVisibility="hidden">
+            <Input
+              appearance="heading"
+              value={title}
+              onValueChange={setTitle}
+              disabled={busy}
+              readOnly={!editing}
+              tabIndex={editing ? undefined : -1}
+            />
+          </Field>
+        ) : (
+          <h2 className="text-heading">
+            {!unavailable && note ? note.title : "Working note"}
+          </h2>
         )}
-        <IconButton
-          aria-label="Refresh note"
-          title="Refresh note"
-          icon={<ArrowsClockwiseIcon size={16} />}
-          disabled={busy}
-          onClick={() => {
-            void refresh();
-          }}
-        />
         {note && !unavailable && (
-          <>
-            <IconButton
-              aria-label="Share note"
-              title="Share note"
-              icon={<ShareIcon size={16} />}
-              onClick={() => setDialog("share")}
-            />
-            <MenuRoot>
-              <MenuTrigger
-                render={
-                  <IconButton
-                    aria-label="Note actions"
-                    title="Note actions"
-                    icon={<DotsThreeIcon size={16} />}
-                  />
-                }
-              />
-              <MenuPopup>
-                <MenuItem onClick={copyLink}>Copy note link</MenuItem>
-                {!note.deleted && (
-                  <MenuSubmenu>
-                    <MenuSubmenuTrigger>Linked notes</MenuSubmenuTrigger>
-                    <MenuSubmenuPopup aria-label="Linked notes">
-                      {backlinks.map((source) => (
-                        <MenuItem
-                          key={noteKey(source)}
-                          onClick={() => onOpen(source)}
-                        >
-                          {source.title}
-                        </MenuItem>
-                      ))}
-                      {!backlinks.length && (
-                        <MenuNote>No links from the loaded notes.</MenuNote>
-                      )}
-                      {partial && (
-                        <MenuNote>
-                          More notes are available in the browser. Linked notes
-                          cover the loaded notes.
-                        </MenuNote>
-                      )}
-                    </MenuSubmenuPopup>
-                  </MenuSubmenu>
-                )}
-                <MenuItem onClick={() => setDialog("history")}>
-                  Revision history
-                </MenuItem>
-                <MenuItem onClick={exportMarkdown}>Export Markdown</MenuItem>
-                {canEdit && !note.deleted && (
-                  <MenuItem
-                    disabled={busy || dirty}
-                    onClick={() => setDialog("delete")}
-                  >
-                    Delete note
-                  </MenuItem>
-                )}
-              </MenuPopup>
-            </MenuRoot>
-          </>
+          <NoteByline
+            note={note.event}
+            author={authorName}
+            picture={avatarMedia(profile?.picture, workspace.session.media)}
+          />
         )}
-      </div>
-      {busy && (
-        <p role="status" className="text-caption text-subtle">
-          Working…
-        </p>
-      )}
-      {error && <p role="alert">{error}</p>}
-      {status && (
-        <p role="status" className="text-caption text-subtle">
-          {status}
-        </p>
-      )}
-      {note && !unavailable && !canEdit && !note.deleted && (
-        <p className="text-caption text-subtle">
-          {note.editable
-            ? "You have read access."
-            : "This document format is read-only in this version of Buzz."}
-        </p>
-      )}
-      {note?.deleted && !unavailable && !editing && (
-        <div className={styles.stack}>
-          <p>
-            This note was deleted. Its retained history and sharing remain
-            available.
-          </p>
-          {canEdit && (
-            <Button onClick={() => setDialog("history")}>
-              Choose a revision to restore
-            </Button>
-          )}
-        </div>
-      )}
-      {note && (editing || (!unavailable && !note.deleted)) && (
-        <div className={styles.stack}>
-          <NoteEditor
-            value={markdown}
-            editing={editing}
-            onChange={setMarkdown}
-            disabled={busy}
-            notes={catalogue}
-            community={community}
-            linkOpen={dialog === "link"}
-            onLinkOpenChange={(open) => setDialog(open ? "link" : undefined)}
-            onSave={save}
-          >
-            <NoteMarkdown
-              text={markdown}
-              community={community}
-              onOpen={onOpen}
+        <div className={styles.actions}>
+          {note && canEdit && !note.deleted && (
+            <Select
+              label="Document mode"
+              variant="compact"
+              size="sm"
+              value={editing ? "editing" : "viewing"}
+              disabled={busy}
+              groups={[
+                {
+                  label: "Document mode",
+                  options: [
+                    { value: "viewing", label: "Viewing" },
+                    { value: "editing", label: "Editing" },
+                  ],
+                },
+              ]}
+              onValueChange={(mode) => {
+                setStatus("");
+                setEditing(mode === "editing");
+              }}
             />
-          </NoteEditor>
-        </div>
-      )}
-      {note && (dirty || restoreFrom) && (
-        <div className={styles.saveBar}>
-          <Button
-            variant="prominent"
-            size="lg"
-            loading={busy}
-            disabled={busy || !!conflict || !canEdit}
-            onClick={save}
-          >
-            {note.deleted ? "Restore note" : "Save"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
+          )}
+          <IconButton
+            aria-label="Refresh note"
+            title="Refresh note"
+            icon={<ArrowsClockwiseIcon size={16} />}
             disabled={busy}
             onClick={() => {
-              adopt(note);
-              setEditing(false);
+              void refresh();
             }}
-          >
-            Discard changes
-          </Button>
+          />
+          {note && !unavailable && (
+            <>
+              <IconButton
+                aria-label="Share note"
+                title="Share note"
+                icon={<ShareIcon size={16} />}
+                onClick={() => setDialog("share")}
+              />
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      aria-label="Note actions"
+                      title="Note actions"
+                      icon={<DotsThreeIcon size={16} />}
+                    />
+                  }
+                />
+                <MenuPopup>
+                  <MenuItem onClick={copyLink}>Copy note link</MenuItem>
+                  {!note.deleted && (
+                    <MenuSubmenu>
+                      <MenuSubmenuTrigger>Linked notes</MenuSubmenuTrigger>
+                      <MenuSubmenuPopup aria-label="Linked notes">
+                        {backlinks.map((source) => (
+                          <MenuItem
+                            key={noteKey(source)}
+                            onClick={() => onOpen(source)}
+                          >
+                            {source.title}
+                          </MenuItem>
+                        ))}
+                        {!backlinks.length && (
+                          <MenuNote>No links from the loaded notes.</MenuNote>
+                        )}
+                        {partial && (
+                          <MenuNote>
+                            More notes are available in the browser. Linked
+                            notes cover the loaded notes.
+                          </MenuNote>
+                        )}
+                      </MenuSubmenuPopup>
+                    </MenuSubmenu>
+                  )}
+                  <MenuItem onClick={() => setDialog("history")}>
+                    Revision history
+                  </MenuItem>
+                  <MenuItem onClick={exportMarkdown}>Export Markdown</MenuItem>
+                  {canEdit && !note.deleted && (
+                    <MenuItem
+                      disabled={busy || dirty}
+                      onClick={() => setDialog("delete")}
+                    >
+                      Delete note
+                    </MenuItem>
+                  )}
+                </MenuPopup>
+              </MenuRoot>
+            </>
+          )}
         </div>
-      )}
-      {note && dialog === "share" && (
-        <NoteSharing
-          note={note}
-          workspace={workspace}
-          onClose={() => setDialog(undefined)}
-        />
-      )}
-      {note && dialog === "history" && (
-        <NoteHistory
-          note={note}
-          workspace={workspace}
-          canEdit={canEdit}
-          selection={view}
-          onSelection={(revision) =>
-            presentation.current.onViewChange?.({
-              ...presentation.current.view,
-              revision,
-            })
-          }
-          onPage={(offset) => {
-            const { revision: _revision, ...rest } =
-              presentation.current.view ?? {};
-            presentation.current.onViewChange?.({ ...rest, offset });
-          }}
-          onClose={() => setDialog(undefined)}
-          onUse={(revision) => {
-            setRestoreFrom(note.deleted ? revision : undefined);
-            setTitle(revision.title);
-            setMarkdown(revision.markdown);
-            setLocalEditing(true);
-            setLocalDialog(undefined);
-            presentation.current.onViewChange?.({ edit: true });
-          }}
-        />
-      )}
-      {note && dialog === "delete" && (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setDialog(undefined);
-          }}
-          title="Delete this note?"
-          description="You can restore it from retained history."
-          preventClose={busy}
-          actions={
-            <>
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() => setDialog(undefined)}
-              >
-                Cancel
+        {busy && (
+          <p role="status" className="text-caption text-subtle">
+            Working…
+          </p>
+        )}
+        {error && <p role="alert">{error}</p>}
+        {status && (
+          <p role="status" className="text-caption text-subtle">
+            {status}
+          </p>
+        )}
+        {note && !unavailable && !canEdit && !note.deleted && (
+          <p className="text-caption text-subtle">
+            {note.editable
+              ? "You have read access."
+              : "This document format is read-only in this version of Buzz."}
+          </p>
+        )}
+        {note?.deleted && !unavailable && !editing && (
+          <div className={styles.stack}>
+            <p>
+              This note was deleted. Its retained history and sharing remain
+              available.
+            </p>
+            {canEdit && (
+              <Button onClick={() => setDialog("history")}>
+                Choose a revision to restore
               </Button>
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  void run(async () => {
-                    adopt(
-                      await workspace.save(
-                        note,
-                        { title: note.title, markdown: "" },
-                        "delete",
-                      ),
-                    );
-                    setDialog(undefined);
-                  });
-                }}
-              >
-                Delete note
-              </Button>
-            </>
-          }
-        />
-      )}
-      {conflict && active && (
-        <Dialog
-          open
-          onOpenChange={() => {}}
-          title="This note has a newer revision"
-          description="Compare the latest contents with your unsaved draft before choosing what to keep."
-          size="wide"
-          preventClose
-          actions={
-            <>
-              <Button
-                onClick={() => {
-                  adopt(conflict);
-                  setEditing(false);
-                  setError("");
-                }}
-              >
-                Use latest version
-              </Button>
-              <Button
-                disabled={conflict.deleted || !conflict.editable}
-                onClick={() => {
-                  setNote(conflict);
-                  setConflict(undefined);
-                  setError("");
-                }}
-              >
-                I’ve compared; keep my draft
-              </Button>
-            </>
-          }
-        >
-          <h2 className="text-label">{conflict.title}</h2>
-          <pre className={styles.source}>
-            {conflict.markdown ||
-              (conflict.deleted ? "The note was deleted." : "Empty note")}
-          </pre>
-        </Dialog>
-      )}
+            )}
+          </div>
+        )}
+        {note && (editing || (!unavailable && !note.deleted)) && (
+          <div className={styles.stack}>
+            <NoteEditor
+              toolbarTarget={toolbarTarget}
+              value={markdown}
+              editing={editing}
+              onChange={setMarkdown}
+              disabled={busy}
+              notes={catalogue}
+              community={community}
+              linkOpen={dialog === "link"}
+              onLinkOpenChange={(open) => setDialog(open ? "link" : undefined)}
+              onSave={save}
+            >
+              <NoteMarkdown
+                text={markdown}
+                community={community}
+                onOpen={onOpen}
+              />
+            </NoteEditor>
+          </div>
+        )}
+        {note && (dirty || restoreFrom) && (
+          <div className={styles.saveBar}>
+            <Button
+              variant="prominent"
+              size="lg"
+              loading={busy}
+              disabled={busy || !!conflict || !canEdit}
+              onClick={save}
+            >
+              {note.deleted ? "Restore note" : "Save"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                adopt(note);
+                setEditing(false);
+              }}
+            >
+              Discard changes
+            </Button>
+          </div>
+        )}
+        {note && dialog === "share" && (
+          <NoteSharing
+            note={note}
+            workspace={workspace}
+            onClose={() => setDialog(undefined)}
+          />
+        )}
+        {note && dialog === "history" && (
+          <NoteHistory
+            note={note}
+            workspace={workspace}
+            canEdit={canEdit}
+            selection={view}
+            onSelection={(revision) =>
+              presentation.current.onViewChange?.({
+                ...presentation.current.view,
+                revision,
+              })
+            }
+            onPage={(offset) => {
+              const { revision: _revision, ...rest } =
+                presentation.current.view ?? {};
+              presentation.current.onViewChange?.({ ...rest, offset });
+            }}
+            onClose={() => setDialog(undefined)}
+            onUse={(revision) => {
+              setRestoreFrom(note.deleted ? revision : undefined);
+              setTitle(revision.title);
+              setMarkdown(revision.markdown);
+              setLocalEditing(true);
+              setLocalDialog(undefined);
+              presentation.current.onViewChange?.({ edit: true });
+            }}
+          />
+        )}
+        {note && dialog === "delete" && (
+          <Dialog
+            open
+            onOpenChange={(open) => {
+              if (!open) setDialog(undefined);
+            }}
+            title="Delete this note?"
+            description="You can restore it from retained history."
+            preventClose={busy}
+            actions={
+              <>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setDialog(undefined)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={busy}
+                  onClick={() => {
+                    void run(async () => {
+                      adopt(
+                        await workspace.save(
+                          note,
+                          { title: note.title, markdown: "" },
+                          "delete",
+                        ),
+                      );
+                      setDialog(undefined);
+                    });
+                  }}
+                >
+                  Delete note
+                </Button>
+              </>
+            }
+          />
+        )}
+        {conflict && active && (
+          <Dialog
+            open
+            onOpenChange={() => {}}
+            title="This note has a newer revision"
+            description="Compare the latest contents with your unsaved draft before choosing what to keep."
+            size="wide"
+            preventClose
+            actions={
+              <>
+                <Button
+                  onClick={() => {
+                    adopt(conflict);
+                    setEditing(false);
+                    setError("");
+                  }}
+                >
+                  Use latest version
+                </Button>
+                <Button
+                  disabled={conflict.deleted || !conflict.editable}
+                  onClick={() => {
+                    setNote(conflict);
+                    setConflict(undefined);
+                    setError("");
+                  }}
+                >
+                  I’ve compared; keep my draft
+                </Button>
+              </>
+            }
+          >
+            <h2 className="text-label">{conflict.title}</h2>
+            <pre className={styles.source}>
+              {conflict.markdown ||
+                (conflict.deleted ? "The note was deleted." : "Empty note")}
+            </pre>
+          </Dialog>
+        )}
+      </section>
+      <div
+        ref={setToolbarTarget}
+        className={styles.editorDock}
+        hidden={!editing}
+      />
     </article>
   );
 }

@@ -1,3 +1,5 @@
+@reference "../../shared/styles/globals.css";
+
 .split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 0px);
@@ -131,19 +133,42 @@
   }
 }
 
+.documentPane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.documentPane > :first-child {
+  flex: 1;
+}
+.editorDock {
+  container: note-formatting / inline-size;
+  flex-shrink: 0;
+  margin: 0 var(--space-4) var(--space-4);
+}
 .editorToolbar {
+  @apply floating-surface;
+  --floating-inset: var(--space-3);
+  min-width: 0;
+  margin: 0;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
+  padding: var(--space-3);
+}
+@container note-formatting (max-width: 24rem) {
+  .editorToolbar > :first-child:not(:only-child) {
+    flex-basis: 100%;
+  }
 }
 .editorBody [role="textbox"] {
   max-height: none;
   overflow: visible;
-}
-
-.editorToolbar[data-viewing] {
-  visibility: hidden;
 }
 
 .saveBar {
