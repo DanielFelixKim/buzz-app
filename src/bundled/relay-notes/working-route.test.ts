@@ -26,13 +26,6 @@ it("round-trips browser, editor, dialog, revision and new-draft addresses withou
       offset: 100,
     },
     { view: "new", draft: id },
-    { view: "browse", author: "b".repeat(64), query: "Research" },
-    {
-      view: "shared",
-      shared: `30023:${"b".repeat(64)}:two\nlines`,
-      query: "Research",
-    },
-    { view: "profile", profile: "b".repeat(64) },
   ]) {
     const route = workingRoute(value as JsonValue);
     expect(route).toEqual(value);
@@ -42,15 +35,12 @@ it("round-trips browser, editor, dialog, revision and new-draft addresses withou
     });
   }
   expect(workingRoute({ id, channel })).toEqual({ view: "note", id, channel });
-  expect(
-    workingRoute({ author: "b".repeat(64), note: `30023:${"b".repeat(64)}:` }),
-  ).toEqual({
-    view: "shared",
-    author: "b".repeat(64),
-    shared: `30023:${"b".repeat(64)}:`,
-  });
 });
 it.each([
+  { author: "b".repeat(64), note: `30023:${"b".repeat(64)}:note` },
+  { view: "browse", author: "b".repeat(64) },
+  { view: "shared", shared: `30023:${"b".repeat(64)}:note` },
+  { view: "profile", profile: "b".repeat(64) },
   { view: "note", id, channel, markdown: "private draft" },
   { view: "note", id, channel, revision: "a".repeat(64) },
   { view: "note", id, channel, dialog: "share", offset: 100 },

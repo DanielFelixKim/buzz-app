@@ -13,7 +13,7 @@ import { provideNavigation } from "../../features/navigation/service";
 import { PanelsService } from "../../features/panels/service";
 import { PagesService } from "../../features/pages/service";
 
-it("owns the working-note tools and panel while preserving legacy note tools", async () => {
+it("owns only channel-backed note routes, tools and panels while preserving separate built-in tools", async () => {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
     isActive: () => true,
@@ -60,6 +60,23 @@ it("owns the working-note tools and panel while preserving legacy note tools", a
         placement: "topbar",
       },
     ]);
+    const validate = pages.snapshot()[0]?.route?.validate;
+    expect(validate?.({ view: "browse" })).toBe(true);
+    expect(
+      validate?.({
+        id: "11111111-1111-4111-8111-111111111111",
+        channel: "22222222-2222-4222-8222-222222222222",
+      }),
+    ).toBe(true);
+    expect(
+      validate?.({
+        author: "c".repeat(64),
+        note: `30023:${"c".repeat(64)}:recipe`,
+      }),
+    ).toBe(false);
+    expect(
+      validate?.({ view: "shared", shared: `30023:${"c".repeat(64)}:recipe` }),
+    ).toBe(false);
     expect(panels.snapshot()).toMatchObject([
       { id: "note", keepOpen: true, channelPlacement: "tab" },
     ]);

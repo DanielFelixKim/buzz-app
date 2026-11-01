@@ -38,12 +38,3 @@ it.each([
 ])("preserves unsupported or literal source: %s", (markdown) => {
   expect(composerMarkdown(noteEditorDraft(markdown))).toBe(markdown);
 });
-
-it("keeps card previews readable without exposing Markdown destinations", async () => {
-  const { workingNotePreview } = await import("./collection");
-  expect(
-    workingNotePreview(
-      "# Plan\n\nRead [the research](https://example.com/private-path).\n\n![picture](https://example.com/image.png)",
-    ),
-  ).toBe("Plan\nRead the research.");
-});

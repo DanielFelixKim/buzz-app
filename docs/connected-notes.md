@@ -1,6 +1,6 @@
 # Connected working notes
 
-The bundled `buzz.relay-notes` plugin owns one author-oriented Notes browser and contributes one
+The bundled `buzz.relay-notes` plugin owns one channel-backed Notes browser and contributes one
 document panel plus five agent tools. `features/notes` owns the shared protocol
 model and channel orchestration. Existing session reads, channel creation,
 membership operations, signing and panel routing retain their authority; there is
@@ -127,13 +127,12 @@ formatting bar hides in source mode. An untouched editor does not normalize the
 original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.
 
-The combined browser lists linked note titles in newest-revision order, without
+The browser lists linked note titles in newest-revision order, without
 card previews, author folders or row metadata. Author and revision metadata remain
 in the note viewer.
-Both kinds of note use the shared reader's heading, author/avatar and update
-byline, document spacing, scrollport and Markdown styles. Published notes retain
-their saved identifiers; editable documents retain access notices, sharing,
-revision history, backlinks and draft actions alongside that common presentation.
+Notes retain the shared reader's heading, author/avatar and update byline,
+document spacing, scrollport and Markdown styles, alongside access notices,
+sharing, revision history, backlinks and draft actions.
 Backlinks appear in **Note actions → Linked notes** as a submenu of source titles,
 with empty and partial-collection guidance inside the submenu.
 
@@ -162,17 +161,16 @@ History contains addresses and presentation only, never draft titles or bodies.
 Unsaved document drafts and new-note drafts survive Back/Forward in the current
 session; refreshing or restarting is not offline draft persistence. Replaying a
 destination reads current permissions and does not repeat a save, share, delete
-or restore. Legacy note addresses remain accepted.
+or restore. Earlier channel-backed `{id, channel}` addresses remain accepted.
 
-Legacy NIP-23 routes open the same full-page viewer as editable documents.
-The combined collection has one search, recency-ordered title list and pagination
-action.
+This experience handles only channel-backed NIP-AR documents, regardless of whether
+a person or agent authored them. It does not query, display, copy or import
+NIP-23 published notes. Old published-note routes are no longer accepted by this
+page. Existing published records and the separate built-in plural `notes_*`
+tools are unchanged; there is no migration or deletion of those records.
 Signed current-revision authors provide document bylines; this is not a new
-claim about the original creator after collaborative edits. Independent source
-pagination and read authority remain with their existing owners.
-Copying is a deliberate
-new-document operation with an explicit audience. Original events and links stay
-unchanged; retirement of legacy authoring is a later migration decision.
+claim about the original creator after collaborative edits. Discovery, pagination
+and read authority belong to the existing NotesWorkspace owner.
 
 ## Verification boundary
 
@@ -181,8 +179,9 @@ permissions, CAS, partial creation, pagination and human/agent publication using
 real sessions and outboxes with an in-memory upstream. The Chromium/WebKit
 `working-notes.spec.mjs` journeys use the registered production plugin and channel
 workspace to cover editing, conflict dialogs, links, sharing, export, restoration,
-legacy copying and the right-pane layout. The affected native package separately
-tests artifact signing, including the strict deletion envelope without chat `ms`.
+NIP-23 separation and the conversation right-pane layout. The affected native
+package separately tests artifact signing, including the strict deletion envelope
+without chat `ms`.
 
 These checks do not establish a packaged-native live-relay round trip, OS delivery,
 or capacity at thousands of note channels. Those require an agreed isolated

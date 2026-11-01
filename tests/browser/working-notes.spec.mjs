@@ -29,7 +29,6 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await expect(list.getByRole("link")).toHaveText([
     "Connected notes plan",
     "Storage research",
-    "Legacy research",
   ]);
   await expect(
     list.getByRole("link", { name: "Connected notes plan", exact: true }),
@@ -149,13 +148,13 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     create.getByRole("textbox", { name: "Title", exact: true }),
   ).toHaveValue("Draft survives history");
   await page.keyboard.press("Escape");
-  await search.fill("Legacy");
+  await search.fill("Connected");
   await search.press("Enter");
   await page
-    .getByRole("link", { name: "Legacy research", exact: true })
+    .getByRole("link", { name: "Connected notes plan", exact: true })
     .click();
   await expect(
-    page.getByRole("article", { name: "Legacy research", exact: true }),
+    page.getByRole("article", { name: "Connected notes plan", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("article", { name: "Storage research", exact: true }),
@@ -760,97 +759,62 @@ test("creates, deletes and restores a working note through the editor", async ({
   expect(errors.unexplained()).toEqual([]);
 });
 
-test("copies a legacy shared note deliberately while keeping the original readable", async ({
+test("discovers only channel-backed notes while leaving published records untouched", async ({
   page,
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
-  await page
-    .getByRole("list", { name: "Notes", exact: true })
-    .getByRole("link", { name: "Connected notes plan", exact: true })
-    .click();
-  const plan = page.getByRole("article", { name: "Connected notes plan" });
-  await expect(plan).toContainText("Updated");
-  await expect(plan).toContainText("You");
-  const readerSpacing = await plan
-    .getByRole("region", { name: "Note contents", exact: true })
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return [style.padding, style.gap, style.overflowY];
-    });
-  const titleTypography = await plan
-    .getByRole("textbox", { name: "Title", exact: true })
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return [style.fontSize, style.fontWeight, style.lineHeight];
-    });
-  await page
-    .getByRole("button", { name: "Back to notes", exact: true })
-    .click();
-  await page.evaluate(() => window.workingNotesFixture.openLegacyLink());
-  await expect(plan).not.toBeVisible();
+  const list = page.getByRole("list", { name: "Notes", exact: true });
+  await expect(list.getByRole("link")).toHaveText([
+    "Connected notes plan",
+    "Storage research",
+  ]);
   await expect(
-    page.getByRole("article", { name: "Legacy research", exact: true }),
-  ).toBeVisible();
-  const published = page.getByRole("article", {
-    name: "Legacy research",
+    page.getByRole("button", { name: "Refresh notes", exact: true }),
+  ).toHaveAttribute("aria-busy", "false");
+  const published = await page.evaluate(() =>
+    window.workingNotesFixture.legacy(),
+  );
+  expect(published).toHaveLength(1);
+  await page.evaluate(() =>
+    window.workingNotesFixture.agentCreate(
+      "Agent research",
+      "Written in a private note channel.",
+    ),
+  );
+  await page
+    .getByRole("button", { name: "Refresh notes", exact: true })
+    .click();
+  await expect(list.getByRole("link").first()).toHaveText("Agent research");
+  await list.getByRole("link", { name: "Agent research", exact: true }).click();
+  const note = page.getByRole("article", {
+    name: "Agent research",
     exact: true,
   });
-  await expect(published).toContainText("Carl");
-  await expect(published).toContainText("Updated");
+  await expect(note).toContainText("Carl");
+  await expect(note).toContainText("Updated");
+  await expect(note).toContainText("Written in a private note channel.");
   await expect(
-    published.getByText("old-research", { exact: true }),
-  ).toBeVisible();
-  expect(
-    await published.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return [style.padding, style.gap, style.overflowY];
-    }),
-  ).toEqual(readerSpacing);
-  expect(
-    await published
-      .getByRole("heading", { name: "Legacy research", exact: true })
-      .evaluate((element) => {
-        const style = getComputedStyle(element);
-        return [style.fontSize, style.fontWeight, style.lineHeight];
-      }),
-  ).toEqual(titleTypography);
-  await expect(
-    page.getByRole("complementary", { name: "Note editor" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Existing shared notes" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("combobox", { name: "Document mode", exact: true }),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "Make editable copy" }).click();
-  const copy = page.getByRole("dialog", { name: "New note" });
-  await expect(copy).toContainText("The original note stays readable.");
-  await copy.getByRole("button", { name: "Create note", exact: true }).click();
-  await expect(
-    page
-      .getByRole("article", { name: "Legacy research" })
-      .getByRole("combobox", { name: "Document mode", exact: true }),
+    note.getByRole("combobox", { name: "Document mode", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Back to notes", exact: true })
     .click();
-  const copies = page
-    .getByRole("list", { name: "Notes", exact: true })
-    .getByRole("link", { name: "Legacy research", exact: true });
-  await expect(copies).toHaveCount(2);
-  await expect(copies.first()).toHaveAttribute("href", /^buzz:\/\/note\?/);
-  await expect(copies.last()).toHaveAttribute("href", /^buzz:\/\/plugin\?/);
-  await copies.last().click();
+  await expect(list.getByRole("link")).toHaveCount(3);
+  await expect(
+    list.getByRole("link", { name: "Legacy research", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Make editable copy", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  const kinds = await page.evaluate(() =>
+    window.workingNotesFixture.queryKinds(),
+  );
+  expect(kinds).toContain(45010);
+  expect(kinds).not.toContain(30023);
   expect(
-    (await page.evaluate(() => window.workingNotesFixture.legacy())).map(
-      (note) => note.content,
-    ),
-  ).toEqual(["# Earlier findings\n\nKeep this shared reference readable."]);
+    await page.evaluate(() => window.workingNotesFixture.legacy()),
+  ).toEqual(published);
   expect(errors.unexplained()).toEqual([]);
 });
 

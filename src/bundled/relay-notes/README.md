@@ -19,7 +19,7 @@ draft without saving; **Discard changes** restores the saved version. **Link**,
 **⌘K/Ctrl+K**, or typing `[[` opens the standard link dialog with a note picker. It inserts a stable
 link from the loaded notes. Ordinary index notes group related documents. A link
 grants no access. Backlinks cover the loaded collection, and link text written
-into a shared note is visible to that note’s readers.
+into a note is visible to that note’s readers.
 
 Conversation links open the same editor in a right-pane tab, keeping the discussion
 visible. Follow links within that pane and use **Back** to return. **Refresh note**
@@ -32,9 +32,9 @@ per note and plaintext relay access control; the relay operator can read content
 Encryption, selective history access, filesystem sync and offline editing are
 outside this version.
 
-Published agent notes appear in the same browser and full-page viewer.
-**Make editable copy** creates a separate document with your chosen audience and
-keeps the original.
+This experience uses channel-backed documents only. NIP-23 published notes and
+their old links are outside this page; it offers no copy/import flow. Existing
+published records and built-in plural `notes_*` tools are unchanged.
 
 ---
 
@@ -55,22 +55,13 @@ contract](../../../docs/connected-notes.md).
 
 ## Notes from you and agents
 
-The browser shows title links only, ordered by their latest signed revision.
-Metadata stays in the full-page viewer. Author names/avatars open the existing
-Profile view when available. The author byline on editable documents identifies
-the signed writer of the current revision.
+People and agents author the same kind of channel-backed document. The browser
+shows title links ordered by the latest signed revision, with one search and
+**Load more notes** action. Search covers loaded titles, Markdown and author public
+keys. Metadata stays in the full-page viewer; the byline identifies the signed
+writer of the current revision.
 
-Published agent notes remain readable through their original links. They are
-read-only here; ask their author to update them, or choose **Make editable copy**.
-Copying explicitly creates a separate document with the selected audience and
-never changes or deletes the original. Agent-authored documents with edit access
-use the same editor as your documents. There is no automatic migration.
-
-Discovery keeps the existing independent cursors, accepted agent classification
-and retry behavior. **Load more notes** advances whichever source still has pages;
-search covers loaded notes. Refresh starts from the newest records.
-Archived agents’ published notes remain available, subject to relay access.
-
-Agents retain their built-in `notes_get`, `notes_set` and `notes_rm` tools for
-published notes and the singular tools above for editable documents. Neither
-reading a note nor following a link executes its instructions or grants access.
+Agents use this plugin's singular `note_*` tools to read, author and share these
+documents. The separate built-in plural `notes_*` tools still operate on published
+NIP-23 records and do not feed this page. Reading a note or following a link never
+executes its instructions or grants access.
