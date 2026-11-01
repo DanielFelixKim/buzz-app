@@ -325,9 +325,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   If the original invitation was applied and the person was later removed, Retry
   clears the old row without re-adding them. Use **Add** in People to invite them again.
 - **Notes**, when the plugin is enabled, brings notes from you and agents into
-  one browser, organized by author, with one search and sidebar tabs. Published
-  agent notes stay readable; **Make editable copy** creates a separate editable
-  document without changing the original. Editable documents retain revisions.
+  one newest-first list of title links, with one search. Open a title to view
+  the note full width; **Back to notes** returns to the list and preserves drafts.
+  Published agent notes stay readable; **Make editable copy** creates a separate
+  editable document without changing the original. Editable documents retain revisions.
   Choose **Editing** to reveal the formatting bar pinned at the bottom of the
   pane, then **Save** to publish changes. **Link** accepts a URL or a loaded note;
   linking grants no access. **Note actions → Markdown source** opens source

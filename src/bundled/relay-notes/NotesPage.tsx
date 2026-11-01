@@ -23,7 +23,7 @@ import {
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import panelStyles from "../../features/panels/Panels.module.css";
-import type { Note } from "../../features/notes/model";
+import { noteUrl, type Note } from "../../features/notes/model";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { PlusIcon } from "../../shared/design-system/icons";
@@ -85,7 +85,7 @@ import { profileTarget } from "../../features/profiles/target";
 const noSubscribe = () => () => {};
 const noPanels: readonly RegisteredPanel[] = [];
 const emptyPanels = () => noPanels;
-/** The editable documents share this browser and tab host with published notes. */
+/** Editable documents and published notes share one list and full-page viewer. */
 export type WorkingNotesExtension = {
   entries: readonly Note[];
   open(note: Note): void;
@@ -160,9 +160,10 @@ function NotesPanel({
                   >
                     {working ? (
                       <p>
-                        Notes from you and agents live together here. Open any
-                        note in the sidebar. Edit when you have access, or make
-                        an editable copy of a published agent note.
+                        Notes from you and agents live together here. Open a
+                        title to read the note, then use Back to notes to return
+                        to the list. Edit when you have access, or make an
+                        editable copy of a published agent note.
                       </p>
                     ) : (
                       <p>
@@ -471,6 +472,7 @@ function NoteCollection({
   }, []);
   const folderGrid = useRef<HTMLElement>(null);
   const folderTitle = useRef<HTMLHeadingElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
   const [profile, setProfile] = useState("");
   useSyncExternalStore(
     panels?.subscribe ?? noSubscribe,
@@ -493,6 +495,9 @@ function NoteCollection({
     (profilePanel && (selected === profileKey || !noteActive)
       ? profileKey
       : noteActive);
+  useEffect(() => {
+    if (combined && active !== "browse") backRef.current?.focus();
+  }, [combined, active]);
   useEffect(() => {
     if (working?.selected === profileKey && profile && !profilePanel) {
       setProfile("");
@@ -813,7 +818,7 @@ function NoteCollection({
       ...(working?.entries ?? [])
         .filter(
           (note) =>
-            (!author || note.event.pubkey === author) &&
+            (!author || !!working || note.event.pubkey === author) &&
             (!group ||
               (group === "you"
                 ? note.event.pubkey === session.viewer
@@ -847,6 +852,77 @@ function NoteCollection({
         published: note,
       })),
     ];
+    if (working) {
+      const visible = rows
+        .filter((row) =>
+          `${row.title}\n${row.summary}\n${"document" in row ? row.document.markdown : row.published.content}\n${agents.find((agent) => agent.pubkey === row.author)?.name ?? ""}`
+            .toLowerCase()
+            .includes(query),
+        )
+        .sort(
+          (a, b) =>
+            b.event.created_at - a.event.created_at ||
+            a.event.id.localeCompare(b.event.id),
+        );
+      return (
+        <>
+          <ul className={styles.titleList} aria-label="Notes">
+            {visible.map((row) => {
+              const href =
+                "document" in row
+                  ? noteUrl(
+                      row.document,
+                      session.scope.replace(/:[0-9a-f]{64}$/, ""),
+                    )
+                  : `buzz://plugin?${new URLSearchParams({
+                      id: "buzz.relay-notes",
+                      page: "notes",
+                      "route.author": row.author,
+                      "route.note": row.key,
+                    })}`;
+              return (
+                <li key={row.key}>
+                  <a
+                    className="text-body"
+                    href={href}
+                    onClick={(event) => {
+                      if (
+                        event.button !== 0 ||
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey
+                      )
+                        return;
+                      event.preventDefault();
+                      origin.current = event.currentTarget;
+                      if ("document" in row) working.open(row.document);
+                      else {
+                        setOpened((old) =>
+                          old.some((note) => noteKey(note) === row.key)
+                            ? old
+                            : [...old, row.published],
+                        );
+                        setSelected(row.key);
+                        visit({ author: "", note: row.key });
+                      }
+                    }}
+                  >
+                    {row.title}
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+          {query &&
+            !visible.length &&
+            !result.loading &&
+            !working.loading &&
+            !result.error &&
+            !working.error && <p role="status">No matching notes.</p>}
+        </>
+      );
+    }
     return (
       <div className={styles.notes}>
         {rows
@@ -861,12 +937,11 @@ function NoteCollection({
               a.event.id.localeCompare(b.event.id),
           )
           .map((row) => {
+            if ("document" in row) return null;
             const agent = agents.find((agent) => agent.pubkey === row.author);
             const caption = agent?.name ?? row.author;
             const picture = avatarMedia(agent?.picture, session.media);
-            const isOpen =
-              opened.some((note) => noteKey(note) === row.key) ||
-              !!working?.items.some((item) => item.id === row.key);
+            const isOpen = opened.some((note) => noteKey(note) === row.key);
             return (
               <article key={row.key} className={styles.noteItem}>
                 <SurfaceButton
@@ -876,15 +951,7 @@ function NoteCollection({
                   aria-pressed={isOpen}
                   onClick={(event) => {
                     origin.current = event.currentTarget;
-                    if ("document" in row) {
-                      if (isOpen)
-                        working?.close(
-                          row.key,
-                          working.items.find((item) => item.id !== row.key)
-                            ?.id ?? (opened[0] ? noteKey(opened[0]) : "browse"),
-                        );
-                      else working?.open(row.document);
-                    } else if (isOpen) close(row.key);
+                    if (isOpen) close(row.key);
                     else {
                       setOpened((old) => [...old, row.published]);
                       setSelected(row.key);
@@ -935,13 +1002,102 @@ function NoteCollection({
     ? active !== "browse" &&
       !!(opened.length || working.items.length || profilePanel)
     : !!opened.length || !!profilePanel;
+  const items: ComponentProps<typeof PanelWorkspace>["items"] = [
+    ...(working?.items ?? []),
+    ...opened.map((note) => ({
+      id: noteKey(note),
+      label: noteTitle(note),
+      icon: (
+        <Avatar
+          src={avatarMedia(
+            agents.find((agent) => agent.pubkey === note.pubkey)?.picture,
+            session.media,
+          )}
+          alt=""
+          fallback={name(note)}
+          size="fill"
+          shape="squircle"
+        />
+      ),
+      close: () => close(noteKey(note)),
+      content: (
+        <NoteBody
+          note={note}
+          onConvert={onConvert ? () => onConvert(note) : undefined}
+          openProfile={
+            canProfile(note.pubkey) ? () => openProfile(note.pubkey) : undefined
+          }
+          author={name(note)}
+          picture={avatarMedia(
+            agents.find((agent) => agent.pubkey === note.pubkey)?.picture,
+            session.media,
+          )}
+        />
+      ),
+    })),
+    ...(profilePanel && profileAddress
+      ? [
+          {
+            id: profileKey,
+            label: `${agents.find((agent) => agent.pubkey === profile)?.name ?? "Agent"} · Profile`,
+            close: closeProfile,
+            content: (
+              <profilePanel.component
+                target={profileAddress}
+                close={closeProfile}
+              />
+            ),
+          },
+        ]
+      : []),
+  ];
+  const activeItem = items.find((item) => item.id === active);
+  const fullView = working && (
+    <div className={styles.fullView} hidden={!readerOpen}>
+      <Panel aria-label="Note details">
+        <PanelHeader
+          title={
+            <PanelHeaderLabel
+              title={activeItem?.label ?? "Note"}
+              icon={<NoteIcon size={16} />}
+            />
+          }
+          navigation={
+            <IconButton
+              ref={backRef}
+              aria-label="Back to notes"
+              title="Back to notes"
+              icon={<ArrowLeftIcon size={16} />}
+              onClick={() => working.select("browse")}
+            />
+          }
+        />
+        {items.map((item) => (
+          <div
+            key={item.id}
+            className={styles.noteView}
+            hidden={item.id !== active}
+          >
+            {item.content}
+          </div>
+        ))}
+      </Panel>
+    </div>
+  );
   return (
     <div
-      className={`${layoutStyles.split} ${panelStyles.splitMotion}`}
-      ref={split.ref}
+      className={
+        working
+          ? styles.page
+          : `${layoutStyles.split} ${panelStyles.splitMotion}`
+      }
+      ref={working ? undefined : split.ref}
       data-side={readerOpen ? "" : undefined}
     >
-      <div className={layoutStyles.main}>
+      <div
+        className={working ? styles.collection : layoutStyles.main}
+        hidden={!!working && readerOpen}
+      >
         <NotesPanel
           refresh={refresh}
           refreshRef={refreshRef}
@@ -975,7 +1131,7 @@ function NoteCollection({
               )}
             </>
           )}
-          {author && (
+          {!working && author && (
             <div className={styles.folderHeader}>
               <IconButton
                 hint="familiar"
@@ -1031,19 +1187,29 @@ function NoteCollection({
             !inventoryError &&
             !result.loading &&
             !result.error &&
+            !working?.loading &&
+            !working?.error &&
             !working?.entries.length &&
-            !(author ? visible.length : folders.length) && (
+            !(working
+              ? result.notes.length
+              : author
+                ? visible.length
+                : folders.length) && (
               <EmptyState
                 icon={<NoteIcon size="1.5rem" />}
                 title="No notes yet"
                 description={
-                  author
-                    ? "This folder has no notes in the loaded collection. Go back to folders to browse another agent."
-                    : "Ask one of your agents to save a recipe or reference as a shared note, then refresh."
+                  working
+                    ? "Create a note or ask an agent to save one."
+                    : author
+                      ? "This folder has no notes in the loaded collection. Go back to folders to browse another agent."
+                      : "Ask one of your agents to save a recipe or reference as a shared note, then refresh."
                 }
               />
             )}
-          {!author && !query ? (
+          {working ? (
+            renderNoteGrid(result.notes)
+          ) : !author && !query ? (
             <section
               className={styles.folderGroups}
               aria-label="Agent folders"
@@ -1164,109 +1330,34 @@ function NoteCollection({
           )}
         </NotesPanel>
       </div>
-      <PanelDock
-        open={readerOpen}
-        keepMounted
-        className={layoutStyles.side}
-        resizeHandle={split.handle}
-      >
-        <aside aria-label={working ? "Note editor" : "Note reader"}>
-          <Panel aria-label="Note details">
-            <PanelWorkspace
-              label="Open notes"
-              value={active}
-              select={(key) => {
-                if (working) {
-                  working.select(key);
-                  return;
-                }
-                setSelected(key);
-                visit(
-                  key === profileKey
-                    ? { author, profile }
-                    : { author, note: key },
-                  true,
-                );
-              }}
-              items={[
-                ...(working?.items ?? []).map((item) => ({
-                  ...item,
-                  close: () =>
-                    working?.close(
-                      item.id,
-                      opened[0]
-                        ? noteKey(opened[0])
-                        : (working.items.find((next) => next.id !== item.id)
-                            ?.id ?? "browse"),
-                    ),
-                })),
-                ...opened.map((note) => ({
-                  id: noteKey(note),
-                  label: noteTitle(note),
-                  ...(working
-                    ? {
-                        toolbar: (
-                          <IconButton
-                            aria-label="Back to notes"
-                            title="Back to notes"
-                            icon={<ArrowLeftIcon size={16} />}
-                            onClick={() => working.select("browse")}
-                          />
-                        ),
-                      }
-                    : {}),
-                  icon: (
-                    <Avatar
-                      src={avatarMedia(
-                        agents.find((agent) => agent.pubkey === note.pubkey)
-                          ?.picture,
-                        session.media,
-                      )}
-                      alt=""
-                      fallback={name(note)}
-                      size="fill"
-                      shape="squircle"
-                    />
-                  ),
-                  close: () => close(noteKey(note)),
-                  content: (
-                    <NoteBody
-                      note={note}
-                      onConvert={onConvert ? () => onConvert(note) : undefined}
-                      openProfile={
-                        canProfile(note.pubkey)
-                          ? () => openProfile(note.pubkey)
-                          : undefined
-                      }
-                      author={name(note)}
-                      picture={avatarMedia(
-                        agents.find((agent) => agent.pubkey === note.pubkey)
-                          ?.picture,
-                        session.media,
-                      )}
-                    />
-                  ),
-                })),
-                ...(profilePanel && profileAddress
-                  ? [
-                      {
-                        id: profileKey,
-                        label: `${agents.find((agent) => agent.pubkey === profile)?.name ?? "Agent"} · Profile`,
-                        close: closeProfile,
-                        content: (
-                          <profilePanel.component
-                            target={profileAddress}
-                            close={closeProfile}
-                          />
-                        ),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-          </Panel>
-        </aside>
-      </PanelDock>
+      {fullView}
+      {!working && (
+        <PanelDock
+          open={readerOpen}
+          keepMounted
+          className={layoutStyles.side}
+          resizeHandle={split.handle}
+        >
+          <aside aria-label="Note reader">
+            <Panel aria-label="Note details">
+              <PanelWorkspace
+                label="Open notes"
+                value={active}
+                select={(key) => {
+                  setSelected(key);
+                  visit(
+                    key === profileKey
+                      ? { author, profile }
+                      : { author, note: key },
+                    true,
+                  );
+                }}
+                items={items}
+              />
+            </Panel>
+          </aside>
+        </PanelDock>
+      )}
     </div>
   );
 }

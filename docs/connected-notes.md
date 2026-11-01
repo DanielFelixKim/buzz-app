@@ -127,9 +127,9 @@ formatting bar hides in source mode. An untouched editor does not normalize the
 original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.
 
-Browser cards follow the original reader's square aspect ratio, container-based
-columns, clipped preview and bottom fade. Previews show plain text without link
-destinations; selection remains distinct from hover.
+The combined browser lists linked note titles in newest-revision order, without
+card previews, author folders or row metadata. Author and revision metadata remain
+in the note viewer.
 Both kinds of note use the shared reader's heading, author/avatar and update
 byline, document spacing, scrollport and Markdown styles. Published notes retain
 their saved identifiers; editable documents retain access notices, sharing,
@@ -141,11 +141,12 @@ with empty and partial-collection guidance inside the submenu.
 
 `buzz://note?community=<https-origin>&channel=<uuid>&id=<uuid>` binds a document
 to its community and stable identity. The shared parser is used by chat,
-Markdown and OS ingress. The Notes browser keeps its collection visible and opens documents in a
-resizable, tabbed right sidebar, following the original shared-notes viewer.
-On narrow screens the editor fills the workspace; Back to notes returns to the
-collection without discarding drafts. It uses the same editor as the channel’s
-right-pane panel. Both use the existing browser-history driver.
+Markdown and OS ingress. Opening a title replaces the collection with a full-width
+note view at every screen size. **Back to notes** returns to the same search and
+collection without discarding drafts. Loaded editors stay mounted across these
+visits. The full view uses the same document/editor as the channel’s right-pane
+panel; conversation links still open beside the discussion. Both use the existing
+browser-history driver.
 Notes-page destinations record the selected note, committed search, deleted-note
 filter, editing mode, share/link/delete/history dialog, selected revision and
 history page. New-note destinations contain a draft identifier. Conversation
@@ -163,8 +164,9 @@ session; refreshing or restarting is not offline draft persistence. Replaying a
 destination reads current permissions and does not repeat a save, share, delete
 or restore. Legacy note addresses remain accepted.
 
-Legacy NIP-23 routes open the same browser and sidebar as editable documents.
-The collection has one search, author folders, shared card renderer and tab host.
+Legacy NIP-23 routes open the same full-page viewer as editable documents.
+The combined collection has one search, recency-ordered title list and pagination
+action.
 Signed current-revision authors provide document bylines; this is not a new
 claim about the original creator after collaborative edits. Independent source
 pagination and read authority remain with their existing owners.

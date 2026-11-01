@@ -457,19 +457,30 @@ it.each([false, true])(
     }
     const view = render(<Host />);
     try {
-      await enterFolder();
+      if (combined)
+        await user.click(await screen.findByRole("link", { name: "Icons" }));
+      else {
+        await enterFolder();
+        await user.click(
+          screen.getByRole("button", { name: "Open Icons by Carl" }),
+        );
+      }
+      const reader = combined
+        ? screen.getByRole("region", { name: "Note details" })
+        : screen.getByRole("complementary");
       await user.click(
-        screen.getByRole("button", { name: "Open Icons by Carl" }),
+        within(reader).getByRole("button", { name: "View Carl profile" }),
       );
-      await user.click(
-        within(screen.getByRole("complementary")).getByRole("button", {
-          name: "View Carl profile",
-        }),
-      );
-      expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
-      expect(
-        screen.getByRole("tab", { name: "Carl · Profile" }),
-      ).toHaveAttribute("aria-selected", "true");
+      if (combined)
+        expect(
+          screen.queryByRole("article", { name: "Icons" }),
+        ).not.toBeInTheDocument();
+      else {
+        expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
+        expect(
+          screen.getByRole("tab", { name: "Carl · Profile" }),
+        ).toHaveAttribute("aria-selected", "true");
+      }
       expect(
         screen.getByText(`Profile for buzz:agent-profile:${carl}`),
       ).toBeVisible();
@@ -477,12 +488,19 @@ it.each([false, true])(
         await scope.dispose();
       });
       expect(
-        screen.queryByRole("tab", { name: "Carl · Profile" }),
+        screen.queryByText(`Profile for buzz:agent-profile:${carl}`),
       ).not.toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: "Icons" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      if (combined)
+        expect(screen.getByRole("article", { name: "Icons" })).toBeVisible();
+      else {
+        expect(
+          screen.queryByRole("tab", { name: "Carl · Profile" }),
+        ).not.toBeInTheDocument();
+        expect(screen.getByRole("tab", { name: "Icons" })).toHaveAttribute(
+          "aria-selected",
+          "true",
+        );
+      }
     } finally {
       view.unmount();
       await ctx.fiber.dispose();
