@@ -77,10 +77,9 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     name: "Storage research",
     exact: true,
   });
-  await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
-    .click();
-  await page.getByRole("option", { name: "Editing", exact: true }).click();
+  await expect(
+    document.getByRole("combobox", { name: "Document mode", exact: true }),
+  ).toContainText("Editing");
   await document
     .getByRole("textbox", { name: "Document body", exact: true })
     .fill("Keep my unsaved research");
@@ -93,6 +92,10 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     .getByRole("link", { name: "Storage research", exact: true })
     .click();
   await expect(document).toContainText("Keep my unsaved research");
+  await document
+    .getByRole("combobox", { name: "Document mode", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await document
     .getByRole("combobox", { name: "Document mode", exact: true })
     .click();
@@ -180,6 +183,13 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     exact: true,
   });
   await expect(document).toBeVisible();
+  await expect(
+    document.getByRole("combobox", { name: "Document mode", exact: true }),
+  ).toContainText("Editing");
+  await document
+    .getByRole("combobox", { name: "Document mode", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await document
     .getByRole("link", { name: "Storage research", exact: true })
     .click();
@@ -197,6 +207,13 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     name: "Storage research",
     exact: true,
   });
+  await expect(
+    research.getByRole("combobox", { name: "Document mode", exact: true }),
+  ).toContainText("Editing");
+  await research
+    .getByRole("combobox", { name: "Document mode", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await research
     .getByRole("combobox", { name: "Document mode", exact: true })
     .click();
@@ -253,6 +270,10 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await expect(document).toBeVisible();
   await expect(research).not.toBeVisible();
   // Reopening is a fresh visit; closing an inactive sibling keeps it selected.
+  await document
+    .getByRole("combobox", { name: "Document mode", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await document
     .getByRole("link", { name: "Storage research", exact: true })
     .click();
@@ -312,7 +333,12 @@ test("human and agents edit, link, share and export the same working note", asyn
     name: "Document mode",
     exact: true,
   });
-  await expect(mode).toContainText("Viewing");
+  await expect(mode).toContainText("Editing");
+  await expect(
+    document.getByRole("textbox", { name: "Document body", exact: true }),
+  ).toBeVisible();
+  await mode.click();
+  await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await expect(document).toContainText("Carl");
   await expect(document).toContainText("Updated");
   await expect(document.locator("time")).toHaveAttribute(
@@ -817,6 +843,13 @@ test("creates, deletes and restores a working note through the editor", async ({
     .click();
   const document = page.getByRole("article", { name: "Research draft" });
   await expect(
+    document.getByRole("combobox", { name: "Document mode", exact: true }),
+  ).toContainText("Editing");
+  await document
+    .getByRole("combobox", { name: "Document mode", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Viewing", exact: true }).click();
+  await expect(
     page.getByRole("searchbox", { name: "Search notes" }),
   ).not.toBeVisible();
   await page
@@ -985,6 +1018,12 @@ test("reader access hides editing while preserving history", async ({
   await expect(document.getByText("You have read access.")).toBeVisible();
   await expect(
     document.getByRole("combobox", { name: "Document mode", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    document.getByRole("textbox", { name: "Document body", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    document.getByRole("group", { name: "Document formatting", exact: true }),
   ).toHaveCount(0);
   await document.getByRole("button", { name: "Note actions" }).click();
   await page.getByRole("menuitem", { name: "Revision history" }).click();

@@ -111,7 +111,10 @@ the retained snapshots and whether more remain.
 
 ## Document editing
 
-The Viewing/Editing selector controls the document mode. Editing reveals the
+The Viewing/Editing selector controls the document mode. New visits default to
+Editing for editable notes; explicit Viewing/Editing history choices remain
+authoritative. Read-only and deleted notes keep their reader presentation, and
+retained drafts remain available after access changes. Editing reveals the
 formatting list directly, without a formatting toggle. Both modes keep the same
 title and body alignment; the body has no additional editor border or padding.
 The toolbar is pinned in an inset pane-bottom floating surface outside the

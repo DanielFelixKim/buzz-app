@@ -15,9 +15,10 @@ private, and owners retain the automatic-agent sharing toggle.
 
 The browser searches its loaded collection. **Load more notes** continues
 discovery. Titles are stacked newest first. Open a title for a full-width note;
-**Back to notes** returns to the list and preserves drafts. Choose **Editing** from
-the **Viewing/Editing** dropdown to show the formatting list. The document stays in
-place, and **Save** appears at the bottom when modified. **Viewing** previews the
+**Back to notes** returns to the list and preserves drafts. Notes open in
+**Editing** when you have edit access; use the **Viewing/Editing** dropdown to
+switch modes. The document stays in place, and **Save** appears at the bottom
+when modified. **Viewing** previews the
 draft without saving; **Discard changes** restores the saved version. **Link**,
 **⌘K/Ctrl+K**, or typing `[[` opens the standard link dialog with a note picker. It inserts a stable
 link from the loaded notes. Ordinary index notes group related documents. A link

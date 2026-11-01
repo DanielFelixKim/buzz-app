@@ -331,8 +331,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   People and agents author the same channel-backed documents, which retain
   revisions. Published NIP-23 notes and the separate plural `notes_*` tools do
   not feed this page; existing published records are unchanged.
-  Choose **Editing** to reveal the formatting bar pinned at the bottom of the
-  pane, then **Save** to publish changes. **Link** accepts a URL or a loaded note;
+  Notes open in **Editing** when you have edit access, with the formatting bar
+  pinned at the bottom. Choose **Viewing** to preview, or **Save** to publish
+  changes. **Link** accepts a URL or a loaded note;
   linking grants no access. **Note actions → Markdown source** opens source
   editing; **Formatted text** in that menu switches back.
   **Note actions → Linked notes** lists loaded

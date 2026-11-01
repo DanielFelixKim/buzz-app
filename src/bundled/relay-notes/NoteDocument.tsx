@@ -88,8 +88,7 @@ export function NoteDocument({
   const [note, setNote] = useState<Note | undefined>(cachedDraft?.base);
   const [title, setTitle] = useState(cachedDraft?.title ?? "");
   const [markdown, setMarkdown] = useState(cachedDraft?.markdown ?? "");
-  const [localEditing, setLocalEditing] = useState(!!cachedDraft);
-  const editing = view ? !!view.edit : localEditing;
+  const [localEditing, setLocalEditing] = useState(true);
   const [source, setSource] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -104,6 +103,10 @@ export function NoteDocument({
   const [restoreFrom, setRestoreFrom] = useState<Note | undefined>(
     cachedDraft?.restoreFrom,
   );
+  const dirty = !!note && (title !== note.title || markdown !== note.markdown);
+  const editing =
+    (view ? (view.edit ?? true) : localEditing) &&
+    ((canEdit && !note?.deleted) || dirty || !!restoreFrom);
   const [localDialog, setLocalDialog] = useState<
     "share" | "history" | "link" | "delete" | undefined
   >();
@@ -130,7 +133,6 @@ export function NoteDocument({
   const callbacks = useRef({ onChange, onDirty, onUnavailable });
   callbacks.current = { onChange, onDirty, onUnavailable };
   const community = workspace.session.scope.replace(/:[0-9a-f]{64}$/, "");
-  const dirty = !!note && (title !== note.title || markdown !== note.markdown);
   useEffect(() => {
     const key = noteKey(address);
     if (note && dirty)
