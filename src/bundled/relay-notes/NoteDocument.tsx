@@ -360,7 +360,14 @@ export function NoteDocument({
           <IconButton
             aria-label="Refresh note"
             title="Refresh note"
-            icon={<ArrowsClockwiseIcon size={16} />}
+            icon={
+              <ArrowsClockwiseIcon
+                size={16}
+                aria-hidden="true"
+                className={busy ? "motion-safe:animate-spin" : undefined}
+              />
+            }
+            aria-busy={busy}
             disabled={busy}
             onClick={() => {
               void refresh();
@@ -438,11 +445,6 @@ export function NoteDocument({
             </>
           )}
         </div>
-        {busy && (
-          <p role="status" className="text-caption text-subtle">
-            Working…
-          </p>
-        )}
         {error && <p role="alert">{error}</p>}
         {status && (
           <p role="status" className="text-caption text-subtle">
