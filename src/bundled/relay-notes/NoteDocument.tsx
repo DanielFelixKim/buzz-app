@@ -90,6 +90,7 @@ export function NoteDocument({
   const [markdown, setMarkdown] = useState(cachedDraft?.markdown ?? "");
   const [localEditing, setLocalEditing] = useState(!!cachedDraft);
   const editing = view ? !!view.edit : localEditing;
+  const [source, setSource] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(
@@ -385,6 +386,17 @@ export function NoteDocument({
                 />
                 <MenuPopup>
                   <MenuItem onClick={copyLink}>Copy note link</MenuItem>
+                  {canEdit && !note.deleted && (
+                    <MenuItem
+                      disabled={busy}
+                      onClick={() => {
+                        setSource(editing ? !source : true);
+                        setEditing(true);
+                      }}
+                    >
+                      {editing && source ? "Formatted text" : "Markdown source"}
+                    </MenuItem>
+                  )}
                   {!note.deleted && (
                     <MenuSubmenu>
                       <MenuSubmenuTrigger>Linked notes</MenuSubmenuTrigger>
@@ -460,6 +472,8 @@ export function NoteDocument({
         {note && (editing || (!unavailable && !note.deleted)) && (
           <div className={styles.stack}>
             <NoteEditor
+              source={source}
+              onSourceChange={setSource}
               toolbarTarget={toolbarTarget}
               value={markdown}
               editing={editing}
@@ -620,7 +634,7 @@ export function NoteDocument({
       <div
         ref={setToolbarTarget}
         className={styles.editorDock}
-        hidden={!editing}
+        hidden={!editing || source}
       />
     </article>
   );

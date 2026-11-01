@@ -10,7 +10,6 @@ import type {
 } from "../../features/messages/composer-dom";
 import { composerMarkdown } from "../../features/messages/composer-markdown";
 import { MAX_NOTE_BYTES, noteUrl, type Note } from "../../features/notes/model";
-import { Button } from "../../shared/design-system/ui/Button";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { noteEditorDraft } from "./editor-markdown";
 import styles from "./WorkingNotes.module.css";
@@ -30,6 +29,8 @@ export function NoteEditor({
   onLinkOpenChange,
   onSave,
   toolbarTarget,
+  source,
+  onSourceChange,
 }: {
   value: string;
   editing: boolean;
@@ -42,12 +43,13 @@ export function NoteEditor({
   onLinkOpenChange(open: boolean): void;
   onSave(): void;
   toolbarTarget: HTMLElement | null;
+  source: boolean;
+  onSourceChange(source: boolean): void;
 }) {
   const input = useRef<ComposerInputElement>(null);
   const [draft, setDraft] = useState(() => noteEditorDraft(value));
   const [formats, setFormats] = useState<readonly ComposerFormat[]>([]);
   const [link, setLink] = useState<ComposerLinkEdit>();
-  const [source, setSource] = useState(false);
   const emitted = useRef(value);
   useEffect(() => {
     if (value === emitted.current) return;
@@ -59,9 +61,9 @@ export function NoteEditor({
       setLink(undefined);
       return;
     }
-    if (source) setSource(false);
+    if (source) onSourceChange(false);
     setLink((old) => old ?? input.current?.editLink() ?? undefined);
-  }, [linkOpen, source]);
+  }, [linkOpen, source, onSourceChange]);
   const editLink = (edit?: ComposerLinkEdit) => {
     const next = edit ?? input.current?.editLink();
     if (!next) return;
@@ -71,32 +73,22 @@ export function NoteEditor({
   return (
     <div className={styles.stack}>
       {editing &&
+        !source &&
         toolbarTarget &&
         createPortal(
           <fieldset
             className={styles.editorToolbar}
             aria-label="Document formatting"
           >
-            {!source && (
-              <ComposerFormattingTools
-                persistent
-                disabled={disabled || !editing}
-                activeFormats={formats}
-                toggleFormat={(format) => input.current?.toggleFormat(format)}
-                editLink={() => editLink()}
-              >
-                {null}
-              </ComposerFormattingTools>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-pressed={source}
-              onClick={() => setSource(!source)}
+            <ComposerFormattingTools
+              persistent
               disabled={disabled || !editing}
+              activeFormats={formats}
+              toggleFormat={(format) => input.current?.toggleFormat(format)}
+              editLink={() => editLink()}
             >
-              {source ? "Formatted text" : "Markdown source"}
-            </Button>
+              {null}
+            </ComposerFormattingTools>
           </fieldset>,
           toolbarTarget,
         )}

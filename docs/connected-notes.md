@@ -121,8 +121,10 @@ same dialog. Note destinations retain their stable community/channel/document UR
 Markdown remains the persisted format. The note-owned importer restores supported
 inline formatting, lists, quotes and code into the existing schema. Unsupported
 blocks, including headings and tables, remain editable Markdown source rather
-than being discarded. Markdown source is also available explicitly. An untouched
-editor does not normalize the original document. Rich edits use the shared
+than being discarded. **Note actions → Markdown source** opens source editing;
+**Formatted text** in the same menu returns to the formatted editor. The
+formatting bar hides in source mode. An untouched editor does not normalize the
+original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.
 
 Browser cards follow the original reader's square aspect ratio, container-based

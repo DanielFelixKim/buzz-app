@@ -330,7 +330,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   document without changing the original. Editable documents retain revisions.
   Choose **Editing** to reveal the formatting bar pinned at the bottom of the
   pane, then **Save** to publish changes. **Link** accepts a URL or a loaded note;
-  linking grants no access. **Note actions → Linked notes** lists loaded
+  linking grants no access. **Note actions → Markdown source** opens source
+  editing; **Formatted text** in that menu switches back.
+  **Note actions → Linked notes** lists loaded
   notes that link to the current document. Sharing a note includes its retained
   history.
   Notes are readable by the relay operator. In a conversation, Back/Forward can

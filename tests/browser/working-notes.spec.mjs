@@ -508,15 +508,19 @@ test("human and agents edit, link, share and export the same working note", asyn
   await page.getByRole("option", { name: "Editing", exact: true }).click();
   await expect(body.locator("strong")).toHaveText("Ready");
 
-  await document
-    .getByRole("button", { name: "Markdown source", exact: true })
+  await document.getByRole("button", { name: "Note actions" }).click();
+  await page
+    .getByRole("menuitem", { name: "Markdown source", exact: true })
     .click();
+  await expect(toolbar).toHaveCount(0);
   await expect(
     document.getByRole("textbox", { name: "Markdown", exact: true }),
   ).toHaveValue(/\*\*Ready\*\*/);
-  await document
-    .getByRole("button", { name: "Formatted text", exact: true })
+  await document.getByRole("button", { name: "Note actions" }).click();
+  await page
+    .getByRole("menuitem", { name: "Formatted text", exact: true })
     .click();
+  await expect(toolbar).toBeVisible();
   await expect(body.locator("strong")).toHaveText("Ready");
   await body.press("ArrowRight");
   await body.press("ControlOrMeta+End");
@@ -661,15 +665,9 @@ test("human and agents edit, link, share and export the same working note", asyn
     await expect(toolbar).toBeVisible();
     const narrowPane = await document.boundingBox();
     const narrowToolbar = await toolbar.boundingBox();
-    const narrowFormats = await document
-      .getByRole("group", { name: "Formatting options" })
-      .boundingBox();
-    const narrowSource = await document
-      .getByRole("button", { name: "Markdown source", exact: true })
-      .boundingBox();
-    expect(narrowSource.y).toBeGreaterThanOrEqual(
-      narrowFormats.y + narrowFormats.height,
-    );
+    await expect(
+      toolbar.getByRole("button", { name: "Markdown source", exact: true }),
+    ).toHaveCount(0);
     expect(narrowToolbar.x).toBeGreaterThan(narrowPane.x);
     expect(narrowToolbar.x + narrowToolbar.width).toBeLessThan(
       narrowPane.x + narrowPane.width,
