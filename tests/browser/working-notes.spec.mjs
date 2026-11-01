@@ -33,6 +33,14 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await expect(
     list.getByRole("link", { name: "Connected notes plan", exact: true }),
   ).toHaveAttribute("href", /^buzz:\/\/note\?/);
+  const measure = await list.evaluate(
+    () => 52 * parseFloat(getComputedStyle(document.documentElement).fontSize),
+  );
+  const listBounds = await list.boundingBox();
+  expect(listBounds.width).toBe(measure);
+  expect(
+    Math.abs(listBounds.x * 2 + listBounds.width - page.viewportSize().width),
+  ).toBeLessThan(1);
   await page.screenshot({ path: testInfo.outputPath("notes-list.png") });
   const links = await list.getByRole("link").all();
   const first = await links[0].boundingBox();
@@ -340,6 +348,15 @@ test("human and agents edit, link, share and export the same working note", asyn
     document.getByRole("button", { name: "Note actions" }),
   ).toBeFocused();
   const viewingBounds = await canvas.boundingBox();
+  const channelMeasure = await canvas.evaluate(
+    () => 52 * parseFloat(getComputedStyle(document.documentElement).fontSize),
+  );
+  expect(viewingBounds.width).toBe(channelMeasure);
+  expect(
+    Math.abs(
+      viewingBounds.x * 2 + viewingBounds.width - page.viewportSize().width,
+    ),
+  ).toBeLessThan(1);
   const scrollport = document.getByRole("region", {
     name: "Note contents",
     exact: true,
@@ -370,6 +387,8 @@ test("human and agents edit, link, share and export the same working note", asyn
 
   await expect(toolbar).toBeVisible();
   const toolbarBounds = await toolbar.boundingBox();
+  expect(toolbarBounds.width).toBe(channelMeasure);
+  expect(toolbarBounds.x).toBe(viewingBounds.x);
   const paneBounds = await document.boundingBox();
   const paneInset = await scrollport.evaluate((element) =>
     parseFloat(getComputedStyle(element).paddingInlineStart),

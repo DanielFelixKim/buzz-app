@@ -107,3 +107,10 @@
   text-decoration: underline;
   overflow-wrap: anywhere;
 }
+
+/* Match the channel timeline's centered reading column. */
+.body > *,
+.document > * {
+  width: min(100%, 52rem);
+  margin-inline: auto;
+}

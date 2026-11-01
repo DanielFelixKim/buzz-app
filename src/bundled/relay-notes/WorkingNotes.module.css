@@ -84,7 +84,8 @@
 }
 .editorDock {
   flex-shrink: 0;
-  margin: 0 var(--space-4) var(--space-4);
+  width: min(calc(100% - 2 * var(--space-4)), 52rem);
+  margin: 0 auto var(--space-4);
 }
 .editorToolbar {
   @apply floating-surface;

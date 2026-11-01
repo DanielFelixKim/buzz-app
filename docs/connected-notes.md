@@ -138,7 +138,8 @@ serializer; source spelling of supported constructs may normalize.
 
 The browser lists linked note titles in newest-revision order, without
 card previews, author folders or row metadata. Author and revision metadata remain
-in the note viewer.
+in the note viewer. The list, document content and formatting bar share the channel
+timeline/composer's centered 52rem maximum width and shrink to fit narrow panes.
 Notes retain the shared reader's heading, author/avatar and update byline,
 document spacing, scrollport and Markdown styles, alongside access notices,
 sharing, revision history, backlinks and draft actions.
