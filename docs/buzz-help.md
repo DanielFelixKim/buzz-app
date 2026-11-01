@@ -335,8 +335,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   linking grants no access. **Note actions → Markdown source** opens source
   editing; **Formatted text** in that menu switches back.
   **Note actions → Linked notes** lists loaded
-  notes that link to the current document. Sharing a note includes its retained
-  history.
+  notes that link to the current document. **Share note** opens the same searchable
+  member picker used by channels. Owners and admins can add people or agents and
+  use each person's menu to choose **Viewing only**, **Participating**, or **Admin**
+  access. Notes stay private; sharing includes retained history. Owners can also
+  toggle automatic sharing with their verified agents.
   Notes are readable by the relay operator. In a conversation, Back/Forward can
   revisit a note; closing its tab retires those visits. Collapsing the tab pane
   only hides it.

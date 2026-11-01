@@ -93,6 +93,7 @@ export function NoteDocument({
   const [source, setSource] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
   const [busy, setBusy] = useState(false);
+  const shareTrigger = useRef<HTMLButtonElement>(null);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(
     null,
   );
@@ -376,6 +377,7 @@ export function NoteDocument({
           {note && !unavailable && (
             <>
               <IconButton
+                ref={shareTrigger}
                 aria-label="Share note"
                 title="Share note"
                 icon={<ShareIcon size={16} />}
@@ -523,6 +525,7 @@ export function NoteDocument({
           <NoteSharing
             note={note}
             workspace={workspace}
+            trigger={shareTrigger}
             onClose={() => setDialog(undefined)}
           />
         )}

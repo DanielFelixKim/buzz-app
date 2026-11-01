@@ -1,7 +1,9 @@
 import { attestedOwner } from "../agents/owner-attestation";
 import {
   memberAuthority,
+  memberChangeConfirmed,
   type MemberAuthority,
+  type MemberChange,
 } from "../channel-members/administration-protocol";
 import type { RelaySession } from "../relay/session";
 import { hasEventProof, type RelayEvent } from "../relay/events";
@@ -253,7 +255,7 @@ export function createNotesWorkspace(session: RelaySession) {
           hasEventProof(profile) &&
           (await attestedOwner(profile)) === session.viewer
         )
-          await setMember(address, key, "remove", caller, false);
+          await setMember(address, key, "remove", caller, { restrict: false });
       }
     })();
     syncing.set(address.channel, work);
@@ -298,9 +300,12 @@ export function createNotesWorkspace(session: RelaySession) {
   async function setMember(
     address: NoteAddress,
     key: string,
-    access: "read" | "edit" | "remove",
+    access: "read" | "edit" | "admin" | "remove",
     caller?: AbortSignal,
-    restrict = true,
+    options: {
+      restrict?: boolean;
+      expectedRole?: MemberChange["expectedRole"];
+    } = {},
   ) {
     if (!PUBKEY.test(key)) throw new Error("Choose a valid public key.");
     await resolve(address, caller);
@@ -315,7 +320,22 @@ export function createNotesWorkspace(session: RelaySession) {
       roles.roles[key] === "owner"
     )
       throw new Error("You cannot change this person’s note access.");
-    if (restrict && access !== "edit" && state.labels.includes(AGENTS_LABEL)) {
+    const previous = roles.roles[key];
+    if (
+      options.expectedRole !== undefined &&
+      (options.expectedRole === "absent"
+        ? !!previous
+        : previous !== options.expectedRole)
+    )
+      throw new Error(
+        "This person’s access changed. Refresh access before retrying.",
+      );
+    if (
+      options.restrict !== false &&
+      access !== "edit" &&
+      access !== "admin" &&
+      state.labels.includes(AGENTS_LABEL)
+    ) {
       const profiles = await snapshot(
         [{ kinds: [0], authors: [key], limit: 1, consistency: "strong" }],
         caller,
@@ -328,8 +348,8 @@ export function createNotesWorkspace(session: RelaySession) {
       )
         await setAudience(address, false, caller);
     }
-    const role = access === "read" ? "guest" : "member";
-    const previous = roles.roles[key];
+    const role =
+      access === "read" ? "guest" : access === "admin" ? "admin" : "member";
     if (previous) {
       if (access === "remove" || previous !== role)
         await session.memberAdministration.run(address.channel, {
@@ -358,9 +378,11 @@ export function createNotesWorkspace(session: RelaySession) {
     }
     const confirmed = await authority(address.channel, caller);
     if (
-      access === "remove"
-        ? !!confirmed.roles[key]
-        : confirmed.roles[key] !== role
+      !memberChangeConfirmed(confirmed, {
+        pubkey: key,
+        expectedRole: previous ?? "absent",
+        role: access === "remove" ? "remove" : role,
+      })
     )
       throw new Error(
         "The sharing change could not be confirmed. Refresh access before retrying.",

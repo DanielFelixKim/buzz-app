@@ -225,8 +225,11 @@ export async function notesFixture() {
       if (!channel || (role !== "owner" && role !== "admin"))
         throw new PublishRejected("restricted: administration denied");
       const key = noteTag(event, "p") ?? "";
-      if (event.kind === 9000)
-        channel.roles[key] = noteTag(event, "role") ?? "member";
+      if (event.kind === 9000) {
+        const requested = noteTag(event, "role") ?? "member";
+        channel.roles[key] =
+          requested === "member" && agentKeys.includes(key) ? "bot" : requested;
+      }
       if (event.kind === 9001) delete channel.roles[key];
       if (event.kind === 9002) {
         channel.labels = event.tags

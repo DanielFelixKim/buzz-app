@@ -105,15 +105,15 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     .getByRole("button", { name: "Share note", exact: true })
     .click();
   await expect(
-    page.getByRole("dialog", { name: "Share Storage research" }),
+    page.getByRole("dialog", { name: "Share access" }),
   ).toBeVisible();
   await page.goBack();
-  await expect(
-    page.getByRole("dialog", { name: "Share Storage research" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Share access" })).toHaveCount(
+    0,
+  );
   await page.goForward();
   await expect(
-    page.getByRole("dialog", { name: "Share Storage research" }),
+    page.getByRole("dialog", { name: "Share access" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await document.getByRole("button", { name: "Note actions" }).click();
@@ -209,15 +209,15 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     .getByRole("button", { name: "Share note", exact: true })
     .click();
   await expect(
-    page.getByRole("dialog", { name: "Share Storage research" }),
+    page.getByRole("dialog", { name: "Share access" }),
   ).toBeVisible();
   await page.goBack();
-  await expect(
-    page.getByRole("dialog", { name: "Share Storage research" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Share access" })).toHaveCount(
+    0,
+  );
   await page.goForward();
   await expect(
-    page.getByRole("dialog", { name: "Share Storage research" }),
+    page.getByRole("dialog", { name: "Share access" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   expect(page.url()).not.toContain("Unsaved");
@@ -574,39 +574,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   await document
     .getByRole("button", { name: "Share note", exact: true })
     .click();
-  const sharing = page.getByRole("dialog", { name: "Share Delivery plan" });
-  await sharing
-    .getByRole("textbox", { name: "Person or agent public key" })
-    .fill(await page.evaluate(() => window.workingNotesFixture.sam));
-  await sharing
-    .getByRole("button", { name: "Share note", exact: true })
-    .click();
-  await expect(sharing.getByText("Sam", { exact: true })).toBeVisible();
-  expect(
-    (
-      await page.evaluate(
-        (address) => window.workingNotesFixture.readAsSam(address),
-        created,
-      )
-    ).length,
-  ).toBe(1);
-  await page.evaluate(
-    (address) => window.workingNotesFixture.makeAdministrator(address),
-    created,
-  );
-  await page.keyboard.press("Escape");
-  await document
-    .getByRole("button", { name: "Share note", exact: true })
-    .click();
-  const samAccess = sharing.getByRole("combobox", {
-    name: "Access for Sam",
-    exact: true,
-  });
-  await expect(samAccess).toContainText("Administrator");
-  await samAccess.click();
-  await page.getByRole("option", { name: "Can edit", exact: true }).click();
-  await expect(samAccess).toContainText("Can edit");
-  await page.keyboard.press("Escape");
+  const sharing = page.getByRole("dialog", { name: "Share access" });
   // Capture the browser clipboard boundary without writing to the host clipboard.
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", {
@@ -618,6 +586,121 @@ test("human and agents edit, link, share and export the same working note", asyn
       },
     });
   });
+  await expect(sharing).toContainText("all retained revisions");
+  await expect(
+    sharing.getByRole("region", { name: "Member list", exact: true }),
+  ).toHaveAttribute("data-refreshing", "false");
+  await sharing
+    .getByRole("searchbox", { name: "Search people and agents", exact: true })
+    .fill(await page.evaluate(() => window.workingNotesFixture.sam));
+  await sharing.getByRole("button", { name: /^Add Sam .* as$/ }).click();
+  await page.getByRole("menuitem", { name: /View only/ }).click();
+  const addConfirmation = page.getByRole("dialog", {
+    name: "Add member?",
+    exact: true,
+  });
+  await addConfirmation
+    .getByRole("button", { name: "Add with view-only access", exact: true })
+    .click();
+  await expect(
+    sharing.getByRole("region", { name: "Member list", exact: true }),
+  ).toHaveAttribute("data-refreshing", "false");
+  await expect(
+    sharing
+      .getByRole("region", { name: "Member list", exact: true })
+      .getByText("Sam", { exact: true }),
+  ).toBeVisible();
+  await expect(sharing.getByRole("button", { name: "Done" })).toBeEnabled();
+  expect(
+    (
+      await page.evaluate(
+        (address) => window.workingNotesFixture.readAsSam(address),
+        created,
+      )
+    ).length,
+  ).toBe(1);
+  await sharing
+    .getByRole("button", { name: "Actions for Sam", exact: true })
+    .click();
+  await page.getByRole("menuitemradio", { name: "Admin", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Change access to Admin?", exact: true })
+    .getByRole("button", { name: "Set as admin", exact: true })
+    .click();
+  await expect(
+    sharing.getByRole("region", { name: "Member list", exact: true }),
+  ).toContainText("Admin");
+  await expect(sharing.getByRole("button", { name: "Done" })).toBeEnabled();
+  await sharing
+    .getByRole("button", { name: "Actions for Sam", exact: true })
+    .click();
+  await page
+    .getByRole("menuitemradio", { name: "Participating", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", {
+      name: "Change access to Participating?",
+      exact: true,
+    })
+    .getByRole("button", { name: "Set to participating", exact: true })
+    .click();
+  await expect(
+    sharing.getByRole("region", { name: "Member list", exact: true }),
+  ).not.toContainText("Admin");
+  await expect(
+    sharing.getByRole("button", { name: "Done", exact: true }),
+  ).toBeEnabled();
+  await sharing.getByRole("button", { name: "Copy link", exact: true }).click();
+  await expect(
+    sharing.getByRole("button", { name: "Link copied", exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => window.noteCopiedLink)).toBe(created.link);
+  await sharing
+    .getByRole("searchbox", { name: "Search people and agents" })
+    .fill("");
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.classList.toggle("dark", value === "dark");
+    }, theme);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 950 });
+      await page.evaluate((narrow) => {
+        document.documentElement.style.fontSize = narrow ? "20px" : "";
+      }, width === 390);
+      await expect(sharing).toBeInViewport({ ratio: 1 });
+      await expect(
+        sharing.getByRole("searchbox", { name: "Search people and agents" }),
+      ).toBeVisible();
+      const toggleBounds = await sharing
+        .getByRole("checkbox", { name: "Share with my agents automatically" })
+        .boundingBox();
+      const headingTextX = await sharing
+        .getByRole("heading", { name: /^People ·/ })
+        .evaluate((heading) => {
+          const text = document.createRange();
+          text.selectNodeContents(heading);
+          return text.getBoundingClientRect().x;
+        });
+      expect(Math.abs(toggleBounds.x - headingTextX)).toBeLessThan(1);
+      await expect(
+        sharing.getByRole("button", { name: "Done" }),
+      ).toBeInViewport({
+        ratio: 1,
+      });
+      await page.screenshot({
+        path: testInfo.outputPath(`note-share-${theme}-${width}.png`),
+      });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.style.fontSize = "";
+  });
+  await page.keyboard.press("Escape");
+  await expect(
+    document.getByRole("button", { name: "Share note", exact: true }),
+  ).toBeFocused();
   await document.getByRole("button", { name: "Note actions" }).click();
   await page.getByRole("menuitem", { name: "Copy note link" }).click();
   await expect(

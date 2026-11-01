@@ -479,6 +479,46 @@ describe("channel orchestration", () => {
     expect(invitations[0]?.tags).toContainEqual(["role", "guest"]);
     expect(f.channels.get(note.channel)?.roles[f.sam.pubkey]).toBe("guest");
   });
+  it("keeps role confirmations current and supports explicit administrators", async () => {
+    const f = await fixture(),
+      note = f.seed("Plan", "Work", false);
+    await f.workspace.setMember(note, f.sam.pubkey, "admin", undefined, {
+      expectedRole: "absent",
+    });
+    expect(f.channels.get(note.channel)?.roles[f.sam.pubkey]).toBe("admin");
+    const before = f.accepted.length;
+    await expect(
+      f.workspace.setMember(note, f.sam.pubkey, "read", undefined, {
+        expectedRole: "member",
+      }),
+    ).rejects.toThrow(/access changed/);
+    expect(f.accepted).toHaveLength(before);
+    await f.workspace.setMember(note, f.sam.pubkey, "read", undefined, {
+      expectedRole: "admin",
+    });
+    expect(f.channels.get(note.channel)?.roles[f.sam.pubkey]).toBe("guest");
+  });
+  it("confirms participating agent access when the relay stores the bot role", async () => {
+    const f = await fixture(),
+      note = f.seed("Plan", "Work", false);
+    const state = await f.workspace.setMember(note, f.carl.pubkey, "edit");
+    expect(state.roles[f.carl.pubkey]).toBe("bot");
+    expect(f.channels.get(note.channel)?.labels).not.toContain(
+      "buzz.notes.agents",
+    );
+  });
+  it("keeps note access administration unavailable to an editor", async () => {
+    const f = await fixture(),
+      note = f.seed("Plan", "Work", false);
+    const channel = f.channels.get(note.channel);
+    if (!channel) throw new Error("Missing note channel");
+    channel.roles[f.viewer.pubkey] = "member";
+    channel.updated++;
+    await expect(
+      f.workspace.setMember(note, f.sam.pubkey, "admin"),
+    ).rejects.toThrow(/cannot change/);
+    expect(channel.roles[f.sam.pubkey]).toBeUndefined();
+  });
   it("keeps deliberate restrictions when a new owned agent asks for access", async () => {
     const f = await fixture(),
       restricted = f.seed("Restricted", "Only owner", false);

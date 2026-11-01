@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import type { MemberAuthority } from "../../features/channel-members/administration-protocol";
-import { AGENTS_LABEL, type Note } from "../../features/notes/model";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
+import type { MemberChange } from "../../features/channel-members/administration-protocol";
+import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
+import { AGENTS_LABEL, noteUrl, type Note } from "../../features/notes/model";
 import type { NotesWorkspace } from "../../features/notes/workspace";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Input } from "../../shared/design-system/ui/Input";
-import { Select } from "../../shared/design-system/ui/Select";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
-import { formatPublicKey } from "../../shared/identity/public-key";
 import styles from "./WorkingNotes.module.css";
 
 const message = (error: unknown) =>
@@ -21,197 +25,129 @@ export function NoteSharing({
   note,
   workspace,
   onClose,
+  trigger,
 }: {
   note: Note;
   workspace: NotesWorkspace;
   onClose(): void;
+  trigger: RefObject<HTMLElement | null>;
 }) {
-  const [authority, setAuthority] = useState<MemberAuthority>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [key, setKey] = useState("");
-  const [access, setAccess] = useState("read");
-  const [agents, setAgents] = useState(false);
+  const pending = useRef(false);
+  const lifetime = useRef<AbortController | undefined>(undefined);
+  const [agents, setAgents] = useState<boolean>();
   const session = workspace.session;
-  const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
-    session.profiles.snapshot,
-    session.profiles.snapshot,
+  const { id, channel } = note;
+  const administration = useSyncExternalStore(
+    session.memberAdministration.subscribe,
+    () => session.memberAdministration.snapshot(note.channel),
   );
   useEffect(() => {
     const controller = new AbortController();
+    lifetime.current = controller;
     void (async () => {
-      await workspace.resolve(note, controller.signal);
-      const state = await workspace.sharing(note.channel, controller.signal);
-      const roles = state.authority;
+      await workspace.resolve({ id, channel }, controller.signal);
+      const state = await workspace.sharing(channel, controller.signal);
       controller.signal.throwIfAborted();
-      setAuthority(roles);
       setAgents(state.labels.includes(AGENTS_LABEL));
-      await session.profiles.ensure(Object.keys(roles.roles));
     })().catch((error: unknown) => {
       if (!controller.signal.aborted) setError(message(error));
     });
     return () => controller.abort();
-  }, [workspace, note, session]);
-  const run = async (work: () => Promise<void>) => {
+  }, [workspace, id, channel]);
+  const run = async (
+    work?: (signal: AbortSignal) => Promise<unknown>,
+    caller?: AbortSignal,
+  ) => {
+    if (pending.current)
+      throw new Error("Wait for the current sharing change to finish.");
+    const signal = lifetime.current?.signal;
+    if (!signal || signal.aborted) throw new Error("Reopen sharing to retry.");
+    const active = caller ? AbortSignal.any([signal, caller]) : signal;
+    pending.current = true;
     setBusy(true);
     setError("");
     try {
-      await work();
-      const state = await workspace.sharing(note.channel);
-      const current = state.authority;
-      setAuthority(current);
+      await work?.(active);
+      const state = await workspace.sharing(note.channel, active);
+      active.throwIfAborted();
       setAgents(state.labels.includes(AGENTS_LABEL));
-      await session.profiles.ensure(Object.keys(current.roles));
-    } catch (error) {
-      setError(message(error));
+      await session.memberAdministration.refresh(note.channel);
     } finally {
-      setBusy(false);
+      pending.current = false;
+      if (!signal.aborted) setBusy(false);
     }
   };
-  const owner = authority?.roles[session.viewer ?? ""] === "owner";
-  const name = (pubkey: string) =>
-    profiles.get(pubkey)?.name ?? formatPublicKey(pubkey) ?? pubkey;
+  const roles =
+    administration.status === "ready" ? administration.authority : undefined;
+  const owner = roles?.roles[session.viewer ?? ""] === "owner";
+  const change = (change: MemberChange, signal: AbortSignal) =>
+    run(
+      (active) =>
+        workspace.setMember(
+          note,
+          change.pubkey,
+          change.role === "guest"
+            ? "read"
+            : change.role === "member"
+              ? "edit"
+              : change.role,
+          active,
+          { expectedRole: change.expectedRole },
+        ),
+      signal,
+    );
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      preventClose={busy}
-      title={`Share ${note.title}`}
+    <ChannelMembersDialog
+      session={session}
+      channelId={note.channel}
+      trigger={trigger}
+      close={onClose}
+      title="Share access"
       description="Access includes the current note and all retained revisions."
-      size="default"
-    >
-      <div className={styles.stack}>
-        {!authority && !error && <p role="status">Reading current access…</p>}
-        {error && <p role="alert">{error}</p>}
-        {owner && (
-          <Checkbox
-            label="Share with my agents automatically"
-            checked={agents}
-            disabled={busy}
-            onCheckedChange={(checked) => {
-              void run(async () => {
-                await workspace.setAudience(note, checked);
-                setAgents(checked);
-              });
-            }}
-          />
-        )}
-        {authority && (
-          <ul className={styles.members}>
-            {Object.entries(authority.roles).map(([pubkey, role]) => (
-              <li key={pubkey}>
-                <div>
-                  <span>{name(pubkey)}</span>
-                  <small className="text-caption text-subtle">{pubkey}</small>
-                </div>
-                {authority.canManage &&
-                pubkey !== session.viewer &&
-                role !== "owner" ? (
-                  <Select
-                    label={`Access for ${name(pubkey)}`}
-                    value={
-                      role === "admin"
-                        ? "admin"
-                        : role === "guest"
-                          ? "read"
-                          : "edit"
-                    }
-                    disabled={busy}
-                    groups={[
-                      {
-                        label: "Note access",
-                        options: [
-                          ...(role === "admin"
-                            ? [{ value: "admin", label: "Administrator" }]
-                            : []),
-                          { value: "read", label: "Can read" },
-                          { value: "edit", label: "Can edit" },
-                          { value: "remove", label: "Remove access" },
-                        ],
-                      },
-                    ]}
-                    onValueChange={(value) => {
-                      if (value === "admin") return;
-                      void run(async () => {
-                        const next = await workspace.setMember(
-                          note,
-                          pubkey,
-                          value as "read" | "edit" | "remove",
-                        );
-                        setAuthority(next);
-                        if (value === "remove") setAgents(false);
-                      });
-                    }}
-                  />
-                ) : (
-                  <span className="text-caption text-subtle">
-                    {role === "owner"
-                      ? "Owner"
-                      : role === "admin"
-                        ? "Administrator"
-                        : role === "guest"
-                          ? "Can read"
-                          : "Can edit"}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {authority?.canManage && (
-          <form
-            className={styles.stack}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void run(async () => {
-                await workspace.setMember(
-                  note,
-                  key.trim(),
-                  access as "read" | "edit",
-                );
-                setKey("");
-              });
-            }}
-          >
-            <Field label="Person or agent public key">
-              <Input
-                value={key}
-                onValueChange={setKey}
-                placeholder="64-character public key"
+      shareLink={noteUrl(note, session.scope.replace(/:[0-9a-f]{64}$/, ""))}
+      memberActions={{ canAdd: !!roles?.canManage, pending: busy, change }}
+      accessSettings={
+        <div className={`${styles.stack} ${styles.sharingSettings}`}>
+          {owner && agents !== undefined && (
+            <Checkbox
+              label="Share with my agents automatically"
+              checked={agents}
+              disabled={busy}
+              onCheckedChange={(checked) => {
+                void run((signal) =>
+                  workspace.setAudience(note, checked, signal),
+                ).catch((error: unknown) => {
+                  if (!lifetime.current?.signal.aborted)
+                    setError(message(error));
+                });
+              }}
+            />
+          )}
+          {error && (
+            <div>
+              <p role="alert">{error}</p>
+              <Button
+                size="sm"
                 disabled={busy}
-              />
-            </Field>
-            <div className={styles.actions}>
-              <Select
-                label="Access"
-                value={access}
-                disabled={busy}
-                groups={[
-                  {
-                    label: "Note access",
-                    options: [
-                      { value: "read", label: "Can read" },
-                      { value: "edit", label: "Can edit" },
-                    ],
-                  },
-                ]}
-                onValueChange={setAccess}
-              />
-              <Button type="submit" disabled={busy || !key.trim()}>
-                Share note
+                onClick={() => {
+                  void run().catch((error: unknown) =>
+                    setError(message(error)),
+                  );
+                }}
+              >
+                Retry note access
               </Button>
             </div>
-          </form>
-        )}
-        <p className="text-caption text-subtle">
-          Editors can also delete and restore this note. Administrators can
-          change roles and remove members.
-        </p>
-      </div>
-    </Dialog>
+          )}
+          <p className="text-caption text-subtle">
+            Private note. Owners and admins manage access; participants can
+            edit, delete and restore it.
+          </p>
+        </div>
+      }
+    />
   );
 }
 

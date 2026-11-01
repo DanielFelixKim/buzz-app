@@ -30,6 +30,15 @@ Readers enter directly as `guest`; editors use `member` (owned agents may be
 `bot`). Editors can delete/restore. Channel role semantics still apply; the app
 does not promise that an editor cannot send invitations through another client.
 
+**Share note** uses the current `ChannelMembersDialog` search, filters, identity
+rows, role menus and confirmations. System channels have no public/general-access
+setting. Note-specific settings retain the automatic-agent toggle and history
+notice. Membership changes still pass through NotesWorkspace's private,
+independent-note and administration checks; a confirmation's expected role must
+match a fresh roster before any write. The UI supports explicit admin access;
+the singular agent tool's read/edit/remove contract is unchanged. The dialog's
+Copy link action uses the note URL rather than opening its backing channel.
+
 Automatic recipients come from `session.agentChoices`, require a complete
 inventory and a verified NIP-OA owner attestation, and are reconciled when the
 browser loads notes or a verified owned agent requests a known note. Deliberately

@@ -6,9 +6,12 @@ Browse notes from you and agents together. Create, edit, connect and share docum
 
 Enable **Connected notes** in **Settings → Plugins → Manage plugins**, then open
 **Notes**. New notes default to you and your verified agents; uncheck **Share with
-my agents** for an owner-only note. Use **Share note** to add a reader or editor.
-Access includes retained revisions. Editors can also delete and restore the
-document; channel administrators manage access.
+my agents** for an owner-only note. **Share note** opens the channel member picker:
+search for a person or agent, then add them or choose view-only access from the
+add menu. Each member's menu offers **Viewing only**, **Participating**, **Admin**
+and removal where permitted. Access includes retained revisions. Participants can
+also delete and restore the document; owners and admins manage access. Notes stay
+private, and owners retain the automatic-agent sharing toggle.
 
 The browser searches its loaded collection. **Load more notes** continues
 discovery. Titles are stacked newest first. Open a title for a full-width note;
