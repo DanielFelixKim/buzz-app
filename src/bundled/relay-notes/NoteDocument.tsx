@@ -49,7 +49,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { Select } from "../../shared/design-system/ui/Select";
 import { NoteHistory, NoteSharing } from "./NoteDialogs";
-import { NoteEditor } from "./NoteEditor";
+import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { NoteByline } from "./NoteMetadata";
 import readerStyles from "./NotesPage.module.css";
 import styles from "./WorkingNotes.module.css";
@@ -93,6 +93,9 @@ export function NoteDocument({
   const [canEdit, setCanEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const shareTrigger = useRef<HTMLButtonElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const editor = useRef<NoteEditorHandle>(null);
+  const blankPress = useRef(false);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(
     null,
   );
@@ -313,7 +316,34 @@ export function NoteDocument({
       className={styles.documentPane}
       aria-label={!unavailable && note ? note.title : "Working note"}
     >
-      <section className={readerStyles.document} aria-label="Note contents">
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: blank-space clicks extend the existing textbox hit area; keyboard users reach that textbox with Tab. */}
+      <section
+        className={readerStyles.document}
+        aria-label="Note contents"
+        onPointerDown={(event) => {
+          blankPress.current = event.target === event.currentTarget;
+        }}
+        onClick={(event) => {
+          const startedOnBlank = blankPress.current;
+          blankPress.current = false;
+          if (
+            !startedOnBlank ||
+            !editing ||
+            !canEdit ||
+            busy ||
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.altKey ||
+            event.shiftKey ||
+            event.target !== event.currentTarget ||
+            !body.current ||
+            event.clientY < body.current.getBoundingClientRect().bottom
+          )
+            return;
+          editor.current?.focusEnd();
+        }}
+      >
         {note && canEdit && !unavailable && !note.deleted ? (
           <Field label="Title" labelVisibility="hidden">
             <Input
@@ -476,8 +506,9 @@ export function NoteDocument({
           </div>
         )}
         {note && (editing || (!unavailable && !note.deleted)) && (
-          <div className={styles.stack}>
+          <div ref={body} className={styles.stack}>
             <NoteEditor
+              ref={editor}
               source={source}
               onSourceChange={setSource}
               toolbarTarget={toolbarTarget}

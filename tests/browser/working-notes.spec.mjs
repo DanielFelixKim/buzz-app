@@ -25,6 +25,27 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
   const search = page.getByRole("searchbox", { name: "Search notes" });
+  const filter = page.getByRole("button", {
+    name: "Filter notes",
+    exact: true,
+  });
+  await filter.focus();
+  await filter.press("Enter");
+  const deleted = page.getByRole("menuitemcheckbox", {
+    name: "Show deleted notes",
+    exact: true,
+  });
+  await expect(deleted).not.toBeChecked();
+  await deleted.press("Space");
+  await expect(filter).toBeFocused();
+  await page.goBack();
+  await filter.click();
+  await expect(deleted).not.toBeChecked();
+  await page.keyboard.press("Escape");
+  await page.goForward();
+  await filter.click();
+  await expect(deleted).toBeChecked();
+  await deleted.click();
   const list = page.getByRole("list", { name: "Notes", exact: true });
   await expect(list.getByRole("link")).toHaveText([
     "Connected notes plan",
@@ -337,8 +358,51 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(
     document.getByRole("textbox", { name: "Document body", exact: true }),
   ).toBeVisible();
-  await mode.click();
-  await page.getByRole("option", { name: "Viewing", exact: true }).click();
+  const initialBody = document.getByRole("textbox", {
+    name: "Document body",
+    exact: true,
+  });
+  await initialBody.evaluate((field) => {
+    field.focus();
+    field.setSelectionRange(0, 0);
+  });
+  const title = document.getByRole("textbox", { name: "Title", exact: true });
+  await title.click();
+  await expect(title).toBeFocused();
+  const initialPage = document.getByRole("region", {
+    name: "Note contents",
+    exact: true,
+  });
+  const pageBounds = await initialPage.boundingBox();
+  const initialBodyBounds = await initialBody.boundingBox();
+  await page.mouse.move(initialBodyBounds.x + 2, initialBodyBounds.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(
+    pageBounds.x + 8,
+    pageBounds.y + pageBounds.height - 8,
+    { steps: 5 },
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.getSelection()?.toString().length ?? 0),
+    )
+    .toBeGreaterThan(0);
+  await page.mouse.up();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.getSelection()?.toString().length ?? 0),
+    )
+    .toBeGreaterThan(0);
+  await initialPage.click({ position: { x: 8, y: pageBounds.height - 8 } });
+  await expect(initialBody).toBeFocused();
+  await page.keyboard.type(" Appended at the end.");
+  await expect(initialBody).toContainText(
+    "Written by Carl. Appended at the end.",
+  );
+  await document
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(mode).toContainText("Viewing");
   await expect(document).toContainText("Carl");
   await expect(document).toContainText("Updated");
   await expect(document.locator("time")).toHaveAttribute(
@@ -563,6 +627,23 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(
     document.getByRole("textbox", { name: "Markdown", exact: true }),
   ).toHaveValue(/\*\*Ready\*\*/);
+  const source = document.getByRole("textbox", {
+    name: "Markdown",
+    exact: true,
+  });
+  await source.evaluate((field) => field.setSelectionRange(0, 0));
+  const sourcePageBounds = await scrollport.boundingBox();
+  await scrollport.click({
+    position: { x: 8, y: sourcePageBounds.height - 8 },
+  });
+  await expect(source).toBeFocused();
+  expect(
+    await source.evaluate(
+      (field) =>
+        field.selectionStart === field.value.length &&
+        field.selectionEnd === field.value.length,
+    ),
+  ).toBe(true);
   await document.getByRole("button", { name: "Note actions" }).click();
   await page
     .getByRole("menuitem", { name: "Formatted text", exact: true })

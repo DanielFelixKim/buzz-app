@@ -122,6 +122,10 @@ document scrollport while Editing, with no reserved gap in Viewing. Its natural
 height keeps document content and Save clear when controls wrap or text grows.
 The hidden editor retains its selection and undo state. Viewing previews unsaved
 text without publishing it.
+An unmodified primary click on the blank scrollport below the document body
+focuses the active formatted/source editor at its end. Text, title and control
+clicks retain their own behavior; Viewing and read-only documents do not activate
+an editor. Keyboard users reach the existing textbox with Tab.
 A large, full-width prominent Save action stays above the toolbar while modified;
 Discard changes restores the saved revision. Clean documents show no Save action.
 `NoteEditor` reuses `EditableInput`, `ComposerFormattingTools`, `ComposerLinkDialog`
@@ -140,7 +144,10 @@ original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.
 
 The browser lists linked note titles in newest-revision order, without
-card previews, author folders or row metadata. Author and revision metadata remain
+card previews, author folders or row metadata. A subtle **New note** button follows
+the newest visible title and remains available in an empty collection. **Show
+deleted notes** lives in the search field's trailing filter menu, retaining the
+existing history-backed filter state. Author and revision metadata remain
 in the note viewer. The list, document content and formatting bar share the channel
 timeline/composer's centered 52rem maximum width and shrink to fit narrow panes.
 Notes retain the shared reader's heading, author/avatar and update byline,

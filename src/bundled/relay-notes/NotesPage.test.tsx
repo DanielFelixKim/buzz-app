@@ -52,6 +52,14 @@ it("shows only title links in revision order and opens the selected channel-back
       .map((link) => link.textContent),
   ).toEqual(["Latest note", "First note"]);
   expect(list).not.toHaveTextContent("Searchable body");
+  expect(
+    within(list)
+      .getAllByRole("listitem")
+      .map((row) => row.textContent?.trim()),
+  ).toEqual(["Latest note", "New note", "First note"]);
+  expect(
+    within(list).getByRole("button", { name: "New note" }),
+  ).toHaveAttribute("data-variant", "subtle");
   expect(screen.getByRole("link", { name: "Latest note" })).toHaveAttribute(
     "href",
     noteUrl(latest, props.community),
@@ -68,6 +76,11 @@ it("shows only title links in revision order and opens the selected channel-back
       .getAllByRole("link")
       .map((link) => link.textContent),
   ).toEqual(["First note", "Latest note"]);
+  expect(
+    within(list)
+      .getAllByRole("listitem")
+      .map((row) => row.textContent?.trim()),
+  ).toEqual(["First note", "New note", "Latest note"]);
 });
 
 it("retains mounted editor state across Back and focuses the full-view Back button", async () => {
@@ -137,6 +150,7 @@ it("keeps loading and failed reads distinct from empty and retains useful conten
   expect(props.refresh).toHaveBeenCalledOnce();
   view.rerender(<NotesPage {...props} entries={[]} />);
   expect(screen.getByText("No notes yet")).toBeVisible();
+  expect(screen.getByRole("button", { name: "New note" })).toBeVisible();
 });
 
 it("searches loaded documents and delegates filters, creation and pagination to the workspace", async () => {
@@ -146,10 +160,24 @@ it("searches loaded documents and delegates filters, creation and pagination to 
   expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
     "Latest note",
   ]);
-  await user.click(
-    screen.getByRole("checkbox", { name: "Show deleted notes" }),
-  );
+  const filter = screen.getByRole("button", { name: "Filter notes" });
+  expect(
+    screen.queryByRole("checkbox", { name: "Show deleted notes" }),
+  ).not.toBeInTheDocument();
+  await user.click(filter);
+  const deleted = await screen.findByRole("menuitemcheckbox", {
+    name: "Show deleted notes",
+  });
+  expect(deleted).not.toBeChecked();
+  await user.click(deleted);
   expect(vi.mocked(props.showDeleted).mock.calls[0]?.[0]).toBe(true);
+  view.rerender(<NotesPage {...props} query="searchable" more trash />);
+  await user.click(filter);
+  expect(
+    await screen.findByRole("menuitemcheckbox", { name: "Show deleted notes" }),
+  ).toBeChecked();
+  await user.keyboard("{Escape}");
+  expect(filter).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "New note" }));
   expect(props.create).toHaveBeenCalledOnce();
   await user.click(screen.getByRole("button", { name: "Load more notes" }));

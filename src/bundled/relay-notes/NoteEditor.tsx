@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { createPortal } from "react-dom";
 import { EditableInput } from "../../features/messages/EditableInput";
 import { ComposerFormattingTools } from "../../features/messages/ComposerFormattingTools";
@@ -16,8 +23,11 @@ import styles from "./WorkingNotes.module.css";
 
 const noDecorations = () => [];
 
+export type NoteEditorHandle = { focusEnd(): void };
+
 /** A document body using the composer's editing engine, without chat behavior. */
 export function NoteEditor({
+  ref,
   value,
   editing,
   children,
@@ -32,6 +42,7 @@ export function NoteEditor({
   source,
   onSourceChange,
 }: {
+  ref?: Ref<NoteEditorHandle>;
   value: string;
   editing: boolean;
   children: ReactNode;
@@ -47,6 +58,21 @@ export function NoteEditor({
   onSourceChange(source: boolean): void;
 }) {
   const input = useRef<ComposerInputElement>(null);
+  const sourceInput = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusEnd() {
+        if (!editing || disabled) return;
+        const field = source ? sourceInput.current : input.current;
+        if (!field) return;
+        const end = field.value.length;
+        field.focus();
+        field.setSelectionRange(end, end);
+      },
+    }),
+    [editing, disabled, source],
+  );
   const [draft, setDraft] = useState(() => noteEditorDraft(value));
   const [formats, setFormats] = useState<readonly ComposerFormat[]>([]);
   const [link, setLink] = useState<ComposerLinkEdit>();
@@ -96,6 +122,7 @@ export function NoteEditor({
         <div hidden={!editing}>
           {source ? (
             <Textarea
+              ref={sourceInput}
               aria-label="Markdown"
               value={value}
               rows={18}

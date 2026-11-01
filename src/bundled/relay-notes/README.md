@@ -14,11 +14,14 @@ also delete and restore the document; owners and admins manage access. Notes sta
 private, and owners retain the automatic-agent sharing toggle.
 
 The browser searches its loaded collection. **Load more notes** continues
-discovery. Titles are stacked newest first. Open a title for a full-width note;
+discovery. Titles are stacked newest first, with a subtle **New note** button below
+the newest visible title. Use the filter button inside search for **Show deleted
+notes**. Open a title for a full-width note;
 **Back to notes** returns to the list and preserves drafts. Notes open in
 **Editing** when you have edit access; use the **Viewing/Editing** dropdown to
-switch modes. The document stays in place, and **Save** appears at the bottom
-when modified. **Viewing** previews the
+switch modes. Click the blank area below the body to place the cursor at the end,
+including in Markdown source mode. The document stays in place, and **Save**
+appears at the bottom when modified. **Viewing** previews the
 draft without saving; **Discard changes** restores the saved version. **Link**,
 **⌘K/Ctrl+K**, or typing `[[` opens the standard link dialog with a note picker. It inserts a stable
 link from the loaded notes. Ordinary index notes group related documents. A link

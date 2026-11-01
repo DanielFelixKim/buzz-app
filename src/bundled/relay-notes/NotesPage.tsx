@@ -3,12 +3,12 @@ import { noteKey, noteUrl, type Note } from "../../features/notes/model";
 import {
   ArrowLeftIcon,
   ArrowsClockwiseIcon,
+  Filter2Icon,
   InfoIcon,
   NoteIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -24,6 +24,12 @@ import {
   PopoverDescription,
 } from "../../shared/design-system/ui/Popover";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuCheckboxItem,
+} from "../../shared/design-system/ui/Menu";
 import styles from "./NotesPage.module.css";
 
 export type NotesPageProps = {
@@ -86,6 +92,28 @@ export function NotesPage({
         a.event.id.localeCompare(b.event.id),
     );
   const active = items.find((item) => item.id === selected);
+  const titleLink = (note: Note) => (
+    <li key={noteKey(note)}>
+      <a
+        className="text-body"
+        href={noteUrl(note, community)}
+        onClick={(event) => {
+          if (
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          event.preventDefault();
+          open(note);
+        }}
+      >
+        {note.title}
+      </a>
+    </li>
+  );
   return (
     <div className={styles.page}>
       <div className={styles.collection} hidden={reading}>
@@ -125,29 +153,21 @@ export function NotesPage({
                 </PanelHeaderLabel>
               }
               actions={
-                <>
-                  <IconButton
-                    aria-label="New note"
-                    title="New note"
-                    icon={<PlusIcon size={16} />}
-                    onClick={create}
-                  />
-                  <IconButton
-                    aria-label="Refresh notes"
-                    title="Refresh notes"
-                    icon={
-                      <ArrowsClockwiseIcon
-                        size={16}
-                        className={
-                          loading ? "motion-safe:animate-spin" : undefined
-                        }
-                      />
-                    }
-                    aria-busy={loading}
-                    disabled={loading}
-                    onClick={refresh}
-                  />
-                </>
+                <IconButton
+                  aria-label="Refresh notes"
+                  title="Refresh notes"
+                  icon={
+                    <ArrowsClockwiseIcon
+                      size={16}
+                      className={
+                        loading ? "motion-safe:animate-spin" : undefined
+                      }
+                    />
+                  }
+                  aria-busy={loading}
+                  disabled={loading}
+                  onClick={refresh}
+                />
               }
             />
             <div className={styles.body}>
@@ -161,11 +181,29 @@ export function NotesPage({
                 onKeyDown={(event) => {
                   if (event.key === "Enter") search(query, true);
                 }}
-              />
-              <Checkbox
-                label="Show deleted notes"
-                checked={trash}
-                onCheckedChange={showDeleted}
+                trailing={
+                  <MenuRoot>
+                    <MenuTrigger
+                      render={
+                        <IconButton
+                          aria-label="Filter notes"
+                          title="Filter notes"
+                          variant={trash ? "prominent" : "ghost"}
+                          icon={<Filter2Icon size={16} aria-hidden="true" />}
+                        />
+                      }
+                    />
+                    <MenuPopup align="end">
+                      <MenuCheckboxItem
+                        checked={trash}
+                        onCheckedChange={showDeleted}
+                        closeOnClick
+                      >
+                        Show deleted notes
+                      </MenuCheckboxItem>
+                    </MenuPopup>
+                  </MenuRoot>
+                }
               />
               {loading && (
                 <span role="status" className="sr-only">
@@ -186,28 +224,13 @@ export function NotesPage({
                 />
               )}
               <ul className={styles.titleList} aria-label="Notes">
-                {visible.map((note) => (
-                  <li key={noteKey(note)}>
-                    <a
-                      className="text-body"
-                      href={noteUrl(note, community)}
-                      onClick={(event) => {
-                        if (
-                          event.button !== 0 ||
-                          event.metaKey ||
-                          event.ctrlKey ||
-                          event.shiftKey ||
-                          event.altKey
-                        )
-                          return;
-                        event.preventDefault();
-                        open(note);
-                      }}
-                    >
-                      {note.title}
-                    </a>
-                  </li>
-                ))}
+                {visible.slice(0, 1).map(titleLink)}
+                <li key="new-note">
+                  <Button variant="subtle" size="sm" onClick={create}>
+                    <PlusIcon size={16} aria-hidden="true" /> New note
+                  </Button>
+                </li>
+                {visible.slice(1).map(titleLink)}
               </ul>
               {!loading && !error && query && !visible.length && (
                 <p role="status">No matching notes.</p>
