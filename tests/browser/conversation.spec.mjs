@@ -13,6 +13,7 @@ import {
   expectMessageActionsHidden,
 } from "./message-actions.mjs";
 import { settle } from "./timeline.mjs";
+import { signPackage } from "../fixtures/plugin-release.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", async ({
@@ -61,6 +62,8 @@ test("independent packed author consumer and native-installed contribution survi
     const home = join(temp, "home");
     const native = (op, ...args) =>
       JSON.parse(run(binary, [home, op, ...args]));
+    await signPackage(join(source, "dist"));
+    await signPackage(join(toolSource, "dist"));
     const installed = native("install", join(source, "dist"));
     expect(
       installed.catalog.plugins.find(
@@ -111,6 +114,7 @@ test("independent packed author consumer and native-installed contribution survi
                         "Insert updated timestamp",
                       ),
                     );
+                    await signPackage(join(toolSource, "dist"));
                     result = native("install", join(toolSource, "dist"));
                     break;
                   default:
