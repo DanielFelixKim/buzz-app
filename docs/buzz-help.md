@@ -723,7 +723,10 @@ confirmation.
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
-  them. Do not assume a particular optional plugin is on.
+  them. Every external plugin, including a local development build, requires a
+  valid signature. Existing unsigned installations remain blocked until replaced
+  with a signed release. Plugins built into Buzz are exempt. Do not assume a
+  particular optional plugin is on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.
   A saved plugin sort can briefly wait for its plugin at startup, within the
