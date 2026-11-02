@@ -224,13 +224,12 @@ export function NotesPage({
                 />
               )}
               <ul className={styles.titleList} aria-label="Notes">
-                {visible.slice(0, 1).map(titleLink)}
                 <li key="new-note">
                   <Button variant="subtle" size="sm" onClick={create}>
                     <PlusIcon size={16} aria-hidden="true" /> New note
                   </Button>
                 </li>
-                {visible.slice(1).map(titleLink)}
+                {visible.map(titleLink)}
               </ul>
               {!loading && !error && query && !visible.length && (
                 <p role="status">No matching notes.</p>

@@ -328,7 +328,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   one newest-first list of title links, with one search. Open a title to view
   the note in a full-page view; **Back to notes** returns to the list and preserves
   drafts. The list and document use the same centered reading width as channels.
-  **New note** sits below the newest visible title. The filter button inside search
+  **New note** sits above the note titles. The filter button inside search
   offers **Show deleted notes**.
   People and agents author the same channel-backed documents, which retain
   revisions. Published NIP-23 notes and the separate plural `notes_*` tools do

@@ -144,8 +144,8 @@ original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.
 
 The browser lists linked note titles in newest-revision order, without
-card previews, author folders or row metadata. A subtle **New note** button follows
-the newest visible title and remains available in an empty collection. **Show
+card previews, author folders or row metadata. A subtle **New note** button precedes
+the note titles and remains available in an empty collection. **Show
 deleted notes** lives in the search field's trailing filter menu, retaining the
 existing history-backed filter state. Author and revision metadata remain
 in the note viewer. The list, document content and formatting bar share the channel

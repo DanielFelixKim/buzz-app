@@ -14,8 +14,8 @@ also delete and restore the document; owners and admins manage access. Notes sta
 private, and owners retain the automatic-agent sharing toggle.
 
 The browser searches its loaded collection. **Load more notes** continues
-discovery. Titles are stacked newest first, with a subtle **New note** button below
-the newest visible title. Use the filter button inside search for **Show deleted
+discovery. Titles are stacked newest first, with a subtle **New note** button above
+the note titles. Use the filter button inside search for **Show deleted
 notes**. Open a title for a full-width note;
 **Back to notes** returns to the list and preserves drafts. Notes open in
 **Editing** when you have edit access; use the **Viewing/Editing** dropdown to
