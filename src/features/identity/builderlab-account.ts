@@ -376,7 +376,6 @@ export function federatedBuilderlabAccount(
 export function builderlabSessionAccount(
   session: BuilderlabSession,
   identity: BackupIdentity,
-  federated: string,
 ): FirstRunAccount {
   const credential = session.credential();
   return kgooseAccount(

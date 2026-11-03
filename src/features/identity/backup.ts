@@ -3,6 +3,7 @@ import { BACKUP_FAILURES, type BackupFailureKind } from "./backup-failure";
 import type { Identity } from "./service";
 
 type Send = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+type BackupCredential = string | Readonly<{ credential: string } | { federated: string }>;
 
 // Shared by both login owners so re-enabling a plugin cannot reuse an old revision.
 let generation = 0;
@@ -165,7 +166,7 @@ function failure(status: BackupStatus): BackupFailureKind | undefined {
 export async function backUpWith(
   identity: Pick<Identity, "backup" | "setBackupChoice">,
   pubkey: string,
-  session: Readonly<{ credential: string } | { federated: string }>,
+  credential: BackupCredential | (() => BackupCredential),
   {
     timeout = 60_000,
     after = timer,
@@ -187,10 +188,15 @@ export async function backUpWith(
   const settled = new AbortController();
   let unsubscribe = () => {};
   let completed = false;
+  let supplied: BackupCredential | undefined;
   try {
-    const ticket = await ("federated" in session
-      ? handoffFederatedBackupSession(session.federated, send)
-      : handoffBackupSession("builderlab", session.credential, send));
+    // Native revisions can change while readiness and consent are awaited.
+    supplied = typeof credential === "function" ? credential() : credential;
+    const ticket = await (typeof supplied === "string"
+      ? handoffBackupSession("builderlab", supplied, send)
+      : "federated" in supplied
+        ? handoffFederatedBackupSession(supplied.federated, send)
+        : handoffBackupSession("builderlab", supplied.credential, send));
     if (ticket === null) throw new BackupError("unavailable");
     const outcome = new Promise<BackupStatus>((resolve) => {
       const check = () => {
@@ -213,8 +219,8 @@ export async function backUpWith(
     settled.abort();
     // After a timeout this also retires the pass still running. Native
     // refuses an FI revision that is no longer current.
-    await (completed && "federated" in session
-      ? handoffFederatedBackupSession(session.federated, send)
+    await (completed && supplied && typeof supplied !== "string" && "federated" in supplied
+      ? handoffFederatedBackupSession(supplied.federated, send)
       : handoffBackupSession("builderlab", null, send));
   }
 }
