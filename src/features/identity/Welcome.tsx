@@ -182,6 +182,7 @@ export function Welcome({
   // return to the landing or choices page.
   const [finding, setFinding] = useState<string>();
   const [requiresSignIn, setRequiresSignIn] = useState(false);
+  const [nipFiCompatible, setNipFiCompatible] = useState(true);
   // The code of the invite link `finding` came from, claimed on Join; "" for
   // a bare address. Every submit sets it with `finding`.
   const [inviteCode, setInviteCode] = useState("");
@@ -633,6 +634,7 @@ export function Welcome({
           <ConnectChoice
             host={new URL(finding).host}
             requiresSignIn={requiresSignIn}
+            nipFiCompatible={nipFiCompatible}
             signInOrigin={
               nativeLogin
                 ? federatedIdentity?.snapshot().authority?.identityOrigin
@@ -1013,7 +1015,15 @@ export function Welcome({
           onCancel={backToLanding}
           onFound={(found) => {
             setRequiresSignIn(found.requiresNipFi === true);
-            if (hostedByThisBuilderlab(found)) void signIn();
+            setNipFiCompatible(found.nipFiCompatible !== false);
+            if (
+              hostedByThisBuilderlab(found) &&
+              (!found.requiresNipFi ||
+                (nativeLogin &&
+                  federatedIdentity?.snapshot().authority &&
+                  found.nipFiCompatible))
+            )
+              void signIn();
             else pause("connect-choice");
           }}
           titleId="welcome-title"

@@ -1,6 +1,7 @@
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { OnboardingBack } from "./OnboardingBack";
 import { Button } from "../../shared/design-system/ui/Button";
+import { nativeBuilderlab } from "../../bundled/builderlab/session";
 
 /**
  * Pause on a found community that this build's Builderlab does not host (one
@@ -17,6 +18,7 @@ export function ConnectChoice({
   onBack,
   requiresSignIn = false,
   signInOrigin,
+  nipFiCompatible = true,
 }: {
   /** The found community's host, as the find page shows it. */
   host: string;
@@ -28,7 +30,11 @@ export function ConnectChoice({
   onBack: () => void;
   requiresSignIn?: boolean;
   signInOrigin?: string | undefined;
+  nipFiCompatible?: boolean;
 }) {
+  const unsupportedSignIn =
+    requiresSignIn &&
+    (!nativeBuilderlab() || !signInOrigin || !nipFiCompatible);
   return (
     <>
       <div>
@@ -40,11 +46,13 @@ export function ConnectChoice({
           Connect to your community
         </h1>
         <p className="mt-2 text-body text-subtle">
-          {requiresSignIn
-            ? "This community requires account sign-in, including when you use an existing key. Buzz keeps that key."
-            : "Buzz relies on a key for your identity."}
+          {unsupportedSignIn
+            ? "This community requires account sign-in. Ask its administrator for a supported Buzz build configured for this host and compatible community settings. Your key is kept."
+            : requiresSignIn
+              ? "This community requires account sign-in, including when you use an existing key. Buzz keeps that key."
+              : "Buzz relies on a key for your identity."}
         </p>
-        {signInOrigin && (
+        {signInOrigin && !unsupportedSignIn && (
           <p className="mt-2 break-all text-body text-subtle">
             Sign in at {signInOrigin}.
           </p>
@@ -62,6 +70,7 @@ export function ConnectChoice({
           {host}
         </span>
       </div>
+      {!unsupportedSignIn && (
       <div className="flex flex-col gap-2">
         <Button variant="prominent" size="lg" onClick={onConnect}>
           Sign in with Builderlab
@@ -70,6 +79,7 @@ export function ConnectChoice({
           Use an existing key
         </Button>
       </div>
+      )}
       <div data-onboarding-actions="">
         <OnboardingBack onClick={onBack} />
       </div>
