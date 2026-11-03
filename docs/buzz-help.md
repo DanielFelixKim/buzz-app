@@ -811,7 +811,9 @@ confirmation.
   “Runs in” names its execution conversation; its instructions can specify a
   different place to report. A
   mention can still wake an agent when Attention is off; turning Attention on does not grant new access.
-  On macOS and Linux, watched commands stop when their Buzz process exits.
+  An event watch hears the channels its agent may read, including public channels
+  the agent has not joined, but its turns run only in channels the agent is a
+  member of. On macOS and Linux, watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.
 - **Shared compute** is off by default; enable it in Settings → Plugins, then
