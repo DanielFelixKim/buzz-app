@@ -17,6 +17,9 @@ import {
   type FirstRunIdentity,
 } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
+import { nativeBuilderlab } from "../../bundled/builderlab/session";
+import type { FederatedIdentity } from "../federated-identity/service";
+import { createFederatedFirstRun } from "./federated-first-run";
 import { communityDestination } from "../communities/destination";
 import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
@@ -37,6 +40,7 @@ import { hostedByThisBuilderlab } from "./builderlab-hosted";
 import {
   builderlabAccount,
   federatedBuilderlabAccount,
+  builderlabSessionAccount,
   type FirstRunAccount,
   type OwnedCommunity,
   seededAccount,
@@ -133,13 +137,26 @@ export function Welcome({
     | undefined;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
-  const [login] = useState(() => createOAuthSession(connect));
+  const [legacyLogin] = useState(() => createOAuthSession(connect));
+  const [nativeLogin, setNativeLogin] =
+    useState<ReturnType<typeof createFederatedFirstRun>>();
+  const login = nativeLogin ?? legacyLogin;
   // Counts canceled sign-ins: a sign-in continues only if none was canceled
   // since it started, since the session may by then hold a later sign-in.
   const cancels = useRef(0);
   const auth = useSyncExternalStore(login.subscribe, login.snapshot);
   const [setup] = useState(createSetup);
   const progress = useSyncExternalStore(setup.subscribe, setup.snapshot);
+  const firstRun = state.status === "missing" || progress.status !== "idle";
+  useEffect(() => {
+    if (!firstRun || !federatedIdentity || !nativeBuilderlab()) return;
+    const session = createFederatedFirstRun(federatedIdentity);
+    setNativeLogin(session);
+    return () => {
+      if (session.snapshot().status === "pending") session.cancel();
+      session.dispose();
+    };
+  }, [federatedIdentity, firstRun]);
   // The signed-in account's reads, from sign-in until the landing is shown again.
   const reads = useRef<FirstRunAccount | undefined>(undefined);
   // The hex key the account check found bound to the account: the returning-
@@ -164,6 +181,7 @@ export function Welcome({
   // discovery lookup; after setup, the Join Community page. Cleared on every
   // return to the landing or choices page.
   const [finding, setFinding] = useState<string>();
+  const [requiresSignIn, setRequiresSignIn] = useState(false);
   // The code of the invite link `finding` came from, claimed on Join; "" for
   // a bare address. Every submit sets it with `finding`.
   const [inviteCode, setInviteCode] = useState("");
@@ -293,10 +311,23 @@ export function Welcome({
     const attempt = cancels.current;
     // A canceled attempt still settles here, possibly after a later sign-in
     // succeeded; it must not read that one's credential.
-    await login.signIn();
+    if (nativeLogin) {
+      // Native sign-in settles before its account read. Wait for the account,
+      // including restore already in flight, before choosing a key lane.
+      await nativeLogin
+        .ensureSignedIn(new AbortController().signal)
+        .catch(() => {});
+    } else await login.signIn();
     if (attempt !== cancels.current || login.snapshot().status !== "signed-in")
       return;
-    const current = account(login.credential(), identity);
+    const current =
+      nativeLogin && federatedIdentity
+        ? builderlabSessionAccount(
+            nativeLogin,
+            identity,
+            federatedIdentity.snapshot().revision,
+          )
+        : account(legacyLogin.credential(), identity);
     reads.current = current;
     let checkedKey: string | undefined;
     let checkedBackups: readonly string[] | undefined;
@@ -436,6 +467,7 @@ export function Welcome({
     setFinding(undefined);
     setInviteCode("");
     setSwitchError(undefined);
+    setRequiresSignIn(false);
     setLinked(undefined);
     setOwned(undefined);
     setBackups(undefined);
@@ -600,6 +632,12 @@ export function Welcome({
         return finding ? (
           <ConnectChoice
             host={new URL(finding).host}
+            requiresSignIn={requiresSignIn}
+            signInOrigin={
+              nativeLogin
+                ? federatedIdentity?.snapshot().authority?.identityOrigin
+                : undefined
+            }
             onConnect={() => {
               setup.reset();
               void signIn();
@@ -668,7 +706,10 @@ export function Welcome({
               ]);
             }}
             onImport={() => pause("key-import")}
-            onSwitchAccount={backToLanding}
+            onSwitchAccount={() => {
+              nativeLogin?.signOut();
+              backToLanding();
+            }}
           />
         );
       case "welcome-back":
@@ -971,6 +1012,7 @@ export function Welcome({
           url={finding}
           onCancel={backToLanding}
           onFound={(found) => {
+            setRequiresSignIn(found.requiresNipFi === true);
             if (hostedByThisBuilderlab(found)) void signIn();
             else pause("connect-choice");
           }}

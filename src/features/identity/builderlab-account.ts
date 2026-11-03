@@ -14,6 +14,7 @@ import {
 import { enteredRelayOrigin, relayAddress } from "../communities/destination";
 import type { FederatedIdentity } from "../federated-identity/service";
 import type { Host, HostResponse } from "../host/service";
+import type { BuilderlabSession } from "../../bundled/builderlab/session";
 import { BackupError, backUpWith } from "./backup";
 import type { BackupFailureKind } from "./backup-failure";
 import type { FirstRunAccountSeed } from "./first-run-seed";
@@ -371,6 +372,22 @@ export function federatedBuilderlabAccount(
   );
 }
 
+/** Same account contract through the shared native session. */
+export function builderlabSessionAccount(
+  session: BuilderlabSession,
+  identity: BackupIdentity,
+  federated: string,
+): FirstRunAccount {
+  const credential = session.credential();
+  return kgooseAccount(
+    (path, headers, body) => session.request(credential, {
+      path, method: "POST", headers, body,
+    }),
+    { federated },
+    identity,
+  );
+}
+
 /** One JSON POST under the Builderlab API root; `path` starts with `/`. */
 type Post = (
   path: string,
@@ -449,7 +466,9 @@ function kgooseAccount(
     linkedKey,
     async bind(pubkey) {
       // Re-running after a failure must not meet 409 `pubkey_already_bound`.
-      if ((await linkedKey()) === pubkey) return;
+      const bound = await linkedKey();
+      if (bound === pubkey) return;
+      if (bound) throw new Error(OTHER_KEY);
       const step = "account link";
       const fallback = "Could not link your key to this Builderlab account.";
       // The challenge refuses only with 403 `unauthorized` or `invalid_origin`,

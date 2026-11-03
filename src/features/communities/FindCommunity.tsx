@@ -25,6 +25,11 @@ export type JoinConsent = Readonly<{ adult: boolean; agreed: boolean }>;
 
 /** Classified copy; raw transport errors are never shown. */
 const FAILURES: Record<FindFailure, { message: string; retry: boolean }> = {
+  "unsupported-auth": {
+    message:
+      "This community requires sign-in that this Buzz build cannot confirm. Ask its administrator for a supported build and try again.",
+    retry: true,
+  },
   unreachable: {
     message: "Could not reach the relay. Check your connection and try again.",
     retry: true,
@@ -177,6 +182,12 @@ export function FindCommunity({
   return (
     <>
       {heading("Join Community")}
+      {found.requiresNipFi && (
+        <p className="text-body text-subtle">
+          This community requires account sign-in and a linked Buzz identity.
+          Your existing key will be kept.
+        </p>
+      )}
       <div className="flex items-center gap-3 rounded-[var(--radius-row)] bg-surface-inset p-4">
         <Avatar
           alt=""
