@@ -851,8 +851,8 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 
 - Desktop packages include a `buzz` command line client. On macOS, use
   `Buzz.app/Contents/Resources/bin/buzz`. Recognized CLI commands sent to the
-  old `Contents/MacOS/buzz` path fail with exit code 2 instead of running the
-  command. Update scripts or PATH links to use the bundled CLI.
+  old `Contents/MacOS/buzz` path fail with exit code 1 (bad input) instead of
+  running the command. Update scripts or PATH links to use the bundled CLI.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
   A page whose plugin is turned off says so, and its **Manage plugins** opens
