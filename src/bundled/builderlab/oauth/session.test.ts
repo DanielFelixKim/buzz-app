@@ -437,7 +437,8 @@ it("an A check held while Welcome saves B, then a delayed 401, keeps B saved acr
   await vi.waitFor(() => expect(session.credential()).toBe(b));
   held.resolve({ ...ok, status: 401 });
   await vi.waitFor(() => expect(k.store.load).toHaveBeenCalledTimes(1));
-  await createSavedSignIn(k.store).dispose();
+  // Drains its queued writes, including the stale restore's fenced delete.
+  await k.saved.dispose();
   expect(k.store.clear).not.toHaveBeenCalled();
   expect(k.store.value).toBe("b");
   const restarted = createOAuthSession(
