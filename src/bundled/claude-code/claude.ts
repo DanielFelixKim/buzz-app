@@ -964,8 +964,8 @@ export class ClaudeProcess {
         const signal = AbortSignal.any([review, denied.signal]);
         const { gate } = this.protection;
         const slot = limited(4);
-        // A stream event repeats its transcript row once that row is written,
-        // and identical sources are identical checks.
+        // Identical sources, such as a stream event and its later transcript
+        // row, are identical checks.
         const unique = new Map(
           sources.map((source) => [JSON.stringify(source), source]),
         );
