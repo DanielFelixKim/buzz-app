@@ -543,58 +543,66 @@ it("checks a long history four at a time and a denial cancels the rest", async (
   }
 });
 
-it("ends a stalled review with its reason before the native watchdog", async () => {
-  const f = fixture();
-  const held: AbortSignal[] = [];
-  // As the protection service does, a check rejects with its signal's reason.
-  f.check.mockImplementation(
-    (_action, signal) =>
-      new Promise<void>((_resolve, reject) => {
+it.each(["transcript read", "check"])(
+  "ends a review stalled in its %s with its reason before the native watchdog",
+  async (stage) => {
+    const f = fixture();
+    const held: AbortSignal[] = [];
+    // As the transcript reader and the protection service do, a stalled step
+    // rejects with its signal's reason.
+    const stall = (signal: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => {
         held.push(signal);
         signal.addEventListener("abort", () => reject(signal.reason), {
           once: true,
         });
-      }),
-  );
-  const process = await ClaudeProcess.start(f.spawn, f.launch);
-  const worker = f.processes[0];
-  if (!worker) throw new Error("Claude did not start");
-  worker.hold = true;
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  try {
-    const turn = process.send("authorized task");
-    worker.emit({
-      type: "control_request",
-      request_id: "stalled-review",
-      request: {
-        subtype: "hook_callback",
-        callback_id: "security-incoming",
-        input: {
-          hook_event_name: "PostToolUse",
-          transcript_path: "/native/transcript",
-          tool_response: { stdout: "output" },
+      });
+    if (stage === "check")
+      f.check.mockImplementation((_action, signal) => stall(signal));
+    else
+      Object.assign(f.protection, {
+        history: (_path: string, signal: AbortSignal) => stall(signal),
+      });
+    const process = await ClaudeProcess.start(f.spawn, f.launch);
+    const worker = f.processes[0];
+    if (!worker) throw new Error("Claude did not start");
+    worker.hold = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const turn = process.send("authorized task");
+      worker.emit({
+        type: "control_request",
+        request_id: "stalled-review",
+        request: {
+          subtype: "hook_callback",
+          callback_id: "security-incoming",
+          input: {
+            hook_event_name: "PostToolUse",
+            transcript_path: "/native/transcript",
+            tool_response: { stdout: "output" },
+          },
         },
-      },
-    });
-    await vi.advanceTimersByTimeAsync(329_999);
-    expect(held.length).toBeGreaterThan(0);
-    expect(worker.killed).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(worker.killed).toBe(true);
-    await expect(turn).resolves.toEqual({
-      ok: false,
-      error: "The security review did not finish in time",
-    });
-    expect(held.every((signal) => signal.aborted)).toBe(true);
-    // Never released: the worker is killed instead.
-    expect(worker.received.some((m) => m.type === "control_response")).toBe(
-      false,
-    );
-  } finally {
-    vi.useRealTimers();
-    await process.kill();
-  }
-});
+      });
+      await vi.advanceTimersByTimeAsync(329_999);
+      expect(held.length).toBeGreaterThan(0);
+      expect(worker.killed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(worker.killed).toBe(true);
+      await expect(turn).resolves.toEqual({
+        ok: false,
+        error: "The security review did not finish in time",
+      });
+      expect(held.every((signal) => signal.aborted)).toBe(true);
+      // Never released: the worker is killed instead.
+      expect(worker.received.some((m) => m.type === "control_response")).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+      await process.kill();
+    }
+  },
+);
 
 it("Stop revokes a pending approval and never releases its callback", async () => {
   const f = fixture();
