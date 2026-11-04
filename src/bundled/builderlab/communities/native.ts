@@ -198,12 +198,15 @@ export function createNativeBackend(
   // one: the native uploader allows Builderlab backup (`backupOfferedFor`).
   // Elsewhere the reply lists none.
   const backups = async () => {
+    // As in `bind`, the read belongs to the sign-in that asked for it.
+    const credential = session.credential();
     const state = await command<{ builderlab?: unknown }>(
       bridge,
       "nsec_backup_state",
     );
+    ensureCurrent(credential);
     return state.builderlab === true
-      ? request("/v1/buzz/nsec-backups/status", {})
+      ? request("/v1/buzz/nsec-backups/status", {}, credential)
       : { status: 200, value: {} };
   };
   const call = (action: string, input?: Record<string, unknown>) => {
