@@ -49,9 +49,11 @@ shown up to the last 12 unseen messages, and Codex up to the last 50, each cut
 to 4,000 characters. Only the newest that fit 128 KiB once encoded for a check
 are kept, so long or heavily escaped messages leave fewer, and the rest stay
 available through `read`. Any Canvas is shown whole, so an oversized Canvas is
-refused until it shrinks. A tool review carries the whole conversation, and
-nothing is cut to fit, so once a protected conversation outgrows the 256 KiB
-limit its tool actions are refused with a message to start a new conversation.
+refused until it shrinks. Tool reviews are not cut to fit either, so one over
+the 256 KiB limit refuses the tool action. A Claude review carries its whole
+transcript, so once a protected Claude conversation outgrows the limit, Claude
+stops with a message to start a new conversation. Other runtimes refuse the
+oversized tool action without that message.
 
 Protected Codex runs in Buzz's Codex home, like unprotected Codex. Its security
 reviews run in a separate Buzz review home, which the security plugin keeps

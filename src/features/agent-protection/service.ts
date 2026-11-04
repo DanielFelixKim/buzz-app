@@ -453,7 +453,7 @@ export class AgentProtectionService extends Service {
         )
           throw new Error(
             action.kind === "tool"
-              ? "This conversation is too long to review its next action; start a new conversation"
+              ? "This conversation is too large to review its next action; start a new conversation"
               : "Protected action is too large",
           );
         let stop!: () => void;

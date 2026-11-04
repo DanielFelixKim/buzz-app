@@ -651,7 +651,7 @@ it("preserves complete large actions and bounds serialized review prompts separa
   const content = `${'"\\😀'.repeat(20000)}final evidence`;
   await gate.check({ ...action, content }, new AbortController().signal);
   expect(check.mock.calls[0]?.[0]).toMatchObject({ content });
-  // A tool review carries the whole conversation, so one too long to review
+  // A tool review carries the whole conversation, so one too large to review
   // says how to recover; other actions keep the plain refusal.
   await expect(
     gate.check(
@@ -659,7 +659,7 @@ it("preserves complete large actions and bounds serialized review prompts separa
       new AbortController().signal,
     ),
   ).rejects.toThrow(
-    "This conversation is too long to review its next action; start a new conversation",
+    "This conversation is too large to review its next action; start a new conversation",
   );
   await expect(
     gate.check(
