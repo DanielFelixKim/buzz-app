@@ -179,6 +179,9 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   channels: [],
 };
 const noSubscription = () => () => {};
+// The edit view each composer in this window has open, so a quiet resume
+// leaves an edit open in another composer alone.
+const openEdits = new Map<object, string>();
 
 type AcceptedDraft = {
   next: MentionDraft;
@@ -336,6 +339,9 @@ export type MessageComposerProps = {
   autoFocus?: boolean | RefObject<HTMLElement | null>;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
+  /** Reopens an unsaved edit kept from an earlier mount unasked; choosing Edit
+   * resumes it either way. */
+  resumeEdit?: boolean;
   disabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
   submission?: {
@@ -514,6 +520,7 @@ function Composer({
   autoFocus = false,
   focusRequest,
   hideMediaTimeIndicator = false,
+  resumeEdit = true,
   disabled: requestedDisabled = false,
   submission,
   soloConversation,
@@ -1130,6 +1137,7 @@ function Composer({
     const saved = beforeEdit.current;
     if (!saved) return;
     if (editKey) writeView(scope, editKey, null);
+    openEdits.delete(beforeEdit);
     valueRef.current = saved.value;
     updateDraft(saved.value);
     saved.restore();
@@ -1614,6 +1622,8 @@ function Composer({
       input.current.focus();
       return true;
     }
+    const open = `${scope}\n${editKey}`;
+    if (quiet && [...openEdits.values()].includes(open)) return true;
     const kept = keptEdit();
     const resumed = kept?.id === current.id ? kept : undefined;
     completion.invalidate();
@@ -1621,6 +1631,7 @@ function Composer({
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
+    openEdits.set(beforeEdit, open);
     const body = editing.start(
       current,
       (body) =>
@@ -1684,21 +1695,26 @@ function Composer({
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
-  // An edit kept from an earlier mount reopens once its message loads. Rows
-  // that load without it, a change to the new-message draft, or an error the
-  // composer reports for it, as for a recovered send, end the wait.
+  // An edit kept from an earlier mount reopens once its message loads, unless
+  // another composer in this window has it open. Rows that load without it, a
+  // change to the new-message draft, or an error the composer reports for it,
+  // as for a recovered send, end the wait.
   // It starts in a later commit than the mount: StrictMode's replayed mount
   // effects rebuild the editor from the draft and would drop its reset.
   const [resuming, setResuming] = useState<string>();
-  const resume = useEffectEvent(() => setResuming(keptEdit()?.id));
+  const resume = useEffectEvent(() => {
+    if (resumeEdit) setResuming(keptEdit()?.id);
+  });
   useEffect(() => resume(), []);
+  useEffect(() => () => void openEdits.delete(beforeEdit), []);
+  // A thread's rows and load signal arrive as props, which re-render it.
   const subscribeResume = useCallback(
     (listener: () => void) =>
-      resuming
+      resuming && !threadRootId
         ? (session.channels.subscribeWindow?.(channelId, listener) ??
           noSubscription())
         : noSubscription(),
-    [resuming, session.channels, channelId],
+    [resuming, threadRootId, session.channels, channelId],
   );
   const resumeRow = useSyncExternalStore(subscribeResume, () => {
     if (!resuming) return;
