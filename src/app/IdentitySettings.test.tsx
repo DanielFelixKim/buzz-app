@@ -21,7 +21,7 @@ import { backupOfferedFor } from "../features/identity/builderlab-account";
 import type { Identity } from "../features/identity/service";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { CHANNEL_ACTIVITY_KINDS } from "../features/relay/channel-activity";
-import { IdentitySettings, newestEventAt } from "./IdentitySettings";
+import { IdentitySettings, keyActivity } from "./IdentitySettings";
 import { federatedFixture } from "../features/federated-identity/testing";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
@@ -389,7 +389,7 @@ it("lists the account's backed-up keys with their last activity and switches thr
         }),
   );
   const lastActive = vi.fn(async (pubkey: string) => {
-    if (pubkey === other) return Date.now() / 1000 - 7200;
+    if (pubkey === other) return { at: Date.now() / 1000 - 7200, sent: 3 };
     throw new Error("relay refused");
   });
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -410,7 +410,9 @@ it("lists the account's backed-up keys with their last activity and switches thr
   expect(radios[0]).toHaveAccessibleName("This device, Linked");
   expect(radios[0]).toHaveAttribute("aria-disabled", "true");
   expect(
-    await within(list).findByText(/Last active 2 hours ago/),
+    await within(list).findByText(
+      /Last active 2 hours ago · 3 messages in 7 days/,
+    ),
   ).toBeVisible();
   expect(within(list).getByText(/Couldn’t check activity/)).toBeVisible();
   expect(within(list).getByText(npubEncode(other))).toBeVisible();
@@ -467,20 +469,35 @@ it.each([
 
 it.each([
   ["no events", [], undefined],
-  ["events", [{ created_at: 5 }, { created_at: 9 }], 9],
+  [
+    "events",
+    [
+      // Read by both filters: counted once.
+      { id: "a", kind: 9, created_at: 900 },
+      { id: "a", kind: 9, created_at: 900 },
+      { id: "b", kind: 9, created_at: 800 },
+      // Older than 7 days, or not a chat message: not counted.
+      { id: "c", kind: 9, created_at: 100 },
+      { id: "d", kind: 40002, created_at: 950 },
+    ],
+    { at: 950, sent: 2 },
+  ],
 ] as const)(
-  "reads the newest event time from a relay with %s",
-  async (_label, events, newest) => {
+  "reads a key's newest activity and 7-day message count from a relay with %s",
+  async (_label, events, activity) => {
+    const since = 200;
+    vi.spyOn(Date, "now").mockReturnValue((since + 7 * 24 * 60 * 60) * 1000);
     const read = vi.fn(async () => events);
     const relay = {
       snapshot: () => ({ status: "ready", session: { read } }),
-    } as unknown as Parameters<typeof newestEventAt>[0];
-    await expect(newestEventAt(relay, viewer)).resolves.toBe(newest);
+    } as unknown as Parameters<typeof keyActivity>[0];
+    await expect(keyActivity(relay, viewer)).resolves.toEqual(activity);
     expect(read).toHaveBeenCalledWith(
-      [{ kinds: [...CHANNEL_ACTIVITY_KINDS], authors: [viewer], limit: 1 }],
-      {
-        priority: "background",
-      },
+      [
+        { kinds: [...CHANNEL_ACTIVITY_KINDS], authors: [viewer], limit: 1 },
+        { kinds: [9], authors: [viewer], since, limit: 500 },
+      ],
+      { priority: "background" },
     );
   },
 );

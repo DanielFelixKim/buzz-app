@@ -81,21 +81,39 @@ function BackupRow({
   );
 }
 
-/** The newest channel activity time by `pubkey` on the current community's relay, if any. */
-export async function newestEventAt(
+/** The window, back from now, a key's chat messages are counted in. */
+const RECENT_SECONDS = 7 * 24 * 60 * 60;
+/** The relay read cap: a count at it shows as at least this many. */
+const RECENT_LIMIT = 500;
+
+export type KeyActivity = { at: number; sent: number };
+
+/**
+ * `pubkey`'s newest channel activity and its chat messages in the last 7 days
+ * on the current community's relay, in one read; undefined with neither.
+ */
+export async function keyActivity(
   relay: Pick<RelayData, "snapshot">,
   pubkey: string,
-) {
+): Promise<KeyActivity | undefined> {
   const connection = relay.snapshot();
   if (connection.status !== "ready") return undefined;
+  const since = Math.floor(Date.now() / 1000) - RECENT_SECONDS;
   const events = await connection.session.read(
     // Relay reads must name kinds: channel activity, the messages people see.
-    [{ kinds: [...CHANNEL_ACTIVITY_KINDS], authors: [pubkey], limit: 1 }],
+    [
+      { kinds: [...CHANNEL_ACTIVITY_KINDS], authors: [pubkey], limit: 1 },
+      { kinds: [9], authors: [pubkey], since, limit: RECENT_LIMIT },
+    ],
     { priority: "background" },
   );
-  return events.length
-    ? Math.max(...events.map((event) => event.created_at))
-    : undefined;
+  if (!events.length) return undefined;
+  const sent = new Set(
+    events
+      .filter((event) => event.kind === 9 && event.created_at >= since)
+      .map((event) => event.id),
+  ).size;
+  return { at: Math.max(...events.map((event) => event.created_at)), sent };
 }
 
 type BackedUp =
@@ -117,7 +135,9 @@ function BackedUpKeys({
   viewer: string;
   identity: Identity;
   federated: FederatedIdentity;
-  lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
+  lastActive?:
+    | ((pubkey: string) => Promise<KeyActivity | undefined>)
+    | undefined;
   onSwitch: (pubkey: string) => void;
 }) {
   const session = useSyncExternalStore(
@@ -132,7 +152,7 @@ function BackedUpKeys({
   const [read, setRead] = useState<BackedUp>();
   // null: no events there; false: the read failed.
   const [active, setActive] = useState<
-    Readonly<Record<string, number | null | false>>
+    Readonly<Record<string, KeyActivity | null | false>>
   >({});
   const [picked, setPicked] = useState<string>();
   useEffect(() => {
@@ -244,7 +264,7 @@ function BackedUpKeys({
                             ? "No activity here"
                             : at === false
                               ? "Couldn’t check activity"
-                              : `Last active ${relativeTimestamp(at)}`)}
+                              : `Last active ${relativeTimestamp(at.at)} · ${at.sent >= RECENT_LIMIT ? `${RECENT_LIMIT}+` : at.sent} ${at.sent === 1 ? "message" : "messages"} in 7 days`)}
                     </>
                   }
                 />
@@ -281,8 +301,10 @@ export function IdentitySettings({
    * first run uses it: the host's own refuses authenticated requests.
    */
   builderlabIdentity?: FederatedIdentity | undefined;
-  /** The newest channel activity time by `pubkey` on the current community's relay. */
-  lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
+  /** `pubkey`'s newest channel activity and recent message count on the current community's relay. */
+  lastActive?:
+    | ((pubkey: string) => Promise<KeyActivity | undefined>)
+    | undefined;
 }) {
   const [signingOut, setSigningOut] = useState(false);
   const [offered, setOffered] = useState(false);
