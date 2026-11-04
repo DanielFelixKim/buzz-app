@@ -5226,6 +5226,56 @@ it("with several backups of the signed-in account, restoring another key than th
   identity.dispose();
 });
 
+it("a link failure after restoring another key keeps the restored key, and Try again re-runs only the link", async () => {
+  recoveringAs(credential.account.subject, stranger.pubkey);
+  const calls: string[] = [];
+  const unbind = vi.fn((old: string) => {
+    calls.push(`unbind ${old}`);
+    return Promise.resolve();
+  });
+  let binds = 0;
+  const bind = vi.fn((pubkey: string) => {
+    calls.push(`bind ${pubkey}`);
+    return binds++
+      ? Promise.resolve()
+      : Promise.reject(
+          transientError("Builderlab account link failed (HTTP 503)."),
+        );
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    replacedBy(unbind, bind, undefined, {
+      backupStatus: () => Promise.resolve([owned.pubkey, stranger.pubkey]),
+      recovery: recoveryFor(identity),
+    }),
+  );
+  await user.click(await screen.findByRole("radio", { checked: false }));
+  await user.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: stranger.pubkey,
+  });
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(calls).toEqual([
+    `unbind ${owned.pubkey}`,
+    `bind ${stranger.pubkey}`,
+    `bind ${stranger.pubkey}`,
+  ]);
+  identity.dispose();
+});
+
 it("backups recovered from another account than the signed-in one offer no choice and change no binding", async () => {
   recoveringAs("another-account", owned.pubkey);
   const changed = (name: string) => () =>
