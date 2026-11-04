@@ -623,6 +623,7 @@ export function Settings({
   communities,
   identity,
   federatedIdentity,
+  builderlabIdentity,
   appearance,
   shortcuts,
   shortcutBindings,
@@ -645,6 +646,8 @@ export function Settings({
   communities: Communities;
   identity?: Identity | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
+  /** The session as the Builderlab plugin's bundled installation, for its account reads. */
+  builderlabIdentity?: FederatedIdentity | undefined;
   appearance: Appearance;
   shortcuts: ShortcutsService;
   shortcutBindings: ShortcutBindings;
@@ -1349,6 +1352,7 @@ export function Settings({
             viewer={client.viewer}
             identity={identity}
             federatedIdentity={federatedIdentity}
+            builderlabIdentity={builderlabIdentity}
             lastActive={lastActive}
           />
         )}

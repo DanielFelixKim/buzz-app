@@ -231,11 +231,17 @@ export function IdentitySettings({
   viewer,
   identity,
   federatedIdentity,
+  builderlabIdentity,
   lastActive,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
+  /**
+   * The same session as the Builderlab plugin's bundled installation, as
+   * first run uses it: the host's own refuses authenticated requests.
+   */
+  builderlabIdentity?: FederatedIdentity | undefined;
   /** The newest event time by `pubkey` on the current community's relay. */
   lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
 }) {
@@ -317,11 +323,11 @@ export function IdentitySettings({
               </SettingsGroup>
               <SettingsGroup>
                 <BackupRow backup={identity.backup} offered={offered} />
-                {offered && federatedIdentity && (
+                {offered && builderlabIdentity && (
                   <BackedUpKeys
                     viewer={viewer}
                     identity={identity}
-                    federated={federatedIdentity}
+                    federated={builderlabIdentity}
                     lastActive={lastActive}
                     onSwitch={(pubkey) => {
                       restoreChoice.set(pubkey);

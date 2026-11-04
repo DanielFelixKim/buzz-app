@@ -613,7 +613,7 @@ command permission is not proof of a human gesture.
 ## Sign out of Buzz
 
 Settings → Buzz → Identity → **Backed-up keys**, wherever the Key backup row
-shows and the organization is signed in, reads the account's linked key and
+shows and the organization is signed in, reads (through the Builderlab plugin's bundled session, as first run does) the account's linked key and
 `nsec-backups/status` as first run does. It appears once a backed-up key is not
 this device's, and lists each npub, tagged *This device* and *Linked*, with its
 newest event time on the current community relay (*No activity here* without

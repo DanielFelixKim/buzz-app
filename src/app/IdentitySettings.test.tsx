@@ -394,7 +394,7 @@ it("lists the account's backed-up keys with their last activity and switches thr
     <IdentitySettings
       viewer={viewer}
       identity={identity}
-      federatedIdentity={fi.service}
+      builderlabIdentity={fi.service}
       lastActive={lastActive}
     />,
     { wrapper: ToastProvider },
@@ -441,7 +441,7 @@ it("hides backed-up keys when only this device's key is backed up", async () => 
     <IdentitySettings
       viewer={viewer}
       identity={host.identity}
-      federatedIdentity={fi.service}
+      builderlabIdentity={fi.service}
     />,
     { wrapper: ToastProvider },
   );
