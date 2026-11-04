@@ -20,6 +20,7 @@ import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { backupOfferedFor } from "../features/identity/builderlab-account";
 import type { Identity } from "../features/identity/service";
 import type { FederatedIdentity } from "../features/federated-identity/service";
+import { CHANNEL_ACTIVITY_KINDS } from "../features/relay/channel-activity";
 import { IdentitySettings, newestEventAt } from "./IdentitySettings";
 import { federatedFixture } from "../features/federated-identity/testing";
 
@@ -475,8 +476,11 @@ it.each([
       snapshot: () => ({ status: "ready", session: { read } }),
     } as unknown as Parameters<typeof newestEventAt>[0];
     await expect(newestEventAt(relay, viewer)).resolves.toBe(newest);
-    expect(read).toHaveBeenCalledWith([{ authors: [viewer], limit: 1 }], {
-      priority: "background",
-    });
+    expect(read).toHaveBeenCalledWith(
+      [{ kinds: [...CHANNEL_ACTIVITY_KINDS], authors: [viewer], limit: 1 }],
+      {
+        priority: "background",
+      },
+    );
   },
 );

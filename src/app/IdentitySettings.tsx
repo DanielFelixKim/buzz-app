@@ -21,6 +21,7 @@ import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { relativeTimestamp } from "../shared/relative-timestamp";
 import { restoreChoice } from "../features/identity/restore-choice";
 import { canRestore } from "../features/identity/Welcome";
+import { CHANNEL_ACTIVITY_KINDS } from "../features/relay/channel-activity";
 import type { RelayData } from "../features/relay/service";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -80,7 +81,7 @@ function BackupRow({
   );
 }
 
-/** The newest event time by `pubkey` on the current community's relay, if any. */
+/** The newest channel activity time by `pubkey` on the current community's relay, if any. */
 export async function newestEventAt(
   relay: Pick<RelayData, "snapshot">,
   pubkey: string,
@@ -88,7 +89,8 @@ export async function newestEventAt(
   const connection = relay.snapshot();
   if (connection.status !== "ready") return undefined;
   const events = await connection.session.read(
-    [{ authors: [pubkey], limit: 1 }],
+    // Relay reads must name kinds: channel activity, the messages people see.
+    [{ kinds: [...CHANNEL_ACTIVITY_KINDS], authors: [pubkey], limit: 1 }],
     { priority: "background" },
   );
   return events.length
@@ -279,7 +281,7 @@ export function IdentitySettings({
    * first run uses it: the host's own refuses authenticated requests.
    */
   builderlabIdentity?: FederatedIdentity | undefined;
-  /** The newest event time by `pubkey` on the current community's relay. */
+  /** The newest channel activity time by `pubkey` on the current community's relay. */
   lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
 }) {
   const [signingOut, setSigningOut] = useState(false);
