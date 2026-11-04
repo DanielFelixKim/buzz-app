@@ -106,13 +106,25 @@ function hostDeclarations(
     })),
     ...(manifest.host?.networkOrigins ?? []).map((origin) => ({
       key: `origin:${origin}`,
-      signature: `HTTPS origin: ${origin}`,
-      title: "HTTPS origin:",
-      name: `HTTPS origin ${origin}`,
-      label: `Connect to ${origin}`,
-      hint: "Buzz can make HTTPS requests to this address for the plugin.",
+      signature: origin === "*" ? "Any web address" : `HTTPS origin: ${origin}`,
+      title: origin === "*" ? "Any web address:" : "HTTPS origin:",
+      name: origin === "*" ? "Any web address" : `HTTPS origin ${origin}`,
+      label:
+        origin === "*" ? "Connect to any web address" : `Connect to ${origin}`,
+      hint:
+        origin === "*"
+          ? "Can send what it reads to servers it chooses, including ones on this computer."
+          : "Buzz can make HTTPS requests to this address for the plugin.",
       icon: GlobeIcon,
-      details: <code className={styles.sourcePath}>{origin}</code>,
+      details:
+        origin === "*" ? (
+          <p>
+            Any HTTPS server and local HTTP services at loopback IP addresses.
+            Destinations are chosen by the plugin.
+          </p>
+        ) : (
+          <code className={styles.sourcePath}>{origin}</code>
+        ),
     })),
     ...(manifest.host?.federatedIdentity?.operations ?? []).map(
       (operation) => ({

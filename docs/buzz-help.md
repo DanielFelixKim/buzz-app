@@ -294,6 +294,9 @@ available rather than silently discarding it.
 
 ## Optional features and limits
 
+- Plugins can request network access to declared HTTPS servers, or to any HTTPS
+  server and local HTTP services. The installation review describes this access:
+  a plugin may send what it reads to servers it chooses.
 - Plugins may request permission to read conversations and agent memory when a new agent turn starts, and add selected context to that request. The installation review describes this access; copied excerpts may be retained or sent to your Decisions provider.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.

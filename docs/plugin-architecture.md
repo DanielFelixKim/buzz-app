@@ -1213,6 +1213,14 @@ the call started under. Plugin reload, recovery and enable changes retire
 registrations; a caller registers again once. The token never enters the
 renderer, and an ordinary network origin is never authority to use it.
 
+`host.networkOrigins: ["*"]` admits any HTTPS server and HTTP only at
+parsed loopback IP addresses (127.0.0.0/8 and [::1]); hostnames such as
+`localhost` do not qualify for HTTP. The wildcard must be the sole entry.
+The plugin chooses destinations and can send what it reads to those servers;
+plugin settings do not create a native owner-selected origin restriction.
+URL credentials are refused and redirects remain disabled. Exact HTTPS origin
+declarations keep their existing restrictions.
+
 Requests use the native HTTPS client, so a plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text

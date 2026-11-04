@@ -30,6 +30,7 @@ export type PluginManifest = Readonly<{
       /** Maximum UTF-8 stdout bytes; defaults to 4096, bounded at 1048576. */
       maxOutputBytes?: number;
     }>[];
+    /** Exact HTTPS origins, or ["*"] for any HTTPS server and loopback HTTP. */
     networkOrigins?: readonly string[];
     /** Separate authority access; ordinary HTTPS grants never authorize a session. */
     federatedIdentity?: Readonly<{

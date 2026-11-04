@@ -298,6 +298,9 @@ impl Manifest {
             }
             let mut origins = std::collections::HashSet::new();
             for origin in &host.network_origins {
+                if origin == "*" && host.network_origins.len() == 1 {
+                    continue;
+                }
                 let url = url::Url::parse(origin).map_err(err)?;
                 if url.scheme() != "https"
                     || !url.username().is_empty()
@@ -2602,6 +2605,26 @@ mod tests {
         assert_eq!(plugin.revision, first);
         assert_eq!(plugin.previous, None);
     }
+    #[test]
+    fn wildcard_origin_must_be_the_only_entry() {
+        for (origins, valid) in [
+            (vec!["*"], true),
+            (vec!["*", "https://example.test"], false),
+            (vec!["https://example.test", "*"], false),
+            (vec!["*", "*"], false),
+        ] {
+            let manifest = serde_json::json!({
+                "id": "recall", "name": "Recall", "apiVersion": 1,
+                "host": { "networkOrigins": origins },
+            });
+            assert_eq!(
+                artifact_from_text(&manifest.to_string(), "export const x = 1".into()).is_ok(),
+                valid,
+                "{origins:?}"
+            );
+        }
+    }
+
     #[test]
     fn validates_turn_context_grant() {
         for enabled in [true, false] {
