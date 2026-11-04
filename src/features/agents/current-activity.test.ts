@@ -311,3 +311,84 @@ it("moves channel-started local work into its observed reply thread", () => {
     ).has(agent),
   ).toBe(true);
 });
+
+it("shows a local woken turn as working, not typing alone, and keeps it beside a message's work", () => {
+  const wake = {
+    scope: "scope",
+    agent,
+    channelId: "channel",
+    threadRootId: root,
+    startedAt: now,
+  };
+  const entries = [{ pubkey: agent, channelId: "channel", threadRootId: root }];
+  const live: Snapshot = { ...base, wakes: [wake] };
+  const shown = {
+    label: "Working",
+    detailAvailability: "available",
+    roots: [root],
+  };
+  // The observer has nothing for it, so typing alone would say so.
+  expect(
+    currentActivity(live, entries, new Set([agent]), "channel").get(agent),
+  ).toEqual(shown);
+  expect(
+    currentActivity(live, entries, new Set([agent]), "channel", root).get(
+      agent,
+    ),
+  ).toEqual(shown);
+  // Without the observer, too: the wake runs on this device.
+  expect(
+    currentActivity(
+      { ...live, status: "disabled" },
+      [],
+      new Set(),
+      "channel",
+    ).get(agent),
+  ).toEqual(shown);
+  expect(currentActivity(live, [], new Set(), "channel", otherRoot).size).toBe(
+    0,
+  );
+  expect(currentActivity(live, [], new Set(), "elsewhere").size).toBe(0);
+  // Channel-only views leave a thread's wake to the thread.
+  expect(
+    currentActivity(live, [], new Set(), "channel", undefined, false).size,
+  ).toBe(0);
+  const { threadRootId: _thread, ...channelWake } = wake;
+  const topLevel: Snapshot = { ...base, wakes: [channelWake] };
+  expect(
+    currentActivity(topLevel, [], new Set(), "channel", undefined, false).get(
+      agent,
+    ),
+  ).toEqual({ ...shown, roots: [null] });
+  // An earlier request it finished in this channel does not hide the wake.
+  const request = {
+    scope: "scope",
+    agent,
+    channelId: "channel",
+    messageId: otherRoot,
+    threadRootId: otherRoot,
+    thread: true as const,
+    startedAt: now - 1000,
+  };
+  expect(
+    currentActivity(
+      { ...live, local: [{ ...request, state: "done" }] },
+      [],
+      new Set(),
+      "channel",
+    ).get(agent),
+  ).toEqual(shown);
+  // A request it is working on keeps its own, more exact status.
+  expect(
+    currentActivity(
+      { ...live, local: [{ ...request, state: "working" }] },
+      [],
+      new Set(),
+      "channel",
+    ).get(agent),
+  ).toEqual({
+    label: "Starting",
+    detailAvailability: "available",
+    roots: [otherRoot],
+  });
+});

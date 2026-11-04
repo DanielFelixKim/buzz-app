@@ -2699,23 +2699,41 @@ export class AgentRunners {
         : undefined;
     if (resumable) this.mark(runner.key, resumable, channel ?? "");
     let typing: (() => void) | undefined;
+    let shown: (() => void) | undefined;
     const beginTyping = () => {
       if (typing || !event || !channel) return;
+      // Where its turn answers, read the same way.
+      const topLevel = this.host
+        .soloChat(agent, channel, runner.controller.signal)
+        .then((flat) => {
+          if (wake && !wakeLands(wake, flat))
+            throw new Error("The wake has no conversation here");
+          return flat || wake?.topLevel === true;
+        });
       typing = pulseTyping(
         // Straight to custody, so pulses stay out of what it wrote.
         async (pulse) => this.require().publish(runner.member, pulse),
-        // Where its turn answers, read the same way.
-        this.host
-          .soloChat(agent, channel, runner.controller.signal)
-          .then((flat) => {
-            if (wake && !wakeLands(wake, flat))
-              throw new Error("The wake has no conversation here");
-            return flat || wake?.topLevel === true;
-          }),
+        topLevel,
         event,
         channel,
         runner.typing,
       );
+      // A wake answers no message, so it has no work row; show this device
+      // that the turn is running where it types, until it ends.
+      const scope = !work && wake ? this.host.scope(agent) : undefined;
+      if (scope)
+        topLevel.then(
+          (flat) => {
+            if (holds < 0) return;
+            shown = this.host.activity.wake({
+              scope,
+              agent: runner.member.pubkey,
+              channelId: channel,
+              ...(flat ? {} : { threadRootId: event.id }),
+            });
+          },
+          () => {},
+        );
     };
     let holds = 1;
     let outcome: WorkOutcome = { ok: true };
@@ -2734,6 +2752,7 @@ export class AgentRunners {
       runner.working--;
       this.noteWorking();
       typing?.();
+      shown?.();
       if (resumable) this.unmark(runner.key, [resumable]);
     };
     const abort = () => {

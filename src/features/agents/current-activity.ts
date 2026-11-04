@@ -155,9 +155,11 @@ export function currentActivity(
         }
       : snapshot;
   const local = localActivity(localSnapshot, channelId, threadRootId);
+  const requested = new Set<string>();
   for (const [agent, work] of local) {
     agents.delete(agent);
     if (work.state !== "working" && work.state !== "waiting") continue;
+    requested.add(agent);
     const roots = [
       ...new Set(
         (localSnapshot?.local ?? [])
@@ -175,6 +177,26 @@ export function currentActivity(
       label: localWorkLabel(work),
       detailAvailability: "available",
       roots,
+    });
+  }
+  // A turn an Interest or plugin woke runs here without answering a message.
+  // Its typing is then this device's own work, not typing alone.
+  for (const wake of snapshot?.wakes ?? []) {
+    if (
+      requested.has(wake.agent) ||
+      !matches(wake.channelId, wake.threadRootId)
+    )
+      continue;
+    const known = agents.get(wake.agent);
+    const root = wake.threadRootId ?? null;
+    if (known?.detailAvailability === "available") {
+      if (!known.roots.includes(root)) known.roots.push(root);
+      continue;
+    }
+    agents.set(wake.agent, {
+      label: "Working",
+      detailAvailability: "available",
+      roots: [...new Set([...(known?.roots ?? []), root])],
     });
   }
   return agents;

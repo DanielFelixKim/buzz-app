@@ -1,4 +1,4 @@
-import type { LocalAgentSource, LocalWork } from "./local-activity";
+import type { LocalAgentSource, LocalWake, LocalWork } from "./local-activity";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
@@ -51,6 +51,8 @@ type Snapshot = Readonly<{
   records: readonly RawRecord[];
   turns: readonly ActivityTurn[];
   local?: readonly LocalWork[];
+  /** Woken turns running here; never message work. */
+  wakes?: readonly LocalWake[];
   typing: readonly TypingEntry[];
   trimmed: number;
 }>;
@@ -145,6 +147,12 @@ export function createAgentActivity(
               (row) => row.scope === local.scope && canAccess(row.channelId),
             )
         : [];
+    const localWakes =
+      local && !closed
+        ? (local.source.wakes?.() ?? []).filter(
+            (row) => row.scope === local.scope && canAccess(row.channelId),
+          )
+        : [];
     const now = Date.now();
     const fresh = records.filter(
       (record) => now - record.receivedAt < ACTIVITY_HISTORY_AGE_MS,
@@ -213,6 +221,8 @@ export function createAgentActivity(
       snapshot.status === status &&
       (snapshot.local ?? []).length === localWork.length &&
       (snapshot.local ?? []).every((row, index) => row === localWork[index]) &&
+      (snapshot.wakes ?? []).length === localWakes.length &&
+      (snapshot.wakes ?? []).every((row, index) => row === localWakes[index]) &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
       JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
@@ -225,6 +235,7 @@ export function createAgentActivity(
       records: Object.freeze(records),
       turns: Object.freeze(visible),
       local: Object.freeze(localWork),
+      wakes: Object.freeze(localWakes),
       typing: Object.freeze(typers),
       trimmed,
     });

@@ -10927,6 +10927,50 @@ it("delivers matched events to their configured address rather than the listenin
   expect(runOnce).not.toHaveBeenCalled();
 });
 
+it("shows a woken turn as running where it types until it ends, as no message's work", async () => {
+  const runOnce = vi.fn(async () => ({ ok: true }));
+  const { service, run, emit, native, activity } = await setup({ runOnce });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const root = "e".repeat(64);
+  native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: { "watch/channel": { ...watch, channel, root } },
+  });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(({ workingUntil }) => workingUntil(turn));
+  emit({ channelId: channel, events: [deploy("woken")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    type: "attention",
+    root,
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(activity.reader.wakes?.()).toEqual([
+        {
+          scope: expect.any(String),
+          agent: bot,
+          channelId: channel,
+          threadRootId: root,
+          startedAt: expect.any(Number),
+        },
+      ]),
+    );
+    // It answers no message: nothing to notify, stop or retry per message.
+    expect(activity.reader.work()).toEqual([]);
+  } finally {
+    finish();
+  }
+  await vi.waitFor(() => expect(activity.reader.wakes?.()).toEqual([]));
+  expect(activity.reader.work()).toEqual([]);
+});
+
 it("serializes standalone source output per Interest and drops queued output after removal", async () => {
   const prompts: string[] = [];
   let release = () => {};

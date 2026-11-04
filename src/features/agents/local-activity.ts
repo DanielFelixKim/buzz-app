@@ -43,6 +43,16 @@ export type LocalWork = Readonly<{
   /** It can be asked again once it fails. */
   retryable?: true;
 }>;
+/** A turn an Interest or plugin woke, while it runs here. It answers no
+ * message, so it never takes a message's activity, notification or Stop. */
+export type LocalWake = Readonly<{
+  scope: string;
+  agent: string;
+  channelId: string;
+  /** The thread it types in; absent at channel top level. */
+  threadRootId?: string;
+  startedAt: number;
+}>;
 const settled = (state: LocalWorkState) =>
   state === "done" ||
   state === "error" ||
@@ -51,6 +61,8 @@ const settled = (state: LocalWorkState) =>
 export type LocalAgentSource = {
   work(): readonly LocalWork[];
   subscribeWork(listener: () => void): () => void;
+  /** Woken turns running now; `subscribeWork` reports their changes too. */
+  wakes?(): readonly LocalWake[];
   /** Hides one already-seen error on this device; never changes its outcome. */
   dismissError?(work: Pick<LocalWork, "scope" | "agent" | "messageId">): void;
   /** Stops the turn this unsettled request is in, then shows it stopped. */
@@ -72,8 +84,11 @@ export function createLocalAgentActivity() {
   /** How to ask each retryable request again, while its row is kept. */
   const retries = new Map<symbol, () => void>();
   const replyTimers = new Map<symbol, ReturnType<typeof setTimeout>>();
+  let wakes: readonly LocalWake[] = [];
+  const wakeEntries = new Map<symbol, LocalWake>();
   const publish = () => {
     work = Object.freeze([...entries.values()]);
+    wakes = Object.freeze([...wakeEntries.values()]);
     for (const listener of workListeners) listener();
   };
   const subscribe = (listeners: Set<() => void>, listener: () => void) => {
@@ -84,6 +99,7 @@ export function createLocalAgentActivity() {
   };
   const reader: LocalAgentSource = {
     work: () => work,
+    wakes: () => wakes,
     subscribeWork: (listener) => subscribe(workListeners, listener),
     dismissError({ scope, agent, messageId }) {
       for (const [id, row] of entries)
@@ -383,8 +399,25 @@ export function createLocalAgentActivity() {
         },
       };
     },
+    /** Shows a woken turn as running until the returned end is called. */
+    wake(input: Omit<LocalWake, "startedAt">) {
+      const id = Symbol();
+      wakeEntries.set(id, Object.freeze({ ...input, startedAt: Date.now() }));
+      publish();
+      return () => {
+        if (wakeEntries.delete(id)) publish();
+      };
+    },
     clear(scope?: string, agent?: string) {
       let changed = false;
+      for (const [id, row] of wakeEntries)
+        if (
+          (!scope || row.scope === scope) &&
+          (!agent || row.agent === agent)
+        ) {
+          wakeEntries.delete(id);
+          changed = true;
+        }
       for (const [id, row] of entries)
         if (
           (!scope || row.scope === scope) &&
