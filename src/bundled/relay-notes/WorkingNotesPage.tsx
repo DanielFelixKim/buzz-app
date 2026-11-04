@@ -29,17 +29,13 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ArrowLeftIcon, NoteIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Input } from "../../shared/design-system/ui/Input";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
-import { NoteDocument } from "./NoteDocument";
+import { NoteDocument, type NoteFocus } from "./NoteDocument";
+import { NewNoteDocument, type NewDraft } from "./NewNoteDocument";
 import { NotesPage } from "./NotesPage";
 import styles from "./WorkingNotes.module.css";
 import {
@@ -49,12 +45,6 @@ import {
 } from "./working-route";
 
 export type NotesOwner = (session: RelaySession) => NotesWorkspace;
-type NewDraft = {
-  id: string;
-  title: string;
-  markdown: string;
-  agents?: boolean;
-};
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Notes could not be read.";
 
@@ -159,14 +149,18 @@ export function WorkingNotesCommunity({
   const [sharingError, setSharingError] = useState("");
   const [query, setQuery] = useState(destination?.query ?? "");
   const [trash, setTrash] = useState(destination?.trash ?? false);
-  const [creating, setCreating] = useState<NewDraft>();
   const drafts = useRef(new Map<string, NewDraft>());
+  const createdDrafts = useRef(new Map<string, NoteAddress>());
+  const createdFocus = useRef(new Map<string, NoteFocus>());
+  const createdAutoSave = useRef(new Map<string, boolean>());
   const [opened, setOpened] = useState<NoteAddress[]>(() =>
     initial ? [initial] : [],
   );
   const [selected, setSelected] = useState(
     initial ? noteKey(initial) : "browse",
   );
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const reconciled = useRef(new Map<string, string>());
   const choices = useAgentChoices(workspace.session, true, true);
   const agentKeys = choices.complete
@@ -222,7 +216,7 @@ export function WorkingNotesCommunity({
     setSelected(noteKey(address));
   }, []);
   const visit = useCallback(
-    (next: WorkingRoute) => {
+    (next: WorkingRoute, replace = false) => {
       if (
         !navigator ||
         !request ||
@@ -236,29 +230,32 @@ export function WorkingNotesCommunity({
         return;
       void navigator.open(target, {
         focus: "preserve",
+        replace,
       });
     },
     [navigator, request],
   );
-  const open = (address: NoteAddress) => {
+  const open = (address: NoteAddress, replace = false) => {
     reveal(address);
-    visit({
-      view: "note",
-      ...noteAddress(address),
-      query,
-      trash,
-    });
+    visit(
+      {
+        view: "note",
+        ...noteAddress(address),
+        query,
+        trash,
+      },
+      replace,
+    );
   };
   const browse = () => {
     setSelected("browse");
-    setCreating(undefined);
     visit({ view: "browse", query, trash });
     requestAnimationFrame(() => searchRef.current?.focus());
   };
   const newNote = (draft: Omit<NewDraft, "id">) => {
     const next = { ...draft, id: crypto.randomUUID() };
     drafts.current.set(next.id, next);
-    setCreating(next);
+    setSelected(`new:${next.id}`);
     visit({ view: "new", draft: next.id, query, trash });
   };
   useEffect(() => {
@@ -267,17 +264,24 @@ export function WorkingNotesCommunity({
     if (destination) {
       setQuery(destination.query ?? "");
       setTrash(destination.trash ?? false);
-      setCreating(
-        destination.view === "new" && destination.draft
-          ? (drafts.current.get(destination.draft) ?? {
+      if (destination.view === "new" && destination.draft) {
+        const created = createdDrafts.current.get(destination.draft);
+        if (created) {
+          reveal(created);
+          const { draft: _draft, ...rest } = destination;
+          visit({ ...rest, view: "note", ...created }, true);
+        } else {
+          if (!drafts.current.has(destination.draft))
+            drafts.current.set(destination.draft, {
               id: destination.draft,
               title: "",
               markdown: "",
-            })
-          : undefined,
-      );
+            });
+          setSelected(`new:${destination.draft}`);
+        }
+      }
     }
-  }, [initial, destination, reveal]);
+  }, [initial, destination, reveal, visit]);
   useEffect(() => {
     if (agentKeys === undefined || choices.pending) return;
     const controller = new AbortController();
@@ -311,60 +315,47 @@ export function WorkingNotesCommunity({
     );
   }, []);
   const visible = collection.notes.filter((note) => trash || !note.deleted);
-  const creation = creating && (
-    <NewNoteDialog
-      workspace={workspace}
-      initial={creating}
-      onDraftChange={(draft) => drafts.current.set(draft.id, draft)}
-      onClose={browse}
-      onCreated={(note) => {
-        changed(note);
-        open(note);
-        setCreating(undefined);
-      }}
-    />
-  );
   return (
-    <>
-      <NotesPage
-        community={workspace.session.scope.replace(/:[0-9a-f]{64}$/, "")}
-        {...{
-          selected,
-          query,
-          trash,
-          searchRef,
-          loading,
-          more: collection.more,
-          error,
-          sharingError,
-          search: (value, commit) => {
-            setQuery(value);
-            if (commit)
-              visit({
-                ...(destination ?? { view: "browse" }),
-                query: value,
-                trash,
-              });
-          },
-          showDeleted: (value) => {
-            setTrash(value);
+    <NotesPage
+      community={workspace.session.scope.replace(/:[0-9a-f]{64}$/, "")}
+      {...{
+        selected,
+        query,
+        trash,
+        searchRef,
+        loading,
+        more: collection.more,
+        error,
+        sharingError,
+        search: (value, commit) => {
+          setQuery(value);
+          if (commit)
             visit({
               ...(destination ?? { view: "browse" }),
-              query,
-              trash: value,
+              query: value,
+              trash,
             });
-          },
-          create: () => newNote({ title: "", markdown: "" }),
-          refresh: () => {
-            void load();
-          },
-          loadMore: () => {
-            void load(true);
-          },
-          browse,
-          entries: visible,
-          open,
-          items: opened.map((address) => {
+        },
+        showDeleted: (value) => {
+          setTrash(value);
+          visit({
+            ...(destination ?? { view: "browse" }),
+            query,
+            trash: value,
+          });
+        },
+        create: () => newNote({ title: "", markdown: "" }),
+        refresh: () => {
+          void load();
+        },
+        loadMore: () => {
+          void load(true);
+        },
+        browse,
+        entries: visible,
+        open,
+        items: [
+          ...opened.map((address) => {
             const key = noteKey(address);
             return {
               id: key,
@@ -374,6 +365,8 @@ export function WorkingNotesCommunity({
               content: (
                 <NoteDocument
                   address={address}
+                  initialFocus={createdFocus.current.get(key)}
+                  initialAutoSave={createdAutoSave.current.get(key)}
                   workspace={workspace}
                   catalogue={collection.notes}
                   partial={collection.more}
@@ -409,137 +402,31 @@ export function WorkingNotesCommunity({
               ),
             };
           }),
-        }}
-      />
-      {creation}
-    </>
-  );
-}
-
-function NewNoteDialog({
-  workspace,
-  initial,
-  onCreated,
-  onClose,
-  onDraftChange,
-}: {
-  workspace: NotesWorkspace;
-  initial: NewDraft;
-  onDraftChange(draft: NewDraft): void;
-  onCreated(note: Note): void;
-  onClose(): void;
-}) {
-  const [id] = useState(initial.id);
-  const [title, setTitle] = useState(initial.title);
-  const [markdown, setMarkdown] = useState(initial.markdown);
-  const [agents, setAgents] = useState(initial.agents ?? true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [unverified, setUnverified] = useState<string[]>([]);
-  const draftCallback = useRef(onDraftChange);
-  draftCallback.current = onDraftChange;
-  useEffect(() => {
-    draftCallback.current({
-      id,
-      title,
-      markdown,
-      agents,
-    });
-  }, [id, title, markdown, agents]);
-  return (
-    <Dialog
-      open
-      title="New note"
-      size="wide"
-      preventClose={busy}
-      onOpenChange={(open) => {
-        if (!open) onClose();
+          ...[...drafts.current.values()].map((draft) => ({
+            id: `new:${draft.id}`,
+            label: "New note",
+            content: (
+              <NewNoteDocument
+                workspace={workspace}
+                initial={draft}
+                catalogue={collection.notes}
+                active={selected === `new:${draft.id}`}
+                onDraftChange={(next) => drafts.current.set(next.id, next)}
+                onCreated={(note, autoSave, focus) => {
+                  if (focus) createdFocus.current.set(noteKey(note), focus);
+                  createdAutoSave.current.set(noteKey(note), autoSave);
+                  createdDrafts.current.set(draft.id, noteAddress(note));
+                  drafts.current.delete(draft.id);
+                  changed(note);
+                  if (selectedRef.current === `new:${draft.id}`)
+                    open(note, true);
+                }}
+              />
+            ),
+          })),
+        ],
       }}
-      actions={
-        <Button
-          form={`new-note-${id}`}
-          type="submit"
-          disabled={busy || !title.trim()}
-        >
-          {busy
-            ? "Creating…"
-            : unverified.length && agents
-              ? "Create with verified agents"
-              : "Create note"}
-        </Button>
-      }
-    >
-      <form
-        id={`new-note-${id}`}
-        className={styles.stack}
-        onSubmit={(event) => {
-          event.preventDefault();
-          setBusy(true);
-          setError("");
-          void (async () => {
-            if (agents && !unverified.length) {
-              const access = await workspace.agentAccess();
-              if (access.unverified.length) {
-                setUnverified(access.unverified);
-                return undefined;
-              }
-            }
-            return workspace.create({ id, title, markdown, agents });
-          })()
-            .then((note) => {
-              if (note) onCreated(note);
-            })
-            .catch((error: unknown) => setError(errorText(error)))
-            .finally(() => setBusy(false));
-        }}
-      >
-        <Field label="Title">
-          <Input
-            autoFocus
-            value={title}
-            onValueChange={setTitle}
-            disabled={busy}
-            placeholder="Research, plan or guide"
-          />
-        </Field>
-        <Field label="Markdown">
-          <Textarea
-            value={markdown}
-            onChange={(event) => setMarkdown(event.target.value)}
-            disabled={busy}
-            rows={10}
-          />
-        </Field>
-        <Checkbox
-          label="Share with my agents"
-          checked={agents}
-          onCheckedChange={setAgents}
-          disabled={busy}
-        />
-        <p className="text-caption text-subtle">
-          {agents
-            ? "You and your verified agents can edit this note."
-            : "Only you have access until you share it."}
-        </p>
-        {error && <p role="alert">{error}</p>}
-        {agents && unverified.length > 0 && (
-          <p role="status">
-            These agents could not be verified and will not receive access:{" "}
-            {unverified
-              .map(
-                (key) =>
-                  workspace.session.agentChoices
-                    .snapshot()
-                    .selectable.find((agent) => agent.pubkey === key)?.name ??
-                  key,
-              )
-              .join(", ")}
-            . You can create with verified agents, or turn off agent sharing to
-            create privately.
-          </p>
-        )}
-      </form>
-    </Dialog>
+    />
   );
 }
 

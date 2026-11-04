@@ -7,6 +7,13 @@ async function settleNotePane(page) {
   ).toBeVisible();
 }
 
+async function disableAutoSave(page, document) {
+  await document.getByRole("button", { name: "Note actions" }).click();
+  await page
+    .getByRole("menuitem", { name: "Disable auto-save", exact: true })
+    .click();
+}
+
 function floatingPaint(element) {
   const style = getComputedStyle(element);
   return {
@@ -98,6 +105,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     name: "Storage research",
     exact: true,
   });
+  await disableAutoSave(page, document);
   await expect(
     document.getByRole("combobox", { name: "Document mode", exact: true }),
   ).toContainText("Editing");
@@ -169,17 +177,20 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     .click();
   await expect(search).toHaveValue("Storage");
   await page.getByRole("button", { name: "New note", exact: true }).click();
-  const create = page.getByRole("dialog", { name: "New note" });
+  const create = page.getByRole("article", { name: "New note", exact: true });
+  await disableAutoSave(page, create);
   await create
     .getByRole("textbox", { name: "Title", exact: true })
     .fill("Draft survives history");
   await page.goBack();
-  await expect(create).toHaveCount(0);
+  await expect(create).not.toBeVisible();
   await page.goForward();
   await expect(
     create.getByRole("textbox", { name: "Title", exact: true }),
   ).toHaveValue("Draft survives history");
-  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Back to notes", exact: true })
+    .click();
   await search.fill("Connected");
   await search.press("Enter");
   await page
@@ -346,6 +357,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   ).toHaveText("Delivery plan");
   await page.getByRole("link", { name: "Delivery plan", exact: true }).click();
   const document = page.getByRole("article", { name: "Delivery plan" });
+  await disableAutoSave(page, document);
   const canvas = document.getByRole("region", {
     name: "Document content",
     exact: true,
@@ -460,8 +472,19 @@ test("human and agents edit, link, share and export the same working note", asyn
   const sectionGap = await scrollport.evaluate((element) =>
     parseFloat(getComputedStyle(element).rowGap),
   );
+  const savedStatusBounds = await document.getByRole("status").boundingBox();
   expect(
-    Math.abs(viewingBounds.y - modeBounds.y - modeBounds.height - sectionGap),
+    Math.abs(
+      savedStatusBounds.y - modeBounds.y - modeBounds.height - sectionGap,
+    ),
+  ).toBeLessThan(1);
+  expect(
+    Math.abs(
+      viewingBounds.y -
+        savedStatusBounds.y -
+        savedStatusBounds.height -
+        sectionGap,
+    ),
   ).toBeLessThan(1);
   const viewingTitle = await document
     .getByRole("textbox", { name: "Title", exact: true })
@@ -573,10 +596,9 @@ test("human and agents edit, link, share and export the same working note", asyn
     .poll(() => scrollport.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
   expect(await toolbar.boundingBox()).toEqual(pinnedBounds);
-  const pinnedSave = await document
-    .getByRole("button", { name: "Save", exact: true })
-    .boundingBox();
-  expect(pinnedSave.y + pinnedSave.height).toBeLessThanOrEqual(pinnedBounds.y);
+  await scrollport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
   await document
     .getByRole("textbox", { name: "Document body", exact: true })
     .fill("# Taylor’s revision\n\nReady for another agent.");
@@ -595,11 +617,17 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(body.locator("strong")).toHaveText("Ready");
   const save = document.getByRole("button", { name: "Save", exact: true });
   await expect(save).toHaveAttribute("data-variant", "prominent");
-  await expect(save).toHaveAttribute("data-size", "lg");
+  await expect(save).toHaveAttribute("data-size", "sm");
   const saveBounds = await save.boundingBox();
   const contentBounds = await canvas.boundingBox();
   const documentBounds = await document.boundingBox();
-  expect(Math.abs(saveBounds.width - contentBounds.width)).toBeLessThan(1);
+  expect(saveBounds.width).toBeLessThan(contentBounds.width);
+  const modeSaveBounds = await mode.boundingBox();
+  const refreshSaveBounds = await document
+    .getByRole("button", { name: "Refresh note", exact: true })
+    .boundingBox();
+  expect(saveBounds.x).toBeGreaterThan(modeSaveBounds.x + modeSaveBounds.width);
+  expect(saveBounds.x + saveBounds.width).toBeLessThan(refreshSaveBounds.x);
   expect(saveBounds.y + saveBounds.height).toBeLessThan(
     documentBounds.y + documentBounds.height,
   );
@@ -907,16 +935,13 @@ test("creates, deletes and restores a working note through the editor", async ({
   await page.goto("/tests/fixtures/working-notes.html");
   await page.evaluate(() => window.workingNotesFixture.unverifyCarl());
   await page.getByRole("button", { name: "New note", exact: true }).click();
-  const create = page.getByRole("dialog", { name: "New note" });
+  const create = page.getByRole("article", { name: "New note", exact: true });
   await create
     .getByRole("textbox", { name: "Title", exact: true })
     .fill("Research draft");
   await create
-    .getByRole("textbox", { name: "Markdown", exact: true })
+    .getByRole("textbox", { name: "Document body", exact: true })
     .fill("A durable finding.");
-  await create
-    .getByRole("button", { name: "Create note", exact: true })
-    .click();
   await expect(create).toContainText("These agents could not be verified");
   await expect(create).toContainText("Carl");
   await create
@@ -1043,6 +1068,7 @@ test("preserves a conflicting draft and opens note links in the conversation’s
     .getByRole("link", { name: "Connected notes plan", exact: true })
     .click();
   const document = page.getByRole("article", { name: "Connected notes plan" });
+  await disableAutoSave(page, document);
   await document
     .getByRole("combobox", { name: "Document mode", exact: true })
     .click();
@@ -1080,6 +1106,176 @@ test("preserves a conflicting draft and opens note links in the conversation’s
   await page.screenshot({
     path: testInfo.outputPath("note-beside-conversation.png"),
   });
+  expect(errors.unexplained()).toEqual([]);
+});
+
+// Browser boundary: the real rich-text editor must retain native focus and
+// selection through acceptance; DOM geometry proves the animated CTA's slot.
+test("auto-saves the editor without losing focus and animates manual Save into the action row", async ({
+  page,
+}, testInfo) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/working-notes.html");
+  await page
+    .getByRole("link", { name: "Connected notes plan", exact: true })
+    .click();
+  const document = page.getByRole("article", {
+    name: "Connected notes plan",
+    exact: true,
+  });
+  const body = document.getByRole("textbox", {
+    name: "Document body",
+    exact: true,
+  });
+  await body.fill("Automatically saved body");
+  await expect(body).toBeFocused();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workingNotesFixture.head(window.workingNotesFixture.plan.id)
+            .markdown,
+      ),
+    )
+    .toBe("Automatically saved body");
+  await expect(document.getByRole("status")).toHaveText("Saved");
+  await expect(body).toBeFocused();
+  await expect(
+    document.getByRole("combobox", { name: "Document mode" }),
+  ).toContainText("Editing");
+  await expect(
+    document.getByRole("button", { name: "Save", exact: true }),
+  ).toHaveCount(0);
+  await disableAutoSave(page, document);
+  await body.fill("Manual body");
+  const save = document.getByRole("button", { name: "Save", exact: true });
+  for (const theme of ["light", "dark"]) {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 950 });
+      await page.evaluate(
+        ({ theme, width }) => {
+          document.documentElement.classList.toggle("dark", theme === "dark");
+          document.documentElement.style.fontSize = width === 390 ? "20px" : "";
+        },
+        { theme, width },
+      );
+      await expect(save).toBeInViewport({ ratio: 1 });
+      await expect
+        .poll(async () => (await save.boundingBox()).width)
+        .toBeGreaterThan(40);
+      const order = await document.evaluate((article) => {
+        const mode = article.querySelector('[role="combobox"]');
+        const save = [...article.querySelectorAll("button")].find(
+          (button) => button.textContent === "Save",
+        );
+        const refresh = article.querySelector('[aria-label="Refresh note"]');
+        return (
+          !!mode &&
+          !!save &&
+          !!refresh &&
+          !!(
+            mode.compareDocumentPosition(save) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+          ) &&
+          !!(
+            save.compareDocumentPosition(refresh) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+          )
+        );
+      });
+      expect(order).toBe(true);
+      const saveBox = await save.boundingBox();
+      const modeBox = await document
+        .getByRole("combobox", { name: "Document mode" })
+        .boundingBox();
+      const refreshBox = await document
+        .getByRole("button", { name: "Refresh note" })
+        .boundingBox();
+      expect(saveBox.x).toBeGreaterThan(modeBox.x + modeBox.width);
+      expect(saveBox.x + saveBox.width).toBeLessThan(refreshBox.x);
+      await page.screenshot({
+        path: testInfo.outputPath(`manual-save-${theme}-${width}.png`),
+      });
+    }
+  }
+  await save.click();
+  await expect(document.getByRole("status")).toHaveText("Saved");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workingNotesFixture.head(window.workingNotesFixture.plan.id)
+            .markdown,
+      ),
+    )
+    .toBe("Manual body");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await document.getByRole("combobox", { name: "Document mode" }).click();
+  await page.getByRole("option", { name: "Editing", exact: true }).click();
+  await body.fill("Reduced motion draft");
+  await expect(save).toBeVisible();
+  await document.getByRole("button", { name: "Note actions" }).click();
+  await page
+    .getByRole("menuitem", { name: "Enable auto-save", exact: true })
+    .click();
+  await expect(save).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workingNotesFixture.head(window.workingNotesFixture.plan.id)
+            .markdown,
+      ),
+    )
+    .toBe("Reduced motion draft");
+  // First-save creation crosses from the blank draft to its accepted address.
+  // Native rich-editor selection and history replacement need a browser.
+  await page
+    .getByRole("button", { name: "Back to notes", exact: true })
+    .click();
+  await page.getByRole("button", { name: "New note", exact: true }).click();
+  const fresh = page.getByRole("article", { name: "New note", exact: true });
+  await expect(page.getByRole("dialog", { name: "New note" })).toHaveCount(0);
+  await expect(
+    fresh.getByRole("textbox", { name: "Title", exact: true }),
+  ).toBeFocused();
+  await expect(
+    fresh.getByRole("textbox", { name: "Title", exact: true }),
+  ).toHaveValue("");
+  await page.screenshot({ path: testInfo.outputPath("fresh-note.png") });
+  const freshBody = fresh.getByRole("textbox", {
+    name: "Document body",
+    exact: true,
+  });
+  await freshBody.fill("A fresh thought");
+  await freshBody.evaluate((field) => field.setSelectionRange(2, 7));
+  const savedNew = page.getByRole("article", {
+    name: "Untitled note",
+    exact: true,
+  });
+  const savedBody = savedNew.getByRole("textbox", {
+    name: "Document body",
+    exact: true,
+  });
+  await expect(savedNew.getByRole("status")).toHaveText("Saved");
+  await expect(savedBody).toHaveText("A fresh thought");
+  await expect(savedBody).toBeFocused();
+  expect(
+    await savedBody.evaluate((field) => [
+      field.selectionStart,
+      field.selectionEnd,
+    ]),
+  ).toEqual([2, 7]);
+  const createdAddress = await page.evaluate(
+    () => window.workingNotesFixture.navigation().entry.target.route.params,
+  );
+  expect(createdAddress.view).toBe("note");
+  await page.goBack();
+  await expect(
+    page.getByRole("button", { name: "New note", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(savedBody).toHaveText("A fresh thought");
   expect(errors.unexplained()).toEqual([]);
 });
 

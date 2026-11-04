@@ -5,8 +5,11 @@ Browse notes from you and agents together. Create, edit, connect and share docum
 ## Getting started
 
 Enable **Connected notes** in **Settings → Plugins → Manage plugins**, then open
-**Notes**. New notes default to you and your verified agents; uncheck **Share with
-my agents** for an owner-only note. **Share note** opens the channel member picker:
+**Notes**. **New note** opens a fresh document in the editor. Start with a title
+or the body; auto-save creates the note after typing. Body-only notes save as
+**Untitled note**; an untouched blank editor creates nothing. New notes default
+to you and your verified agents; uncheck **Note actions → Share with my agents**
+before the first save for an owner-only note. **Share note** opens the channel member picker:
 search for a person or agent, then add them or choose view-only access from the
 add menu. Each member's menu offers **Viewing only**, **Participating**, **Admin**
 and removal where permitted. Access includes retained revisions. Participants can
@@ -20,9 +23,16 @@ notes**. Open a title for a full-width note;
 **Back to notes** returns to the list and preserves drafts. Notes open in
 **Editing** when you have edit access; use the **Viewing/Editing** dropdown to
 switch modes. Click the blank area below the body to place the cursor at the end,
-including in Markdown source mode. The document stays in place, and **Save**
-appears at the bottom when modified. **Viewing** previews the
-draft without saving; **Discard changes** restores the saved version. **Link**,
+including in Markdown source mode. Changes auto-save after 1.5 seconds without
+typing, or after at most ten seconds of continuous edits, and the editor stays
+in Editing. Only changed content is saved; each accepted save retains a full
+revision. **Note actions → Disable auto-save** remembers a per-note preference
+for your account on this device; **Enable auto-save** turns it back on. With
+auto-save disabled, a small **Save** button appears between the mode dropdown
+and Refresh when modified. **Viewing** previews the draft; auto-save remains
+active until disabled. **Discard changes** restores the last saved version.
+Save failures keep your draft, pause automatic attempts and offer **Retry save**.
+**Link**,
 **⌘K/Ctrl+K**, or typing `[[` opens the standard link dialog with a note picker. It inserts a stable
 link from the loaded notes. Ordinary index notes group related documents. A link
 grants no access. Backlinks cover the loaded collection, and link text written

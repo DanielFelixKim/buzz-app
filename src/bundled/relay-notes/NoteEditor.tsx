@@ -23,7 +23,12 @@ import styles from "./WorkingNotes.module.css";
 
 const noDecorations = () => [];
 
-export type NoteEditorHandle = { focusEnd(): void };
+export type NoteSelection = { start: number; end: number; source: boolean };
+export type NoteEditorHandle = {
+  focusEnd(): void;
+  selection(): NoteSelection | undefined;
+  focusSelection(selection: NoteSelection): void;
+};
 
 /** A document body using the composer's editing engine, without chat behavior. */
 export function NoteEditor({
@@ -62,6 +67,16 @@ export function NoteEditor({
   useImperativeHandle(
     ref,
     () => ({
+      selection() {
+        const field = source ? sourceInput.current : input.current;
+        if (!field?.contains(document.activeElement)) return;
+        return { start: field.selectionStart, end: field.selectionEnd, source };
+      },
+      focusSelection(selection) {
+        const field = source ? sourceInput.current : input.current;
+        field?.focus();
+        field?.setSelectionRange(selection.start, selection.end);
+      },
       focusEnd() {
         if (!editing || disabled) return;
         const field = source ? sourceInput.current : input.current;

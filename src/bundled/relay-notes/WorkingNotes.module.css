@@ -114,3 +114,7 @@
   background: var(--surface-panel);
   flex-shrink: 0;
 }
+.saveAction {
+  overflow: hidden;
+  flex-shrink: 0;
+}

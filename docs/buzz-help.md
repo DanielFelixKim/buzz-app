@@ -328,14 +328,21 @@ that agent in Buzz; they do not notify the external app through this connection.
   one newest-first list of title links, with one search. Open a title to view
   the note in a full-page view; **Back to notes** returns to the list and preserves
   drafts. The list and document use the same centered reading width as channels.
-  **New note** sits above the note titles. The filter button inside search
-  offers **Show deleted notes**.
+  **New note** sits above the note titles and opens a blank editor. Start with
+  a title or the body; an unnamed note saves as **Untitled note**. Blank visits
+  create nothing. Before the first save, **Note actions → Share with my agents**
+  controls initial agent access. The filter button inside search offers
+  **Show deleted notes**.
   People and agents author the same channel-backed documents, which retain
   revisions. Published NIP-23 notes and the separate plural `notes_*` tools do
   not feed this page; existing published records are unchanged.
   Notes open in **Editing** when you have edit access, with the formatting bar
-  pinned at the bottom. Choose **Viewing** to preview, or **Save** to publish
-  changes. Clicking the blank area below the body places the cursor at the end
+  pinned at the bottom. Changes auto-save after a short typing pause, with a
+  maximum interval during continuous typing. **Note actions → Disable auto-save**
+  remembers your choice for that note on this device. When disabled, **Save**
+  appears between the mode dropdown and Refresh when modified. Choose **Viewing**
+  to preview. Save failures keep your draft and offer **Retry save**; conflicting
+  revisions require comparison. Clicking the blank area below the body places the cursor at the end
   while editing. **Link** accepts a URL or a loaded note;
   linking grants no access. **Note actions → Markdown source** opens source
   editing; **Formatted text** in that menu switches back.

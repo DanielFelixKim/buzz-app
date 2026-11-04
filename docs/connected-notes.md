@@ -50,7 +50,7 @@ until an explicit membership change.
 
 Ownership checks query each agent's latest signed profile independently. An
 unattested agent is excluded without blocking verified siblings. Before creating
-with agent sharing, the dialog names unverified agents and requires an explicit
+with agent sharing, the editor names unverified agents and requires an explicit
 "Create with verified agents" confirmation; disabling agent sharing creates a
 private note. No profile or attestation is repaired or overwritten by this flow.
 
@@ -111,6 +111,17 @@ the retained snapshots and whether more remain.
 
 ## Document editing
 
+**New note** opens a blank document in the same centered editor, with a heading
+input, rich-text body and formatting dock. Storage is allocated only after typing
+and the first save; body-only notes use **Untitled note**. New-note actions offer
+source mode, the auto-save toggle and **Share with my agents** before creation.
+Drafts stay mounted across Back/Forward; inactive drafts do not begin auto-saving.
+First-save completion replaces the creation address, preserves edits made in
+flight and restores the active title/body selection. An in-flight completion
+while browsing updates the collection without navigating away. Creation retries
+reuse the original UUID and attempted payload, preserving subsequent edits as
+a draft against the accepted first revision.
+
 The Viewing/Editing selector controls the document mode. New visits default to
 Editing for editable notes; explicit Viewing/Editing history choices remain
 authoritative. Read-only and deleted notes keep their reader presentation, and
@@ -119,18 +130,32 @@ formatting list directly, without a formatting toggle. Both modes keep the same
 title and body alignment; the body has no additional editor border or padding.
 The toolbar is pinned in an inset pane-bottom floating surface outside the
 document scrollport while Editing, with no reserved gap in Viewing. Its natural
-height keeps document content and Save clear when controls wrap or text grows.
-The hidden editor retains its selection and undo state. Viewing previews unsaved
-text without publishing it.
+height keeps document content clear when controls wrap or text grows.
+The hidden editor retains its selection and undo state. Viewing previews the
+current draft; auto-save remains active unless disabled.
 An unmodified primary click on the blank scrollport below the document body
 focuses the active formatted/source editor at its end. Text, title and control
 clicks retain their own behavior; Viewing and read-only documents do not activate
 an editor. Keyboard users reach the existing textbox with Tab.
-A large, full-width prominent Save action stays above the toolbar while modified;
-Discard changes restores the saved revision. Clean documents show no Save action.
+Auto-save is enabled by default. Changed title/body content is saved after a
+1.5-second idle period, with a ten-second maximum during continuous edits; IME
+composition defers saving until composition ends. Auto-save stays in Editing and
+typing remains available during the request. The accepted revision becomes the
+next save's base without replacing newer edits made in flight. Local live echoes
+are reconciled after the save receipt. Clean remote updates are adopted, while a
+dirty draft requires comparison before a concurrent revision can be overwritten.
+Failures pause automatic attempts, retain the draft and offer Retry save.
+
+Note actions offers Disable auto-save / Enable auto-save, persisted through the
+existing scoped view store for this account, community and note on this device.
+This is a local editing preference, not shared document metadata. When disabled,
+a small prominent Save action appears after Viewing/Editing and before Refresh
+while modified, using motion/react for its enter/exit with reduced-motion and
+keyboard transitions kept immediate. Discard changes restores the saved revision;
+clean documents show no Save action. Restoring a deleted note remains explicit.
 `NoteEditor` reuses `EditableInput`, `ComposerFormattingTools`, `ComposerLinkDialog`
-and the composer's ProseMirror schema/commands. Enter inserts a newline; saving
-remains explicit. There are no chat send, recipient or attachment controls.
+and the composer's ProseMirror schema/commands. Enter inserts a newline. There are
+no chat send, recipient or attachment controls.
 The standard Link action and Mod-K accept a URL or a loaded note; `[[` uses the
 same dialog. Note destinations retain their stable community/channel/document URL.
 
@@ -168,7 +193,8 @@ panel; conversation links still open beside the discussion. Both use the existin
 browser-history driver.
 Notes-page destinations record the selected note, committed search, deleted-note
 filter, editing mode, share/link/delete/history dialog, selected revision and
-history page. New-note destinations contain a draft identifier. Conversation
+history page. New-note destinations contain a draft identifier and open the
+document editor directly, without a creation modal. Conversation
 destinations optionally carry the same note presentation; Back/Forward restores
 linked notes and their editor state without leaving the conversation.
 The host applies note restoration after restoring its conversation tab visit.

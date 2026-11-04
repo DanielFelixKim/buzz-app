@@ -77,7 +77,8 @@ export function NotesPage({
   const backRef = useRef<HTMLButtonElement>(null);
   const reading = selected !== "browse";
   useEffect(() => {
-    if (selected !== "browse") backRef.current?.focus();
+    if (selected !== "browse" && !selected.startsWith("new:"))
+      backRef.current?.focus();
   }, [selected]);
   const match = query.toLowerCase();
   const visible = entries

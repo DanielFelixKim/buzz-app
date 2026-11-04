@@ -22,6 +22,7 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { avatarMedia } from "../../shared/avatar-source";
 import { writeClipboardText } from "../../shared/clipboard";
 import { formatPublicKey } from "../../shared/identity/public-key";
+import { readView, subscribeView, writeView } from "../../shared/view-state";
 import {
   MAX_MARKDOWN_LENGTH,
   safeLinkUrl,
@@ -50,6 +51,7 @@ import {
 import { Select } from "../../shared/design-system/ui/Select";
 import { NoteHistory, NoteSharing } from "./NoteDialogs";
 import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
+import { NoteSaveAction } from "./NoteSaveAction";
 import { NoteByline } from "./NoteMetadata";
 import readerStyles from "./NotesPage.module.css";
 import styles from "./WorkingNotes.module.css";
@@ -57,6 +59,13 @@ import type { DocumentView } from "./working-route";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "The note could not be read.";
+export type NoteFocus = {
+  target: "title" | "body";
+  start: number;
+  end: number;
+  source: boolean;
+};
+
 const nothing = () => {};
 
 export function NoteDocument({
@@ -71,6 +80,8 @@ export function NoteDocument({
   view,
   onViewChange,
   active = true,
+  initialFocus,
+  initialAutoSave,
 }: {
   address: NoteAddress;
   workspace: NotesWorkspace;
@@ -83,15 +94,47 @@ export function NoteDocument({
   view?: DocumentView | undefined;
   onViewChange?: ((view: DocumentView) => void) | undefined;
   active?: boolean;
+  initialFocus?: NoteFocus | undefined;
+  initialAutoSave?: boolean | undefined;
 }) {
   const cachedDraft = useRef(workspace.drafts.get(noteKey(address))).current;
   const [note, setNote] = useState<Note | undefined>(cachedDraft?.base);
   const [title, setTitle] = useState(cachedDraft?.title ?? "");
   const [markdown, setMarkdown] = useState(cachedDraft?.markdown ?? "");
   const [localEditing, setLocalEditing] = useState(true);
-  const [source, setSource] = useState(false);
+  const [source, setSource] = useState(initialFocus?.source ?? false);
+  const titleInput = useRef<HTMLInputElement>(null);
+  const pendingFocus = useRef(initialFocus);
   const [canEdit, setCanEdit] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [composing, setComposing] = useState(false);
+  const saveRequest = useRef<AbortController | null>(null);
+  const refreshAfterSave = useRef(false);
+  const changedAt = useRef<number | undefined>(undefined);
+  const autoSaveKey = `note-auto-save:${noteKey(address)}`;
+  const [autoSave, setAutoSave] = useState(
+    () =>
+      readView<unknown>(
+        workspace.session.scope,
+        autoSaveKey,
+        initialAutoSave ?? true,
+      ) !== false,
+  );
+  useEffect(() => {
+    const read = () =>
+      setAutoSave(
+        readView<unknown>(
+          workspace.session.scope,
+          autoSaveKey,
+          initialAutoSave ?? true,
+        ) !== false,
+      );
+    read();
+    return subscribeView(workspace.session.scope, read);
+  }, [workspace, autoSaveKey, initialAutoSave]);
+  useEffect(() => () => saveRequest.current?.abort(), []);
   const shareTrigger = useRef<HTMLButtonElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const editor = useRef<NoteEditorHandle>(null);
@@ -99,9 +142,28 @@ export function NoteDocument({
   const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(
     null,
   );
-  const [error, setError] = useState("");
+  const [error, setError] = useState(
+    initialAutoSave !== undefined &&
+      readView(workspace.session.scope, autoSaveKey, undefined) === undefined
+      ? "Your auto-save setting could not be remembered on this device."
+      : "",
+  );
   const [status, setStatus] = useState("");
   const [unavailable, setUnavailable] = useState(!!cachedDraft);
+  useEffect(() => {
+    if (!active || busy || unavailable || !note || !pendingFocus.current)
+      return;
+    const frame = requestAnimationFrame(() => {
+      const focus = pendingFocus.current;
+      if (!focus) return;
+      pendingFocus.current = undefined;
+      if (focus.target === "title") {
+        titleInput.current?.focus();
+        titleInput.current?.setSelectionRange(focus.start, focus.end);
+      } else editor.current?.focusSelection(focus);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, busy, unavailable, note]);
   const [conflict, setConflict] = useState<Note>();
   const [restoreFrom, setRestoreFrom] = useState<Note | undefined>(
     cachedDraft?.restoreFrom,
@@ -131,8 +193,26 @@ export function NoteDocument({
         ...(next ? { dialog: next } : {}),
       });
   }, []);
-  const latest = useRef({ note, editing, title, markdown });
-  latest.current = { note, editing, title, markdown };
+  const latest = useRef({
+    note,
+    title,
+    markdown,
+    restoreFrom,
+    busy,
+    canEdit,
+    conflict,
+    unavailable,
+  });
+  latest.current = {
+    note,
+    title,
+    markdown,
+    restoreFrom,
+    busy,
+    canEdit,
+    conflict,
+    unavailable,
+  };
   const callbacks = useRef({ onChange, onDirty, onUnavailable });
   callbacks.current = { onChange, onDirty, onUnavailable };
   const community = workspace.session.scope.replace(/:[0-9a-f]{64}$/, "");
@@ -162,10 +242,17 @@ export function NoteDocument({
     setMarkdown(next.markdown);
     setConflict(undefined);
     setRestoreFrom(undefined);
+    setSaveError("");
     callbacks.current.onChange(next);
   }, []);
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
+      // A local revision may echo before its save receipt. Reconcile after the
+      // transaction settles so our own write cannot conflict with its draft.
+      if (saveRequest.current) {
+        refreshAfterSave.current = true;
+        return;
+      }
       setBusy(true);
       setError("");
       try {
@@ -179,14 +266,14 @@ export function NoteDocument({
           ) && current.editable,
         );
         const previous = latest.current;
-        if (
-          (previous.editing || workspace.drafts.has(noteKey(address))) &&
+        const unsaved =
           previous.note &&
-          previous.note.revision !== current.revision
-        )
+          (previous.title !== previous.note.title ||
+            previous.markdown !== previous.note.markdown ||
+            previous.restoreFrom);
+        if (unsaved && previous.note?.revision !== current.revision)
           setConflict(current);
-        else if (!previous.editing && !workspace.drafts.has(noteKey(address)))
-          adopt(current);
+        else if (!unsaved) adopt(current);
         callbacks.current.onChange(current);
       } catch (error) {
         if (!signal?.aborted) {
@@ -261,19 +348,113 @@ export function NoteDocument({
       setBusy(false);
     }
   };
-  const save = () => {
-    if (note)
-      void run(async () => {
+  const save = useCallback(
+    async (automatic = false) => {
+      const current = latest.current;
+      const base = current.note;
+      if (
+        !base ||
+        current.busy ||
+        saveRequest.current ||
+        !current.canEdit ||
+        current.unavailable ||
+        current.conflict ||
+        (base.title === current.title &&
+          base.markdown === current.markdown &&
+          !current.restoreFrom) ||
+        (base.deleted && !current.restoreFrom)
+      )
+        return;
+      const request = new AbortController();
+      saveRequest.current = request;
+      changedAt.current = undefined;
+      setSaving(true);
+      setSaveError("");
+      setStatus("");
+      try {
         const next = await workspace.save(
-          note,
-          { title, markdown, ...(restoreFrom ? { restoreFrom } : {}) },
-          note.deleted ? "restore" : "update",
+          base,
+          {
+            title: current.title,
+            markdown: current.markdown,
+            ...(current.restoreFrom
+              ? { restoreFrom: current.restoreFrom }
+              : {}),
+          },
+          base.deleted ? "restore" : "update",
+          request.signal,
         );
-        adopt(next);
-        setEditing(false);
+        request.signal.throwIfAborted();
+        const unchanged =
+          latest.current.title === current.title &&
+          latest.current.markdown === current.markdown;
+        // Advance the accepted base without replacing edits made in flight.
+        latest.current = {
+          ...latest.current,
+          note: next,
+          restoreFrom: undefined,
+        };
+        setNote(next);
+        setRestoreFrom(undefined);
+        callbacks.current.onChange(next);
+        if (!automatic && unchanged) setEditing(false);
         setStatus("Saved");
-      });
-  };
+      } catch (error) {
+        if (request.signal.aborted) return;
+        if (error instanceof NoteConflict) setConflict(error.current);
+        setSaveError(errorText(error));
+      } finally {
+        saveRequest.current = null;
+        if (!request.signal.aborted) {
+          setSaving(false);
+          if (refreshAfterSave.current) {
+            refreshAfterSave.current = false;
+            void refresh();
+          }
+        }
+      }
+    },
+    [workspace, refresh, setEditing],
+  );
+  useEffect(() => {
+    if (
+      !autoSave ||
+      !note ||
+      (title === note.title && markdown === note.markdown) ||
+      !canEdit ||
+      unavailable ||
+      note.deleted ||
+      restoreFrom ||
+      conflict ||
+      saveError ||
+      composing
+    ) {
+      changedAt.current = undefined;
+      return;
+    }
+    if (busy || saving) return;
+    const started = changedAt.current ?? Date.now();
+    changedAt.current = started;
+    const timer = window.setTimeout(
+      () => void save(true),
+      Math.max(0, Math.min(1500, 10_000 - (Date.now() - started))),
+    );
+    return () => window.clearTimeout(timer);
+  }, [
+    autoSave,
+    canEdit,
+    unavailable,
+    note,
+    restoreFrom,
+    conflict,
+    saveError,
+    composing,
+    busy,
+    saving,
+    title,
+    markdown,
+    save,
+  ]);
   const backlinks = useMemo(
     () =>
       catalogue.filter(
@@ -320,6 +501,8 @@ export function NoteDocument({
       <section
         className={readerStyles.document}
         aria-label="Note contents"
+        onCompositionStart={() => setComposing(true)}
+        onCompositionEnd={() => setComposing(false)}
         onPointerDown={(event) => {
           blankPress.current = event.target === event.currentTarget;
         }}
@@ -347,6 +530,7 @@ export function NoteDocument({
         {note && canEdit && !unavailable && !note.deleted ? (
           <Field label="Title" labelVisibility="hidden">
             <Input
+              ref={titleInput}
               appearance="heading"
               value={title}
               onValueChange={setTitle}
@@ -374,7 +558,7 @@ export function NoteDocument({
               variant="compact"
               size="sm"
               value={editing ? "editing" : "viewing"}
-              disabled={busy}
+              disabled={busy || saving}
               groups={[
                 {
                   label: "Document mode",
@@ -390,6 +574,18 @@ export function NoteDocument({
               }}
             />
           )}
+          <NoteSaveAction
+            shown={
+              !!note &&
+              !!(dirty || restoreFrom) &&
+              (!autoSave || !!saveError || !!restoreFrom)
+            }
+            loading={saving}
+            disabled={busy || !!conflict || !canEdit || unavailable}
+            onClick={() => void save()}
+          >
+            {note?.deleted ? "Restore note" : saveError ? "Retry save" : "Save"}
+          </NoteSaveAction>
           <IconButton
             aria-label="Refresh note"
             title="Refresh note"
@@ -401,7 +597,7 @@ export function NoteDocument({
               />
             }
             aria-busy={busy}
-            disabled={busy}
+            disabled={busy || saving}
             onClick={() => {
               void refresh();
             }}
@@ -427,6 +623,27 @@ export function NoteDocument({
                 />
                 <MenuPopup>
                   <MenuItem onClick={copyLink}>Copy note link</MenuItem>
+                  {canEdit && !note.deleted && (
+                    <MenuItem
+                      onClick={() => {
+                        const enabled = !autoSave;
+                        setAutoSave(enabled);
+                        setSaveError("");
+                        if (
+                          !writeView(
+                            workspace.session.scope,
+                            autoSaveKey,
+                            enabled,
+                          )
+                        )
+                          setError(
+                            "This auto-save setting could not be remembered on this device.",
+                          );
+                      }}
+                    >
+                      {autoSave ? "Disable auto-save" : "Enable auto-save"}
+                    </MenuItem>
+                  )}
                   {canEdit && !note.deleted && (
                     <MenuItem
                       disabled={busy}
@@ -462,13 +679,16 @@ export function NoteDocument({
                       </MenuSubmenuPopup>
                     </MenuSubmenu>
                   )}
-                  <MenuItem onClick={() => setDialog("history")}>
+                  <MenuItem
+                    disabled={saving}
+                    onClick={() => setDialog("history")}
+                  >
                     Revision history
                   </MenuItem>
                   <MenuItem onClick={exportMarkdown}>Export Markdown</MenuItem>
                   {canEdit && !note.deleted && (
                     <MenuItem
-                      disabled={busy || dirty}
+                      disabled={busy || saving || dirty}
                       onClick={() => setDialog("delete")}
                     >
                       Delete note
@@ -480,9 +700,15 @@ export function NoteDocument({
           )}
         </div>
         {error && <p role="alert">{error}</p>}
-        {status && (
+        {saveError && (
+          <p role="alert">
+            {autoSave ? "Auto-save is paused." : "Saving failed."} Your draft is
+            kept. {saveError}
+          </p>
+        )}
+        {note && canEdit && !unavailable && !note.deleted && (
           <p role="status" className="text-caption text-subtle">
-            {status}
+            {saving ? "Saving…" : dirty ? "Unsaved changes" : status || "Saved"}
           </p>
         )}
         {note && !unavailable && !canEdit && !note.deleted && (
@@ -520,7 +746,7 @@ export function NoteDocument({
               community={community}
               linkOpen={dialog === "link"}
               onLinkOpenChange={(open) => setDialog(open ? "link" : undefined)}
-              onSave={save}
+              onSave={() => void save()}
             >
               <NoteMarkdown
                 text={markdown}
@@ -533,18 +759,9 @@ export function NoteDocument({
         {note && (dirty || restoreFrom) && (
           <div className={styles.saveBar}>
             <Button
-              variant="prominent"
-              size="lg"
-              loading={busy}
-              disabled={busy || !!conflict || !canEdit}
-              onClick={save}
-            >
-              {note.deleted ? "Restore note" : "Save"}
-            </Button>
-            <Button
               variant="ghost"
               size="sm"
-              disabled={busy}
+              disabled={busy || saving}
               onClick={() => {
                 adopt(note);
                 setEditing(false);
@@ -566,7 +783,7 @@ export function NoteDocument({
           <NoteHistory
             note={note}
             workspace={workspace}
-            canEdit={canEdit}
+            canEdit={canEdit && !saving}
             selection={view}
             onSelection={(revision) =>
               presentation.current.onViewChange?.({
@@ -654,6 +871,7 @@ export function NoteDocument({
                     setNote(conflict);
                     setConflict(undefined);
                     setError("");
+                    setSaveError("");
                   }}
                 >
                   I’ve compared; keep my draft
