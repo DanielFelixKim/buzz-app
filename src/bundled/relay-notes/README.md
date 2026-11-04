@@ -30,7 +30,8 @@ revision. **Note actions → Disable auto-save** remembers a per-note preference
 for your account on this device; **Enable auto-save** turns it back on. With
 auto-save disabled, a small **Save** button appears between the mode dropdown
 and Refresh when modified. **Viewing** previews the draft; auto-save remains
-active until disabled. **Discard changes** restores the last saved version.
+active until disabled. The stop icon beside the save status offers **Discard
+changes**, restoring the last saved version; it is disabled during a save.
 Save failures keep your draft, pause automatic attempts and offer **Retry save**.
 **Link**,
 **⌘K/Ctrl+K**, or typing `[[` opens the standard link dialog with a note picker. It inserts a stable

@@ -122,8 +122,8 @@ export function NoteSharing({
             </div>
           )}
           <p className="text-caption text-subtle">
-            Private note. Owners and admins manage access; participants can
-            edit, delete and restore it.
+            Private note. View-only members can read; participants can edit,
+            delete and restore. Owners and admins can also manage access.
           </p>
         </div>
       }

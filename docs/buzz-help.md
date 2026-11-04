@@ -343,7 +343,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   remembers your choice for that note on this device. When disabled, **Save**
   appears between the mode dropdown and Refresh when modified. Choose **Viewing**
   to preview. Save failures keep your draft and offer **Retry save**; conflicting
-  revisions require comparison. Clicking the blank area below the body places the cursor at the end
+  revisions require comparison. The stop icon beside the save status offers
+  **Discard changes**, restoring the last saved version; it is disabled during a save.
+  Clicking the blank area below the body places the cursor at the end
   while editing. **Link** accepts a URL or a loaded note;
   linking grants no access. **Note actions → Markdown source** opens source
   editing; **Formatted text** in that menu switches back.

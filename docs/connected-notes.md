@@ -136,6 +136,8 @@ an editor. Keyboard users reach the existing textbox with Tab.
 The byline uses one status phrase: Saved with its timestamp when clean,
 Saving… for queued/in-flight auto-saves, or Save paused on failure. Human
 avatars are circles; agents retain squircles. Empty drafts have no status hint.
+The stop icon beside the save status discards pending changes and restores the
+last saved version. It is disabled while a save is in flight.
 Auto-save is enabled by default. Changed title/body content is saved after a
 1.5-second idle period, with a ten-second maximum during continuous edits; IME
 composition defers saving until composition ends. Auto-save stays in Editing and
