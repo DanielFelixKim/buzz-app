@@ -224,13 +224,19 @@ describe("an FI build", () => {
     ],
     [
       "the session changes before the sign-in answer is consumed",
-      (fi: ReturnType<typeof federatedFixture>) =>
+      (fi: ReturnType<typeof federatedFixture>) => {
+        fi.request.mockResolvedValueOnce({
+          status: 200,
+          headers: {},
+          body: JSON.stringify(me),
+        });
         vi.mocked(fi.service.signIn).mockImplementationOnce(async () => {
           fi.publish({ status: "signed-in", revision: "returned" });
           const returned = fi.service.snapshot();
           fi.publish({ revision: "concurrent-replacement" });
           return returned;
-        }),
+        });
+      },
       "Could not load your Builderlab account. Try again.",
     ],
     [

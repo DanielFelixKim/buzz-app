@@ -7492,3 +7492,60 @@ it("FI account choice with the linked key already installed preserves main's dev
     identity.dispose();
   }
 });
+
+it("FI replacement rejects a concurrent session before consuming the selected sign-in result", async () => {
+  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const h = federatedFixture();
+  let subject = "original";
+  nativeFirstRunReplies(
+    h,
+    () => ({ subject, email: `${subject}@example.com` }),
+    () => (subject === "original" ? owned.pubkey : null),
+  );
+  const identity = createIdentity();
+  const view = render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      federatedIdentity={h.service}
+    >
+      <p>App open</p>
+    </Welcome>,
+  );
+  const user = userEvent.setup();
+  try {
+    await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+    await screen.findByRole("heading", { name: "Continue with this key" });
+    const requests = h.request.mock.calls.length;
+    vi.mocked(h.service.signIn).mockImplementationOnce(async () => {
+      h.publish({ status: "signed-in", revision: "selected-session" });
+      const selected = h.service.snapshot();
+      subject = "concurrent";
+      h.publish({ revision: "concurrent-session" });
+      return selected;
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Use a different account" }),
+    );
+    await screen.findByRole("heading", { name: "Couldn’t change account" });
+    // Successful account replies are available, but this sign-in may not adopt
+    // the concurrent session. The failure view is the completion barrier.
+    expect(h.request).toHaveBeenCalledTimes(requests);
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set me up" })).toBeNull();
+    expect(identity.snapshot().status).toBe("missing");
+    // An explicit retry may load the current account without another browser.
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("heading", { name: "Get started with Buzz" });
+    expect(
+      screen.getByText("Signed in as concurrent@example.com"),
+    ).toBeVisible();
+    expect(h.service.signIn).toHaveBeenCalledTimes(2);
+    expect(h.service.signOut).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    identity.dispose();
+  }
+});
