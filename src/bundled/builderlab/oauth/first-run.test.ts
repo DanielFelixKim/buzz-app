@@ -524,3 +524,96 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
   );
   other.session.dispose();
 });
+
+// Welcome through its real entry point, with the plugin, native, the auto
+// session and the real Apps client over one shared saved sign-in.
+it.each(["server check", "browser callback"] as const)(
+  "a NIP-FI takeover during Welcome's %s saves nothing, and Apps never acts as A",
+  async (held) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+    vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "auto");
+    const { createSavedSignIn, browserCredential, logout } = await import(
+      "./browser"
+    );
+    const { createOAuthSession } = await import("./session");
+    const { createAutoSession, createNativeSession } = await import(
+      "../session"
+    );
+    const { createAppsClient } = await import("../apps/client");
+    let release!: (response: unknown) => void;
+    const hold = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    const saves: unknown[] = [];
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const input = args as { request?: { url: string } } | undefined;
+      switch (command) {
+        case "plugin_catalog":
+          return catalog(true);
+        case "oauth_callback_begin":
+          return { id: "a", callbackUrl: "http://127.0.0.1:1/cb" };
+        case "oauth_callback_wait":
+          return held === "browser callback"
+            ? hold()
+            : { parameters: [["code", "code"]] };
+        case "builderlab_session_save":
+          saves.push(args);
+          return undefined;
+        case "plugin_host_request":
+          if (input?.request?.url.endsWith("/v1/session"))
+            return held === "server check"
+              ? hold()
+              : { status: 404, headers: {}, body: "" };
+          return input?.request?.url.endsWith("/exchange")
+            ? { status: 200, headers: {}, body: '{"session_credential":"a"}' }
+            : { status: 200, headers: {}, body: '{"subject":"a"}' };
+        default:
+          return null;
+      }
+    });
+    const saved = createSavedSignIn();
+    const welcome = createOAuthSession(
+      (signal) => browserCredential(bundledHost, signal),
+      logout(bundledHost),
+      undefined,
+      saved,
+    );
+    const plugin = createOAuthSession(vi.fn(), undefined, bundledHost, saved);
+    const fi = federatedFixture();
+    const auto = createAutoSession(
+      createNativeSession(fi.service),
+      plugin,
+      async () => "browser",
+      fi.service,
+    );
+    const signingIn = firstRunCredential(
+      new AbortController().signal,
+      fi.service,
+      welcome,
+    );
+    await vi.waitFor(() => expect(release).toBeDefined());
+    // Native B takes over while it is pending; then it answers.
+    fi.publish({ status: "signed-in", revision: "b" });
+    release(
+      held === "server check"
+        ? { status: 404, headers: {}, body: "" }
+        : { parameters: [["code", "code"]] },
+    );
+    await expect(signingIn).rejects.toThrow("Sign-in canceled.");
+    if (held === "server check")
+      expect(vi.mocked(invoke).mock.calls.map(([c]) => c)).not.toContain(
+        "oauth_callback_begin",
+      );
+    // NIP-FI signs out: nothing reselects A.
+    fi.publish({ status: "signed-out" });
+    expect(saves).toEqual([]);
+    expect(saved.current()).toBeUndefined();
+    expect(auto.snapshot().status).toBe("signed-out");
+    const request = vi.fn();
+    const apps = createAppsClient({ request } as never, auto, "https://apps");
+    await expect(apps.create("Demo")).rejects.toThrow(/not signed in/);
+    expect(request).not.toHaveBeenCalled();
+    await saved.dispose();
+  },
+);

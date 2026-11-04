@@ -341,43 +341,6 @@ const browser = (value: string) =>
     account: { ...account, subject: value },
   }) as never;
 
-it("a Welcome sign-in held across a NIP-FI takeover never brings A back, and Apps sends nothing as A", async () => {
-  const { deferred } = await import("./test-helpers");
-  const { createAppsClient } = await import("./apps/client");
-  const k = await launch();
-  const held = deferred<never>();
-  let aborted: AbortSignal | undefined;
-  const welcome = k.welcome((signal) => {
-    aborted = signal;
-    return held.promise;
-  });
-  const native = fake();
-  const identity = owner();
-  const auto = createAutoSession(
-    native,
-    k.plugin,
-    async () => "browser",
-    identity,
-  );
-  const signingIn = welcome.signIn();
-  native.set({ status: "signed-in", account });
-  identity.set("signed-in");
-  expect(aborted?.aborted).toBe(true);
-  held.resolve(browser("a"));
-  await signingIn;
-  expect(k.store.save).not.toHaveBeenCalled();
-  // NIP-FI signs out: nothing reselects A.
-  native.set({ status: "signed-out" });
-  identity.set("signed-out");
-  expect(auto.snapshot().status).toBe("signed-out");
-  expect(k.saved.current()).toBeUndefined();
-  const request = vi.fn();
-  const apps = createAppsClient({ request } as never, auto, "https://apps");
-  await expect(apps.create("Demo")).rejects.toThrow(/not signed in/);
-  expect(request).not.toHaveBeenCalled();
-  vi.unstubAllEnvs();
-});
-
 it("a Welcome save held, then Cancel and a denied delete, shows the error and is not restored", async () => {
   const { deferred } = await import("./test-helpers");
   const k = await launch();
@@ -413,7 +376,7 @@ it("a successful Welcome switch whose cleanup of A fails warns on the shared own
   const other = k.welcome(async () => browser("b"));
   await other.signIn();
   await vi.waitFor(() => expect(k.saved.failed()).toBe(true));
-  expect(k.plugin.credential().value).toBe("b");
+  await vi.waitFor(() => expect(k.plugin.credential().value).toBe("b"));
   expect(k.store.value).toBe("b");
   await k.saved.dispose();
   vi.unstubAllEnvs();

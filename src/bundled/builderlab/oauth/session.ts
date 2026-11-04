@@ -215,6 +215,8 @@ export function createOAuthSession(
     retire: () => (saved ? saved.retire() : reset(true)),
     /** Removing a retired sign-in keeps failing; shown where it's active. */
     cleanupFailed: () => saved?.failed() === true,
+    /** The shared sign-in's generation: see `SavedSignIn.generation`. */
+    generation: () => saved?.generation() ?? 0,
     async signIn() {
       if (disposed || attempt) return;
       reset(!saved, false);

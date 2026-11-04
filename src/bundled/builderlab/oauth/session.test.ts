@@ -483,3 +483,20 @@ it("a failed Welcome save settles after its revoke's first try, so Welcome can s
   expect(k.saved.failed()).toBe(true);
   await k.saved.dispose();
 });
+
+it("shows a denied delete at once, without waiting on a slow revoke", async () => {
+  const k = keychain("a");
+  const slow = deferred<void>();
+  const { session } = k.plugin();
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+  k.host.request.mockImplementationOnce(async () => {
+    await slow.promise;
+    return { status: 200, headers: {}, body: "" };
+  });
+  k.store.clear.mockRejectedValueOnce(new Error("denied"));
+  session.retire();
+  await vi.waitFor(() => expect(k.saved.failed()).toBe(true));
+  expect(session.snapshot().error).toMatch(/keeps trying/);
+  slow.resolve();
+  await k.saved.dispose();
+});

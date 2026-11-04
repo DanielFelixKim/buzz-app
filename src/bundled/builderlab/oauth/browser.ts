@@ -261,20 +261,20 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
         deleting = false;
       }),
     );
-    try {
-      for (const result of await Promise.allSettled(tries))
-        if (result.status === "rejected") throw result.reason;
-      if (disposed) return;
-      if (failed) {
-        failed = false;
-        notify();
-      }
-    } catch {
-      if (!failed) {
-        failed = true;
-        notify();
-      }
-      if (!disposed) timer = setTimeout(() => void cleanup(), RETRY_MS);
+    // Each failure shows as soon as it is known, not after the slowest try.
+    let ok = true;
+    const fail = () => {
+      ok = false;
+      if (failed) return;
+      failed = true;
+      notify();
+    };
+    await Promise.all(tries.map((attempt) => attempt.catch(fail)));
+    if (disposed) return;
+    if (!ok) timer = setTimeout(() => void cleanup(), RETRY_MS);
+    else if (failed) {
+      failed = false;
+      notify();
     }
   };
   const retiring = (held: Held | undefined, remove: boolean) => {
