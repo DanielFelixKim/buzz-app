@@ -176,6 +176,8 @@ function SwitchAccount({
 }) {
   const [failure, setFailure] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
   const server = serverName(authority);
   const account = state.email ?? "your organization account";
   return (
@@ -210,6 +212,10 @@ function SwitchAccount({
         }}
       >
         Switch account
+      </Button>
+      {/* Closes the prompt; the session and the refusal stay as they are. */}
+      <Button disabled={busy} onClick={() => setDismissed(true)}>
+        Not now
       </Button>
       {failure && (
         <p role="alert" className="text-body-sm text-danger">

@@ -1657,38 +1657,50 @@ const publicServers = async (): Promise<SessionSnapshot[]> => [
   },
 ];
 
-it("a landing URL hosted by this build's Builderlab signs in at once, with no connect choice", async () => {
-  const relay = landingRelay("https://design.communities.buzz.xyz");
-  relay.info.resolve();
-  const connect = vi
-    .fn<(signal: AbortSignal) => Promise<Credential>>()
-    .mockImplementation(() => new Promise(() => {}));
-  const identity = createIdentity();
-  const user = userEvent.setup();
-  render(
-    <Welcome
-      identity={identity}
-      communities={noJoin}
-      invites={invites}
-      account={unlinked}
-      connect={connect}
-      servers={publicServers}
-    >
-      <p>Signed in</p>
-    </Welcome>,
-  );
-  await screen.findByRole("button", { name: SIGN_IN });
-  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
-  await screen.findByRole("button", { name: "Other options" });
-  expect(connect).toHaveBeenCalledTimes(1);
-  expect(
-    screen.queryByRole("heading", { name: "Connect to your community" }),
-  ).toBeNull();
-  expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
-  expect(relay.relayCalls).toEqual(relay.lookup);
-  expect(identity.snapshot().status).toBe("missing");
-  identity.dispose();
-});
+it.each([
+  ["bb-public compiled", publicServers, ""],
+  // The pinned development broker: no compiled server, built-in Builderlab.
+  [
+    "the pinned development broker",
+    async () => [],
+    "https://app.builderlab.xyz",
+  ],
+])(
+  "a landing URL hosted by this build's Builderlab (%s) signs in at once, with no connect choice",
+  async (_, servers, build) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", build);
+    const relay = landingRelay("https://design.communities.buzz.xyz");
+    relay.info.resolve();
+    const connect = vi
+      .fn<(signal: AbortSignal) => Promise<Credential>>()
+      .mockImplementation(() => new Promise(() => {}));
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    render(
+      <Welcome
+        identity={identity}
+        communities={noJoin}
+        invites={invites}
+        account={unlinked}
+        connect={connect}
+        servers={servers}
+      >
+        <p>Signed in</p>
+      </Welcome>,
+    );
+    await screen.findByRole("button", { name: SIGN_IN });
+    await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+    await screen.findByRole("button", { name: "Other options" });
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("heading", { name: "Connect to your community" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    expect(identity.snapshot().status).toBe("missing");
+    identity.dispose();
+  },
+);
 
 it.each([
   ["bb-public", publicServers, "buzz.block.builderlab.xyz"],
@@ -1696,6 +1708,8 @@ it.each([
 ])(
   "a build with %s sign-in server that does not cover a landing URL pauses on the ordinary connect choice: %s",
   async (_, servers, host) => {
+    // Another Builderlab deployment: the built-in server's hosts don't apply.
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://block.builderlab.xyz");
     const relay = landingRelay(`https://${host}`);
     const connect = vi.fn();
     const identity = createIdentity();

@@ -116,3 +116,26 @@ it.each(["binding-mismatch", "authorization-denied"])(
     expect(block.service.snapshot().status).toBe("signed-in");
   },
 );
+
+it("closes the switch prompt on Not now without changing any session", async () => {
+  const pub = publicServer();
+  const retry = vi.fn();
+  render(
+    <CommunitySignIn
+      identity={pub.service}
+      error="authorization-denied"
+      retry={retry}
+      relay="wss://kalvin.communities.buzz.xyz"
+      memberships={memberships}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Not now" }));
+  expect(screen.queryByRole("button", { name: "Switch account" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(pub.service.signOut).not.toHaveBeenCalled();
+  expect(pub.service.signIn).not.toHaveBeenCalled();
+  expect(retry).not.toHaveBeenCalled();
+  expect(pub.service.snapshot().status).toBe("signed-in");
+});

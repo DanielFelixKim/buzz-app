@@ -40,7 +40,9 @@ const INVALID: &str = "Invalid BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG";
 /// The sign-in server every build trusts unless it opts out: Builderlab for
 /// the public hosted communities. Shaped like the descriptors that builds add.
 #[allow(dead_code)] // Compiled in by build.rs.
-pub(crate) const BUILT_IN: &str = r#"{"version":1,"id":"bb-public","identityOrigin":"https://app.builderlab.xyz","communityHosts":["*.communities.buzz.xyz","communities.buzz.xyz"],"adapterBase":"https://app.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#;
+/// The front end reads the same file (`builderlab-hosted.ts`).
+pub(crate) const BUILT_IN: &str =
+    include_str!("../../../src/features/federated-identity/built-in-server.json");
 
 /// A build's pinned development viewer (`BUZZ_DEV_VIEWER`), kept only for a
 /// `tauri dev` run, which serves the development broker. Tauri marks that run
