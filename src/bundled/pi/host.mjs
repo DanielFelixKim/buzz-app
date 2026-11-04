@@ -19,9 +19,15 @@ import {
 } from "@earendil-works/chord/context";
 import {
   clampThinkingLevel,
+  createModels,
+  createProvider,
+  formatUserAgent,
   getSupportedThinkingLevels,
   getSystemMessageText,
 } from "@earendil-works/pi-ai";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AssistantEntry,
@@ -31,6 +37,7 @@ import {
   defineTool,
   Harness,
   hook,
+  LiveDoc,
   ToolTask,
   ProviderDoc,
   SessionFailed,
@@ -125,6 +132,180 @@ export function protectModels(models, inspect, conversationFor) {
             }
             signal?.throwIfAborted();
             return assembled;
+          },
+        });
+      };
+    },
+  });
+}
+
+/** Block's model gateway: the provider an agent eligible for Block mode
+ * uses, in place of every other. Each model keeps the one protocol it was
+ * verified with (README: "Block mode"); nothing retries on another. */
+export const WORKFORCE = "workforce";
+const PROTOCOLS = {
+  "anthropic/v1/messages": {
+    api: "anthropic-messages",
+    path: "anthropic",
+    compat: { sendSessionAffinityHeaders: true },
+  },
+  "openai/v1/responses": { api: "openai-responses", path: "openai/v1" },
+  // Databricks rejects `store` and `max_completion_tokens` on this protocol.
+  "mlflow/v1/chat/completions": {
+    api: "openai-completions",
+    path: "mlflow/v1",
+    compat: {
+      sendSessionAffinityHeaders: true,
+      supportsStore: false,
+      maxTokensField: "max_tokens",
+    },
+  },
+};
+/** The protocol each model family is verified on; others use mlflow's. */
+const NATIVE = {
+  claude: "anthropic/v1/messages",
+  gpt: "openai/v1/responses",
+};
+/** Buzz's context headers, which only the host sets (DXA-1152). */
+const RESERVED = /^x-workforce-(?:buzz-|launcher-(?:client|session)$)/i;
+/** Headers the gateway takes a session from ahead of, or as, the affinity
+ * one: any other value would attribute the request to another session. */
+const CORRELATION =
+  /^(?:x-session-affinity|x-litellm-(?:session|trace)-id|agent-session-id|session-id|x-.+-session-id)$/i;
+/** The gateway's own credential stands in for this placeholder. */
+const GATEWAY_KEY = "trogdor";
+
+/** The gateway's models for its serving endpoints: each served by the
+ * protocol its family is verified on, when the endpoint offers it. */
+export function workforceModels(origin, endpoints) {
+  const models = [];
+  for (const endpoint of endpoints) {
+    const served = endpoint.config?.served_entities?.[0]?.foundation_model;
+    const types = served?.api_types ?? [];
+    const protocol = [
+      NATIVE[served?.model_class],
+      "mlflow/v1/chat/completions",
+    ].find((type) => type && types.includes(type));
+    if (
+      !protocol ||
+      endpoint.state?.ready !== "READY" ||
+      endpoint.capabilities?.function_calling !== true
+    )
+      continue;
+    const { api, path, compat } = PROTOCOLS[protocol];
+    models.push({
+      id: endpoint.name,
+      name: served.display_name || endpoint.name,
+      api,
+      provider: WORKFORCE,
+      baseUrl: `${origin}/pass-through/databricks/ai-gateway/${path}`,
+      input: endpoint.capabilities.image_input ? ["text", "image"] : ["text"],
+      reasoning: false,
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      ...(compat ? { compat } : {}),
+    });
+  }
+  const provider = createProvider({
+    id: WORKFORCE,
+    name: "Block",
+    auth: {
+      apiKey: {
+        name: "Block model gateway",
+        resolve: async () => ({
+          auth: { apiKey: GATEWAY_KEY },
+          source: "gateway",
+        }),
+      },
+    },
+    models,
+    api: {
+      "anthropic-messages": anthropicMessagesApi(),
+      "openai-responses": openAIResponsesApi(),
+      "openai-completions": openAICompletionsApi(),
+    },
+  });
+  const catalog = createModels();
+  catalog.setProvider(provider);
+  return catalog;
+}
+
+/** The gateway's serving endpoints, as the agent's route may see them. */
+export async function discoverWorkforce(origin, headers, signal) {
+  const response = await fetch(
+    `${origin}/pass-through/databricks/api/2.0/serving-endpoints`,
+    {
+      headers: {
+        ...headers,
+        authorization: `Bearer ${GATEWAY_KEY}`,
+        "user-agent": formatUserAgent(),
+      },
+      signal,
+    },
+  );
+  if (!response.ok)
+    throw new Error(
+      `Block's model gateway did not list models (HTTP ${response.status})`,
+    );
+  return (await response.json()).endpoints ?? [];
+}
+
+/** The final request headers: native ones, less any Buzz context a caller
+ * set, with the run's own context and the native session for affinity. A
+ * conflicting session would win over affinity at the gateway: refused. */
+export function composeWorkforce(assembled, bundle, session) {
+  if (typeof session !== "string" || !session)
+    throw new Error("Block mode model request has no session");
+  const headers = {};
+  for (const [name, value] of Object.entries(assembled ?? {})) {
+    if (RESERVED.test(name)) continue;
+    if (CORRELATION.test(name)) {
+      if (value != null && value !== session)
+        throw new Error(
+          `Block mode model request has a conflicting ${name.toLowerCase()} header`,
+        );
+      continue;
+    }
+    headers[name] = value;
+  }
+  return { ...headers, ...bundle, "x-session-affinity": session };
+}
+
+/** Models that send every request with its run's Buzz context, after any
+ * caller's header transform (protection's review). Requests the gateway's
+ * protocols do not cover fail closed. */
+export function routeModels(models, contextFor) {
+  const requests = new Set([
+    "stream",
+    "complete",
+    "streamSimple",
+    "completeSimple",
+  ]);
+  const unsupported = new Set([
+    "streamDeferred",
+    "fetchDeferred",
+    "cancelDeferred",
+    "generateImages",
+    "classify",
+  ]);
+  return new Proxy(models, {
+    get(target, name) {
+      if (unsupported.has(name))
+        return () => {
+          throw new Error(`Block mode does not support ${String(name)}`);
+        };
+      const method = Reflect.get(target, name);
+      if (!requests.has(name))
+        return typeof method === "function" ? method.bind(target) : method;
+      return (model, input, options = {}) => {
+        const caller = options.transformHeaders;
+        return method.call(target, model, input, {
+          ...options,
+          transformHeaders: async (assembled) => {
+            const headers = caller ? await caller(assembled) : assembled;
+            const bundle = await contextFor(options.sessionId, options.signal);
+            return composeWorkforce(headers, bundle, options.sessionId);
           },
         });
       };
@@ -249,6 +430,16 @@ const Replies = defineDoc({
   version: 1,
   scope: "session",
   initial: () => ({}),
+  checkpointWhen,
+});
+/** Block mode: each conversation key's session binding, the keys reset since
+ * their last turn, and each request's Buzz context, recorded before it is
+ * submitted, so a run continued after a restart dispatches with it. */
+const Workforce = defineDoc({
+  kind: "buzz.workforce",
+  version: 1,
+  scope: "session",
+  initial: () => ({ places: {}, resets: {}, requests: {}, latest: {} }),
   checkpointWhen,
 });
 /** Why a request in a conversation Pi parked a task of is unanswered. */
@@ -624,20 +815,26 @@ export function serve({
 
   /** The model a turn runs on: the owner's pick, the agent's, or else Pi's
    * default. */
-  async function choose({ provider, model, thinking, pick = {} }) {
+  async function choose({ provider, model, thinking, pick = {} }, opened) {
     const defaults = await piDefaults(dir);
     const id = provider || defaults.provider;
     const modelId =
       pick.model ||
       model ||
       (id === defaults.provider ? defaults.model : undefined);
-    if (id && !models.getProvider(id))
+    const catalog = catalogOf(opened);
+    // Never another provider in Block mode, nor another model.
+    if (catalog !== models && id !== WORKFORCE)
+      throw new Error(
+        `${models.getProvider(id)?.name ?? id ?? "Pi's default provider"} is unavailable in Block mode. Choose a Block model in the agent's Identity tab.`,
+      );
+    if (id && !catalog.getProvider(id))
       throw new Error(unknownProvider(id, packages.errors));
     if (!id || !modelId)
       throw new Error(
         "This agent has no model. Choose a provider and model in its Identity tab.",
       );
-    const found = models.getModel(id, modelId);
+    const found = catalog.getModel(id, modelId);
     if (!found) throw new Error(`Pi has no model ${modelId} from ${id}`);
     return {
       found,
@@ -647,6 +844,37 @@ export function serve({
         pick.thinking || thinking || defaults.thinking || THINKING,
       ),
     };
+  }
+
+  /** The models an agent's turns use: Pi's own when its route is external,
+   * else the gateway's, which are none until it has listed them. */
+  function catalogOf(opened) {
+    return !opened || opened.route?.kind === "external"
+      ? models
+      : opened.catalog;
+  }
+
+  /** Takes the route the plugin resolved for the agent. Its models change
+   * only with the route's kind and gateway: one that changes them closes
+   * the agent first, as the plugin does. */
+  async function routeTo(opened, route = { kind: "external" }) {
+    const key =
+      route.kind === "external"
+        ? "external"
+        : `${route.kind} ${route.gatewayOrigin} ${route.identity?.community_id ?? ""}`;
+    if (opened.route && opened.routeKey !== key)
+      throw new Error("This agent's model route changed. Try again.");
+    if (route.kind === "eligible" && opened.routeKey !== key)
+      opened.catalog = workforceModels(
+        route.gatewayOrigin,
+        await discoverWorkforce(
+          route.gatewayOrigin,
+          route.discovery,
+          AbortSignal.timeout(TEST_TIMEOUT_MS),
+        ),
+      );
+    opened.route = route;
+    opened.routeKey = key;
   }
 
   async function open(agent, lost) {
@@ -741,7 +969,7 @@ export function serve({
       let harness;
       const conversationFor = async (sessionId) => {
         if (typeof sessionId !== "string" || !sessionId)
-          throw new Error("Protected model request has no session");
+          throw new Error("Pi model request has no session");
         if (!sessions.has(sessionId)) {
           for (const conversation of conversations) {
             const document = await harness.snapshot(
@@ -754,9 +982,67 @@ export function serve({
           }
         }
         if (!sessions.has(sessionId))
-          throw new Error("Protected model request has an unknown session");
+          throw new Error("Pi model request has an unknown session");
         return sessions.get(sessionId);
       };
+      /** A Block mode request's Buzz context: its run's first request's,
+       * recorded before that was submitted; outside a run, as a compaction
+       * after it, the last run's. Only while the plugin still admits the
+       * binding it was made with. */
+      const contextFor = async (sessionId, signal) => {
+        const conversation = await conversationFor(sessionId);
+        const live = await harness.snapshot(LiveDoc, conversation, context);
+        const input = live?.run?.inputs?.[0];
+        const submission =
+          input !== undefined && (await harness.submission(input, context));
+        const request =
+          submission && (await submission.status(context)).requestId;
+        const doc = await harness.snapshot(Workforce, context);
+        const record = live?.run
+          ? request && doc?.requests?.[request]
+          : doc?.latest?.[conversation];
+        if (!record)
+          throw new Error("Block mode model request has no Buzz context");
+        const admitted = await call(
+          "workforce",
+          { op: "admit", agent, binding: record.binding },
+          signal,
+        );
+        if (admitted?.ok !== true)
+          throw new Error(
+            admitted?.message ||
+              "This agent can't use Block's model gateway now",
+          );
+        return record.bundle;
+      };
+      let opened = { catalog: createModels() };
+      const workforce = routeModels(
+        new Proxy(
+          {},
+          {
+            get: (_, name) => {
+              const value = Reflect.get(opened.catalog, name);
+              return typeof value === "function"
+                ? value.bind(opened.catalog)
+                : value;
+            },
+          },
+        ),
+        contextFor,
+      );
+      // Until the plugin gives its route, the agent has Block mode's models,
+      // which are none: it runs nothing it might send elsewhere.
+      const routed = new Proxy(
+        {},
+        {
+          get: (_, name) => {
+            const target =
+              opened.route?.kind === "external" ? models : workforce;
+            const value = Reflect.get(target, name);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        },
+      );
       install(CodingTools);
       // Loads the Buzz tools that are deferred when the model asks for them.
       install(createToolSearchExtension());
@@ -768,8 +1054,8 @@ export function serve({
         storage,
         {
           models: protectedAgent
-            ? protectModels(models, inspect, conversationFor)
-            : models,
+            ? protectModels(routed, inspect, conversationFor)
+            : routed,
           registry,
           settings: SETTINGS,
           env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? homedir() }),
@@ -783,9 +1069,13 @@ export function serve({
         },
         context,
       );
-      const opened = {
+      opened = {
         agent,
         harness,
+        /** The route the plugin resolved, and the gateway's models for it. */
+        route: undefined,
+        routeKey: undefined,
+        catalog: opened.catalog,
         storage,
         registry,
         install,
@@ -861,6 +1151,25 @@ export function serve({
       );
     }
     return started;
+  }
+
+  /** An open agent's gateway models, listed again, when its route is not
+   * external; a blocked route's reason when it has one. */
+  async function listed(agent) {
+    const opened = await agentOf(agent);
+    if (!opened.route)
+      throw new Error("This agent's model route is not known yet");
+    if (opened.route.kind === "external") return;
+    if (opened.route.kind === "blocked") throw new Error(opened.route.message);
+    opened.catalog = workforceModels(
+      opened.route.gatewayOrigin,
+      await discoverWorkforce(
+        opened.route.gatewayOrigin,
+        opened.route.discovery,
+        AbortSignal.timeout(TEST_TIMEOUT_MS),
+      ),
+    );
+    return opened.catalog;
   }
 
   async function agentOf(agent) {
@@ -1124,10 +1433,65 @@ export function serve({
    * steers a run working in it, `busy`, changes only what its owner picked,
    * as in Claude. The agent's `core` memory read for it is the
    * conversation's latest; a failed read shows it none if not yet shown. */
+  /** Records a Block mode request's binding and Buzz context before it is
+   * submitted, with its reply destination, in one commit. One already
+   * recorded, by a host that stopped before submitting it, is kept. */
+  async function bind(
+    opened,
+    turn,
+    { key, fresh, workforce, reply, conversation, starts },
+  ) {
+    const { request } = turn;
+    const { harness } = opened;
+    let record =
+      opened.route?.kind !== "external" &&
+      (await harness.snapshot(Workforce, context))?.requests?.[request];
+    if (opened.route?.kind !== "external" && !record) {
+      // A model Block mode refuses binds nothing.
+      await choose(turn, opened);
+      const saved = key && (await harness.snapshot(Workforce, context));
+      const bound = await call("workforce", {
+        op: "bind",
+        agent: opened.agent,
+        event: !key
+          ? "standalone"
+          : fresh
+            ? "new_generation"
+            : saved?.resets?.[key]
+              ? "reset"
+              : "resume",
+        saved: key ? saved?.places?.[key] : undefined,
+        turn: workforce,
+      });
+      if (bound?.ok !== true)
+        throw new Error(
+          bound?.message || "This agent can't use Block's model gateway now",
+        );
+      record = {
+        binding: bound.binding,
+        bundle: bound.bundle,
+        persist: bound.persist,
+      };
+    }
+    if (!record && !reply) return;
+    await harness.commit(async (tx) => {
+      if (record) {
+        const doc = await tx.doc(Workforce);
+        if (key && record.persist) doc.places[key] = record.binding;
+        if (key) delete doc.resets[key];
+        const recorded = { binding: record.binding, bundle: record.bundle };
+        doc.requests[request] = recorded;
+        // What runs in the conversation once its runs end.
+        if (starts) doc.latest[conversation] = recorded;
+      }
+      if (reply) (await tx.doc(Replies))[request] = reply;
+    }, context);
+  }
+
   async function submit(opened, conversation, turn, busy, refresh) {
     opened.cores.set(conversation.id, turn.core);
     const steers = busy && turn.steer;
-    const chosen = await choose(turn);
+    const chosen = await choose(turn, opened);
     const change = steers
       ? {
           ...(turn.pick?.model ? { model: chosen.model } : {}),
@@ -1234,8 +1598,19 @@ export function serve({
         auth: dir,
       };
     },
-    async providers() {
+    /** Pi's providers; for an agent in Block mode, Block's, with every
+     * other one listed as unavailable. */
+    async providers({ agent } = {}) {
+      const block = agent && (await listed(agent));
       const providers = [];
+      if (block)
+        providers.push({
+          id: WORKFORCE,
+          name: "Block",
+          key: false,
+          signsIn: false,
+          configured: "gateway",
+        });
       for (const provider of models.getProviders()) {
         if (!models.getModels(provider.id).length) continue;
         const auth = await models.checkAuth(provider.id).catch(() => undefined);
@@ -1245,6 +1620,7 @@ export function serve({
           key: Boolean(provider.auth.apiKey),
           signsIn: Boolean(provider.auth.oauth),
           ...(auth ? { configured: auth.source ?? auth.type } : {}),
+          ...(block ? { unavailable: "Unavailable in Block mode" } : {}),
         });
       }
       providers.sort((a, b) => a.name.localeCompare(b.name));
@@ -1254,8 +1630,10 @@ export function serve({
     defaults() {
       return piDefaults(dir);
     },
-    models({ provider }) {
-      return models.getModels(provider).map((model) => ({
+    async models({ provider, agent }) {
+      const block = agent && (await listed(agent));
+      if (block && provider !== WORKFORCE) return [];
+      return (block || models).getModels(provider).map((model) => ({
         id: model.id,
         name: model.name,
         thinking: getSupportedThinkingLevels(model),
@@ -1308,8 +1686,9 @@ export function serve({
         : { ok: true, message: `Connected to ${model.modelId}` };
     },
     /** Opens the agent's storage, once, with its Buzz tools as they are now. */
-    async open({ agent, tools, hint }) {
+    async open({ agent, tools, hint, route }) {
       const opened = await opening(agent);
+      await routeTo(opened, route);
       const listed = JSON.stringify([tools, hint]);
       if (opened.tools !== listed) {
         opened.install(buzz(opened, tools, hint));
@@ -1385,7 +1764,16 @@ export function serve({
     },
     /** A turn for a conversation key: its Pi conversation, made the first
      * time, takes the request, or steers its run if one is working. */
-    async deliver({ agent, key, at, context: tools, reply, refresh, ...turn }) {
+    async deliver({
+      agent,
+      key,
+      at,
+      context: tools,
+      reply,
+      refresh,
+      workforce,
+      ...turn
+    }) {
       const opened = await agentOf(agent);
       const prior = opened.queues.get(key);
       const delivered = (async () => {
@@ -1394,6 +1782,7 @@ export function serve({
         const place = (await harness.snapshot(Places, context))?.[key];
         let conversation =
           place && (await harness.conversation(place.conversation, context));
+        const fresh = !conversation;
         if (!conversation) {
           conversation = await harness.createConversation(
             { ownership: { kind: "ownerless" } },
@@ -1419,10 +1808,14 @@ export function serve({
           !busy && (await firstTurn(opened, conversation.id))
             ? await sessionOf(opened.storage, conversation.id)
             : undefined;
-        if (reply)
-          await harness.commit(async (tx) => {
-            (await tx.doc(Replies))[turn.request] = reply;
-          }, context);
+        await bind(opened, turn, {
+          key,
+          fresh,
+          workforce,
+          reply,
+          conversation: conversation.id,
+          starts: !busy,
+        });
         const submitted = await submit(
           opened,
           conversation,
@@ -1456,12 +1849,17 @@ export function serve({
     /** A one-off turn in a conversation of its own, with no default
      * destination for its tools. Nothing watches it: it has no other
      * requests, and no Activity. */
-    async once({ agent, ...turn }) {
+    async once({ agent, workforce, ...turn }) {
       const opened = await agentOf(agent);
       const conversation = await opened.harness.createConversation(
         { ownership: { kind: "ownerless" } },
         context,
       );
+      await bind(opened, turn, {
+        workforce,
+        conversation: conversation.id,
+        starts: true,
+      });
       opened.conversations.add(conversation.id);
       return submit(opened, conversation, turn, false);
     },
@@ -1530,6 +1928,7 @@ export function serve({
         try {
           await opened.harness.commit(async (tx) => {
             delete (await tx.doc(Replies))[request];
+            delete (await tx.doc(Workforce)).requests[request];
           }, context);
         } catch (error) {
           console.warn("Pi could not clear a wake's reply destination", error);
@@ -1557,6 +1956,7 @@ export function serve({
         await harness.commit(async (tx) => {
           const places = await tx.doc(Places);
           if (places[key]) places[key] = { ...places[key], seen: 0 };
+          (await tx.doc(Workforce)).resets[key] = true;
         }, context);
         return;
       }

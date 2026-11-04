@@ -68,6 +68,12 @@ import {
 import { DEFAULT_THINKING, PiSetup, runsAt } from "./setup";
 import { readTranscript } from "./transcript";
 import { readUsage } from "./usage";
+import {
+  answerWorkforce,
+  hostRoute,
+  routeKey,
+  type WorkforceSeam,
+} from "./workforce";
 
 export type Config = Readonly<{
   /** A Pi provider; empty uses the one Pi's settings name. */
@@ -203,6 +209,10 @@ export class PiRuntime {
     Map<string, { conversation: number; at: number }>
   >();
 
+  /** Each open agent's route watch, which closes it when its route changes
+   * what the host must open it with. */
+  private readonly routes = new Map<AgentKey, () => void>();
+
   /** The Pi host every agent of this type runs in, started when needed. */
   private readonly pi: Pi;
   readonly setup: PiSetup;
@@ -235,6 +245,8 @@ export class PiRuntime {
     ) => () => void = () => () => {},
     /** Agent storage, where what each session started with is kept. */
     private readonly storage: AgentStore = localStore(),
+    /** Block mode's routes and context (DXA-1152); none: all external. */
+    private readonly workforce?: WorkforceSeam,
   ) {
     this.pi = new Pi(
       () => this.spawn,
@@ -253,6 +265,7 @@ export class PiRuntime {
           );
         },
         event: (event) => this.event(event),
+        workforce: async (call) => answerWorkforce(this.workforce, call),
         prompt: ({ agent, request }) =>
           this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
           Promise.resolve(undefined),
@@ -270,6 +283,8 @@ export class PiRuntime {
   }
 
   async retire(pubkey: string) {
+    this.routes.get(pubkey)?.();
+    this.routes.delete(pubkey);
     const entry = this.agents.get(pubkey);
     if (entry) {
       entry.closed = true;
@@ -511,24 +526,25 @@ export class PiRuntime {
     void this.pi.dispose();
   }
 
-  async run({
-    trigger,
-    agent,
-    config: raw,
-    channelId,
-    model,
-    effort,
-    team,
-    workingUntil,
-    current,
-    wakeText,
-    ignored,
-    signal,
-    step,
-    acknowledged,
-    superseded,
-    interruptible,
-  }: Delivery) {
+  async run(delivery: Delivery) {
+    const {
+      trigger,
+      agent,
+      config: raw,
+      channelId,
+      model,
+      effort,
+      team,
+      workingUntil,
+      current,
+      wakeText,
+      ignored,
+      signal,
+      step,
+      acknowledged,
+      superseded,
+      interruptible,
+    } = delivery as Delivery;
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
     if (
       trigger.type !== "mention" &&
@@ -665,6 +681,9 @@ export class PiRuntime {
           steer: steerPrompt(text),
           request,
           ...(attention ? { reply: where, refresh: true } : {}),
+          ...(this.workforce
+            ? { workforce: this.workforce.turnContext(delivery) }
+            : {}),
           ...picked,
         },
         () => !interrupted && (!wake || !current || current()),
@@ -783,7 +802,15 @@ export class PiRuntime {
       const { submission, conversation } = await this.pi.request<{
         submission: number;
         conversation: number;
-      }>("once", { agent: agent.key, text, request, ...turn });
+      }>("once", {
+        agent: agent.key,
+        text,
+        request,
+        ...(this.workforce
+          ? { workforce: this.workforce.turnContext(delivery) }
+          : {}),
+        ...turn,
+      });
       // A removed agent's storage is closed, and stays so.
       stop = () => {
         if (!entry.closed)
@@ -1137,10 +1164,24 @@ export class PiRuntime {
   }
 
   private async open(agent: AgentKey) {
+    const seam = this.workforce;
+    if (seam && !this.routes.has(agent)) {
+      let key = routeKey(seam.routeFor(agent));
+      this.routes.set(
+        agent,
+        seam.subscribeRoute(agent, () => {
+          const next = routeKey(seam.routeFor(agent));
+          if (next === key) return;
+          key = next;
+          void this.retire(agent).catch(() => undefined);
+        }),
+      );
+    }
     await this.pi.request("open", {
       agent,
       tools: sessionTools(this.added()),
       hint: sessionHint(this.added()),
+      route: await hostRoute(seam, agent, AbortSignal.timeout(READ_MS)),
     });
   }
 

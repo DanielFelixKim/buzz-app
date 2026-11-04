@@ -44,8 +44,30 @@ export type PiHookCall = Readonly<{
   event: "beforeTool" | "afterTool";
   input: unknown;
 }>;
+/** The host asks for a Block mode run's binding and Buzz context before it
+ * submits the run, and whether the run's binding is still admitted before
+ * each of its model requests. */
+export type PiWorkforceCall = Readonly<
+  | {
+      op: "bind";
+      agent: string;
+      event: "resume" | "reset" | "new_generation" | "standalone";
+      saved: unknown;
+      turn: unknown;
+    }
+  | { op: "admit"; agent: string; binding: unknown }
+>;
+export type PiWorkforceAnswer =
+  | {
+      ok: true;
+      binding?: unknown;
+      bundle?: Record<string, string>;
+      persist?: boolean;
+    }
+  | { ok: false; message: string };
 type Handlers = Readonly<{
   hook?(call: PiHookCall): Promise<unknown>;
+  workforce?(call: PiWorkforceCall): Promise<PiWorkforceAnswer>;
   tool(call: ToolCall, signal: AbortSignal): Promise<ToolResult>;
   event(event: PiEvent): void;
   prompt?(call: {
@@ -242,7 +264,8 @@ export class Pi {
       else if (
         (message.method === "tool" ||
           message.method === "prompt" ||
-          message.method === "hook") &&
+          message.method === "hook" ||
+          message.method === "workforce") &&
         message.id !== undefined
       )
         void this.answer(
@@ -423,7 +446,7 @@ export class Pi {
   private async answer(
     connection: Connection,
     id: number | string,
-    method: "tool" | "prompt" | "hook",
+    method: "tool" | "prompt" | "hook" | "workforce",
     params: unknown,
   ) {
     let message: Message;
@@ -440,11 +463,18 @@ export class Pi {
         result:
           method === "hook"
             ? ((await this.handlers.hook?.(params as PiHookCall)) ?? null)
-            : method === "tool"
-              ? await this.handlers.tool(params as ToolCall, signal)
-              : ((await this.handlers.prompt?.(
-                  params as { agent: string; request: string },
-                )) ?? false),
+            : method === "workforce"
+              ? ((await this.handlers.workforce?.(
+                  params as PiWorkforceCall,
+                )) ?? {
+                  ok: false,
+                  message: "Block mode is not available here",
+                })
+              : method === "tool"
+                ? await this.handlers.tool(params as ToolCall, signal)
+                : ((await this.handlers.prompt?.(
+                    params as { agent: string; request: string },
+                  )) ?? false),
       };
     } catch (error) {
       message = {

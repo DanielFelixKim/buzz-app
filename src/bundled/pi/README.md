@@ -41,6 +41,48 @@ cd src/bundled/pi/deps
 npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolved
 ```
 
+## Block mode
+
+A Pi agent eligible for Block mode (DXA-1152's route, not yet active: Pi
+gets no `WorkforceSeam` until rollout) runs only Block's models, through
+Block's model gateway at `<gateway>/pass-through/databricks/ai-gateway/`.
+Every other provider is listed as unavailable, and there is no fallback to
+one. A blocked route (readiness, identity, auth or network failure) lists
+nothing and runs nothing. It shows its reason instead. Missing or unresolved
+context never makes an agent external.
+
+Each serving endpoint uses the one protocol verified for its family, with
+pi-ai 1.4.0's own client. Nothing retries a request on another protocol:
+
+| Family (`model_class`) | Protocol | pi-ai API | Verified on |
+|---|---|---|---|
+| `claude` | `anthropic/v1/messages` | `anthropic-messages` | claude-haiku-4-5 |
+| `gpt` | `openai/v1/responses` | `openai-responses` | gpt-5-4-nano |
+| any other offering it | `mlflow/v1/chat/completions` | `openai-completions` (`supportsStore: false`, `maxTokensField: "max_tokens"`) | gpt-oss-20b, qwen3-next-80b-a3b-instruct, glm-5-3-flash |
+
+Endpoints that offer none of these are not listed. That includes Gemini,
+embeddings, endpoints that are not ready, and endpoints without function
+calling. The probes listed above are synthetic, so other endpoints are
+untested on their protocol. Block models are listed with no reasoning
+levels, a 128k context window, a 16k output limit, and no cost. Images are
+the endpoint's `image_input`.
+
+Every model request carries:
+- its run's Buzz context headers, recorded before the run was submitted;
+- `x-session-affinity`, set to Pi's native session ID. This is the
+  conversation's `ProviderDoc` session, not the Buzz session. pi-ai drops
+  its own session headers when compaction disables caching, so without this
+  the request would carry no session ID.
+
+Buzz context a caller set is replaced. A request whose other session
+headers name a different session is refused. A request is also refused
+while its binding is no longer admitted.
+
+Responses transport is verified. Gateway `9fc567e` attributes it through
+affinity, but its harness attribution is still pending integrated and
+downstream confirmation (DXA-1162). Black-box probes saw no effect of
+affinity on Databricks caching. Databricks documents no semantics for it.
+
 ## Limits
 
 - Pi's `read`, `write`, `edit` and `bash` run in the workspace with no sandbox
