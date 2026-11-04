@@ -304,9 +304,13 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
       // A rejected item is deleted only if nothing replaced it meanwhile.
       const credential = await restoredCredential(host, signal, {
         ...store,
+        // A denied delete is left to the cleanup, which retries it.
         clear: () =>
           write(async () => {
             if (mine === generation && !active) await store.clear();
+          }).catch(() => {
+            deleting = true;
+            return cleanup();
           }),
       });
       if (!credential || mine !== generation || deleting) return current();

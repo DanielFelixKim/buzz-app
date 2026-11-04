@@ -337,7 +337,7 @@ it("retires the browser sign-in at once when NIP-FI takes over, retrying its del
     await vi.waitFor(() =>
       expect(session.snapshot().error).toMatch(/keeps trying/),
     );
-    // The retained item is never restored meanwhile.
+    // Another session in this launch never restores the retained item.
     expect(k.store.value).toBe("a");
     const restarted = k.plugin();
     await vi.waitFor(() =>
@@ -499,4 +499,39 @@ it("shows a denied delete at once, without waiting on a slow revoke", async () =
   expect(session.snapshot().error).toMatch(/keeps trying/);
   slow.resolve();
   await k.saved.dispose();
+});
+
+it("after a relaunch, a revoked item whose delete is denied again is retried by the new owner", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const k = keychain("a");
+    const { session } = k.plugin();
+    await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+    k.store.clear.mockRejectedValueOnce(new Error("denied"));
+    session.retire();
+    await vi.waitFor(() => expect(k.saved.failed()).toBe(true));
+    await k.saved.dispose();
+    // Relaunch: a fresh owner over the retained item, which Builderlab now
+    // rejects; its delete is denied once more.
+    expect(k.store.value).toBe("a");
+    k.host.request.mockResolvedValue({ status: 401, headers: {}, body: "" });
+    k.store.clear
+      .mockRejectedValueOnce(new Error("denied"))
+      .mockRejectedValueOnce(new Error("denied"));
+    const saved = createSavedSignIn(k.store);
+    const restarted = createOAuthSession(vi.fn(), vi.fn(), k.host, saved);
+    await vi.waitFor(() =>
+      expect(restarted.snapshot()).toEqual({
+        status: "signed-out",
+        error: expect.stringMatching(/keeps trying/),
+      }),
+    );
+    expect(k.store.value).toBe("a");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(k.store.value).toBeNull();
+    expect(saved.failed()).toBe(false);
+    await saved.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
 });
