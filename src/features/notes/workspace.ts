@@ -38,7 +38,7 @@ export type NotesPage = {
   more: boolean;
   cursor?: Cursor | undefined;
 };
-export type NewNote = NoteDraft & { id: string; agents: boolean };
+export type NewNote = NoteDraft & { id: string; agent?: string };
 const documentLabel = (id: string) => `${NOTE_LABEL}.${id}`;
 
 /** Feature-owned orchestration; the session and host retain all signing/access authority. */
@@ -175,7 +175,8 @@ export function createNotesWorkspace(session: RelaySession) {
         "This storage contains other documents. Create a separate working copy before sharing this note.",
       );
   }
-  async function agentAccess(caller?: AbortSignal) {
+  async function verifyCreatingAgent(key: string, caller?: AbortSignal) {
+    if (!PUBKEY.test(key)) throw new Error("Choose a valid creating agent.");
     session.agentChoices.ensure(true, true);
     if (
       !session.agentChoices.snapshot().complete ||
@@ -186,116 +187,20 @@ export function createNotesWorkspace(session: RelaySession) {
     const choices = session.agentChoices.snapshot();
     if (!choices.complete || choices.pending)
       throw new Error(
-        "Your agent list is incomplete. Refresh it or choose Only me.",
+        "Your agent list is incomplete. Refresh it before creating an agent note.",
       );
-    const keys = [...new Set(choices.selectable.map((agent) => agent.pubkey))];
-    const verified: string[] = [];
-    const unverified: string[] = [];
-    for (let offset = 0; offset < keys.length; offset += 3) {
-      const batch = keys.slice(offset, offset + 3);
-      const profiles = await snapshot(
-        batch.map((key) => ({
-          kinds: [0],
-          authors: [key],
-          limit: 1,
-          consistency: "strong",
-        })),
-        caller,
-      );
-      for (const key of batch) {
-        const profile = profiles?.find(
-          (event) =>
-            event.kind === 0 && event.pubkey === key && hasEventProof(event),
-        );
-        if (profile && (await attestedOwner(profile)) === session.viewer)
-          verified.push(key);
-        else unverified.push(key);
-      }
-    }
-    return { verified, unverified };
-  }
-  const ownedAgents = async (caller?: AbortSignal) =>
-    (await agentAccess(caller)).verified;
-  const syncing = new Map<string, Promise<void>>();
-  async function reconcile(address: NoteAddress, caller?: AbortSignal) {
-    const prior = syncing.get(address.channel);
-    if (prior) return prior;
-    const work = (async () => {
-      const state = await sharing(address.channel, caller);
-      if (!independent(address, state) || !state.labels.includes(AGENTS_LABEL))
-        return;
-      const roles = state.authority;
-      // Only the owning user's app maintains its standing agent-sharing policy.
-      if (roles.roles[session.viewer ?? ""] !== "owner") return;
-      const choices = session.agentChoices.snapshot();
-      const candidates = choices.selectable.map((agent) => agent.pubkey);
-      const missing = candidates.some((key) => !roles.roles[key]);
-      const keys = missing ? await ownedAgents(caller) : candidates;
-      if (missing) {
-        await singleNote(address, caller);
-        await resolve(address, caller);
-        for (const key of keys)
-          if (!roles.roles[key])
-            await session.memberAdditions.add(address.channel, key);
-      }
-      // A disappearing inventory entry alone is not revocation evidence. An
-      // explicitly archived agent is removed, after current role/owner checks.
-      const archived = session.agentChoices.snapshot().archives.archived;
-      for (const key of Object.keys(roles.roles)) {
-        if (
-          keys.includes(key) ||
-          key === session.viewer ||
-          !archived.includes(key)
-        )
-          continue;
-        await session.profiles.ensure([key]);
-        const profile = session.profiles.event?.(key);
-        if (
-          profile &&
-          hasEventProof(profile) &&
-          (await attestedOwner(profile)) === session.viewer
-        )
-          await setMember(address, key, "remove", caller, { restrict: false });
-      }
-    })();
-    syncing.set(address.channel, work);
-    try {
-      await work;
-    } finally {
-      if (syncing.get(address.channel) === work)
-        syncing.delete(address.channel);
-    }
-  }
-  async function setAudience(
-    address: NoteAddress,
-    agents: boolean,
-    caller?: AbortSignal,
-  ) {
-    await resolve(address, caller);
-    const base = await session.channelDetails.load(
-      address.channel,
-      signal(caller),
+    if (!choices.selectable.some((agent) => agent.pubkey === key))
+      throw new Error("This creating agent is unavailable.");
+    const [profile] = await snapshot(
+      [{ kinds: [0], authors: [key], limit: 1, consistency: "strong" }],
+      caller,
     );
-    const state = await sharing(address.channel, caller);
-    if (!independent(address, state))
-      throw new Error("This document does not use independent note sharing.");
-    const roles = state.authority;
-    if (roles.roles[session.viewer ?? ""] !== "owner")
-      throw new Error("Only the note owner can change automatic agent access.");
-    if (agents) {
-      await singleNote(address, caller);
-      await ownedAgents(caller);
-    }
-    const labels = [
-      ...(base.labels ?? []).filter((label) => label !== AGENTS_LABEL),
-      ...(agents ? [AGENTS_LABEL] : []),
-    ];
-    await session.channelDetails.save(
-      base,
-      { ...base, labels },
-      signal(caller),
-    );
-    if (agents) await reconcile(address, caller);
+    if (
+      !profile ||
+      !hasEventProof(profile) ||
+      (await attestedOwner(profile)) !== session.viewer
+    )
+      throw new Error("This caller’s ownership could not be verified.");
   }
   async function setMember(
     address: NoteAddress,
@@ -303,7 +208,6 @@ export function createNotesWorkspace(session: RelaySession) {
     access: "read" | "edit" | "admin" | "remove",
     caller?: AbortSignal,
     options: {
-      restrict?: boolean;
       expectedRole?: MemberChange["expectedRole"];
     } = {},
   ) {
@@ -330,24 +234,6 @@ export function createNotesWorkspace(session: RelaySession) {
       throw new Error(
         "This person’s access changed. Refresh access before retrying.",
       );
-    if (
-      options.restrict !== false &&
-      access !== "edit" &&
-      access !== "admin" &&
-      state.labels.includes(AGENTS_LABEL)
-    ) {
-      const profiles = await snapshot(
-        [{ kinds: [0], authors: [key], limit: 1, consistency: "strong" }],
-        caller,
-      );
-      const profile = profiles?.[0];
-      if (
-        profile &&
-        hasEventProof(profile) &&
-        (await attestedOwner(profile)) === session.viewer
-      )
-        await setAudience(address, false, caller);
-    }
     const role =
       access === "read" ? "guest" : access === "admin" ? "admin" : "member";
     if (previous) {
@@ -401,8 +287,8 @@ export function createNotesWorkspace(session: RelaySession) {
     validateDraft(input);
     if (!UUID.test(input.id))
       throw new Error("Use a new note UUID and reuse it when retrying.");
-    // Resolve automatic recipients before creating any channel.
-    const recipients = input.agents ? await ownedAgents(caller) : [];
+    // Agent creation admits only its verified caller, never the owner’s inventory.
+    if (input.agent) await verifyCreatingAgent(input.agent, caller);
     if (!session.viewer || !session.relayAuthor)
       throw new Error("Connect to create a note.");
     const label = documentLabel(input.id);
@@ -439,7 +325,7 @@ export function createNotesWorkspace(session: RelaySession) {
         name: `Note ${input.id.slice(0, 8)}`,
         visibility: "private",
         system: true,
-        labels: [NOTE_LABEL, label, ...(input.agents ? [AGENTS_LABEL] : [])],
+        labels: [NOTE_LABEL, label],
       });
     const address = noteAddress({ id: input.id, channel });
     await resolve(address, caller);
@@ -490,8 +376,7 @@ export function createNotesWorkspace(session: RelaySession) {
       throw new Error(
         "This storage already contains another document. Use a new note ID.",
       );
-    for (const key of recipients)
-      await session.memberAdditions.add(channel, key);
+    if (input.agent) await session.memberAdditions.add(channel, input.agent);
     try {
       const event = await author(noteTemplate(address, input), caller);
       const current = await readNote(read, address, caller);
@@ -523,12 +408,8 @@ export function createNotesWorkspace(session: RelaySession) {
     resolve,
     authority,
     sharing,
-    ownedAgents,
-    agentAccess,
     drafts,
-    reconcile,
     setMember,
-    setAudience,
     open: async (address: NoteAddress, caller?: AbortSignal) => {
       await resolve(address, caller);
       return readNote(read, address, caller);

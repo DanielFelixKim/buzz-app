@@ -105,6 +105,9 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     name: "Storage research",
     exact: true,
   });
+  await expect(
+    document.getByRole("textbox", { name: "Title", exact: true }),
+  ).toBeFocused();
   await disableAutoSave(page, document);
   await expect(
     document.getByRole("combobox", { name: "Document mode", exact: true }),
@@ -357,6 +360,10 @@ test("human and agents edit, link, share and export the same working note", asyn
   ).toHaveText("Delivery plan");
   await page.getByRole("link", { name: "Delivery plan", exact: true }).click();
   const document = page.getByRole("article", { name: "Delivery plan" });
+  await expect(document.locator("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
   await disableAutoSave(page, document);
   const canvas = document.getByRole("region", {
     name: "Document content",
@@ -416,7 +423,7 @@ test("human and agents edit, link, share and export the same working note", asyn
     .click();
   await expect(mode).toContainText("Viewing");
   await expect(document).toContainText("Carl");
-  await expect(document).toContainText("Updated");
+  await expect(document).toContainText("Saved");
   await expect(document.locator("time")).toHaveAttribute(
     "datetime",
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/,
@@ -429,19 +436,9 @@ test("human and agents edit, link, share and export the same working note", asyn
     0,
   );
   await document.getByRole("button", { name: "Note actions" }).click();
-  const linkedNotes = page.getByRole("menuitem", {
-    name: "Linked notes",
-    exact: true,
-  });
-  await linkedNotes.focus();
-  await linkedNotes.press("ArrowRight");
-  const linkedMenu = page.getByRole("menu", {
-    name: "Linked notes",
-    exact: true,
-  });
-  await expect(linkedMenu).toContainText("No links from the loaded notes.");
-  await page.keyboard.press("Escape");
-  await expect(linkedNotes).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Linked notes", exact: true }),
+  ).toHaveCount(0);
   const menuPaint = await page
     .getByRole("menu", { name: "Note actions", exact: true })
     .evaluate(floatingPaint);
@@ -472,19 +469,14 @@ test("human and agents edit, link, share and export the same working note", asyn
   const sectionGap = await scrollport.evaluate((element) =>
     parseFloat(getComputedStyle(element).rowGap),
   );
-  const savedStatusBounds = await document.getByRole("status").boundingBox();
+  await expect(document.getByRole("status")).toHaveText(/^Saved /);
   expect(
-    Math.abs(
-      savedStatusBounds.y - modeBounds.y - modeBounds.height - sectionGap,
-    ),
-  ).toBeLessThan(1);
+    await document
+      .getByRole("status")
+      .evaluate((label) => !!label.querySelector("time")),
+  ).toBe(true);
   expect(
-    Math.abs(
-      viewingBounds.y -
-        savedStatusBounds.y -
-        savedStatusBounds.height -
-        sectionGap,
-    ),
+    Math.abs(viewingBounds.y - modeBounds.y - modeBounds.height - sectionGap),
   ).toBeLessThan(1);
   const viewingTitle = await document
     .getByRole("textbox", { name: "Title", exact: true })
@@ -563,7 +555,12 @@ test("human and agents edit, link, share and export the same working note", asyn
     .getByRole("button", { name: "Save", exact: true })
     .click();
   await document.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(document.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(document.getByRole("status")).toHaveText(/^Saved /);
+  await expect(document.locator("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    "circle",
+  );
+
   await document
     .getByRole("link", { name: "Delivery plan", exact: true })
     .click();
@@ -698,7 +695,7 @@ test("human and agents edit, link, share and export the same working note", asyn
     .getByRole("button", { name: "Save", exact: true })
     .click();
   await document.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(document.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(document.getByRole("status")).toHaveText(/^Saved /);
   expect(
     (
       await page.evaluate(
@@ -825,17 +822,11 @@ test("human and agents edit, link, share and export the same working note", asyn
       await expect(
         sharing.getByRole("searchbox", { name: "Search people and agents" }),
       ).toBeVisible();
-      const toggleBounds = await sharing
-        .getByRole("checkbox", { name: "Share with my agents automatically" })
-        .boundingBox();
-      const headingTextX = await sharing
-        .getByRole("heading", { name: /^People ·/ })
-        .evaluate((heading) => {
-          const text = document.createRange();
-          text.selectNodeContents(heading);
-          return text.getBoundingClientRect().x;
-        });
-      expect(Math.abs(toggleBounds.x - headingTextX)).toBeLessThan(1);
+      await expect(
+        sharing.getByRole("checkbox", {
+          name: "Share with my agents automatically",
+        }),
+      ).toHaveCount(0);
       await expect(
         sharing.getByRole("button", { name: "Done" }),
       ).toBeInViewport({
@@ -942,11 +933,9 @@ test("creates, deletes and restores a working note through the editor", async ({
   await create
     .getByRole("textbox", { name: "Document body", exact: true })
     .fill("A durable finding.");
-  await expect(create).toContainText("These agents could not be verified");
-  await expect(create).toContainText("Carl");
-  await create
-    .getByRole("button", { name: "Create with verified agents" })
-    .click();
+  await expect(
+    create.getByText(/These agents could not be verified/),
+  ).toHaveCount(0);
   const document = page.getByRole("article", { name: "Research draft" });
   await expect(
     document.getByRole("combobox", { name: "Document mode", exact: true }),
@@ -1033,7 +1022,7 @@ test("discovers only channel-backed notes while leaving published records untouc
     exact: true,
   });
   await expect(note).toContainText("Carl");
-  await expect(note).toContainText("Updated");
+  await expect(note).toContainText("Saved");
   await expect(note).toContainText("Written in a private note channel.");
   await expect(
     note.getByRole("combobox", { name: "Document mode", exact: true }),
@@ -1094,7 +1083,7 @@ test("preserves a conflicting draft and opens note links in the conversation’s
     document.getByRole("textbox", { name: "Document body", exact: true }),
   ).toHaveText("My unsaved draft");
   await document.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(document.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(document.getByRole("status")).toHaveText(/^Saved /);
   await page.getByRole("button", { name: "Conversation", exact: true }).click();
   await page
     .getByRole("link", { name: "Connected notes plan", exact: true })
@@ -1138,7 +1127,7 @@ test("auto-saves the editor without losing focus and animates manual Save into t
       ),
     )
     .toBe("Automatically saved body");
-  await expect(document.getByRole("status")).toHaveText("Saved");
+  await expect(document.getByRole("status")).toHaveText(/^Saved /);
   await expect(body).toBeFocused();
   await expect(
     document.getByRole("combobox", { name: "Document mode" }),
@@ -1199,7 +1188,7 @@ test("auto-saves the editor without losing focus and animates manual Save into t
     }
   }
   await save.click();
-  await expect(document.getByRole("status")).toHaveText("Saved");
+  await expect(document.getByRole("status")).toHaveText(/^Saved /);
   await expect
     .poll(() =>
       page.evaluate(
@@ -1242,6 +1231,7 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   await expect(
     fresh.getByRole("textbox", { name: "Title", exact: true }),
   ).toHaveValue("");
+  await expect(fresh.getByRole("status")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("fresh-note.png") });
   const freshBody = fresh.getByRole("textbox", {
     name: "Document body",
@@ -1257,7 +1247,7 @@ test("auto-saves the editor without losing focus and animates manual Save into t
     name: "Document body",
     exact: true,
   });
-  await expect(savedNew.getByRole("status")).toHaveText("Saved");
+  await expect(savedNew.getByRole("status")).toHaveText(/^Saved /);
   await expect(savedBody).toHaveText("A fresh thought");
   await expect(savedBody).toBeFocused();
   expect(
@@ -1276,6 +1266,32 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   ).toBeVisible();
   await page.goForward();
   await expect(savedBody).toHaveText("A fresh thought");
+  await page
+    .getByRole("button", { name: "Back to notes", exact: true })
+    .click();
+  await page.getByRole("button", { name: "New note", exact: true }).click();
+  await page
+    .getByRole("article", { name: "New note", exact: true })
+    .getByRole("button", { name: "Share note", exact: true })
+    .click();
+  const explicitShare = page.getByRole("dialog", {
+    name: "Share access",
+    exact: true,
+  });
+  await expect(explicitShare).toBeVisible();
+  await expect(
+    explicitShare.getByRole("button", {
+      name: /Actions for Carl|Actions for Ned/,
+    }),
+  ).toHaveCount(0);
+  await explicitShare
+    .getByRole("button", { name: "Done", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("article", { name: "Untitled note", exact: true })
+      .getByRole("textbox", { name: "Document body", exact: true }),
+  ).toHaveText("");
   expect(errors.unexplained()).toEqual([]);
 });
 

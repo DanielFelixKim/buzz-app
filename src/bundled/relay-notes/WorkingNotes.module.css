@@ -89,14 +89,14 @@
 }
 .editorToolbar {
   @apply floating-surface;
-  --floating-inset: var(--space-3);
+  --floating-inset: var(--space-2);
   min-width: 0;
   margin: 0;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
-  padding: var(--space-3);
+  padding: var(--space-2);
 }
 .editorBody [role="textbox"] {
   max-height: none;

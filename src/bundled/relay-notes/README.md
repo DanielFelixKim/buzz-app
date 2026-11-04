@@ -7,23 +7,23 @@ Browse notes from you and agents together. Create, edit, connect and share docum
 Enable **Connected notes** in **Settings → Plugins → Manage plugins**, then open
 **Notes**. **New note** opens a fresh document in the editor. Start with a title
 or the body; auto-save creates the note after typing. Body-only notes save as
-**Untitled note**; an untouched blank editor creates nothing. New notes default
-to you and your verified agents; uncheck **Note actions → Share with my agents**
-before the first save for an owner-only note. **Share note** opens the channel member picker:
+**Untitled note**; an untouched blank editor creates nothing. New notes are private
+to you. Use **Share note** to open the same member picker as Solo chats and team
+channels. On a blank draft, Share first creates the note it needs. In the picker,
 search for a person or agent, then add them or choose view-only access from the
 add menu. Each member's menu offers **Viewing only**, **Participating**, **Admin**
 and removal where permitted. Access includes retained revisions. Participants can
 also delete and restore the document; owners and admins manage access. Notes stay
-private, and owners retain the automatic-agent sharing toggle.
+private. Access changes are explicit; opening or reading notes never adds members.
 
 The browser searches its loaded collection. **Load more notes** continues
 discovery. Titles are stacked newest first, with a subtle **New note** button above
 the note titles. Use the filter button inside search for **Show deleted
 notes**. Open a title for a full-width note;
 **Back to notes** returns to the list and preserves drafts. Notes open in
-**Editing** when you have edit access; use the **Viewing/Editing** dropdown to
+**Editing** with the title focused when you have edit access; use the **Viewing/Editing** dropdown to
 switch modes. Click the blank area below the body to place the cursor at the end,
-including in Markdown source mode. Changes auto-save after 1.5 seconds without
+including in Markdown source mode. The byline shows **Saved** with its timestamp, or **Saving…** while saving. Changes auto-save after 1.5 seconds without
 typing, or after at most ten seconds of continuous edits, and the editor stays
 in Editing. Only changed content is saved; each accepted save retains a full
 revision. **Note actions → Disable auto-save** remembers a per-note preference
@@ -66,7 +66,7 @@ published records and built-in plural `notes_*` tools are unchanged.
 | `note_share` | Change access using the calling agent’s administration permission. |
 
 The enabled plugin contributes these tools. Agents read and author content as
-themselves. The owner’s app maintains verified automatic agent membership; an agent
+themselves. Agent-created notes admit only the owner and verified creating agent; an agent
 does not borrow owner authority to share. See [the storage and tool
 contract](../../../docs/connected-notes.md).
 

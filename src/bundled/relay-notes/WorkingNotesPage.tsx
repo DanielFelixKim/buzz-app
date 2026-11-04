@@ -6,7 +6,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useAgentChoices } from "../../features/agents/use-choices";
 import type { Navigation } from "../../features/navigation/controller";
 import { targetKey } from "../../features/navigation/targets";
 import {
@@ -42,6 +41,7 @@ import {
   workingRoute,
   workingTarget,
   type WorkingRoute,
+  type DocumentView,
 } from "./working-route";
 
 export type NotesOwner = (session: RelaySession) => NotesWorkspace;
@@ -146,7 +146,6 @@ export function WorkingNotesCommunity({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [sharingError, setSharingError] = useState("");
   const [query, setQuery] = useState(destination?.query ?? "");
   const [trash, setTrash] = useState(destination?.trash ?? false);
   const drafts = useRef(new Map<string, NewDraft>());
@@ -161,14 +160,6 @@ export function WorkingNotesCommunity({
   );
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
-  const reconciled = useRef(new Map<string, string>());
-  const choices = useAgentChoices(workspace.session, true, true);
-  const agentKeys = choices.complete
-    ? choices.selectable
-        .map((row) => row.pubkey)
-        .sort()
-        .join(":")
-    : undefined;
   const loadId = useRef(0);
   const cursor = useRef(collection.cursor);
   cursor.current = collection.cursor;
@@ -235,12 +226,17 @@ export function WorkingNotesCommunity({
     },
     [navigator, request],
   );
-  const open = (address: NoteAddress, replace = false) => {
+  const open = (
+    address: NoteAddress,
+    replace = false,
+    dialog?: DocumentView["dialog"],
+  ) => {
     reveal(address);
     visit(
       {
         view: "note",
         ...noteAddress(address),
+        ...(dialog ? { dialog } : {}),
         query,
         trash,
       },
@@ -282,22 +278,6 @@ export function WorkingNotesCommunity({
       }
     }
   }, [initial, destination, reveal, visit]);
-  useEffect(() => {
-    if (agentKeys === undefined || choices.pending) return;
-    const controller = new AbortController();
-    void (async () => {
-      for (const note of collection.notes) {
-        controller.signal.throwIfAborted();
-        if (reconciled.current.get(note.channel) === agentKeys) continue;
-        await workspace.reconcile(note, controller.signal);
-        reconciled.current.set(note.channel, agentKeys);
-      }
-      if (!controller.signal.aborted) setSharingError("");
-    })().catch((error: unknown) => {
-      if (!controller.signal.aborted) setSharingError(errorText(error));
-    });
-    return () => controller.abort();
-  }, [workspace, collection.notes, agentKeys, choices.pending]);
   const changed = useCallback((note: Note) => {
     setCollection((old) =>
       old.notes.some(
@@ -326,7 +306,6 @@ export function WorkingNotesCommunity({
         loading,
         more: collection.more,
         error,
-        sharingError,
         search: (value, commit) => {
           setQuery(value);
           if (commit)
@@ -412,14 +391,14 @@ export function WorkingNotesCommunity({
                 catalogue={collection.notes}
                 active={selected === `new:${draft.id}`}
                 onDraftChange={(next) => drafts.current.set(next.id, next)}
-                onCreated={(note, autoSave, focus) => {
+                onCreated={(note, { autoSave, focus, share }) => {
                   if (focus) createdFocus.current.set(noteKey(note), focus);
                   createdAutoSave.current.set(noteKey(note), autoSave);
                   createdDrafts.current.set(draft.id, noteAddress(note));
                   drafts.current.delete(draft.id);
                   changed(note);
                   if (selectedRef.current === `new:${draft.id}`)
-                    open(note, true);
+                    open(note, true, share ? "share" : undefined);
                 }}
               />
             ),

@@ -124,6 +124,12 @@ it("saves changed content after idle, stays in Editing and skips unchanged conte
   await advance(10_000);
   expect(f.save).not.toHaveBeenCalled();
   f.change("New plan");
+  expect(screen.getByRole("status")).toHaveTextContent("Saving…");
+  expect(
+    screen
+      .getByRole("status")
+      .parentElement?.querySelector("[data-avatar-shape]"),
+  ).toHaveAttribute("data-avatar-shape", "circle");
   await advance(1499);
   expect(f.save).not.toHaveBeenCalled();
   f.change("Final plan");
@@ -181,7 +187,7 @@ it("keeps typing during a pending save and bases the next save on its accepted r
   pending.release();
   await saved(f.save);
   expect(f.title).toHaveValue("Typed during save");
-  expect(screen.getByRole("status")).toHaveTextContent("Unsaved changes");
+  expect(screen.getByRole("status")).toHaveTextContent("Saving…");
   const first = await f.save.mock.results[0]?.value;
   await advance(1500);
   await saved(f.save);

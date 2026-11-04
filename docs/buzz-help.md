@@ -330,14 +330,15 @@ that agent in Buzz; they do not notify the external app through this connection.
   drafts. The list and document use the same centered reading width as channels.
   **New note** sits above the note titles and opens a blank editor. Start with
   a title or the body; an unnamed note saves as **Untitled note**. Blank visits
-  create nothing. Before the first save, **Note actions → Share with my agents**
-  controls initial agent access. The filter button inside search offers
+  create nothing. New notes are private to you; **Share note** opens the same
+  member picker as Solo chats and team channels. Sharing a blank draft first
+  creates its note. The filter button inside search offers
   **Show deleted notes**.
   People and agents author the same channel-backed documents, which retain
   revisions. Published NIP-23 notes and the separate plural `notes_*` tools do
   not feed this page; existing published records are unchanged.
-  Notes open in **Editing** when you have edit access, with the formatting bar
-  pinned at the bottom. Changes auto-save after a short typing pause, with a
+  Notes open in **Editing** with the title focused when you have edit access, with the formatting bar
+  pinned at the bottom. The byline shows **Saved** with its timestamp, or **Saving…** while saving. Changes auto-save after a short typing pause, with a
   maximum interval during continuous typing. **Note actions → Disable auto-save**
   remembers your choice for that note on this device. When disabled, **Save**
   appears between the mode dropdown and Refresh when modified. Choose **Viewing**
@@ -346,12 +347,12 @@ that agent in Buzz; they do not notify the external app through this connection.
   while editing. **Link** accepts a URL or a loaded note;
   linking grants no access. **Note actions → Markdown source** opens source
   editing; **Formatted text** in that menu switches back.
-  **Note actions → Linked notes** lists loaded
-  notes that link to the current document. **Share note** opens the same searchable
+  **Note actions → Linked notes** appears when loaded notes link to the current
+  document and lists those notes. **Share note** opens the same searchable
   member picker used by channels. Owners and admins can add people or agents and
   use each person's menu to choose **Viewing only**, **Participating**, or **Admin**
-  access. Notes stay private; sharing includes retained history. Owners can also
-  toggle automatic sharing with their verified agents.
+  access. Notes stay private; sharing includes retained history. Membership changes
+  are explicit. Opening or reading a note never adds people or agents.
   Notes are readable by the relay operator. In a conversation, Back/Forward can
   revisit a note; closing its tab retires those visits. Collapsing the tab pane
   only hides it.

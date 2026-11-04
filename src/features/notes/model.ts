@@ -4,6 +4,7 @@ import { relayOrigin } from "../communities/destination";
 export const NOTE_KIND = 45010;
 export const NOTE_TYPE = "buzz.note";
 export const NOTE_LABEL = "buzz.notes";
+// Recognize this retired policy label in older note storage; it grants no access.
 export const AGENTS_LABEL = "buzz.notes.agents";
 export const NOTE_PAGE = 100;
 export const MAX_NOTE_BYTES = 32_768;

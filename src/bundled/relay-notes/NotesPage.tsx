@@ -43,7 +43,6 @@ export type NotesPageProps = {
   loading: boolean;
   more: boolean;
   error: string;
-  sharingError: string;
   search(query: string, commit?: boolean): void;
   showDeleted(value: boolean): void;
   create(): void;
@@ -65,7 +64,6 @@ export function NotesPage({
   loading,
   more,
   error,
-  sharingError,
   search,
   showDeleted,
   create,
@@ -212,11 +210,6 @@ export function NotesPage({
                 </span>
               )}
               {error && <p role="alert">{error}</p>}
-              {sharingError && (
-                <p role="alert">
-                  Automatic agent access needs attention: {sharingError}
-                </p>
-              )}
               {!loading && !error && !entries.length && !query && (
                 <EmptyState
                   icon={<NoteIcon size={24} />}

@@ -29,7 +29,6 @@ async function fixture() {
     loading: false,
     more: false,
     error: "",
-    sharingError: "",
     search: vi.fn(),
     showDeleted: vi.fn(),
     create: vi.fn(),
@@ -137,14 +136,8 @@ it("keeps loading and failed reads distinct from empty and retains useful conten
     "true",
   );
   expect(screen.queryByText("No notes yet")).not.toBeInTheDocument();
-  view.rerender(
-    <NotesPage
-      {...props}
-      error="Cannot read notes"
-      sharingError="Agent unavailable"
-    />,
-  );
-  expect(screen.getAllByRole("alert")).toHaveLength(2);
+  view.rerender(<NotesPage {...props} error="Cannot read notes" />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Cannot read notes");
   expect(screen.getByRole("link", { name: "Latest note" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Refresh notes" }));
   expect(props.refresh).toHaveBeenCalledOnce();

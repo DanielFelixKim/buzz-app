@@ -171,7 +171,7 @@ Object.assign(window, {
     async agentRead(address: NoteAddress) {
       return JSON.parse(
         (await tool("note_get").call(
-          f.client(f.ned),
+          f.client(),
           {},
           { id: address.id, channel: address.channel },
         )) as string,

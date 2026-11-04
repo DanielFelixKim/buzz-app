@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { noteKey, type Note } from "../../features/notes/model";
 import type { NotesWorkspace } from "../../features/notes/workspace";
 import { writeView } from "../../shared/view-state";
-import { DotsThreeIcon } from "../../shared/design-system/icons";
-import { Button } from "../../shared/design-system/ui/Button";
+import { DotsThreeIcon, ShareIcon } from "../../shared/design-system/icons";
 import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -12,7 +11,6 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
-  MenuCheckboxItem,
 } from "../../shared/design-system/ui/Menu";
 import { Select } from "../../shared/design-system/ui/Select";
 import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
@@ -25,7 +23,6 @@ export type NewDraft = {
   id: string;
   title: string;
   markdown: string;
-  agents?: boolean;
   autoSave?: boolean;
 };
 
@@ -43,14 +40,21 @@ export function NewNoteDocument({
   catalogue: readonly Note[];
   active: boolean;
   onDraftChange(draft: NewDraft): void;
-  onCreated(note: Note, autoSave: boolean, focus?: NoteFocus): void;
+  onCreated(
+    note: Note,
+    presentation: {
+      autoSave: boolean;
+      focus?: NoteFocus | undefined;
+      share: boolean;
+    },
+  ): void;
 }) {
   const [title, setTitle] = useState(initial.title);
   const [markdown, setMarkdown] = useState(initial.markdown);
-  const [agents, setAgents] = useState(initial.agents ?? true);
   const [autoSave, setAutoSave] = useState(initial.autoSave ?? true);
   const [source, setSource] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [share, setShare] = useState(false);
   const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [accepted, setAccepted] = useState<Note>();
@@ -60,7 +64,6 @@ export function NewNoteDocument({
   const handedOff = useRef(false);
   const titleInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
-  const [unverified, setUnverified] = useState<string[]>([]);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(
     null,
   );
@@ -68,12 +71,10 @@ export function NewNoteDocument({
   const body = useRef<HTMLDivElement>(null);
   const blankPress = useRef(false);
   const changedAt = useRef<number | undefined>(undefined);
-  const attempt = useRef<(NewDraft & { agents: boolean }) | undefined>(
-    undefined,
-  );
+  const attempt = useRef<NewDraft | undefined>(undefined);
   const draft = useMemo(
-    () => ({ id: initial.id, title, markdown, agents, autoSave }),
-    [initial.id, title, markdown, agents, autoSave],
+    () => ({ id: initial.id, title, markdown, autoSave }),
+    [initial.id, title, markdown, autoSave],
   );
   const latest = useRef(draft);
   latest.current = draft;
@@ -84,7 +85,9 @@ export function NewNoteDocument({
     callbacks.current.onDraftChange(draft);
   }, [draft]);
   useEffect(() => {
-    if (active) titleInput.current?.focus();
+    if (!active) return;
+    const frame = requestAnimationFrame(() => titleInput.current?.focus());
+    return () => cancelAnimationFrame(frame);
   }, [active]);
   useEffect(() => {
     if (!accepted || composing || handedOff.current) return;
@@ -113,19 +116,23 @@ export function NewNoteDocument({
         : selection
           ? { target: "body", ...selection }
           : undefined;
-    callbacks.current.onCreated(accepted, autoSave, focus);
-  }, [accepted, composing, title, markdown, autoSave, workspace]);
+    callbacks.current.onCreated(accepted, {
+      autoSave,
+      focus: share ? undefined : focus,
+      share,
+    });
+  }, [accepted, composing, title, markdown, autoSave, workspace, share]);
   useEffect(() => {
     if (!dirty) return;
     const prevent = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", prevent);
     return () => window.removeEventListener("beforeunload", prevent);
   }, [dirty]);
-  const save = async (confirmed = false) => {
+  const save = async (force = false) => {
     if (
       pending.current ||
       accepted ||
-      (!dirty && !attempt.current) ||
+      (!dirty && !attempt.current && !force) ||
       composing
     )
       return;
@@ -135,14 +142,6 @@ export function NewNoteDocument({
     setBusy(true);
     setError("");
     try {
-      if (!attempt.current && agents && !confirmed) {
-        const access = await workspace.agentAccess(controller.signal);
-        controller.signal.throwIfAborted();
-        if (access.unverified.length) {
-          setUnverified(access.unverified);
-          return;
-        }
-      }
       // Reuse both UUID and payload after an uncertain creation receipt.
       // Later typing is retained as a draft against the accepted first revision.
       attempt.current ??= {
@@ -172,7 +171,6 @@ export function NewNoteDocument({
       !(title.trim() || markdown.trim()) ||
       accepted ||
       error ||
-      (agents && unverified.length) ||
       composing ||
       linkOpen
     ) {
@@ -191,8 +189,6 @@ export function NewNoteDocument({
     autoSave,
     accepted,
     error,
-    agents,
-    unverified,
     composing,
     linkOpen,
     busy,
@@ -237,6 +233,17 @@ export function NewNoteDocument({
             onValueChange={setTitle}
           />
         </Field>
+        {(busy || dirty) && (
+          <p className={`${readerStyles.byline} text-caption text-secondary`}>
+            <span role="status">
+              {busy || (autoSave && !error)
+                ? "Saving…"
+                : error
+                  ? "Save paused"
+                  : "Unsaved changes"}
+            </span>
+          </p>
+        )}
         <div className={styles.actions}>
           <Select
             label="Document mode"
@@ -259,6 +266,15 @@ export function NewNoteDocument({
           >
             {error ? "Retry save" : "Save"}
           </NoteSaveAction>
+          <IconButton
+            aria-label="Share note"
+            title="Share note"
+            icon={<ShareIcon size={16} />}
+            onClick={() => {
+              setShare(true);
+              void save(true);
+            }}
+          />
           <MenuRoot>
             <MenuTrigger
               render={
@@ -280,42 +296,11 @@ export function NewNoteDocument({
               <MenuItem onClick={() => setSource(!source)}>
                 {source ? "Formatted text" : "Markdown source"}
               </MenuItem>
-              <MenuCheckboxItem
-                checked={agents}
-                disabled={busy || !!attempt.current}
-                onCheckedChange={setAgents}
-              >
-                Share with my agents
-              </MenuCheckboxItem>
             </MenuPopup>
           </MenuRoot>
         </div>
-        <p role="status" className="text-caption text-subtle">
-          {busy ? "Saving…" : dirty ? "Unsaved changes" : "Start writing…"}
-        </p>
         {error && (
           <p role="alert">Auto-save is paused. Your draft is kept. {error}</p>
-        )}
-        {agents && unverified.length > 0 && (
-          <div className={styles.stack}>
-            <p role="status">
-              These agents could not be verified and will not receive access:{" "}
-              {unverified
-                .map(
-                  (key) =>
-                    workspace.session.agentChoices
-                      .snapshot()
-                      .selectable.find((agent) => agent.pubkey === key)?.name ??
-                    key,
-                )
-                .join(", ")}
-              . You can create with verified agents, or turn off agent sharing
-              to create privately.
-            </p>
-            <Button size="sm" disabled={busy} onClick={() => void save(true)}>
-              Create with verified agents
-            </Button>
-          </div>
         )}
         <div ref={body}>
           <NoteEditor

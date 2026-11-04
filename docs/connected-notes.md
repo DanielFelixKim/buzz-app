@@ -22,8 +22,11 @@ chosen revision’s annotations. Titles are limited to 512 UTF-8 bytes and bodie
 to 32 KiB, with an additional complete-frame bound.
 
 Each independently shared note has one private **system** channel labelled
-`buzz.notes` and `buzz.notes.<note-uuid>`. `buzz.notes.agents` is the owner’s opt-in
-automatic-sharing policy. Labels describe storage and policy, never membership
+`buzz.notes` and `buzz.notes.<note-uuid>`. A human-created note initially admits
+only its creator; an agent-created note admits the owner and that creating agent.
+Other people and agents are invited explicitly. Existing memberships remain;
+the retired `buzz.notes.agents` label is recognized only for compatibility and
+never triggers membership changes. Labels describe storage, never membership
 authority. Sharing reads fresh relay-signed 39000/39001/39002 state and refuses a
 channel containing another artifact, including another artifact’s deletion head.
 Readers enter directly as `guest`; editors use `member` (owned agents may be
@@ -32,27 +35,18 @@ does not promise that an editor cannot send invitations through another client.
 
 **Share note** uses the current `ChannelMembersDialog` search, filters, identity
 rows, role menus and confirmations. System channels have no public/general-access
-setting. Note-specific settings retain the automatic-agent toggle and history
-notice. Membership changes still pass through NotesWorkspace's private,
+setting. Note-specific settings retain the history notice. Membership changes still pass through NotesWorkspace's private,
 independent-note and administration checks; a confirmation's expected role must
 match a fresh roster before any write. The UI supports explicit admin access;
 the singular agent tool's read/edit/remove contract is unchanged. The dialog's
 Copy link action uses the note URL rather than opening its backing channel.
 
-Automatic recipients come from `session.agentChoices`, require a complete
-inventory and a verified NIP-OA owner attestation, and are reconciled when the
-browser loads notes or a verified owned agent requests a known note. Deliberately
-restricted notes never gain that policy implicitly. Disappearance from an
-incomplete inventory is not removal evidence. An explicitly archived owned agent
-can be removed; changing an owned agent to read-only or removing it disables the
-automatic policy first. Disabling automatic sharing preserves existing members
-until an explicit membership change.
-
-Ownership checks query each agent's latest signed profile independently. An
-unattested agent is excluded without blocking verified siblings. Before creating
-with agent sharing, the editor names unverified agents and requires an explicit
-"Create with verified agents" confirmation; disabling agent sharing creates a
-private note. No profile or attestation is repaired or overwritten by this flow.
+Opening, listing or reading a note never changes membership. Human note creation
+requires no agent inventory or owner attestations. When an agent explicitly
+creates a note, the coordinator checks that caller against `session.agentChoices`
+and its latest signed NIP-OA owner attestation before allocating storage, then
+admits only that agent. An unrelated unverified agent cannot block creation.
+No profile or attestation is repaired or overwritten by this flow.
 
 Channel read permission covers current content and retained history. Contents
 are plaintext to the relay operator. Encryption and selective-history permissions
@@ -73,7 +67,7 @@ as a conversation. Search, link pickers and backlinks cover loaded notes only;
 the browser offers further pages. This avoids a silent first-page completeness
 claim, but is not a measured thousand-channel capacity guarantee.
 
-Creation resolves owned-agent recipients before allocating storage. The caller
+Agent creation verifies its caller before allocating storage. The caller
 supplies a UUID and reuses it on retry. The owner’s signed creator/label lookup
 finds an already-created channel, then checks the current artifact before
 retrying the first snapshot. A changed document is never overwritten during
@@ -93,8 +87,9 @@ read is retried once. Writes are never retried automatically.
 The singular tools operate on NIP-AR notes, separately from legacy plural
 `notes_get`, `notes_set` and `notes_rm`. A connected owning app supplies the
 coordinator. Ordinary reads and content writes use the calling agent’s own client
-and identity. Only verified standing membership uses the owner’s coordinator.
-Sharing never borrows its writer or administration role.
+and identity. The owner’s coordinator allocates new storage and admits only the
+verified creating agent on its explicit creation request. Sharing never borrows
+the owner’s writer or administration role.
 
 | Tool | Inputs and result |
 | --- | --- |
@@ -114,7 +109,8 @@ the retained snapshots and whether more remain.
 **New note** opens a blank document in the same centered editor, with a heading
 input, rich-text body and formatting dock. Storage is allocated only after typing
 and the first save; body-only notes use **Untitled note**. New-note actions offer
-source mode, the auto-save toggle and **Share with my agents** before creation.
+source mode and the auto-save toggle. **Share note** explicitly creates an empty
+untitled note if necessary, then opens the same member picker as existing notes.
 Drafts stay mounted across Back/Forward; inactive drafts do not begin auto-saving.
 First-save completion replaces the creation address, preserves edits made in
 flight and restores the active title/body selection. An in-flight completion
@@ -123,7 +119,7 @@ reuse the original UUID and attempted payload, preserving subsequent edits as
 a draft against the accepted first revision.
 
 The Viewing/Editing selector controls the document mode. New visits default to
-Editing for editable notes; explicit Viewing/Editing history choices remain
+Editing for editable notes and focuses the title on entry; explicit Viewing/Editing history choices remain
 authoritative. Read-only and deleted notes keep their reader presentation, and
 retained drafts remain available after access changes. Editing reveals the
 formatting list directly, without a formatting toggle. Both modes keep the same
@@ -137,6 +133,9 @@ An unmodified primary click on the blank scrollport below the document body
 focuses the active formatted/source editor at its end. Text, title and control
 clicks retain their own behavior; Viewing and read-only documents do not activate
 an editor. Keyboard users reach the existing textbox with Tab.
+The byline uses one status phrase: Saved with its timestamp when clean,
+Saving… for queued/in-flight auto-saves, or Save paused on failure. Human
+avatars are circles; agents retain squircles. Empty drafts have no status hint.
 Auto-save is enabled by default. Changed title/body content is saved after a
 1.5-second idle period, with a ten-second maximum during continuous edits; IME
 composition defers saving until composition ends. Auto-save stays in Editing and
@@ -178,8 +177,9 @@ timeline/composer's centered 52rem maximum width and shrink to fit narrow panes.
 Notes retain the shared reader's heading, author/avatar and update byline,
 document spacing, scrollport and Markdown styles, alongside access notices,
 sharing, revision history, backlinks and draft actions.
-Backlinks appear in **Note actions → Linked notes** as a submenu of source titles,
-with empty and partial-collection guidance inside the submenu.
+When the loaded collection contains backlinks, **Note actions → Linked notes**
+shows their source titles. Its submenu retains partial-collection guidance when
+more notes remain to load; notes without loaded backlinks omit the action.
 
 ## Navigation and compatibility
 

@@ -46,7 +46,6 @@ async function fixture(initial: Partial<NewDraft> = {}) {
       id: crypto.randomUUID(),
       title: "",
       markdown: "",
-      agents: false,
       ...initial,
     },
     onCreated,
@@ -86,6 +85,8 @@ function gate() {
 it("opens a fresh editor without allocating storage, then auto-saves after idle", async () => {
   const f = await fixture();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  await advance(16);
   expect(f.title).toHaveFocus();
   expect(screen.getByRole("textbox", { name: "Document body" })).toBeVisible();
   expect(
@@ -156,7 +157,8 @@ it("retains edits and selection while creating and waits for IME before handing 
     expect(f.onCreated).not.toHaveBeenCalled();
     fireEvent.compositionEnd(f.title);
     expect(f.onCreated).toHaveBeenCalledOnce();
-    const [note, _autoSave, focus] = f.onCreated.mock.calls[0] ?? [];
+    const [note, presentation] = f.onCreated.mock.calls[0] ?? [];
+    const focus = presentation.focus;
     expect(f.workspace.drafts.get(noteKey(note))?.title).toBe("Newer title");
     expect(focus).toMatchObject({ target: "title", start: 2, end: 5 });
   } finally {
@@ -217,24 +219,22 @@ it("defers hidden drafts and saves by the maximum interval during continuous typ
   expect(f.create.mock.calls[0]?.[0].title).toBe("Plan 9");
 });
 
-it("requires confirmation before sharing with only the verified agents", async () => {
-  const f = await fixture({ agents: true, title: "Shared draft" });
-  vi.spyOn(f.workspace, "agentAccess").mockResolvedValue({
-    verified: [],
-    unverified: [f.carl.pubkey],
-  });
-  await advance(1500);
-  expect(f.create).not.toHaveBeenCalled();
-  expect(screen.getByText(/These agents could not be verified/)).toBeVisible();
-  await advance(15_000);
-  expect(f.create).not.toHaveBeenCalled();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Create with verified agents" }),
-  );
+it("creates a private empty note when Share is explicitly requested", async () => {
+  const f = await fixture();
+  f.unavailableInventory();
+  fireEvent.click(screen.getByRole("button", { name: "Share note" }));
   await act(async () => {
     await f.create.mock.results[0]?.value;
   });
-  expect(f.create).toHaveBeenCalledOnce();
+  const [note, presentation] = f.onCreated.mock.calls[0] ?? [];
+  expect(presentation).toMatchObject({ share: true, autoSave: true });
+  expect(f.channels.get(note.channel)?.roles).toEqual({
+    [f.viewer.pubkey]: "owner",
+  });
+  expect(f.create.mock.calls[0]?.[0]).toMatchObject({
+    title: "Untitled note",
+    markdown: "",
+  });
 });
 
 it("cancels first-save authority when the creation surface unmounts", async () => {

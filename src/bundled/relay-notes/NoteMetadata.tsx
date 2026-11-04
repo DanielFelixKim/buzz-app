@@ -7,15 +7,27 @@ export function NoteByline({
   note,
   author,
   picture,
+  status,
+  isAgent = false,
 }: {
   note: NoteEvent;
   author: string;
   picture?: string | undefined;
+  status?: string | undefined;
+  isAgent?: boolean;
 }) {
   return (
     <p className={`${styles.byline} text-caption text-secondary`}>
-      <NoteAuthor name={author} picture={picture} /> · Updated{" "}
-      <NoteTime note={note} />
+      <NoteAuthor name={author} picture={picture} isAgent={isAgent} /> ·
+      <span role={status ? "status" : undefined}>
+        {status && status !== "Saved" ? (
+          status
+        ) : (
+          <>
+            Saved <NoteTime note={note} />
+          </>
+        )}
+      </span>
     </p>
   );
 }
@@ -48,9 +60,11 @@ export function NoteTime({ note }: { note: Pick<NoteEvent, "created_at"> }) {
 function NoteAuthor({
   name,
   picture,
+  isAgent,
 }: {
   name: string;
   picture?: string | undefined;
+  isAgent: boolean;
 }) {
   return (
     <span className={styles.byline}>
@@ -59,7 +73,7 @@ function NoteAuthor({
         alt=""
         fallback={name}
         size="compact"
-        shape="squircle"
+        shape={isAgent ? "squircle" : "circle"}
       />
       <span>{name}</span>
     </span>

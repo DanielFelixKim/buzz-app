@@ -261,7 +261,7 @@ describe("connected note revisions", () => {
 });
 
 describe("channel orchestration", () => {
-  it("checks each latest profile independently and excludes unverified identities without blocking verified siblings", async () => {
+  it("verifies only the creating agent and rejects an unattested creator before allocating storage", async () => {
     const f = await fixture();
     f.profiles.push(
       signed(f.carl, {
@@ -271,27 +271,33 @@ describe("channel orchestration", () => {
         created_at: 2_000_000_000,
       }),
     );
-    const access = await f.workspace.agentAccess();
-    expect(access.unverified).toEqual([f.carl.pubkey]);
-    expect(access.verified).toEqual([f.ned.pubkey]);
     const note = await f.workspace.create({
       id: crypto.randomUUID(),
       title: "Plan",
       markdown: "Work",
-      agents: true,
+      agent: f.ned.pubkey,
     });
-    expect(f.channels.get(note.channel)?.roles[f.carl.pubkey]).toBeUndefined();
-    expect(f.channels.get(note.channel)?.roles[f.ned.pubkey]).toBe("bot");
+    expect(f.channels.get(note.channel)?.roles).toEqual({
+      [f.viewer.pubkey]: "owner",
+      [f.ned.pubkey]: "bot",
+    });
+    const before = f.channels.size;
+    await expect(
+      f.workspace.create({
+        id: crypto.randomUUID(),
+        title: "No",
+        markdown: "Work",
+        agent: f.carl.pubkey,
+      }),
+    ).rejects.toThrow(/ownership could not be verified/);
+    expect(f.channels.size).toBe(before);
   });
-  it("does not regrant access after automatic sharing changes on another client", async () => {
+  it("does not regrant access on reads even with a legacy automatic-sharing label", async () => {
     const f = await fixture(),
       note = f.seed("Plan", "Selected access");
     await f.workspace.resolve(note);
     const channel = f.channels.get(note.channel);
     if (!channel) throw new Error("Missing channel");
-    channel.labels = channel.labels.filter(
-      (label) => label !== "buzz.notes.agents",
-    );
     delete channel.roles[f.ned.pubkey];
     channel.updated++;
     const get = noteTools(() => f.workspace).find(
@@ -352,7 +358,12 @@ describe("channel orchestration", () => {
     channel.labels = ["buzz.notes", `buzz.notes.${id}`];
     channel.updated++;
     await expect(
-      f.workspace.create({ id, title: "New", markdown: "Draft", agents: true }),
+      f.workspace.create({
+        id,
+        title: "New",
+        markdown: "Draft",
+        agent: f.carl.pubkey,
+      }),
     ).rejects.toThrow(/another document/);
     expect(channel.roles[f.carl.pubkey]).toBeUndefined();
     expect(f.accepted.filter((event) => event.kind === 9000)).toEqual([]);
@@ -369,31 +380,23 @@ describe("channel orchestration", () => {
         id: crypto.randomUUID(),
         title: "Plan",
         markdown: "Work",
-        agents: false,
       }),
     ).rejects.toThrow(/does not advertise/);
     expect(f.channels.size).toBe(0);
   });
-  it("grants a verified owned agent access on request only under the standing policy", async () => {
+  it("preserves existing memberships when discovery runs after the agent inventory changes", async () => {
     const f = await fixture(),
       note = f.seed("Plan", "Shared work");
     const channel = f.channels.get(note.channel);
     if (!channel) throw new Error("Missing channel");
-    delete channel.roles[f.ned.pubkey];
-    channel.updated++;
-    const get = noteTools(() => f.workspace).find(
-      (tool) => tool.name === "note_get",
-    );
-    if (!get) throw new Error("Missing note_get");
-    const reply = JSON.parse(
-      (await get.call(
-        f.client(f.ned),
-        {},
-        { id: note.id, channel: note.channel },
-      )) as string,
-    );
-    expect(reply.markdown).toBe("Shared work");
-    expect(channel.roles[f.ned.pubkey]).toBe("bot");
+    const roles = { ...channel.roles };
+    f.setAgentKeys([]);
+    await f.workspace.list();
+    await f.workspace.open(note);
+    expect(channel.roles).toEqual(roles);
+    expect(
+      f.accepted.filter((event) => [9000, 9001, 9002].includes(event.kind)),
+    ).toEqual([]);
   });
   it("rejects a cursor that could overwrite the discovery identity filter", async () => {
     const read = vi.fn(async () => []);
@@ -406,39 +409,35 @@ describe("channel orchestration", () => {
     ).rejects.toThrow(/cursor/);
     expect(read).not.toHaveBeenCalled();
   });
-  it("creates a private system channel and admits only verified agents", async () => {
+  it("creates a private system channel for its human creator only", async () => {
     const f = await fixture();
     const note = await f.workspace.create({
       id: crypto.randomUUID(),
       title: "Agent plan",
       markdown: "Shared work",
-      agents: true,
     });
     const channel = f.channels.get(note.channel);
     expect(channel?.type).toBe("system");
     expect(channel?.roles).toEqual({
       [f.viewer.pubkey]: "owner",
-      [f.carl.pubkey]: "bot",
-      [f.ned.pubkey]: "bot",
     });
     expect(
       f.accepted.find((event) => event.kind === 9007)?.tags,
     ).toContainEqual(["visibility", "private"]);
-    expect(channel?.labels).toContain("buzz.notes.agents");
+    expect(channel?.labels).not.toContain("buzz.notes.agents");
   });
-  it("does not create storage after an incomplete agent inventory", async () => {
+  it("creates a human note without requiring the agent inventory", async () => {
     const f = await fixture();
     f.unavailableInventory();
-    await expect(
-      f.workspace.create({
-        id: crypto.randomUUID(),
-        title: "Plan",
-        markdown: "Draft",
-        agents: true,
-      }),
-    ).rejects.toThrow(/agent list is incomplete/);
-    expect(f.channels.size).toBe(0);
-    expect(f.accepted).toEqual([]);
+    const note = await f.workspace.create({
+      id: crypto.randomUUID(),
+      title: "Plan",
+      markdown: "Draft",
+    });
+    expect(f.channels.get(note.channel)?.roles).toEqual({
+      [f.viewer.pubkey]: "owner",
+    });
+    expect(f.accepted.filter((event) => event.kind === 9000)).toEqual([]);
   });
   it("recovers a refused first revision in the same channel using the same note ID", async () => {
     const f = await fixture(),
@@ -446,7 +445,6 @@ describe("channel orchestration", () => {
         id: crypto.randomUUID(),
         title: "Plan",
         markdown: "Work",
-        agents: false,
       };
     f.failNextArtifact();
     await expect(f.workspace.create(draft)).rejects.toThrow(/Reuse note ID/);
@@ -462,7 +460,6 @@ describe("channel orchestration", () => {
         id: crypto.randomUUID(),
         title: "Plan",
         markdown: "Work",
-        agents: false,
       };
     f.loseNextReceipt();
     await expect(f.workspace.create(draft)).rejects.toThrow(/not confirmed/);
@@ -583,6 +580,10 @@ it("runs the human–agent editing loop on the same records with caller-authored
       text: "Carl’s update",
     },
   );
+  await expect(get.call(f.client(f.ned), {}, first)).rejects.toThrow(
+    /unavailable/,
+  );
+  await f.workspace.setMember(first, f.ned.pubkey, "edit");
   const other = JSON.parse(
     (await get.call(f.client(f.ned), {}, first)) as string,
   );
@@ -608,6 +609,24 @@ it("does not call the owner’s writer when an unauthorized agent asks to share"
   ).rejects.toThrow(/cannot administer/);
   expect(spy).not.toHaveBeenCalled();
   expect(f.channels.get(note.channel)?.roles[f.sam.pubkey]).toBeUndefined();
+});
+
+it("confirms explicit agent invitations using the relay's participating role", async () => {
+  const f = await fixture(),
+    note = f.seed("Plan", "Work", false);
+  await f.workspace.setMember(note, f.carl.pubkey, "admin");
+  const share = noteTools(() => f.workspace).find(
+    (tool) => tool.name === "note_share",
+  );
+  if (!share) throw new Error("Missing note_share");
+  await expect(
+    share.call(
+      f.client(),
+      {},
+      { ...note, pubkey: f.ned.pubkey, access: "edit" },
+    ),
+  ).resolves.toBe("Note access updated.");
+  expect(f.channels.get(note.channel)?.roles[f.ned.pubkey]).toBe("bot");
 });
 
 it("uses stable, community-bound note links across Markdown, chat and OS ingress", async () => {

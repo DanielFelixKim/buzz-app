@@ -105,6 +105,10 @@ export function NoteDocument({
   const [source, setSource] = useState(initialFocus?.source ?? false);
   const titleInput = useRef<HTMLInputElement>(null);
   const pendingFocus = useRef(initialFocus);
+  const needsFocus = useRef(true);
+  useEffect(() => {
+    if (active) needsFocus.current = true;
+  }, [active]);
   const [canEdit, setCanEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -150,20 +154,6 @@ export function NoteDocument({
   );
   const [status, setStatus] = useState("");
   const [unavailable, setUnavailable] = useState(!!cachedDraft);
-  useEffect(() => {
-    if (!active || busy || unavailable || !note || !pendingFocus.current)
-      return;
-    const frame = requestAnimationFrame(() => {
-      const focus = pendingFocus.current;
-      if (!focus) return;
-      pendingFocus.current = undefined;
-      if (focus.target === "title") {
-        titleInput.current?.focus();
-        titleInput.current?.setSelectionRange(focus.start, focus.end);
-      } else editor.current?.focusSelection(focus);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [active, busy, unavailable, note]);
   const [conflict, setConflict] = useState<Note>();
   const [restoreFrom, setRestoreFrom] = useState<Note | undefined>(
     cachedDraft?.restoreFrom,
@@ -176,6 +166,38 @@ export function NoteDocument({
     "share" | "history" | "link" | "delete" | undefined
   >();
   const dialog = active ? (view ? view.dialog : localDialog) : undefined;
+  useEffect(() => {
+    if (dialog) {
+      needsFocus.current = false;
+      pendingFocus.current = undefined;
+      return;
+    }
+    if (
+      !active ||
+      busy ||
+      unavailable ||
+      !note ||
+      !canEdit ||
+      !editing ||
+      !needsFocus.current
+    )
+      return;
+    const frame = requestAnimationFrame(() => {
+      needsFocus.current = false;
+      const focus = pendingFocus.current;
+      pendingFocus.current = undefined;
+      if (focus?.target === "body") editor.current?.focusSelection(focus);
+      else {
+        const field = titleInput.current;
+        field?.focus();
+        field?.setSelectionRange(
+          focus?.start ?? field.value.length,
+          focus?.end ?? field.value.length,
+        );
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, busy, unavailable, note, canEdit, editing, dialog]);
   const presentation = useRef({ view, onViewChange, editing });
   presentation.current = { view, onViewChange, editing };
   const setEditing = useCallback((edit: boolean) => {
@@ -547,6 +569,18 @@ export function NoteDocument({
         {note && !unavailable && (
           <NoteByline
             note={note.event}
+            status={
+              canEdit && !note.deleted
+                ? saving || (dirty && autoSave && !saveError && !conflict)
+                  ? "Saving…"
+                  : saveError
+                    ? "Save paused"
+                    : dirty
+                      ? "Unsaved changes"
+                      : status || "Saved"
+                : undefined
+            }
+            isAgent={!!profile?.isAgent}
             author={authorName}
             picture={avatarMedia(profile?.picture, workspace.session.media)}
           />
@@ -655,7 +689,7 @@ export function NoteDocument({
                       {editing && source ? "Formatted text" : "Markdown source"}
                     </MenuItem>
                   )}
-                  {!note.deleted && (
+                  {!note.deleted && backlinks.length > 0 && (
                     <MenuSubmenu>
                       <MenuSubmenuTrigger>Linked notes</MenuSubmenuTrigger>
                       <MenuSubmenuPopup aria-label="Linked notes">
@@ -667,9 +701,6 @@ export function NoteDocument({
                             {source.title}
                           </MenuItem>
                         ))}
-                        {!backlinks.length && (
-                          <MenuNote>No links from the loaded notes.</MenuNote>
-                        )}
                         {partial && (
                           <MenuNote>
                             More notes are available in the browser. Linked
@@ -704,11 +735,6 @@ export function NoteDocument({
           <p role="alert">
             {autoSave ? "Auto-save is paused." : "Saving failed."} Your draft is
             kept. {saveError}
-          </p>
-        )}
-        {note && canEdit && !unavailable && !note.deleted && (
-          <p role="status" className="text-caption text-subtle">
-            {saving ? "Saving…" : dirty ? "Unsaved changes" : status || "Saved"}
           </p>
         )}
         {note && !unavailable && !canEdit && !note.deleted && (

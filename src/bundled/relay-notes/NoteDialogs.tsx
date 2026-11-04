@@ -8,10 +8,9 @@ import {
 } from "react";
 import type { MemberChange } from "../../features/channel-members/administration-protocol";
 import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
-import { AGENTS_LABEL, noteUrl, type Note } from "../../features/notes/model";
+import { noteUrl, type Note } from "../../features/notes/model";
 import type { NotesWorkspace } from "../../features/notes/workspace";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import styles from "./WorkingNotes.module.css";
@@ -36,7 +35,6 @@ export function NoteSharing({
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const lifetime = useRef<AbortController | undefined>(undefined);
-  const [agents, setAgents] = useState<boolean>();
   const session = workspace.session;
   const { id, channel } = note;
   const administration = useSyncExternalStore(
@@ -48,9 +46,8 @@ export function NoteSharing({
     lifetime.current = controller;
     void (async () => {
       await workspace.resolve({ id, channel }, controller.signal);
-      const state = await workspace.sharing(channel, controller.signal);
+      await workspace.sharing(channel, controller.signal);
       controller.signal.throwIfAborted();
-      setAgents(state.labels.includes(AGENTS_LABEL));
     })().catch((error: unknown) => {
       if (!controller.signal.aborted) setError(message(error));
     });
@@ -70,9 +67,8 @@ export function NoteSharing({
     setError("");
     try {
       await work?.(active);
-      const state = await workspace.sharing(note.channel, active);
+      await workspace.sharing(note.channel, active);
       active.throwIfAborted();
-      setAgents(state.labels.includes(AGENTS_LABEL));
       await session.memberAdministration.refresh(note.channel);
     } finally {
       pending.current = false;
@@ -81,7 +77,6 @@ export function NoteSharing({
   };
   const roles =
     administration.status === "ready" ? administration.authority : undefined;
-  const owner = roles?.roles[session.viewer ?? ""] === "owner";
   const change = (change: MemberChange, signal: AbortSignal) =>
     run(
       (active) =>
@@ -110,21 +105,6 @@ export function NoteSharing({
       memberActions={{ canAdd: !!roles?.canManage, pending: busy, change }}
       accessSettings={
         <div className={`${styles.stack} ${styles.sharingSettings}`}>
-          {owner && agents !== undefined && (
-            <Checkbox
-              label="Share with my agents automatically"
-              checked={agents}
-              disabled={busy}
-              onCheckedChange={(checked) => {
-                void run((signal) =>
-                  workspace.setAudience(note, checked, signal),
-                ).catch((error: unknown) => {
-                  if (!lifetime.current?.signal.aborted)
-                    setError(message(error));
-                });
-              }}
-            />
-          )}
           {error && (
             <div>
               <p role="alert">{error}</p>

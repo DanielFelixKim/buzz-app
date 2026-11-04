@@ -58,7 +58,7 @@ it("restores the first history page when Back removes an explicit offset", async
   }
 });
 
-it("uses the channel member picker while guarding a pending automatic-agent policy change", async () => {
+it("uses the channel member picker while guarding a pending explicit invitation", async () => {
   const fixture = await notesFixture();
   const workspace = createNotesWorkspace(fixture.session);
   const note = fixture.seed("Plan", "Original");
@@ -67,9 +67,9 @@ it("uses the channel member picker while guarding a pending automatic-agent poli
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const original = workspace.setAudience;
-  const audience = vi
-    .spyOn(workspace, "setAudience")
+  const original = workspace.setMember;
+  const member = vi
+    .spyOn(workspace, "setMember")
     .mockImplementation(async (...args) => {
       await gate;
       return original(...args);
@@ -78,32 +78,31 @@ it("uses the channel member picker while guarding a pending automatic-agent poli
   try {
     const view = render(<NoteSharing {...props} />);
     await screen.findByRole("searchbox", { name: "Search people and agents" });
-    const toggle = await screen.findByRole("checkbox", {
-      name: "Share with my agents automatically",
-    });
-    expect(toggle).toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "Share with my agents automatically",
+      }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("combobox", { name: "General access" }),
     ).not.toBeInTheDocument();
-    fireEvent.click(toggle);
-    await waitFor(() => expect(audience).toHaveBeenCalledOnce());
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search people and agents" }),
+      { target: { value: "Sam" } },
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Add Sam \([^)]+\)$/ }),
+    );
+    await waitFor(() => expect(member).toHaveBeenCalledOnce());
     // The document refreshes its Note object after membership updates.
     view.rerender(<NoteSharing {...props} note={{ ...note }} />);
     try {
-      expect(toggle).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
       expect(onClose).not.toHaveBeenCalled();
     } finally {
       release();
     }
-    await waitFor(() =>
-      expect(
-        screen.getByRole("checkbox", {
-          name: "Share with my agents automatically",
-        }),
-      ).not.toBeChecked(),
-    );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Done" })).toBeEnabled(),
     );
