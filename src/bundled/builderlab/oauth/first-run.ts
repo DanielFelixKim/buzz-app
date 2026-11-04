@@ -11,9 +11,9 @@ import {
   oauthTarget,
   logout,
   savedSignIn,
-  CLEANUP_FAILED,
   type Credential,
 } from "./browser";
+import { createOAuthSession } from "./session";
 
 /**
  * First launch runs before this plugin can share its Settings session, so the
@@ -57,7 +57,7 @@ export type FirstRunIdentity = Pick<
 export async function firstRunCredential(
   signal: AbortSignal,
   federated?: FirstRunIdentity,
-  saved = savedSignIn,
+  browserSession = welcomeBrowser,
 ): Promise<Credential> {
   const result = await invoke<StorageResult>("plugin_catalog").catch(() => {
     throw new Error("Could not complete Builderlab sign-in. Try again.");
@@ -87,23 +87,34 @@ export async function firstRunCredential(
       )) === "browser");
   signal.throwIfAborted();
   if (browser) {
-    const credential = await browserCredential(bundledHost, signal);
-    // The plugin restores it at launch and, if running, now: one sign-in.
-    // A sign-in Welcome could not keep is removed; say if that is unfinished.
-    await saved
-      .accept(credential, logout(bundledHost), signal)
-      .catch((error: unknown) => {
-        if (!saved.failed()) throw error;
-        throw new Error(
-          `${error instanceof Error ? error.message : ""} ${CLEANUP_FAILED}`.trim(),
-        );
-      });
-    return credential;
+    // The plugin's own sign-in attempt, so the shared owner fences it: a
+    // takeover or Cancel meanwhile saves nothing, and the plugin follows it.
+    const cancel = () => browserSession.cancel();
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      await browserSession.signIn();
+    } finally {
+      signal.removeEventListener("abort", cancel);
+    }
+    signal.throwIfAborted();
+    const state = browserSession.snapshot();
+    if (state.status !== "signed-in")
+      throw new Error(state.error ?? "Sign-in canceled.");
+    return browserSession.credential() as Credential;
   }
   const credential = await federatedCredential(federated, signal);
   federatedCredentials.add(credential);
   return credential;
 }
+
+/** Welcome's browser sign-in: a plugin session over the shared saved sign-in,
+ * restoring nothing itself. */
+const welcomeBrowser = createOAuthSession(
+  (signal) => browserCredential(bundledHost, signal),
+  logout(bundledHost),
+  undefined,
+  savedSignIn,
+);
 
 const federatedCredentials = new WeakSet<Credential>();
 /** Whether first run's `credential` is a NIP-FI session's, whose value is

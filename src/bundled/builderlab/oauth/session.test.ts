@@ -343,7 +343,10 @@ it("retires the browser sign-in at once when NIP-FI takes over, retrying its del
     await vi.waitFor(() =>
       expect(restarted.session.snapshot().status).toBe("signed-out"),
     );
-    expect(k.host.request).not.toHaveBeenCalled();
+    // Revoked at once; the restart reads nothing.
+    expect(k.host.request).not.toHaveBeenCalledWith(
+      expect.objectContaining({ method: "GET" }),
+    );
     await vi.advanceTimersByTimeAsync(5000);
     expect(k.store.value).toBeNull();
     await vi.waitFor(() =>

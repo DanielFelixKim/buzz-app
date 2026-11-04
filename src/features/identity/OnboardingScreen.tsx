@@ -1,4 +1,8 @@
-import type { ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
+import {
+  CLEANUP_FAILED,
+  savedSignIn,
+} from "../../bundled/builderlab/oauth/browser";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   hasIntegratedWindowControls,
@@ -23,12 +27,22 @@ export function OnboardingScreen({
   children: ReactNode;
 }) {
   const introPhase = useWelcomeIntro(welcome);
+  const cleanupFailed = useSyncExternalStore(
+    savedSignIn.subscribe,
+    savedSignIn.failed,
+  );
   const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
   const integratedWindowControls = hasIntegratedWindowControls();
   const content = (
     <>
       <div className={styles.brand}>{intro}</div>
       <div className={styles.actions} inert={introPhase !== "done"}>
+        {/* A canceled or replaced browser sign-in that isn't removed yet. */}
+        {cleanupFailed && (
+          <p role="alert" className="text-body-sm text-danger">
+            {CLEANUP_FAILED}
+          </p>
+        )}
         {children}
       </div>
     </>

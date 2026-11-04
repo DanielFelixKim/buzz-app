@@ -247,18 +247,24 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
   const cleanup = async () => {
     clearTimeout(timer);
     if (disposed) return;
-    try {
-      // A replacement saved since then supersedes the delete.
-      await write(async () => {
+    // Revoking does not wait on the delete: a revoked item that stays saved
+    // is rejected, and so deleted, by the next restore.
+    const tries = [...revoking].map(async (held) => {
+      await held.revoke(held.credential);
+      revoking = revoking.filter((other) => other !== held);
+    });
+    // A replacement saved since then supersedes the delete.
+    tries.push(
+      write(async () => {
         if (!deleting) return;
         await store.clear();
         deleting = false;
-      });
-      for (const held of [...revoking]) {
-        if (disposed) return;
-        await held.revoke(held.credential);
-        revoking = revoking.filter((other) => other !== held);
-      }
+      }),
+    );
+    try {
+      for (const result of await Promise.allSettled(tries))
+        if (result.status === "rejected") throw result.reason;
+      if (disposed) return;
       if (failed) {
         failed = false;
         notify();

@@ -298,3 +298,123 @@ it("lets Cancel or a closing view end the server check, so its sign-in never sta
     expect(browser[end]).not.toHaveBeenCalled();
   }
 });
+
+/** Welcome, the plugin and the auto session over one shared saved sign-in,
+ * with a keychain and a Builderlab that rejects revoked credentials. */
+async function launch(value: string | null = null) {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const { createSavedSignIn } = await import("./oauth/browser");
+  const { createOAuthSession } = await import("./oauth/session");
+  const revoked = new Set<string>();
+  const store = {
+    value,
+    load: vi.fn(async () => store.value),
+    save: vi.fn(async (next: string) => {
+      store.value = next;
+    }),
+    clear: vi.fn(async () => {
+      store.value = null;
+    }),
+  };
+  const host = {
+    request: vi.fn(async (input: { headers?: Record<string, string> }) => {
+      const sent = input.headers?.["X-BB-Session-Credential"] ?? "";
+      return revoked.has(sent) ? { ...me(sent), status: 401 } : me(sent);
+    }),
+  };
+  const revoke = vi.fn(async (credential: { value: string }) => {
+    revoked.add(credential.value);
+  });
+  const restart = () => {
+    const saved = createSavedSignIn(store);
+    const plugin = createOAuthSession(vi.fn(), revoke, host, saved);
+    return { saved, plugin };
+  };
+  const { saved, plugin } = restart();
+  const welcome = (acquire: (signal: AbortSignal) => Promise<never>) =>
+    createOAuthSession(acquire, revoke, undefined, saved);
+  return { store, host, revoke, saved, plugin, welcome, restart };
+}
+const browser = (value: string) =>
+  ({
+    value,
+    account: { ...account, subject: value },
+  }) as never;
+
+it("a Welcome sign-in held across a NIP-FI takeover never brings A back, and Apps sends nothing as A", async () => {
+  const { deferred } = await import("./test-helpers");
+  const { createAppsClient } = await import("./apps/client");
+  const k = await launch();
+  const held = deferred<never>();
+  let aborted: AbortSignal | undefined;
+  const welcome = k.welcome((signal) => {
+    aborted = signal;
+    return held.promise;
+  });
+  const native = fake();
+  const identity = owner();
+  const auto = createAutoSession(
+    native,
+    k.plugin,
+    async () => "browser",
+    identity,
+  );
+  const signingIn = welcome.signIn();
+  native.set({ status: "signed-in", account });
+  identity.set("signed-in");
+  expect(aborted?.aborted).toBe(true);
+  held.resolve(browser("a"));
+  await signingIn;
+  expect(k.store.save).not.toHaveBeenCalled();
+  // NIP-FI signs out: nothing reselects A.
+  native.set({ status: "signed-out" });
+  identity.set("signed-out");
+  expect(auto.snapshot().status).toBe("signed-out");
+  expect(k.saved.current()).toBeUndefined();
+  const request = vi.fn();
+  const apps = createAppsClient({ request } as never, auto, "https://apps");
+  await expect(apps.create("Demo")).rejects.toThrow(/not signed in/);
+  expect(request).not.toHaveBeenCalled();
+  vi.unstubAllEnvs();
+});
+
+it("a Welcome save held, then Cancel and a denied delete, shows the error and is not restored", async () => {
+  const { deferred } = await import("./test-helpers");
+  const k = await launch();
+  const saving = deferred<void>();
+  k.store.save.mockImplementationOnce(async (next: string) => {
+    await saving.promise;
+    k.store.value = next;
+  });
+  k.store.clear.mockRejectedValueOnce(new Error("denied"));
+  const welcome = k.welcome(async () => browser("a"));
+  const signingIn = welcome.signIn();
+  await vi.waitFor(() => expect(k.store.save).toHaveBeenCalled());
+  welcome.cancel();
+  saving.resolve();
+  await signingIn;
+  await vi.waitFor(() => expect(k.saved.failed()).toBe(true));
+  expect(welcome.snapshot().error).toMatch(/keeps trying/);
+  // The item stayed, but its credential is revoked: a restart deletes it.
+  expect(k.store.value).toBe("a");
+  await k.saved.dispose();
+  const restarted = k.restart();
+  await vi.waitFor(() => expect(k.store.value).toBeNull());
+  expect(restarted.plugin.snapshot().status).toBe("signed-out");
+  await restarted.saved.dispose();
+  vi.unstubAllEnvs();
+});
+
+it("a successful Welcome switch whose cleanup of A fails warns on the shared owner", async () => {
+  const k = await launch();
+  const welcome = k.welcome(async () => browser("a"));
+  await welcome.signIn();
+  k.revoke.mockRejectedValueOnce(new Error("offline"));
+  const other = k.welcome(async () => browser("b"));
+  await other.signIn();
+  await vi.waitFor(() => expect(k.saved.failed()).toBe(true));
+  expect(k.plugin.credential().value).toBe("b");
+  expect(k.store.value).toBe("b");
+  await k.saved.dispose();
+  vi.unstubAllEnvs();
+});

@@ -469,6 +469,14 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
     const session = createOAuthSession(acquire, undefined, bundledHost, saved);
     return { session, acquire };
   };
+  const { browserCredential, logout } = await import("./browser");
+  // Welcome's browser sign-in is a plugin session over the same owner.
+  const welcome = createOAuthSession(
+    (signal) => browserCredential(bundledHost, signal),
+    logout(bundledHost),
+    undefined,
+    saved,
+  );
   // The plugin is already running, signed out, while first run signs in.
   const running = plugin();
   await vi.waitFor(() =>
@@ -477,7 +485,7 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
   const credential = await firstRunCredential(
     new AbortController().signal,
     undefined,
-    saved,
+    welcome,
   );
   expect(credential.value).toBe("token");
   expect([...items]).toEqual([
