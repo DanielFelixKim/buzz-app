@@ -563,6 +563,7 @@ function PreparedMessageMarkdown({
         directoryLabel={channelLinkLabel(url, directory.channels)}
         registry={extensions?.links}
         onOpenLink={onOpenLink}
+        canOpenLink={canOpenLink}
         session={session}
         scope={scope}
         interactive={interactive}
