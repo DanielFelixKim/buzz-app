@@ -58,15 +58,59 @@ conversation target as the page's fallback, and closes the card without opening
 Activity; reading follows the ordinary channel visit. **Open Activity** opens the page.
 The shell hides the card while Activity is selected and on devices without hover.
 
-## Drafts (removed)
+## Drafts (PR5)
 
-Activity had a Drafts tab (PR5) that listed every saved composer draft in the
-community. It was removed: a draft now stays only in the conversation where it
-was written, and its composer restores it there as before. Composer draft
-storage, sending and per-conversation attachment drafts are unchanged. Links made while Archived and Drafts
-existed still open the page: a route's `show` is ignored, and `{ drafts: true }`
-alone opens the saved filters. `listDraftViews` in `src/shared/view-state.ts` no longer
-has a caller outside its own tests.
+The sidebar includes Drafts directly below Inbox while the plugin is enabled.
+It opens the existing Inbox page with its Drafts route and shows the current
+viewer/community's number of meaningful message and reply drafts. Solo chat and
+Team channel rows show a pencil when their main composer or any thread has a
+draft. The shared presence projection reuses composer view keys and retained
+attachment counts; it stores no second draft copy and keeps row counts beyond
+the list's 500-preview limit. File-only composers appear in the list even before
+they have a saved text key. Counts update through view/storage and attachment
+notifications, with no relay reads or polling.
+
+Drafts is a quiet Inbox header action. It lists only meaningful saved composer
+text in this viewer/community scope, up to 500 with explicit truncation; an
+emptied selected editor stays open until send, close or confirmed delete. The
+list preserves the Inbox row hierarchy and supports channel, DM and exact-root
+thread coordinates. Only the selected draft loads history through the existing
+channel window or ThreadPanel; thread composition waits for a verified matching
+root, and a deleted/malformed root never rebinds its saved text. The shared
+composer and session outbox retain recipient, admission, signing and delivery
+rules. A selected channel/DM draft opens at the real returned tail without
+reading or overwriting the canonical saved scroll position. The origin action
+navigates separately and reports failure without dismissing the editor.
+
+The selected editor's lifetime does not depend on list-summary eligibility. Rich
+saved envelopes use an 8 MiB preview bound rather than the former 128 KiB text-sized
+cutoff; larger records receive an explicit notice instead of a false empty list.
+The shared composer reconciles an untouched editor with saved changes from another
+window. Locally edited documents remain in place with **Load saved draft** and
+**Keep my draft** choices; Send cannot silently use a conflicted document.
+Foreground revision checks also prevent an observed replacement being overwritten
+by stale send cleanup. These checks are not a cross-window storage transaction.
+
+Outbox acceptance and saved-draft replacement are separate outcomes. Drafts closes
+after replacement succeeds, not merely after acceptance. If no draft was ever saved
+and a fresh read still confirms absence, persistent write failure does not lock the
+composer after acceptance: no stale sent text needs cleanup. A nonempty unsaved
+agent follow-up stays editable with a save warning. Existing or unreadable saved
+revisions retain the accepted-message recovery state and offers **Retry draft cleanup**, never another
+Send of that accepted body. Recovery survives composer remounts within the same
+session; it is RAM evidence, not a new durable receipt or a guarantee across app
+restart. Existing outbox delivery/retry ownership is unchanged.
+
+Delete is consentful and device-local. Confirm moves keyboard focus to the
+actual destructive button; Cancel restores its trigger. After **successful**
+scoped saved-text cleanup, the existing attachment-draft owner clears only the
+same session/destination files and aborts its pending uploads. A failed text
+cleanup preserves files and text for retry; sibling channel/thread drafts and
+other viewers are untouched. Successful Close, Delete and saved Send restore focus
+to the invoking draft row, another remaining row, or Back to Inbox; callbacks from
+an earlier visit cannot retire a later selection. Failed Delete keeps its retryable
+confirmation focused. This is not a new persisted index or migration.
+
 
 ## Ownership and limits
 

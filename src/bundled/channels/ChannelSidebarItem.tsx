@@ -1,4 +1,5 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
+import { DraftIndicator } from "../../features/messages/DraftIndicator";
 import { useIsPresent } from "motion/react";
 import {
   memo,
@@ -253,6 +254,9 @@ function ChannelSidebarItemCore({
           </span>
           {channel.ttlSeconds !== undefined && agents.length === 0 && (
             <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
+          )}
+          {channel.channelType !== "dm" && (
+            <DraftIndicator session={session} channelId={channel.id} />
           )}
         </>
       }
