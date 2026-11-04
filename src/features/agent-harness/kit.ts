@@ -66,7 +66,7 @@ export type HarnessPrompt = Readonly<{
 export type HarnessKit = Readonly<{
   /** The conversation a mention or a wake goes to. Undefined when the
    * harness must not act on it: another trigger, a mention that is not the
-   * owner's own or attested by them (a workflow's never is), no channel, or a
+   * owner's own or attested by them, no channel, or a
    * wake with no conversation to go to. */
   conversation(
     delivery: Delivery,

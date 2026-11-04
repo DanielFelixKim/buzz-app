@@ -176,6 +176,7 @@ describe("harnessKit.conversation", () => {
       await kit.conversation(delivery({ type: "mention", event }), "thread"),
     ).toBeUndefined();
     const workflow = message("3", "@Ampy go", {
+      pubkey: mallory,
       tags: [
         ["h", channel],
         ["buzz:workflow", "w"],
@@ -187,6 +188,13 @@ describe("harnessKit.conversation", () => {
         "thread",
       ),
     ).toBeUndefined();
+    // A marker alone neither grants authority nor revokes the owner's own.
+    expect(
+      await kit.conversation(
+        delivery({ type: "mention", event: { ...workflow, pubkey: alice } }),
+        "thread",
+      ),
+    ).toBeDefined();
     expect(
       await kit.conversation(
         delivery({
