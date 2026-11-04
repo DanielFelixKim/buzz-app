@@ -376,7 +376,7 @@ export function createUnread({
   function folded(channelId: string) {
     let rows = foldedRows.get(channelId);
     if (!rows) {
-      rows = foldMessages(channelId, "", [...events.values()], {
+      rows = foldMessages(channelId, "", foldable(channelId), {
         includeReplies: true,
         signingAuthority,
         agentOwner: profiles?.owner && agentOwner,
@@ -387,6 +387,9 @@ export function createUnread({
   }
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
+  // Retained edits and deletions by each event they reference, which
+  // `foldable` gathers for a channel's content.
+  const byTarget = new Map<string, RelayEvent[]>();
   const tombstones = new Set<string>();
   // Ids named by an `e` tag of any retained or fetched event: a deletion, edit
   // or reply that arrived before its target. Built with the index.
@@ -561,6 +564,7 @@ export function createUnread({
     foldedRows.clear();
     byChannel.clear();
     byId.clear();
+    byTarget.clear();
     tombstones.clear();
     referenced.clear();
     own.clear();
@@ -569,11 +573,15 @@ export function createUnread({
     for (const event of events.values()) markReferenced(event);
     for (const event of lookupEvents.values()) markReferenced(event);
     for (const event of events.values()) {
-      if (event.kind !== 5 && event.kind !== 9005) continue;
+      if (contentKind(event)) continue;
       for (const [name, id] of event.tags) {
-        const target = id ? events.get(id) : undefined;
+        if (name !== "e" || !id) continue;
+        const overlays = byTarget.get(id) ?? [];
+        overlays.push(event);
+        byTarget.set(id, overlays);
+        const target = events.get(id);
         if (
-          name === "e" &&
+          (event.kind === 5 || event.kind === 9005) &&
           target &&
           deletionApplies(event, target, signingAuthority)
         )
@@ -597,6 +605,24 @@ export function createUnread({
   function deleted(event: RelayEvent): boolean {
     indexEvidence();
     return tombstones.has(event.id);
+  }
+  /** What `foldMessages` reads to show a channel's evidence: its content, the
+   * edits and deletions referencing it, and the deletions of those, whatever
+   * channel they name, if any. The fold reads no deeper, and a deleted message
+   * is no row, so its rows are those of folding every retained event, at the
+   * cost of the channel's events rather than all of them. Call after
+   * `indexEvidence`. */
+  function foldable(channelId: string): RelayEvent[] {
+    const result = new Set<RelayEvent>();
+    for (const { event } of byChannel.get(channelId) ?? []) {
+      result.add(event);
+      for (const overlay of byTarget.get(event.id) ?? []) {
+        result.add(overlay);
+        for (const deletion of byTarget.get(overlay.id) ?? [])
+          result.add(deletion);
+      }
+    }
+    return [...result];
   }
   /** Evidence of the target's channel: the index already resolved its channel
    * and reply root, which every selector would otherwise derive per event. */
