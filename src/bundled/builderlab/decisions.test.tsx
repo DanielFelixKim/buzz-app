@@ -226,7 +226,16 @@ it("follows the sign-in in use: the browser's answers, a NIP-FI session withdraw
     nativeState = next;
     for (const listener of listeners) listener();
   };
-  const session = createAutoSession(native, browser, async () => "browser");
+  const identity = {
+    snapshot: () => ({ status: nativeState.status }),
+    subscribe: native.subscribe,
+  } as never;
+  const session = createAutoSession(
+    native,
+    browser,
+    async () => "browser",
+    identity,
+  );
   const decide = vi.fn<BuilderlabDecide>(async () => ({
     outcome: "answered",
     backend: "builderlab",
@@ -255,7 +264,9 @@ it("follows the sign-in in use: the browser's answers, a NIP-FI session withdraw
     reason: "missing_credentials",
   });
   expect(decide).toHaveBeenCalledTimes(1);
+  // Taking over retired the browser sign-in, so it does not come back.
   setNative({ status: "signed-out" });
-  expect(keys()).toEqual(["block.builderlab/builderlab"]);
+  expect(browser.snapshot().status).toBe("signed-out");
+  expect(keys()).toEqual([]);
   await fiber.dispose();
 });

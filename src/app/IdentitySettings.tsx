@@ -40,8 +40,12 @@ const WAITING = {
   not_linked: BACKUP_FAILURES.not_linked.message,
 } as const;
 
-/** Unavailable for want of native, not because a sign-out didn't finish. */
+/** Unavailable for want of native, not because an operation failed. */
 const NOT_SIGN_OUT = new Set(["native-unavailable", "desktop-required"]);
+/** Servers whose sign-out this app started and native has not finished.
+ * Any other unavailable server failed to restore, such as offline at launch;
+ * native finishes an earlier run's sign-out as it restores. */
+const signingOut = new Set<string>();
 
 /** One sentence per uploader status; failures read as first run's copy. */
 function backupSentence(status: BackupStatus) {
@@ -292,12 +296,19 @@ function OrganizationSignIns({
     const authority = session.snapshot().authority;
     if (!authority) return;
     report(session);
-    void session.signOut().catch((error: unknown) =>
-      report(session, {
-        authority,
-        failure: error instanceof Error ? error.message : "",
-      }),
-    );
+    signingOut.add(authority.id);
+    void session
+      .signOut()
+      .then(() => {
+        if (session.snapshot().status !== "unavailable")
+          signingOut.delete(authority.id);
+      })
+      .catch((error: unknown) =>
+        report(session, {
+          authority,
+          failure: error instanceof Error ? error.message : "",
+        }),
+      );
   };
   const signedIn = sessions.filter(
     (_, index) =>
@@ -305,8 +316,9 @@ function OrganizationSignIns({
   );
   // Native reports a sign-out it couldn't finish, such as a storage failure,
   // as that server's unavailable snapshot rather than an error. Read from the
-  // session, it survives Settings closing and a reload until cleanup ends.
+  // session, it survives Settings closing until cleanup ends.
   const unfinished = new Map(failures);
+  const unrestored = new Map<FederatedIdentity, SignOutFailure>();
   sessions.forEach((session, index) => {
     const state = states[index];
     if (
@@ -314,23 +326,39 @@ function OrganizationSignIns({
       state.authority &&
       !NOT_SIGN_OUT.has(state.failure ?? "")
     )
-      unfinished.set(session, {
-        authority: state.authority,
-        failure: state.failure ?? "",
-      });
+      (signingOut.has(state.authority.id) ? unfinished : unrestored).set(
+        session,
+        { authority: state.authority, failure: state.failure ?? "" },
+      );
   });
-  const problems = [...unfinished].map(([session, { authority, failure }]) => (
+  const problem = (
+    { authority, failure }: SignOutFailure,
+    failed: string,
+    retry: () => void,
+  ) => (
     <div key={authority.id}>
       <p role="alert" className="text-body-sm text-danger">
-        {`Couldn’t sign out of ${serverName(authority)}. ${recoveryMessage(failure)}`}
+        {`Couldn’t ${failed} ${serverName(authority)}. ${recoveryMessage(failure)}`}
       </p>
-      <Button type="button" onClick={() => signOut(session)}>
+      <Button type="button" onClick={retry}>
         Try again
       </Button>
     </div>
-  ));
+  );
+  const problems = [
+    ...[...unfinished].map(([session, failure]) =>
+      problem(failure, "sign out of", () => signOut(session)),
+    ),
+    ...[...unrestored].map(([session, failure]) =>
+      problem(
+        failure,
+        "restore your sign-in to",
+        () => void session.restore?.().catch(() => {}),
+      ),
+    ),
+  ];
   // The first server's own row would repeat its failure without naming it.
-  const firstFailed = [...unfinished.values()].some(
+  const firstFailed = [...unfinished.values(), ...unrestored.values()].some(
     ({ authority }) => authority.id === identity.snapshot().authority?.id,
   );
   if (signedIn.length === 0)

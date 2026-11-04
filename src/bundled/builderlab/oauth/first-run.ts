@@ -87,7 +87,9 @@ export async function firstRunCredential(
   if (browser) {
     const credential = await browserCredential(bundledHost, signal);
     // The plugin restores it at launch and, if running, now: one sign-in.
-    await save(credential.value).catch(() => {});
+    await save(credential.value).catch(() => {
+      throw new Error("Could not save your Builderlab sign-in. Try again.");
+    });
     return credential;
   }
   const credential = await federatedCredential(federated, signal);

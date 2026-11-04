@@ -110,6 +110,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 headers: { Accept: "application/json" },
               }),
             ),
+          ctx.federatedIdentity,
         )
       : (legacy ?? createNativeSession(ctx.federatedIdentity)));
   ctx.effect(() => () => session.dispose());

@@ -186,6 +186,21 @@ function fake(): BuilderlabSession & {
   };
   return session as never;
 }
+/** The native identity's status, which says whether a NIP-FI session exists. */
+function owner(status = "signed-out") {
+  const listeners = new Set<() => void>();
+  return {
+    snapshot: () => ({ status }) as never,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    set(next: string) {
+      status = next;
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
 const account = {
   subject: "user",
   email: "",
@@ -201,7 +216,7 @@ it("signs in with the sign-in the server offers, and shows a probe failure", asy
     .mockResolvedValueOnce("browser")
     .mockResolvedValueOnce("federated")
     .mockRejectedValueOnce(new Error("Could not reach Builderlab. Try again."));
-  const session = createAutoSession(native, browser, offered);
+  const session = createAutoSession(native, browser, offered, owner());
   await session.signIn();
   expect(browser.signIn).toHaveBeenCalledTimes(1);
   expect(native.signIn).not.toHaveBeenCalled();
@@ -216,24 +231,52 @@ it("signs in with the sign-in the server offers, and shows a probe failure", asy
   expect(native.signIn).toHaveBeenCalledTimes(1);
 });
 
-it("prefers an existing NIP-FI session over a saved browser credential", async () => {
+it("prefers an existing NIP-FI session, showing its account read, and retires the browser sign-in", async () => {
   const native = fake();
   const browser = fake();
+  const identity = owner();
   const offered = vi.fn(async () => "browser" as const);
-  const session = createAutoSession(native, browser, offered);
+  const session = createAutoSession(native, browser, offered, identity);
   browser.set({ status: "signed-in", account });
   expect(session.snapshot()).toEqual({ status: "signed-in", account });
   session.signOut();
   expect(browser.signOut).toHaveBeenCalledTimes(1);
-  // A community that requires NIP-FI signed the server in.
-  native.set({ status: "signed-in", account });
-  expect(session.snapshot()).toEqual({
-    status: "signed-in",
-    account,
-    federated: true,
-  });
+  // A community that requires NIP-FI signed the server in; its account read
+  // fails, which shows with its retry instead of the older browser account.
+  const failed = { status: "signed-out", error: "Could not load" } as const;
+  native.set(failed);
+  identity.set("signed-in");
+  expect(session.snapshot()).toEqual({ ...failed, federated: true });
+  // Taking over signs the browser sign-in out, which revokes and deletes it.
+  expect(browser.signOut).toHaveBeenCalledTimes(2);
+  await session.signIn();
+  expect(native.signIn).toHaveBeenCalledTimes(1);
+  expect(browser.signIn).not.toHaveBeenCalled();
+  expect(offered).not.toHaveBeenCalled();
   session.signOut();
   expect(native.signOut).toHaveBeenCalledTimes(1);
-  await session.signIn();
-  expect(offered).not.toHaveBeenCalled();
+});
+
+it("lets Cancel or a closing view end the server check, so its sign-in never starts", async () => {
+  for (const end of ["cancel", "abandon"] as const) {
+    const native = fake();
+    const browser = fake();
+    let answer!: (offer: "browser") => void;
+    const offered = vi.fn(
+      () => new Promise<"browser">((resolve) => (answer = resolve)),
+    );
+    const session = createAutoSession(native, browser, offered, owner());
+    const signingIn = session.signIn();
+    const joined = session.ensureSignedIn(new AbortController().signal);
+    expect(session.snapshot().status).toBe("pending");
+    expect(offered).toHaveBeenCalledTimes(1);
+    session[end]();
+    expect(session.snapshot()).toEqual({ status: "signed-out" });
+    answer("browser");
+    await signingIn;
+    await expect(joined).rejects.toThrow("Sign-in canceled.");
+    expect(browser.signIn).not.toHaveBeenCalled();
+    expect(browser.ensureSignedIn).not.toHaveBeenCalled();
+    expect(browser[end]).not.toHaveBeenCalled();
+  }
 });

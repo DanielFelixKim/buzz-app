@@ -1,6 +1,7 @@
 //! The saved Builderlab browser sign-in credential of a build whose
 //! Builderlab plugin does not use NIP-FI, so that sign-in survives restarts.
-//! It is one OS secure item of its own per profile, never another item.
+//! It is one OS secure item of its own per profile and compiled Builderlab
+//! deployment, never another item, and only that deployment's caller uses it.
 use zeroize::Zeroizing;
 
 #[cfg_attr(test, allow(dead_code))]
@@ -11,9 +12,36 @@ const SERVICE: &str = if cfg!(debug_assertions) {
 };
 const LIMIT: usize = 4096;
 
+/// The item's account: the profile and the deployment's API base, so a build
+/// for another Builderlab never reads, sends or deletes this one's credential.
+fn account_for(profile: &str, origin: &str, api_base_path: &str) -> String {
+    format!("{profile} {origin}{api_base_path}")
+}
+
 #[cfg_attr(test, allow(dead_code))]
 fn account() -> String {
-    std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into())
+    let profile = std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into());
+    account_for(
+        &profile,
+        buzzodz_plugins::BUILDERLAB_ORIGIN,
+        buzzodz_plugins::BUILDERLAB_API_BASE_PATH,
+    )
+}
+
+/// The caller's sign-in target (`oauthTarget`) must be this build's.
+fn bound(target: &str, origin: &str, api_base_path: &str) -> Result<(), String> {
+    if origin.is_empty() || target != format!("{origin}{}", api_base_path.trim_end_matches('/')) {
+        return Err("This saved sign-in belongs to another Builderlab".into());
+    }
+    Ok(())
+}
+
+fn this_build(target: &str) -> Result<(), String> {
+    bound(
+        target,
+        buzzodz_plugins::BUILDERLAB_ORIGIN,
+        buzzodz_plugins::BUILDERLAB_API_BASE_PATH,
+    )
 }
 
 #[cfg(all(
@@ -83,7 +111,8 @@ async fn blocking<T: Send + 'static>(
 
 /// The saved credential record, or `None` when there is none.
 #[tauri::command]
-pub(crate) async fn builderlab_session_load() -> Result<Option<String>, String> {
+pub(crate) async fn builderlab_session_load(target: String) -> Result<Option<String>, String> {
+    this_build(&target)?;
     let value = blocking(platform::read).await?;
     value
         .map(|bytes| {
@@ -93,7 +122,8 @@ pub(crate) async fn builderlab_session_load() -> Result<Option<String>, String> 
 }
 
 #[tauri::command]
-pub(crate) async fn builderlab_session_save(value: String) -> Result<(), String> {
+pub(crate) async fn builderlab_session_save(target: String, value: String) -> Result<(), String> {
+    this_build(&target)?;
     let value = Zeroizing::new(value);
     if value.is_empty() || value.len() > LIMIT {
         return Err("Invalid Builderlab sign-in".into());
@@ -102,6 +132,44 @@ pub(crate) async fn builderlab_session_save(value: String) -> Result<(), String>
 }
 
 #[tauri::command]
-pub(crate) async fn builderlab_session_clear() -> Result<(), String> {
+pub(crate) async fn builderlab_session_clear(target: String) -> Result<(), String> {
+    this_build(&target)?;
     blocking(platform::delete).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_builderlab_deployment_has_its_own_item_and_callers() {
+        let public = account_for("default", "https://app.builderlab.xyz", "/api/goose/");
+        assert_ne!(
+            public,
+            account_for("default", "https://builderlab.example", "/api/goose/")
+        );
+        assert_ne!(
+            public,
+            account_for("default", "https://app.builderlab.xyz", "/team/api/goose/")
+        );
+        assert_ne!(
+            public,
+            account_for("work", "https://app.builderlab.xyz", "/api/goose/")
+        );
+        let origin = "https://app.builderlab.xyz";
+        assert!(bound(
+            "https://app.builderlab.xyz/api/goose",
+            origin,
+            "/api/goose/"
+        )
+        .is_ok());
+        for other in [
+            "https://builderlab.example/api/goose",
+            "https://app.builderlab.xyz/team/api/goose",
+            "",
+        ] {
+            assert!(bound(other, origin, "/api/goose/").is_err(), "{other}");
+        }
+        assert!(bound("/api/goose", "", "").is_err());
+    }
 }

@@ -431,7 +431,8 @@ describe("an FI build", () => {
 
 it("saves first run's browser sign-in as the plugin's session, now and after a restart", async () => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
-  let saved: string | null = null;
+  // Native keys the item by the build's Builderlab, which each call names.
+  const items = new Map<unknown, string>();
   const me = JSON.stringify({ subject: "user", email: "a@example.com" });
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     const input = args as Record<string, unknown> | undefined;
@@ -443,10 +444,10 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
       case "oauth_callback_wait":
         return { parameters: [["code", "code"]] };
       case "builderlab_session_save":
-        saved = input?.value as string;
+        items.set(input?.target, input?.value as string);
         return undefined;
       case "builderlab_session_load":
-        return saved;
+        return items.get(input?.target) ?? null;
       case "plugin_host_request": {
         const { url } = (input as { request: { url: string } }).request;
         return url.endsWith("/exchange")
@@ -479,7 +480,9 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
   );
   const credential = await firstRunCredential(new AbortController().signal);
   expect(credential.value).toBe("token");
-  expect(saved).toBe("token");
+  expect([...items]).toEqual([
+    ["https://app.builderlab.xyz/api/goose", "token"],
+  ]);
   await vi.waitFor(() =>
     expect(running.session.snapshot().status).toBe("signed-in"),
   );
@@ -495,4 +498,19 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
   expect(restarted.session.credential().value).toBe("token");
   expect(running.acquire).not.toHaveBeenCalled();
   expect(restarted.acquire).not.toHaveBeenCalled();
+  restarted.session.dispose();
+  // A build for another Builderlab never reads or sends this one.
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const other = plugin();
+  await vi.waitFor(() =>
+    expect(other.session.snapshot()).toEqual({ status: "signed-out" }),
+  );
+  const urls = vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command === "plugin_host_request")
+    .map(([, input]) => (input as { request: { url: string } }).request.url);
+  expect(urls.some((url) => url.startsWith("https://builderlab.example"))).toBe(
+    false,
+  );
+  other.session.dispose();
 });

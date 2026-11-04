@@ -18,6 +18,8 @@ export type Persistence = Readonly<{
   watch?(listener: () => void): () => void;
 }>;
 
+const SIGN_OUT_FAILED = "Couldn’t finish signing out of Builderlab. Try again.";
+
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
 export function createOAuthSession(
   acquire: (signal: AbortSignal) => Promise<Credential>,
@@ -35,11 +37,20 @@ export function createOAuthSession(
   let disposed = false;
   let state: LoginSnapshot = { status: "signed-out" };
   const listeners = new Set<() => void>();
+  // Saves and deletes run in order, so a save still running when sign-out
+  // starts finishes before its delete.
+  let stored: Promise<unknown> = Promise.resolve();
+  const store = (operation: () => Promise<void>) => {
+    const next = stored.then(operation);
+    stored = next.catch(() => {});
+    return next;
+  };
+  let signingOut: Promise<void> | undefined;
   const publish = (next: LoginSnapshot) => {
     state = next;
     for (const listener of listeners) listener();
   };
-  const reset = (revoke = false, announce = true) => {
+  const reset = (revoke = false, announce = true, clear = revoke) => {
     attempt?.abort();
     attempt = undefined;
     viewerLifetime?.abort();
@@ -48,7 +59,7 @@ export function createOAuthSession(
     const previous = credential;
     credential = undefined;
     if (previous && revoke) release?.(previous);
-    if (revoke) void persistence?.clear().catch(() => {});
+    if (clear && persistence) void store(persistence.clear).catch(() => {});
     if (announce) publish({ status: "signed-out" });
   };
   /** Signs in with `obtain`; a restore is pending without a browser step and
@@ -71,6 +82,18 @@ export function createOAuthSession(
         publish({ status: "signed-out" });
         return;
       }
+      if (!restoring && persistence) {
+        try {
+          await store(() => persistence.save(result));
+        } catch {
+          release?.(result);
+          throw new Error("Could not save your Builderlab sign-in. Try again.");
+        }
+        if (attempt !== current || disposed) {
+          release?.(result);
+          return;
+        }
+      }
       credential = result;
       viewerLifetime = new AbortController();
       viewer = {
@@ -78,7 +101,6 @@ export function createOAuthSession(
         storage,
         signal: viewerLifetime.signal,
       };
-      if (!restoring) void persistence?.save(result).catch(() => {});
       publish({ status: "signed-in", account: result.account });
     } catch (error) {
       if (attempt !== current || disposed) return;
@@ -156,10 +178,38 @@ export function createOAuthSession(
     },
     cancel: () => reset(),
     abandon: () => reset(),
-    signOut: () => reset(true),
+    /** Deletes the saved sign-in first; until that succeeds the sign-out is
+     * unfinished, still signed in with an error, and signing out tries again. */
+    signOut() {
+      if (!persistence) return reset(true);
+      signingOut ??= (async () => {
+        attempt?.abort();
+        attempt = undefined;
+        const previous = credential;
+        try {
+          await store(persistence.clear);
+        } catch {
+          if (disposed) return;
+          publish(
+            previous && credential === previous
+              ? {
+                  status: "signed-in",
+                  account: previous.account,
+                  error: SIGN_OUT_FAILED,
+                }
+              : { status: "signed-out", error: SIGN_OUT_FAILED },
+          );
+          return;
+        } finally {
+          signingOut = undefined;
+        }
+        if (credential === previous) reset(true, true, false);
+      })();
+      return signingOut;
+    },
     async signIn() {
       if (disposed || attempt) return;
-      reset(true, false);
+      reset(true, false, !!credential);
       await run(acquire, false);
     },
     dispose() {

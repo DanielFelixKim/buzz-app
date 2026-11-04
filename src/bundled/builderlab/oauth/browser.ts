@@ -198,12 +198,12 @@ export type SavedCredential = {
 };
 const saves = new Set<() => void>();
 export const savedCredential: SavedCredential = {
-  load: () => invoke("builderlab_session_load"),
+  load: () => invoke("builderlab_session_load", { target: oauthTarget() }),
   save: async (value) => {
-    await invoke("builderlab_session_save", { value });
+    await invoke("builderlab_session_save", { target: oauthTarget(), value });
     for (const listener of [...saves]) listener();
   },
-  clear: () => invoke("builderlab_session_clear"),
+  clear: () => invoke("builderlab_session_clear", { target: oauthTarget() }),
 };
 /** Calls `listener` after each save in this app, such as first run's
  * sign-in, so a running session can restore it. */

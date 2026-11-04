@@ -22,8 +22,14 @@ Builderlab sign-in first sends an uncredentialed `GET {adapterBase}/v1/session`.
 A 404 means the server has no NIP-FI sign-in, so **Sign in with Builderlab** is
 the browser sign-in above. First run saves its credential in the same system
 keychain item the plugin restores, so the plugin is signed in at once and after
-a restart (deleted on sign-out or when Builderlab rejects it at launch).
-Builderlab Decisions is offered only while that browser sign-in is in use;
+a restart (deleted on sign-out or when Builderlab rejects it at launch). The
+item is the profile's for this build's Builderlab deployment, its origin and
+API base, so a build for another Builderlab never reads, sends or deletes it.
+A save that fails is a retryable sign-in error, and a sign-out stays unfinished
+until the item is deleted. Once a NIP-FI session exists it is the sign-in in
+use, even while its account is loading or failing, and the browser sign-in is
+signed out, revoked and deleted. Builderlab Decisions and the Apps agent tools
+are offered only while that browser sign-in is in use;
 native sends no NIP-FI session to it, as in builds that add a server. Any other answer means NIP-FI sign-in, as below; a network error or
 5xx shows the retryable sign-in error and never falls back to the browser. The
 plugin uses the server's native session whenever one exists, such as after a

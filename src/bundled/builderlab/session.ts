@@ -102,30 +102,38 @@ export async function offeredSignIn(
  * The built-in server's Builderlab session: its native NIP-FI session
  * whenever one exists or is starting, such as after a community that
  * requires NIP-FI asked for sign-in, and otherwise the browser sign-in. A
- * sign-in asks `offered` which one the server has.
+ * sign-in asks `offered` which one the server has, and Cancel ends that
+ * question too. Once a NIP-FI session is signed in, the browser sign-in is
+ * signed out, revoked and deleted, so it never comes back.
  */
 export function createAutoSession(
   native: BuilderlabSession,
   browser: BuilderlabSession,
   offered: () => Promise<"browser" | "federated">,
+  identity: Pick<FederatedIdentity, "snapshot" | "subscribe">,
 ): BuilderlabSession {
   let chosen: BuilderlabSession | undefined;
   let error: string | undefined;
-  let probing = false;
+  let probe: { promise?: Promise<BuilderlabSession | undefined> } | undefined;
   let state: LoginSnapshot = { status: "signed-out" };
   const listeners = new Set<() => void>();
-  const active = () => {
-    const status = native.snapshot().status;
-    return status === "signed-in" ||
-      (status === "pending" && browser.snapshot().status !== "signed-in") ||
-      (chosen === native && browser.snapshot().status !== "signed-in")
-      ? native
-      : browser;
-  };
+  const owned = () =>
+    [
+      "signed-in",
+      "signing-in",
+      "restoring",
+      "reauthentication-required",
+    ].includes(identity.snapshot().status);
+  const active = () => (owned() || chosen === native ? native : browser);
   const project = () => {
+    if (
+      identity.snapshot().status === "signed-in" &&
+      browser.snapshot().status !== "signed-out"
+    )
+      browser.signOut();
     const current = active();
     const inner = current.snapshot();
-    const next: LoginSnapshot = probing
+    const next: LoginSnapshot = probe
       ? { status: "pending" }
       : error && inner.status === "signed-out"
         ? { status: "signed-out", error }
@@ -143,25 +151,48 @@ export function createAutoSession(
       for (const listener of [...listeners]) listener();
     }
   };
-  const stops = [native.subscribe(project), browser.subscribe(project)];
+  const stops = [
+    native.subscribe(project),
+    browser.subscribe(project),
+    identity.subscribe(project),
+  ];
   project();
-  const choose = async () => {
+  /** The sign-in the server offers; joined callers share one question, and
+   * a canceled one answers undefined. */
+  const choose = () => {
+    if (probe?.promise) return probe.promise;
+    const current: NonNullable<typeof probe> = {};
+    probe = current;
     error = undefined;
-    probing = true;
     project();
-    try {
-      chosen = (await offered()) === "browser" ? browser : native;
-      return chosen;
-    } catch (failure) {
-      error =
-        failure instanceof Error
-          ? failure.message
-          : "Sign-in failed. Try again.";
-      throw failure;
-    } finally {
-      probing = false;
-      project();
-    }
+    current.promise = offered()
+      .then(
+        (offer) => {
+          if (probe !== current) return undefined;
+          chosen = offer === "browser" ? browser : native;
+          return chosen;
+        },
+        (failure) => {
+          if (probe !== current) return undefined;
+          error =
+            failure instanceof Error
+              ? failure.message
+              : "Sign-in failed. Try again.";
+          throw failure;
+        },
+      )
+      .finally(() => {
+        if (probe !== current) return;
+        probe = undefined;
+        project();
+      });
+    return current.promise;
+  };
+  const stop = () => {
+    if (!probe) return false;
+    probe = undefined;
+    project();
+    return true;
   };
   const signedIn = () => state.status === "signed-in";
   return {
@@ -179,21 +210,24 @@ export function createAutoSession(
     async ensureSignedIn(signal) {
       signal.throwIfAborted();
       if (signedIn()) return;
-      if (state.status === "pending" && !probing)
+      if ((state.status === "pending" && !probe) || owned())
         return active().ensureSignedIn(signal);
       const session = await choose();
       signal.throwIfAborted();
+      if (!session) throw new Error("Sign-in canceled.");
       return session.ensureSignedIn(signal);
     },
     async signIn() {
-      if (signedIn() || probing) return;
+      if (signedIn() || probe) return;
+      if (owned()) return native.signIn();
       const session = await choose().catch(() => undefined);
       await session?.signIn();
     },
-    cancel: () => active().cancel(),
-    abandon: () => active().abandon(),
-    signOut: () => active().signOut(),
+    cancel: () => void (stop() || active().cancel()),
+    abandon: () => void (stop() || active().abandon()),
+    signOut: () => void (stop() || active().signOut()),
     dispose() {
+      probe = undefined;
       for (const stop of stops) stop();
       listeners.clear();
       native.dispose();
