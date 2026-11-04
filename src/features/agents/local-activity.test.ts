@@ -549,3 +549,27 @@ it("retries through the session only for this scope and accessible channels", ()
     "This request can't be retried here",
   );
 });
+
+it("clears only the woken turns of the matching scope and agent", () => {
+  const local = createLocalAgentActivity();
+  const other = "d".repeat(64);
+  const wake = (scope: string, agent: string) => ({
+    scope,
+    agent,
+    channelId: "channel",
+  });
+  local.wake(wake(scope, agent));
+  local.wake(wake(scope, other));
+  local.wake(wake("other", agent));
+  local.clear(scope, agent);
+  expect(local.reader.wakes?.()).toEqual([
+    expect.objectContaining(wake(scope, other)),
+    expect.objectContaining(wake("other", agent)),
+  ]);
+  local.clear("other");
+  expect(local.reader.wakes?.()).toEqual([
+    expect.objectContaining(wake(scope, other)),
+  ]);
+  local.clear();
+  expect(local.reader.wakes?.()).toEqual([]);
+});

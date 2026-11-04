@@ -140,6 +140,18 @@ vi.mock("./relay-removal", () => ({
   removeRelayAgent: records.removeAgent,
 }));
 vi.mock("./agent-share", () => ({ unshare: records.unshare }));
+// Where a turn answers, read as the service does unless a test holds it back.
+const soloChats = vi.hoisted(() => ({
+  hold: undefined as undefined | Promise<boolean>,
+}));
+vi.mock("./solo-chat", async (original) => {
+  const actual = await original<typeof import("./solo-chat")>();
+  return {
+    ...actual,
+    soloChat: (...args: Parameters<typeof actual.soloChat>) =>
+      soloChats.hold ?? actual.soloChat(...args),
+  };
+});
 
 const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
@@ -10969,6 +10981,39 @@ it("shows a woken turn as running where it types until it ends, as no message's 
   }
   await vi.waitFor(() => expect(activity.reader.wakes?.()).toEqual([]));
   expect(activity.reader.work()).toEqual([]);
+});
+
+it("never shows a woken turn that settled before its conversation was read", async () => {
+  let resolve = (_flat: boolean) => {};
+  soloChats.hold = new Promise<boolean>((done) => {
+    resolve = done;
+  });
+  try {
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run, emit, native, activity } = await setup({ runOnce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    const root = "e".repeat(64);
+    native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
+    });
+    let settled = false;
+    run.mockImplementationOnce(async ({ workingUntil }) => {
+      await workingUntil(Promise.resolve({ ok: true }));
+      settled = true;
+    });
+    emit({ channelId: channel, events: [deploy("woken")] });
+    await vi.waitFor(() => expect(settled).toBe(true));
+    resolve(false);
+    await soloChats.hold;
+    await new Promise((done) => setTimeout(done, 0));
+    expect(activity.reader.wakes?.()).toEqual([]);
+  } finally {
+    soloChats.hold = undefined;
+  }
 });
 
 it("serializes standalone source output per Interest and drops queued output after removal", async () => {
