@@ -110,7 +110,7 @@ import {
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
-import { browserThreadParticipation } from "./thread-participation";
+import { browserUnreadStorage } from "./unread-storage";
 import { createMessages } from "./messages";
 import { retryRead } from "./read-retry";
 import { messageAuthor } from "./fold";
@@ -1230,7 +1230,7 @@ export function createRelaySession(
       : {}),
     notify,
     follows: browserThreadFollows(readScope),
-    participation: browserThreadParticipation(readScope),
+    storage: browserUnreadStorage(readScope),
   });
   const inboxFeed = createInboxFeed({
     reactionReader: {
