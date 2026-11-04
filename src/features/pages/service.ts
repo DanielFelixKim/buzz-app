@@ -20,6 +20,12 @@ export type PageSidebarProps = {
   children?: ReactNode | undefined;
 };
 
+/** Props for a primary page's sidebar hover preview. */
+export type PagePreviewProps = {
+  /** Close the preview, for example after its content opened something. */
+  close(): void;
+};
+
 export type Page = Readonly<{
   id: string;
   title: string;
@@ -61,6 +67,12 @@ export type Page = Readonly<{
    * placements do not show them.
    */
   rows?: ComponentType;
+  /**
+   * Supplemental content the shell shows while a pointer rests on this page's
+   * sidebar entry. It is never shown without hover, in header placements, or
+   * while the page is selected, so the page must stay complete without it.
+   */
+  preview?: ComponentType<PagePreviewProps>;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
@@ -99,7 +111,8 @@ export class PagesService extends Service implements Pages {
       (page.companion !== undefined && typeof page.companion !== "boolean") ||
       (page.primary !== undefined && typeof page.primary !== "boolean") ||
       (page.badge !== undefined && typeof page.badge !== "function") ||
-      (page.rows !== undefined && typeof page.rows !== "function")
+      (page.rows !== undefined && typeof page.rows !== "function") ||
+      (page.preview !== undefined && typeof page.preview !== "function")
     ) {
       throw new Error(
         "A page needs an id, a title, and a React component function",

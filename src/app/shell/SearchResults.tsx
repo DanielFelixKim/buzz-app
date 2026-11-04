@@ -31,7 +31,6 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   MenuPopup,
   MenuRadioGroup,
@@ -43,6 +42,7 @@ import type {
   SearchDestination,
   SearchGroup,
   SearchInputProps,
+  SearchViews,
 } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
@@ -53,6 +53,7 @@ import {
   searchOrder,
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
+import { useMemberCounts } from "../../features/channels/useChannelDirectory";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
@@ -108,6 +109,41 @@ const noMembers: readonly string[] = [];
 const isSearchAction = (key: string) =>
   key.startsWith("scope:") || key === "more-messages";
 
+function useDelayedSearch(pending: boolean) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!pending) return;
+    const timer = setTimeout(() => setSlow(true), 1000);
+    return () => clearTimeout(timer);
+  }, [pending]);
+  return pending && slow;
+}
+
+function useSearchAnnouncement(
+  channels: boolean,
+  people: boolean,
+  messages: boolean,
+) {
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => {
+    const sources = [
+      channels && "channels",
+      people && "people",
+      messages && "messages",
+    ].filter(Boolean);
+    setAnnouncement((previous) => {
+      if (!sources.length) return "";
+      const names =
+        sources.length === 3
+          ? `${sources.slice(0, 2).join(", ")}, and ${sources[2]}`
+          : sources.join(" and ");
+      return previous || `Searching ${names}…`;
+    });
+  }, [channels, people, messages]);
+  return announcement;
+}
+
 export function SearchResults({
   session,
   inlineSettings,
@@ -123,8 +159,11 @@ export function SearchResults({
   openAgentSession,
   usageScope,
   sidebarScope,
+  views,
 }: {
   session: RelaySession;
+  /** Tabs that switch this search to other views of it. */
+  views?: SearchViews | undefined;
   pages: readonly SearchDestination[];
   scopedChannelId?: string | undefined;
   currentChannelId?: string | undefined;
@@ -258,11 +297,16 @@ export function SearchResults({
           };
         })
       : [];
-  const names = new Map(
-    channels.map((channel) => [
-      channel.id,
-      conversationName(channel, profiles, resolveName),
-    ]),
+  // Every keystroke renders; DM names only change with their inputs.
+  const names = useMemo(
+    () =>
+      new Map(
+        channels.map((channel) => [
+          channel.id,
+          conversationName(channel, profiles, resolveName),
+        ]),
+      ),
+    [channels, profiles, resolveName],
   );
   const operatorChannel = parsed.in ? normalizeInChannel(parsed.in) : "";
   const localChannel = operatorChannel
@@ -517,6 +561,9 @@ export function SearchResults({
     scopedChannelId ? "" : parsed.text,
     list.status === "ready",
   );
+  // Scoped search passes no text, so the lookup is idle there.
+  const slowChannels = useDelayedSearch(publicChannels.loading);
+  const slowPeople = useDelayedSearch(peopleActive && personDirectory.loading);
 
   const profileKey = [
     ...new Set([
@@ -840,6 +887,10 @@ export function SearchResults({
     ],
     channelRank,
   ).slice(0, 8);
+  // Display only; joined rows count the roster they carry.
+  const memberCounts = useMemberCounts(session.channels);
+  const memberCount = (channel: ChannelSummary) =>
+    channel.members?.length || memberCounts.counts.get(channel.id);
   // A chat found by its agent, not its name, says which agent it has.
   const soloDetail = (channel: ChannelSummary) => {
     const agent = newChatAmong(channel.members);
@@ -875,6 +926,22 @@ export function SearchResults({
       icon: ChatCircleIcon,
       run: choose(key, () => openConversation(channel.id)),
     };
+  };
+  // Channel rows add how many members they have, when the roster is known.
+  const channelDestination = (channel: ChannelSummary): SearchDestination => {
+    const destination = conversationDestination(channel);
+    const count = memberCount(channel);
+    return count
+      ? {
+          ...destination,
+          detail: [
+            destination.detail,
+            `${count} ${count === 1 ? "member" : "members"}`,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        }
+      : destination;
   };
   // Choosing a person opens your DM with them, starting it when needed.
   const [personOpen, setPersonOpen] = useState<{
@@ -1085,9 +1152,19 @@ export function SearchResults({
     ? operatorPublicChannels.error
     : undefined;
   const directoryPending = publicChannels.loading || personDirectory.loading;
+  const messagesPending = operatorLookupPending || search.loading;
+  const slowMessages = useDelayedSearch(messagesPending);
+  // An author or date picker replaces the result groups, so it announces
+  // none of their lookups.
+  const resultsShown = !showAuthorPicker && !showDateChoices;
+  const searchAnnouncement = useSearchAnnouncement(
+    resultsShown && slowChannels,
+    slowPeople,
+    resultsShown && slowMessages,
+  );
   const messageEmpty =
     operatorLookupPending || search.loading
-      ? "Searching messages…"
+      ? undefined
       : operatorLookupError || search.error
         ? "Message search is unavailable."
         : query.trim()
@@ -1138,6 +1215,7 @@ export function SearchResults({
                 label: messageOrder,
                 rank: Infinity,
                 destinations: messageRows,
+                headingStatus: slowMessages ? "Searching…" : undefined,
                 empty: messageEmpty,
               },
             ]
@@ -1182,12 +1260,14 @@ export function SearchResults({
                   },
                   {
                     label: "Channels",
-                    destinations: channelResults.map(conversationDestination),
+                    destinations: channelResults.map(channelDestination),
                     best: Math.min(...channelResults.map(channelRank)),
+                    headingStatus: slowChannels ? "Searching…" : undefined,
                   },
                   {
                     label: "People",
                     destinations: personResults,
+                    headingStatus: slowPeople ? "Searching…" : undefined,
                     best: Math.min(...personResults.map(({ score }) => score)),
                   },
                   {
@@ -1242,6 +1322,7 @@ export function SearchResults({
                   label: messageOrder,
                   rank: Infinity,
                   destinations: messageRows,
+                  headingStatus: slowMessages ? "Searching…" : undefined,
                   empty:
                     directMessageResults.length ||
                     chatResults.length ||
@@ -1254,9 +1335,23 @@ export function SearchResults({
               ];
   return (
     <SearchChoices
+      onRowsShown={(keys) => {
+        // Only channel results without a roster read a count.
+        const unknown = new Set(
+          channelResults.flatMap((channel) =>
+            channel.members?.length ? [] : [`channel:${channel.id}`],
+          ),
+        );
+        memberCounts.show(
+          keys.flatMap((key) =>
+            unknown.has(key) ? [key.slice("channel:".length)] : [],
+          ),
+        );
+      }}
       inlineSettings={inlineSettings}
       query={query}
       onQueryChange={onQueryChange}
+      views={views}
       authorChip={
         showAuthorChip && selectedAuthor
           ? {
@@ -1428,16 +1523,9 @@ export function SearchResults({
           </div>
         )}
       </div>
-      {/* A warm directory answers within the typing pause, so this feedback
-          waits a second; the rows and errors above are immediate. */}
-      {query.trim() && !scopedChannelId && (
-        <LoadingRegion
-          pending={publicChannels.loading}
-          label="Searching open channels…"
-        >
-          {null}
-        </LoadingRegion>
-      )}
+      <p className="sr-only" role={searchAnnouncement ? "status" : undefined}>
+        {searchAnnouncement}
+      </p>
     </SearchChoices>
   );
 }
