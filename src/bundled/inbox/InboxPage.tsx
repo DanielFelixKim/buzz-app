@@ -805,22 +805,35 @@ function InboxList({
         if (next && openRow(next, channelOf(next))) {
           if (canRead && hasUnread(next))
             try {
+              // Read it as selecting it would, through what this row shows.
               readNext =
                 next.target.kind === "channel"
                   ? session.unread.prepareChannelRead(next.channelId)
-                  : () =>
-                      settled(
-                        next.readThrough.map((step) =>
-                          session.unread.markThrough(
-                            step.target,
-                            step.messageId,
+                  : next.timeline
+                    ? () =>
+                        session.unread.markTimelineRead(
+                          next.channelId,
+                          next.messageIds,
+                        )
+                    : () =>
+                        settled(
+                          next.readThrough.map((step) =>
+                            session.unread.markThrough(
+                              step.target,
+                              step.messageId,
+                            ),
                           ),
-                        ),
-                      );
+                        );
               readTargets =
                 next.target.kind === "channel"
                   ? [next.target]
-                  : next.readThrough.map((step) => step.target);
+                  : next.timeline
+                    ? next.messageIds.map((messageId) => ({
+                        kind: "message" as const,
+                        channelId: next.channelId,
+                        messageId,
+                      }))
+                    : next.readThrough.map((step) => step.target);
               readSince = session.unread.revision();
               reading = readNext();
             } catch {

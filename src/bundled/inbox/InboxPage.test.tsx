@@ -4757,6 +4757,32 @@ it("a Solo chat row includes ordinary agent responses under All, not DMs, keepin
   expect(screen.queryByText("Agent progress")).not.toBeInTheDocument();
 });
 
+it("archiving into an owned Solo chat's timeline row reads its responses", async () => {
+  const h = fixture({ soloChannel: true, memberAgents: 1 });
+  const progress = message(h.agent, "room", "Agent progress", 30);
+  h.addEvent(progress);
+  render(h.view);
+  act(() => h.emit([progress]));
+  await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
+  const thread = rows()[1] as HTMLElement;
+  expect(thread).toHaveTextContent("A thread update");
+  fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  expect(h.journal()?.state.frontiers["activity:room"]).toBeUndefined();
+  fireEvent.click(within(thread).getByRole("button", { name: /^Archive / }));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toHaveAttribute("data-selected");
+  // Advancing reads the successor as selecting it would: one catch-up mark.
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers["activity:room"]).toBe(30),
+  );
+});
+
 it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {
   const h = fixture({
     withWriter: true,
