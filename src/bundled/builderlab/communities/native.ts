@@ -17,7 +17,6 @@ const MAX_RESPONSE_BYTES = 64 * 1024;
 const ROUTES: Record<string, readonly [string, readonly string[]]> = {
   identity: ["/v1/buzz/nostr-identities/current", []],
   unbind: ["/v1/buzz/nostr-identities/delete", []],
-  backups: ["/v1/buzz/nsec-backups/status", []],
   list: ["/v1/buzz/communities/list", []],
   availability: ["/v1/buzz/communities/availability", ["name"]],
   create: ["/v1/buzz/communities", ["name"]],
@@ -195,6 +194,18 @@ export function createNativeBackend(
         .catch(() => {});
     return verified;
   };
+  // The account's backed-up keys, read only where first run would restore
+  // one: the native uploader allows Builderlab backup (`backupOfferedFor`).
+  // Elsewhere the reply lists none.
+  const backups = async () => {
+    const state = await command<{ builderlab?: unknown }>(
+      bridge,
+      "nsec_backup_state",
+    );
+    return state.builderlab === true
+      ? request("/v1/buzz/nsec-backups/status", {})
+      : { status: 200, value: {} };
+  };
   const call = (action: string, input?: Record<string, unknown>) => {
     const route = Object.hasOwn(ROUTES, action) ? ROUTES[action] : undefined;
     if (!route) throw new Error("Unknown Builderlab route");
@@ -226,6 +237,7 @@ export function createNativeBackend(
         return { status: 200, value: {} };
       }
       if (action === "bind") return bind();
+      if (action === "backups") return backups();
       return call(action, body);
     },
     async localKey() {

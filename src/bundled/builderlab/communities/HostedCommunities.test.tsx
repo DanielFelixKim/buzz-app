@@ -485,34 +485,40 @@ it("offers to restore the account's key only when that key is backed up", async 
   });
   fireEvent.click(
     await within(mismatch).findByRole("button", {
-      name: "Restore backed-up key",
+      name: "Open Identity to sign out",
     }),
   );
   expect(onRestore).toHaveBeenCalledOnce();
   expect(mismatch).toHaveTextContent(
-    "sign out of Buzz, then choose Restore when Buzz opens again",
+    "sign out of Buzz, then sign in with the same Builderlab account",
   );
 });
 
-it("hides restore when only this device's key is backed up or the read fails", async () => {
+it("hides restore when only this device's key is backed up, the list is malformed or the read fails", async () => {
   routes["/api/relay/identity"] = () => ({ viewer: other });
-  routes["/api/builderlab/backups"] = () => ({ backup_nostr_pubkeys: [other] });
-  render(
-    <HostedCommunities
-      api={brokerApi}
-      active={() => true}
-      onRestore={vi.fn()}
-    />,
-  );
-  await screen.findByRole("region", { name: "Identity mismatch" });
-  await waitFor(() =>
-    expect(calls.some(([url]) => url === "/api/builderlab/backups")).toBe(true),
-  );
-  await act(async () => {});
-  expect(
-    screen.queryByRole("button", { name: "Restore backed-up key" }),
-  ).not.toBeInTheDocument();
-  cleanup();
+  // First run discards a list with any unusable entry, so restore does too.
+  for (const keys of [[other], [local, "not-a-key"]]) {
+    calls = [];
+    routes["/api/builderlab/backups"] = () => ({ backup_nostr_pubkeys: keys });
+    render(
+      <HostedCommunities
+        api={brokerApi}
+        active={() => true}
+        onRestore={vi.fn()}
+      />,
+    );
+    await screen.findByRole("region", { name: "Identity mismatch" });
+    await waitFor(() =>
+      expect(calls.some(([url]) => url === "/api/builderlab/backups")).toBe(
+        true,
+      ),
+    );
+    await act(async () => {});
+    expect(
+      screen.queryByRole("button", { name: "Open Identity to sign out" }),
+    ).not.toBeInTheDocument();
+    cleanup();
+  }
   delete routes["/api/builderlab/backups"];
   render(
     <HostedCommunities
@@ -524,7 +530,7 @@ it("hides restore when only this device's key is backed up or the read fails", a
   await screen.findByRole("region", { name: "Identity mismatch" });
   await act(async () => {});
   expect(
-    screen.queryByRole("button", { name: "Restore backed-up key" }),
+    screen.queryByRole("button", { name: "Open Identity to sign out" }),
   ).not.toBeInTheDocument();
 });
 

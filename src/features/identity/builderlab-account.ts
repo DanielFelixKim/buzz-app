@@ -6,6 +6,7 @@ import {
 } from "../../bundled/builderlab/oauth/browser";
 import {
   ApiFailure,
+  backedUpKeyList,
   boundKey,
   check,
   relayUrl,
@@ -273,11 +274,7 @@ function backedUpKeys(response: HostResponse) {
   } catch {
     return undefined;
   }
-  if (!Array.isArray(keys)) return undefined;
-  const listed = keys.map((key) =>
-    typeof key === "string" ? boundKey({ pubkey_hex: key }) : null,
-  );
-  return listed.every((key) => key !== null) ? listed : undefined;
+  return backedUpKeyList(keys);
 }
 
 function owned(community: NonNullable<Reply["communities"]>[number]) {

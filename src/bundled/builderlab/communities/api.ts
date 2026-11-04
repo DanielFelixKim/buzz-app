@@ -231,6 +231,20 @@ export function boundKey(identity: Identity | null | undefined) {
   const hex = identity?.pubkey_hex?.trim().toLowerCase();
   return hex && /^[0-9a-f]{64}$/.test(hex) ? hex : null;
 }
+/**
+ * `nsec-backups/status`'s `backup_nostr_pubkeys` as hex keys, or undefined
+ * unless every entry is one, so a list half understood is never acted on.
+ * First run and the identity-mismatch restore share this rule.
+ */
+export function backedUpKeyList(keys: unknown) {
+  if (!Array.isArray(keys)) return undefined;
+  const listed = keys.map((key) =>
+    typeof key === "string" ? boundKey({ pubkey_hex: key }) : null,
+  );
+  return listed.every((key): key is string => key !== null)
+    ? listed
+    : undefined;
+}
 export function relayUrl(community: Community) {
   const host = community.normalized_host?.trim();
   return host ? `wss://${host.replace(/^wss?:\/\//, "")}` : null;

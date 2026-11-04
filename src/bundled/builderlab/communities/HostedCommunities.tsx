@@ -33,6 +33,7 @@ import {
 } from "../../../shared/design-system/icons";
 import {
   ApiFailure,
+  backedUpKeyList,
   boundKey,
   check,
   clearPendingDeletion,
@@ -383,7 +384,8 @@ export function HostedCommunities({
     Boolean(identity) && (!bound || (Boolean(local) && bound !== local));
   // Acting requires this device's key to be known and to match the account's.
   const ready = bound !== null && bound === local;
-  // Whether the account's key, not this device's, is backed up. A failed read hides restore.
+  // Whether the account's key, not this device's, is backed up, by first
+  // run's rule. A failed read hides restore.
   const [backedUp, setBackedUp] = useState(false);
   const restorable = Boolean(onRestore && mismatch && bound && local);
   useEffect(() => {
@@ -393,15 +395,8 @@ export function HostedCommunities({
     api
       .call("backups")
       .then((reply) => {
-        const keys = reply.backup_nostr_pubkeys;
-        if (current && Array.isArray(keys))
-          setBackedUp(
-            keys.some(
-              (key) =>
-                typeof key === "string" &&
-                boundKey({ pubkey_hex: key }) === bound,
-            ),
-          );
+        const keys = backedUpKeyList(reply.backup_nostr_pubkeys);
+        if (current && keys && bound) setBackedUp(keys.includes(bound));
       })
       .catch(() => {});
     return () => {
@@ -631,11 +626,11 @@ export function HostedCommunities({
                   <>
                     <p className="text-body-sm text-muted">
                       The account’s key is backed up. To use it on this device,
-                      sign out of Buzz, then choose Restore when Buzz opens
-                      again. Save this device’s key first.
+                      save this device’s key, sign out of Buzz, then sign in
+                      with the same Builderlab account when Buzz opens again.
                     </p>
                     <Button disabled={busy} onClick={onRestore}>
-                      Restore backed-up key
+                      Open Identity to sign out
                     </Button>
                   </>
                 )}
