@@ -78,7 +78,7 @@ function start(protectedAgent) {
    binds.push(m.params);await gate;
    const keep=saved&&event==='resume';
    const binding=keep?saved:{v:1,client_session_id:'00000000-0000-4000-8000-00000000000'+(++sessions),identity:{community_id:'c1'}};
-   answer(m,{ok:true,binding,persist:!keep,bundle:{'x-workforce-launcher-client':'buzz','x-workforce-launcher-session':binding.client_session_id,'x-workforce-buzz-trigger-id':turn.trigger_id}});
+   answer(m,{ok:true,binding,persist:!keep,bundle:{'x-workforce-launcher-client':'buzz','x-workforce-launcher-session':binding.client_session_id,...Object.fromEntries(['channel','thread','message'].filter(k=>turn[k+'_id']!=null).map(k=>['x-workforce-buzz-'+k+'-id',turn[k+'_id']]))}});
   } else if(m.method==='security'){actions.push(m.params.action.kind);answer(m,true);}
   else if(m.method==='tool')answer(m,{content:[{type:'text',text:'sent'}]});
   else if(m.method==='hook')answer(m,null);
@@ -88,9 +88,9 @@ function start(protectedAgent) {
  const server=serve({data,models,dir:data,protectedAgent,input,output,exit:()=>{}});
  return {rpc,stop:()=>server.stop()};
 }
-const route={kind:'eligible',gatewayOrigin:ORIGIN,identity:{community_id:'c1'},discovery:{'x-workforce-launcher-client':'buzz','x-workforce-buzz-purpose':'discovery'}};
+const route={kind:'eligible',gatewayOrigin:ORIGIN,identity:{community_id:'c1'},discovery:{'x-workforce-launcher-client':'buzz','x-workforce-buzz-community-id':'c1'}};
 const tools=[{name:'send',description:'Post',inputSchema:{type:'object',properties:{text:{type:'string'}}},load:'always'}];
-const turn=(request,extra={})=>({agent,key:'chan/root',at:100,context:{channel:'chan'},text:'Do it',steer:'Do it',request,provider:WORKFORCE,model:'databricks-gpt-oss-20b',instructions:'Test.',cwd:data,workforce:{trigger_id:request},...extra});
+const turn=(request,extra={})=>({agent,key:'chan/root',at:100,context:{channel:'chan'},text:'Do it',steer:'Do it',request,provider:WORKFORCE,model:'databricks-gpt-oss-20b',instructions:'Test.',cwd:data,workforce:{channel_id:'chan',message_id:request,thread_id:'root'},...extra});
 const sent=from=>requests.slice(from).map(r=>r.headers);
 const run=async(pi,request,extra)=>{const {submission}=await pi.rpc('deliver',turn(request,extra));return pi.rpc('wait',{agent,submission,request});};
 
@@ -129,7 +129,7 @@ result.external=true;
 await pi.rpc('open',{agent,tools,route});
 assert.equal(listings[0].url,ORIGIN+'/pass-through/databricks/api/2.0/serving-endpoints');
 assert.equal(listings[0].headers.authorization,'Bearer trogdor');
-assert.equal(listings[0].headers['x-workforce-buzz-purpose'],'discovery');
+assert.equal(listings[0].headers['x-workforce-buzz-community-id'],'c1');
 assert.deepEqual((await pi.rpc('models',{agent,provider:WORKFORCE})).map(m=>m.id),['databricks-gpt-oss-20b','databricks-claude-x']);
 assert.deepEqual(await pi.rpc('models',{agent,provider:'faux'}),[]);
 const {providers}=await pi.rpc('providers',{agent});
@@ -152,14 +152,14 @@ assert.equal(requests[0].body.store,undefined);assert.ok('max_tokens' in request
 assert.ok(call1['user-agent'].startsWith('pi/'));
 const affinity=call1['x-session-affinity'];
 assert.match(affinity,/^[0-9a-f-]{36}$/);assert.notEqual(affinity,call1['x-workforce-launcher-session']);
-for(const h of [call1,call2]){assert.equal(h['x-workforce-buzz-trigger-id'],'e1');assert.equal(h['x-workforce-launcher-session'],'00000000-0000-4000-8000-000000000001');assert.equal(h['x-session-affinity'],affinity);}
+for(const h of [call1,call2]){assert.equal(h['x-workforce-buzz-message-id'],'e1');assert.equal(h['x-workforce-launcher-session'],'00000000-0000-4000-8000-000000000001');assert.equal(h['x-session-affinity'],affinity);}
 result.firstTurn=true;
 
-// A second turn resumes the binding; its own trigger; the same native session.
+// A second turn resumes the binding; its own message; the same native session.
 let from=requests.length;
 assert.equal((await run(pi,'e2')).status,'done');
 assert.equal(binds[1].event,'resume');assert.equal(binds[1].saved.client_session_id,'00000000-0000-4000-8000-000000000001');
-assert.equal(sent(from)[0]['x-workforce-buzz-trigger-id'],'e2');
+assert.equal(sent(from)[0]['x-workforce-buzz-message-id'],'e2');
 assert.equal(sent(from)[0]['x-workforce-launcher-session'],'00000000-0000-4000-8000-000000000001');
 assert.equal(sent(from)[0]['x-session-affinity'],affinity);
 result.secondTurn=true;
@@ -188,7 +188,7 @@ from=requests.length;
 {const {submission}=await pi.rpc('once',{...turn('o1'),key:undefined});
  assert.equal((await pi.rpc('wait',{agent,submission})).status,'done');}
 assert.equal(binds.at(-1).event,'standalone');assert.equal(binds.at(-1).saved,undefined);
-assert.equal(sent(from)[0]['x-workforce-buzz-trigger-id'],'o1');
+assert.equal(sent(from)[0]['x-workforce-buzz-message-id'],'o1');
 result.standalone=true;
 
 // Compaction in a run, without the native session pi-ai drops for it: the run's context, the native affinity.
@@ -198,15 +198,15 @@ assert.equal((await run(pi,'e6')).status,'done');
 const compaction=requests.slice(from).find(r=>summary(r.body));
 assert.ok(compaction,'no compaction request');
 assert.equal(compaction.headers.session_id,undefined);
-for(const h of sent(from)){assert.equal(h['x-workforce-buzz-trigger-id'],'e6');assert.equal(h['x-session-affinity'],sent(from)[0]['x-session-affinity']);}
+for(const h of sent(from)){assert.equal(h['x-workforce-buzz-message-id'],'e6');assert.equal(h['x-session-affinity'],sent(from)[0]['x-session-affinity']);}
 result.compaction=true;
-// One the owner asks for is its own request, with a manual trigger, in the key's session as it is.
+// One the owner asks for is its own request, with the conversation's place and no message, in the key's session as it is.
 for(const request of ['e7a','e7b'])assert.equal((await run(pi,request,{text:'word '.repeat(30000)})).status,'done');
 from=requests.length;
-await pi.rpc('session',{agent,key:'chan/root',action:'compact',workforce:{trigger_id:'m1'}});
+await pi.rpc('session',{agent,key:'chan/root',action:'compact',workforce:{channel_id:'chan',message_id:null,thread_id:'root'}});
 assert.ok(requests.length>from,'no manual compaction request');
-assert.equal(binds.at(-1).event,'resume');assert.equal(binds.at(-1).saved.client_session_id,'00000000-0000-4000-8000-000000000002');
-for(const h of sent(from)){assert.equal(h['x-workforce-buzz-trigger-id'],'m1');assert.equal(h['x-workforce-launcher-session'],'00000000-0000-4000-8000-000000000002');}
+assert.deepEqual(binds.at(-1).turn,{channel_id:'chan',message_id:null,thread_id:'root'});assert.equal(binds.at(-1).event,'resume');assert.equal(binds.at(-1).saved.client_session_id,'00000000-0000-4000-8000-000000000002');
+for(const h of sent(from)){assert.equal(h['x-workforce-buzz-message-id'],undefined);assert.equal(h['x-workforce-buzz-thread-id'],'root');assert.equal(h['x-workforce-launcher-session'],'00000000-0000-4000-8000-000000000002');}
 assert.ok(Object.keys(await records()).some(r=>r.startsWith('manual/')));
 result.manualCompaction=true;
 
@@ -220,7 +220,7 @@ result.manualCompaction=true;
  assert.equal((await pi.rpc('wait',{agent,submission:a.submission,request:'q1'})).status,'done');
  assert.equal((await pi.rpc('wait',{agent,submission:b.submission,request:'q2'})).status,'done');
  // q1's own background compaction may run beside q2; q2's blocking one is in its run.
- const of=kind=>requests.slice(from).filter(r=>summary(r.body)===kind).map(r=>r.headers['x-workforce-buzz-trigger-id']);
+ const of=kind=>requests.slice(from).filter(r=>summary(r.body)===kind).map(r=>r.headers['x-workforce-buzz-message-id']);
  assert.deepEqual(of(false),['q1','q2','q2']);assert.deepEqual(of(true).sort(),['q1','q2']);}
 result.queued=true;
 
@@ -250,10 +250,10 @@ assert.ok((await records()).b1,'pruned while its compaction lives');
 summaries=true;const later=requests.length;
 assert.equal((await run(pi,'b2')).status,'done');
 await until(()=>summarized.some(s=>s.ok));
-for(const {headers} of summarized)assert.equal(headers['x-workforce-buzz-trigger-id'],'b1');
+for(const {headers} of summarized)assert.equal(headers['x-workforce-buzz-message-id'],'b1');
 const turns=requests.slice(later).filter(r=>!summary(r.body));
 assert.ok(turns.length>0&&requests.slice(later).findIndex(r=>summary(r.body))>requests.slice(later).indexOf(turns[0]));
-for(const r of turns)assert.equal(r.headers['x-workforce-buzz-trigger-id'],'b2');
+for(const r of turns)assert.equal(r.headers['x-workforce-buzz-message-id'],'b2');
 result.background=true;
 
 // A crash between a reset's intent and its write: the next turn does it, then binds the reset.
@@ -292,7 +292,7 @@ const left=submissions.find(s=>s.request==='e5');assert.ok(left);
 const after=requests.length;
 assert.equal((await pi.rpc('wait',{agent,submission:left.submission,request:'e5'})).status,'done');
 assert.ok(requests.length>after);
-for(const h of sent(after)){assert.equal(h['x-workforce-buzz-trigger-id'],'e5');assert.equal(h['x-session-affinity'],sent(from)[0]['x-session-affinity']);}
+for(const h of sent(after)){assert.equal(h['x-workforce-buzz-message-id'],'e5');assert.equal(h['x-session-affinity'],sent(from)[0]['x-session-affinity']);}
 assert.equal(binds.length,bound+1);
 result.restart=true;
 await pi.stop();
@@ -303,7 +303,7 @@ await protectedPi.rpc('open',{agent,tools,route});
 from=requests.length;actions.length=0;
 assert.equal((await run(protectedPi,'p1')).status,'done');
 assert.ok(actions.includes('context'));
-assert.equal(sent(from)[0]['x-workforce-buzz-trigger-id'],'p1');
+assert.equal(sent(from)[0]['x-workforce-buzz-message-id'],'p1');
 result.protected=true;
 await protectedPi.stop();
 console.log(JSON.stringify(result));

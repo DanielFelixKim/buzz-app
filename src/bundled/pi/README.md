@@ -73,7 +73,8 @@ Every model request carries:
   submission's and task's trace (the host's telemetry adapter carries only
   that ID and records nothing), so a queued run, its compactions and
   retries, before or after a restart, carry their own request. An owner's
-  Compact is its own request, with a manual trigger;
+  Compact is its own request, whose context is the conversation's channel
+  and thread with no message, since no signed event caused it;
 - `x-session-affinity`, set to Pi's native session ID. This is the
   conversation's `ProviderDoc` session, not the Buzz session. pi-ai drops
   its own session headers when compaction disables caching, so without this

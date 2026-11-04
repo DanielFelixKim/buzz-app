@@ -26,7 +26,7 @@ const blocked: WorkforceRoute = {
   message: "Sign in to Block again to use its models.",
 };
 const binding = { v: 1, client_session_id: "u1", identity };
-const turn = { trigger_kind: "message", trigger_id: "e1" };
+const turn = { channel_id: null, message_id: "e1", thread_id: null };
 
 function seam(route: WorkforceRoute, overrides: Partial<WorkforceSeam> = {}) {
   return {
@@ -40,7 +40,7 @@ function seam(route: WorkforceRoute, overrides: Partial<WorkforceSeam> = {}) {
     })),
     discoveryBundle: vi.fn(() => ({
       ok: true as const,
-      value: { "x-workforce-buzz-purpose": "discovery" },
+      value: { "x-workforce-buzz-community-id": "c1" },
     })),
     bindingAdmits: vi.fn(() => ({ ok: true as const })),
     turnContext: vi.fn(() => turn),
@@ -62,7 +62,7 @@ describe("hostRoute", () => {
       kind: "eligible",
       gatewayOrigin: "https://gateway.test",
       identity,
-      discovery: { "x-workforce-buzz-purpose": "discovery" },
+      discovery: { "x-workforce-buzz-community-id": "c1" },
     });
     const invalid = seam(eligible, {
       discoveryBundle: () => ({ ok: false, message: "Context is invalid" }),

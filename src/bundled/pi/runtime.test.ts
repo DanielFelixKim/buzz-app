@@ -2549,7 +2549,11 @@ function routes(
     inferenceBundle: () => ({ ok: true, value: {} }),
     discoveryBundle: () => ({ ok: true, value: {} }),
     bindingAdmits: () => ({ ok: true }),
-    turnContext: () => ({ trigger_id: "t" }),
+    turnContext: () => ({
+      channel_id: null,
+      message_id: null,
+      thread_id: null,
+    }),
   };
   return { seam, move, ready, asked };
 }
@@ -2699,4 +2703,30 @@ it("closes an open agent when its route changes later, and opens it with the new
   expect(f.host.requests("open").at(-1)?.params.route).toEqual({
     kind: "external",
   });
+});
+
+it("gives an owner's Compact its conversation's place and no message", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const f = setup({}, [], undefined, undefined, r.seam);
+  const agent = (scope: string) =>
+    ({
+      key: self,
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, scope },
+    }) as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  await f.runtime.session(agent("thread"), thread, "compact");
+  await f.runtime.session(agent("thread"), { channelId: channel }, "compact");
+  await f.runtime.session(agent("channel"), thread, "compact");
+  expect(
+    f.host.requests("session").map((item) => item.params.workforce),
+  ).toEqual([
+    { channel_id: channel, message_id: null, thread_id: root.id },
+    { channel_id: channel, message_id: null, thread_id: null },
+    { channel_id: channel, message_id: null, thread_id: null },
+  ]);
+  // New carries no context: it sends nothing to a model.
+  await f.runtime.session(agent("thread"), thread, "new");
+  expect(f.host.requests("session").at(-1)?.params.workforce).toBeUndefined();
 });

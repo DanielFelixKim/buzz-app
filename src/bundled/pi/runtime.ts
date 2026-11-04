@@ -511,15 +511,10 @@ export class PiRuntime {
         agent: agent.key,
         key,
         action,
-        // An owner's compaction is its own request, with a manual trigger.
+        // An owner's compaction is its own request. No signed event caused
+        // it, so its context is the conversation's place with no message.
         ...(action === "compact" && this.workforce
-          ? {
-              workforce: this.workforce.turnContext({
-                manual: action,
-                agent,
-                place,
-              }),
-            }
+          ? { workforce: placeContext(agent, place) }
           : {}),
       });
     };
@@ -1493,6 +1488,16 @@ export class PiRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkeyOf(agent));
   }
 }
+
+/** The DXA-1151 turn context of a conversation itself, for work no signed
+ * event caused: its channel, its thread unless it spans the channel, and no
+ * message. */
+const placeContext = (agent: Agent, place: SessionPlace) => ({
+  channel_id: place.channelId,
+  message_id: null,
+  thread_id:
+    config(agent.config).scope === "channel" || !place.root ? null : place.root,
+});
 
 /** The conversation key session controls in `place` act on, as `key` makes
  * it: a DM or Solo chat has no root here. */
