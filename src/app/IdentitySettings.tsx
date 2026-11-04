@@ -80,7 +80,7 @@ function BackupRow({
 
 type BackedUp =
   | { revision: string; linked: string | null; backups: readonly string[] }
-  | { revision: string; failed: true };
+  | { revision: string; failed: string };
 
 /**
  * The account's backed-up keys, read with the organization sign-in as first
@@ -135,8 +135,12 @@ function BackedUpKeys({
             () => {},
           );
       },
-      () => {
-        if (current) setRead({ revision, failed: true });
+      (error: unknown) => {
+        if (current)
+          setRead({
+            revision,
+            failed: error instanceof Error ? error.message : String(error),
+          });
       },
     );
     return () => {
@@ -162,7 +166,9 @@ function BackedUpKeys({
     return (
       <PreferenceRow
         title="Backed-up keys"
-        subtitle={<span role="alert">Couldn’t check your backups.</span>}
+        subtitle={
+          <span role="alert">Couldn’t check your backups. {shown.failed}</span>
+        }
       />
     );
   if (!shown.backups.some((key) => key !== viewer)) return null;
