@@ -387,6 +387,9 @@ export function createChannelStore(
       ? true
       : undefined;
   }
+  function savedMetadata(id: string) {
+    return pendingMetadata.has(id) ? (true as const) : undefined;
+  }
   function setList(next: ChannelList, discoveryChanged = false) {
     const previous = new Map(
       list.channels.map((channel) => [channel.id, channel]),
@@ -396,6 +399,7 @@ export function createChannelStore(
       if (!retained.has(id)) checkedMetadata.delete(id);
     const channels = next.channels.map((channel) => {
       const pending = metadataPending(channel.id);
+      const metadataCached = savedMetadata(channel.id);
       const preview =
         windows.get(channel.id)?.preview ??
         tails.peek(channel.id)?.preview ??
@@ -405,6 +409,7 @@ export function createChannelStore(
         old.name === channel.name &&
         old.description === channel.description &&
         old.metadataPending === pending &&
+        old.metadataCached === metadataCached &&
         old.visibility === channel.visibility &&
         old.joinRole === channel.joinRole &&
         old.viewerRole === channel.viewerRole &&
@@ -425,7 +430,12 @@ export function createChannelStore(
         sameKeys(old.owners, channel.owners) &&
         sameKeys(old.participants, channel.participants)
         ? old
-        : Object.freeze({ ...channel, metadataPending: pending, preview });
+        : Object.freeze({
+            ...channel,
+            metadataPending: pending,
+            ...(metadataCached ? { metadataCached } : {}),
+            preview,
+          });
     });
     const sameChannels =
       channels.length === list.channels.length &&
@@ -3278,7 +3288,14 @@ export function createChannelStore(
     list: () => list,
     get: (id: string) => {
       const channel = discovery?.get(id);
-      return channel && { ...channel, metadataPending: metadataPending(id) };
+      const metadataCached = savedMetadata(id);
+      return (
+        channel && {
+          ...channel,
+          metadataPending: metadataPending(id),
+          ...(metadataCached ? { metadataCached } : {}),
+        }
+      );
     },
     start(channel: Parameters<NonNullable<ChannelQueries["start"]>>[0]) {
       if (disposed || !transport || !discovery) return;
