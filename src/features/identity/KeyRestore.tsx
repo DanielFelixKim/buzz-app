@@ -14,7 +14,8 @@ import { recoveryOff } from "./service";
  * recovery signed into that same account (`subject`) and returned another
  * key, the user picks one, the linked key preselected; another key is
  * relinked by the caller once installed. A different account's backups only
- * ever yield the linked key.
+ * ever yield the linked key. With no linked key, the user picks any of the
+ * account's own backups, which the caller links once installed.
  */
 export function KeyRestore({
   recovery,
@@ -28,7 +29,8 @@ export function KeyRestore({
   onInstalled,
 }: {
   recovery: Recovery;
-  expectedPubkey: string;
+  /** The account's linked key; none when it has none. */
+  expectedPubkey?: string | undefined;
   /** The signed-in account's subject, which recovery's must match to offer other keys. */
   subject?: string | undefined;
   /** Preselected over the linked key when listed: the key Settings chose to switch to. */

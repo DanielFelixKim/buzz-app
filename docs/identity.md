@@ -94,12 +94,15 @@ where the backup step can run (see
 [automatic backup](#automatic-backup-and-optional-recovery)); kgoose answers
 `404` wherever backups are not configured. Not sent, a `404` or any failure
 leaves the lookup unavailable rather than empty, and never fails setup: it only
-decides whether Welcome back offers a restore and whether an import needs
+decides whether Welcome back or Get started offers a restore and whether an import needs
 automatic backup.
 
 **Not linked** pauses on **Get started with Buzz**, which says the account will
 manage the Buzz identity. **Set me up** creates and links a key; **Use an
-existing key** opens **Enter your private key**. **Use a different account**
+existing key** opens **Enter your private key**. When the lookup lists a
+backup (backups outlive an unlink), **Restore a backed-up key** opens
+**Restore your key**, which lists the account's backups with none preselected
+and links the one restored; there is no key to unlink. **Use a different account**
 signs out the first-run session and returns to the welcome screen.
 The browser may retain its portal session. This choice page shows the signed-in
 email so the account can be checked before linking a key.

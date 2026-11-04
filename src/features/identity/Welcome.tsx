@@ -670,6 +670,14 @@ export function Welcome({
               ]);
             }}
             onImport={() => pause("key-import")}
+            onRestore={
+              backups?.length
+                ? () => {
+                    void current.recovery.beginRecovery();
+                    pause("key-restore");
+                  }
+                : undefined
+            }
             onSwitchAccount={backToLanding}
           />
         );
@@ -706,27 +714,34 @@ export function Welcome({
         // A restored key is already backed up, so no backup step follows.
         // Another key of this account's backups replaces the linked one as
         // Start over's new key does: unlinked, then linked, and the old key's
-        // communities are not offered to it.
-        return linked ? (
+        // communities are not offered to it. With no linked key (the key
+        // choice's restore), the restored key is only linked.
+        return (
           <KeyRestore
             recovery={current.recovery}
             email={auth.account?.email}
             subject={auth.account?.subject}
             preferredPubkey={restoreChoice.get()}
             expectedPubkey={linked}
-            onBack={() => back("welcome-back", "restore")}
+            onBack={() =>
+              back(linked ? "welcome-back" : "key-choice", "restore")
+            }
             onImport={() => pause("key-import")}
-            onLost={() =>
-              void setup.start([findCommunities(current, setOwned)], {
-                status: "paused",
-                at: "key-lost",
-              })
+            onLost={
+              linked
+                ? () =>
+                    void setup.start([findCommunities(current, setOwned)], {
+                      status: "paused",
+                      at: "key-lost",
+                    })
+                : undefined
             }
             onInstalled={() => {
               const restored = identity.snapshot();
               if (restored.status !== "ready") return;
               restoreChoice.set(undefined);
               if (restored.viewer === linked) return void setup.start(finish());
+              if (!linked) return void setup.start([link, ...restore()]);
               setLinked(undefined);
               setOwned(undefined);
               void setup.start([
@@ -736,7 +751,7 @@ export function Welcome({
               ]);
             }}
           />
-        ) : null;
+        );
       case "key-lost":
         // Starting over creates a new key, as Set me up does, and the old
         // key's communities are not offered to it (so the lane ends with the
