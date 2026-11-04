@@ -467,6 +467,67 @@ it("keeps create and copy paused until this device's key is read and matches", a
   expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
 });
 
+it("offers to restore the account's key only when that key is backed up", async () => {
+  routes["/api/relay/identity"] = () => ({ viewer: other });
+  routes["/api/builderlab/backups"] = () => ({
+    backup_nostr_pubkeys: [local.toUpperCase()],
+  });
+  const onRestore = vi.fn();
+  render(
+    <HostedCommunities
+      api={brokerApi}
+      active={() => true}
+      onRestore={onRestore}
+    />,
+  );
+  const mismatch = await screen.findByRole("region", {
+    name: "Identity mismatch",
+  });
+  fireEvent.click(
+    await within(mismatch).findByRole("button", {
+      name: "Restore backed-up key",
+    }),
+  );
+  expect(onRestore).toHaveBeenCalledOnce();
+  expect(mismatch).toHaveTextContent(
+    "sign out of Buzz, then choose Restore when Buzz opens again",
+  );
+});
+
+it("hides restore when only this device's key is backed up or the read fails", async () => {
+  routes["/api/relay/identity"] = () => ({ viewer: other });
+  routes["/api/builderlab/backups"] = () => ({ backup_nostr_pubkeys: [other] });
+  render(
+    <HostedCommunities
+      api={brokerApi}
+      active={() => true}
+      onRestore={vi.fn()}
+    />,
+  );
+  await screen.findByRole("region", { name: "Identity mismatch" });
+  await waitFor(() =>
+    expect(calls.some(([url]) => url === "/api/builderlab/backups")).toBe(true),
+  );
+  await act(async () => {});
+  expect(
+    screen.queryByRole("button", { name: "Restore backed-up key" }),
+  ).not.toBeInTheDocument();
+  cleanup();
+  delete routes["/api/builderlab/backups"];
+  render(
+    <HostedCommunities
+      api={brokerApi}
+      active={() => true}
+      onRestore={vi.fn()}
+    />,
+  );
+  await screen.findByRole("region", { name: "Identity mismatch" });
+  await act(async () => {});
+  expect(
+    screen.queryByRole("button", { name: "Restore backed-up key" }),
+  ).not.toBeInTheDocument();
+});
+
 it("pauses actions with a retry when this device's key cannot be read", async () => {
   routes["/api/relay/identity"] = () => {
     throw new Error("offline");

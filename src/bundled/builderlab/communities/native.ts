@@ -17,6 +17,7 @@ const MAX_RESPONSE_BYTES = 64 * 1024;
 const ROUTES: Record<string, readonly [string, readonly string[]]> = {
   identity: ["/v1/buzz/nostr-identities/current", []],
   unbind: ["/v1/buzz/nostr-identities/delete", []],
+  backups: ["/v1/buzz/nsec-backups/status", []],
   list: ["/v1/buzz/communities/list", []],
   availability: ["/v1/buzz/communities/availability", ["name"]],
   create: ["/v1/buzz/communities", ["name"]],

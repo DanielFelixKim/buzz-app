@@ -56,6 +56,7 @@ export type Reply = {
   host?: string;
   acknowledgement_version?: number;
   status?: string;
+  backup_nostr_pubkeys?: unknown;
 };
 type Body = Record<string, string | number>;
 
