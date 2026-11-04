@@ -223,6 +223,17 @@ describe("an FI build", () => {
       "Could not load your Builderlab account. Try again.",
     ],
     [
+      "the session changes before the sign-in answer is consumed",
+      (fi: ReturnType<typeof federatedFixture>) =>
+        vi.mocked(fi.service.signIn).mockImplementationOnce(async () => {
+          fi.publish({ status: "signed-in", revision: "returned" });
+          const returned = fi.service.snapshot();
+          fi.publish({ revision: "concurrent-replacement" });
+          return returned;
+        }),
+      "Could not load your Builderlab account. Try again.",
+    ],
+    [
       "the session changes during the account read",
       (fi: ReturnType<typeof federatedFixture>) =>
         fi.request.mockImplementationOnce(async () => {

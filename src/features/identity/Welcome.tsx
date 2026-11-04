@@ -14,12 +14,11 @@ import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import {
   bundledHost,
   firstRunCredential,
+  readFederatedCredential,
   type FirstRunIdentity,
 } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
 import { nativeBuilderlab } from "../../bundled/builderlab/session";
-import type { FederatedIdentity } from "../federated-identity/service";
-import { createFederatedFirstRun } from "./federated-first-run";
 import { communityDestination } from "../communities/destination";
 import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
@@ -40,7 +39,6 @@ import { hostedByThisBuilderlab } from "./builderlab-hosted";
 import {
   builderlabAccount,
   federatedBuilderlabAccount,
-  builderlabSessionAccount,
   type FirstRunAccount,
   type OwnedCommunity,
   seededAccount,
@@ -137,9 +135,8 @@ export function Welcome({
     | undefined;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
-  const [legacyLogin] = useState(() => createOAuthSession(connect));
-  const [nativeLogin, setNativeLogin] =
-    useState<ReturnType<typeof createFederatedFirstRun>>();
+  const [login] = useState(() => createOAuthSession(connect));
+  const [setupCredential, setSetupCredential] = useState<Credential>();
   const [accountChange, setAccountChange] = useState<
     | { status: "pending" | "canceling" }
     | { status: "failed"; error: string; reload: boolean }
@@ -153,7 +150,6 @@ export function Welcome({
       }
     | undefined
   >(undefined);
-  const login = nativeLogin ?? legacyLogin;
   // Fences canceled or replaced sign-ins and their account-loading continuations.
   const cancels = useRef(0);
   useEffect(
@@ -168,16 +164,6 @@ export function Welcome({
   const auth = useSyncExternalStore(login.subscribe, login.snapshot);
   const [setup] = useState(createSetup);
   const progress = useSyncExternalStore(setup.subscribe, setup.snapshot);
-  const firstRun = state.status === "missing" || progress.status !== "idle";
-  useEffect(() => {
-    if (!firstRun || !federatedIdentity || !nativeBuilderlab()) return;
-    const session = createFederatedFirstRun(federatedIdentity);
-    setNativeLogin(session);
-    return () => {
-      if (session.snapshot().status === "pending") session.cancel();
-      session.dispose();
-    };
-  }, [federatedIdentity, firstRun]);
   // The signed-in account's reads, from sign-in until the landing is shown again.
   const reads = useRef<FirstRunAccount | undefined>(undefined);
   // The hex key the account check found bound to the account: the returning-
@@ -333,6 +319,7 @@ export function Welcome({
   /** Once native replaces a session, no previous account's setup may be exposed. */
   const discardAccountSetup = () => {
     reads.current = undefined;
+    setSetupCredential(undefined);
     known.current = undefined;
     setLinked(undefined);
     setBackups(undefined);
@@ -345,7 +332,7 @@ export function Welcome({
       settle = resolve;
     });
     const request =
-      nativeLogin && federatedIdentity && (changeAccount || accountChange)
+      federatedIdentity && (changeAccount || accountChange)
         ? {
             revision: federatedIdentity.snapshot().revision,
             canceling: false,
@@ -362,68 +349,72 @@ export function Welcome({
       mounted.current &&
       attempt === cancels.current &&
       (!request || accountRequest.current === request);
-    let previousSubject: string | undefined;
+    const previousSubject = setupCredential?.account.subject;
     try {
-      if (changeAccount && nativeLogin && federatedIdentity && request) {
-        try {
-          previousSubject = nativeLogin.credential().account.subject;
-        } catch {
-          /* Expired session. */
+      let credential: Credential;
+      if (request && federatedIdentity) {
+        let replacementRevision: string | undefined;
+        if (changeAccount) {
+          const next = await federatedIdentity.signIn();
+          replacementRevision = next.revision;
+          if (!currentAttempt()) return;
+          if (next.status !== "signed-in")
+            throw new Error("Sign-in did not finish");
+          if (next.revision === request.revision) {
+            accountRequest.current = undefined;
+            setAccountChange(undefined);
+            return;
+          }
         }
-        const next = await federatedIdentity.signIn();
-        if (!currentAttempt()) return;
-        if (next.revision !== request.revision) discardAccountSetup();
-        if (next.status !== "signed-in")
-          throw new Error("Sign-in did not finish");
-        if (next.revision === request.revision) {
-          accountRequest.current = undefined;
-          setAccountChange(undefined);
+        // A committed replacement whose account read failed is reloaded without
+        // another browser step. The old setup stays hidden until this settles.
+        credential = await readFederatedCredential(
+          federatedIdentity,
+          undefined,
+          replacementRevision,
+        );
+      } else {
+        await login.signIn();
+        if (!currentAttempt() || login.snapshot().status !== "signed-in")
           return;
-        }
+        credential = login.credential();
       }
-      // Native exchange completes before its account read. Join that read,
-      // including a same-session retry; no second browser step is needed.
-      if (nativeLogin)
-        await nativeLogin.ensureSignedIn(new AbortController().signal);
-      else await login.signIn();
-      if (!currentAttempt() || login.snapshot().status !== "signed-in") return;
-      const current = nativeLogin
-        ? builderlabSessionAccount(nativeLogin, identity)
-        : account(legacyLogin.credential(), identity);
+      if (!currentAttempt()) return;
+      const current = account(credential, identity);
       const sameAccount =
-        changeAccount &&
-        nativeLogin?.credential().account.subject === previousSubject;
+        changeAccount && credential.account.subject === previousSubject;
       discardAccountSetup();
-    reads.current = current;
-    let checkedKey: string | undefined;
-    let checkedBackups: readonly string[] | undefined;
-    await setup.start(
-      [
-        checkAccount(
-          current,
-          (key) => {
-            checkedKey = key;
-            setLinked(key);
+      reads.current = current;
+      setSetupCredential(credential);
+      let checkedKey: string | undefined;
+      let checkedBackups: readonly string[] | undefined;
+      await setup.start(
+        [
+          checkAccount(
+            current,
+            (key) => {
+              checkedKey = key;
+              setLinked(key);
+            },
+            (list) => {
+              known.current = list;
+            },
+          ),
+          checkBackup(current, (keys) => {
+            checkedBackups = keys;
+            setBackups(keys);
+          }),
+          {
+            label: "Preparing your identity…",
+            run: async () => {
+              if (!checkedKey || !checkedBackups?.includes(checkedKey)) return;
+              void current.recovery.beginRecovery();
+              return { status: "paused", at: "key-restore" };
+            },
           },
-          (list) => {
-            known.current = list;
-          },
-        ),
-        checkBackup(current, (keys) => {
-          checkedBackups = keys;
-          setBackups(keys);
-        }),
-        {
-          label: "Preparing your identity…",
-          run: async () => {
-            if (!checkedKey || !checkedBackups?.includes(checkedKey)) return;
-            void current.recovery.beginRecovery();
-            return { status: "paused", at: "key-restore" };
-          },
-        },
-      ],
-      { status: "paused", at: "key-choice" },
-    );
+        ],
+        { status: "paused", at: "key-choice" },
+      );
 
       if (!currentAttempt()) return;
       if (request) {
@@ -552,7 +543,7 @@ export function Welcome({
   ];
   /** A retry after expiration reacquires the same account before uploading. */
   const backupKey = (initial: FirstRunAccount) => {
-    const original = login.credential().account;
+    const original = (setupCredential ?? login.credential()).account;
     let currentAccount = initial;
     let expired = false;
     return backUp(identity, {
@@ -569,6 +560,7 @@ export function Welcome({
               `Sign in as ${original.email} to back up this key.`,
             );
           }
+          setSetupCredential(credential);
           currentAccount = account(credential, identity);
           reads.current = currentAccount;
           expired = false;
@@ -594,11 +586,13 @@ export function Welcome({
     setFinding(undefined);
     setInviteCode("");
     setSwitchError(undefined);
+    setSetupCredential(undefined);
     setRequiresSignIn(false);
     setLinked(undefined);
     setOwned(undefined);
     setBackups(undefined);
     reads.current = undefined;
+    setSetupCredential(undefined);
     known.current = undefined;
     setup.reset();
     cancels.current++;
@@ -762,7 +756,7 @@ export function Welcome({
             requiresSignIn={requiresSignIn}
             nipFiCompatible={nipFiCompatible}
             signInOrigin={
-              nativeLogin
+              federatedIdentity
                 ? federatedIdentity?.snapshot().authority?.identityOrigin
                 : undefined
             }
@@ -824,7 +818,7 @@ export function Welcome({
       case "key-choice":
         return (
           <KeyChoice
-            email={auth.account?.email}
+            email={(setupCredential?.account ?? auth.account)?.email}
             onCreate={() => {
               void setup.start([
                 createKey(identity),
@@ -835,7 +829,7 @@ export function Welcome({
             }}
             onImport={() => pause("key-import")}
             onSwitchAccount={
-              nativeLogin ? () => void signIn(true) : backToLanding
+              federatedIdentity ? () => void signIn(true) : backToLanding
             }
           />
         );
@@ -843,7 +837,7 @@ export function Welcome({
         return linked ? (
           <>
             <WelcomeBack
-              email={auth.account?.email}
+              email={(setupCredential?.account ?? auth.account)?.email}
               npub={npubEncode(linked)}
               onRestore={
                 viewer === linked
@@ -857,7 +851,10 @@ export function Welcome({
               }
               onImport={() => pause("key-import")}
               onSwitchAccount={() => {
-                if (viewer !== linked) return backToLanding();
+                if (viewer !== linked)
+                  return federatedIdentity
+                    ? void signIn(true)
+                    : backToLanding();
                 void identity
                   .signOut({ wipe: false, removeAgents: false })
                   .catch(() =>
@@ -873,7 +870,7 @@ export function Welcome({
         return linked ? (
           <KeyRestore
             recovery={current.recovery}
-            email={auth.account?.email}
+            email={(setupCredential?.account ?? auth.account)?.email}
             expectedPubkey={linked}
             onBack={() => back("welcome-back", "restore")}
             onImport={() => pause("key-import")}
@@ -1116,7 +1113,10 @@ export function Welcome({
           <ProfileStep
             found={profileStep.found}
             read={profileStep.read}
-            defaultName={auth.account?.email.split("@")[0] ?? ""}
+            defaultName={
+              (setupCredential?.account ?? auth.account)?.email.split("@")[0] ??
+              ""
+            }
             onContinue={(next) => finishJoin(profileStep, next)}
           />
         ) : joinError ? (
@@ -1178,7 +1178,7 @@ export function Welcome({
           title="Couldn’t sign in"
           error={auth.error}
           onBack={backToLanding}
-          onRetry={nativeLogin ? () => void signIn() : undefined}
+          onRetry={federatedIdentity ? () => void signIn() : undefined}
         />
       ) : finding ? (
         <FindCommunity
@@ -1191,7 +1191,7 @@ export function Welcome({
             if (
               hostedByThisBuilderlab(found) &&
               (!found.requiresNipFi ||
-                (nativeLogin &&
+                (nativeBuilderlab() &&
                   federatedIdentity?.snapshot().authority &&
                   found.nipFiCompatible))
             )

@@ -1,5 +1,5 @@
-import { requiredFiDiscovery } from "../communities/discovery-fixture";
 // @vitest-environment jsdom
+import { requiredFiDiscovery } from "../communities/discovery-fixture";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -37,6 +37,7 @@ import { federatedFixture } from "../federated-identity/testing";
 import { ProfileStep } from "./ProfileStep";
 import { OnboardingScreen } from "./OnboardingScreen";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
+import { firstRunCredential } from "../../bundled/builderlab/oauth/first-run";
 import { BackupError, type BackupStatus } from "./backup";
 import {
   builderlabAccount,
@@ -81,10 +82,24 @@ const credential: Credential = {
 const welcomeHeading = () => screen.getByRole("heading", { name: "Buzz" });
 
 function nativeFirstRunReplies(
+  h: ReturnType<typeof federatedFixture>,
   account: () => { subject: string; email: string },
   linked: () => string | null,
 ) {
   vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "plugin_catalog")
+      return {
+        status: "ready",
+        catalog: {
+          plugins: [
+            {
+              source: "bundled",
+              manifest: { id: "block.builderlab" },
+              enabled: true,
+            },
+          ],
+        },
+      };
     if (command === "identity_restore") return null;
     if (command === "identity_legacy_available") return false;
     if (command === "nsec_backup_state")
@@ -110,6 +125,9 @@ function nativeFirstRunReplies(
     }
     throw new Error(`Unexpected native command ${command}`);
   });
+  h.request.mockImplementation((request) =>
+    invoke("federated_identity_request", { request }),
+  );
 }
 
 it.each([null, owned.pubkey])(
@@ -119,6 +137,7 @@ it.each([null, owned.pubkey])(
     vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
     const h = federatedFixture();
     nativeFirstRunReplies(
+      h,
       () => ({ subject: "account", email: "person@example.com" }),
       () => linked,
     );
@@ -139,14 +158,12 @@ it.each([null, owned.pubkey])(
         .click(await screen.findByRole("button", { name: SIGN_IN }));
       expect(
         await screen.findByRole("heading", {
-          name: linked ? "Welcome back" : "Set up your key",
+          name: linked ? "Continue with this key" : "Get started with Buzz",
         }),
       ).toBeVisible();
-      expect(
-        screen.getByText("Signed in as person@example.com."),
-      ).toBeVisible();
+      expect(screen.getByText("Signed in as person@example.com")).toBeVisible();
       if (linked) {
-        expect(screen.getByText(npubEncode(linked))).toBeVisible();
+        expect(screen.getByRole("button", { name: /Saved key/ })).toBeVisible();
         expect(
           screen.queryByRole("button", { name: "Create my key" }),
         ).toBeNull();
@@ -173,7 +190,7 @@ it.each([null, owned.pubkey])(
         .click(screen.getByRole("button", { name: "Back" }));
       expect(
         screen.getByRole("heading", {
-          name: linked ? "Welcome back" : "Set up your key",
+          name: linked ? "Continue with this key" : "Get started with Buzz",
         }),
       ).toBeVisible();
     } finally {
@@ -1424,7 +1441,27 @@ it.each([
     });
     const h = federatedFixture();
     const identity = createIdentity();
-    const connect = vi.fn();
+    const relayAnswers = vi.mocked(invoke).getMockImplementation();
+    if (!relayAnswers) throw new Error("Missing relay fixture");
+    vi.mocked(invoke).mockImplementation((command, args) =>
+      command === "plugin_catalog"
+        ? Promise.resolve({
+            status: "ready",
+            catalog: {
+              plugins: [
+                {
+                  source: "bundled",
+                  manifest: { id: "block.builderlab" },
+                  enabled: true,
+                },
+              ],
+            },
+          })
+        : relayAnswers(command, args),
+    );
+    const connect = vi.fn((signal: AbortSignal) =>
+      firstRunCredential(signal, h.service),
+    );
     render(
       <Welcome
         identity={identity}
@@ -1454,7 +1491,7 @@ it.each([
         ).toBeVisible();
         expect(screen.queryByRole("button", { name: SIGN_IN })).toBeNull();
         expect(
-          screen.queryByRole("button", { name: "I already have a key" }),
+          screen.queryByRole("button", { name: "Use an existing key" }),
         ).toBeNull();
       }
       expect(document.body).not.toHaveTextContent("untrusted.invalid");
@@ -1462,17 +1499,21 @@ it.each([
       expect(connect).not.toHaveBeenCalled();
       expect(identity.snapshot().status).toBe("missing");
       if (fi && compatible) {
+        const browser = deferred<void>();
         vi.mocked(h.service.signIn).mockImplementation(async () => {
           h.publish({ status: "signing-in" });
+          await browser.promise;
           return h.service.snapshot();
+        });
+        vi.mocked(h.service.cancelSignIn).mockImplementation(async () => {
+          h.publish({ status: "signed-out" });
+          browser.resolve();
         });
         const user = userEvent.setup();
         await user.click(screen.getByRole("button", { name: SIGN_IN }));
-        expect(h.service.signIn).toHaveBeenCalledOnce();
-        expect(connect).not.toHaveBeenCalled();
-        await user.click(
-          screen.getByRole("button", { name: "Cancel sign-in" }),
-        );
+        await waitFor(() => expect(h.service.signIn).toHaveBeenCalledOnce());
+        expect(connect).toHaveBeenCalledOnce();
+        await user.click(screen.getByRole("button", { name: "Other options" }));
         expect(h.service.cancelSignIn).toHaveBeenCalled();
       }
     } finally {
@@ -7055,6 +7096,7 @@ it.each(["cancel", "failure", "same-account", "different-account"])(
     const h = federatedFixture();
     let subject = "original";
     nativeFirstRunReplies(
+      h,
       () => ({ subject, email: `${subject}@example.com` }),
       () => (subject === "original" ? owned.pubkey : null),
     );
@@ -7072,7 +7114,7 @@ it.each(["cancel", "failure", "same-account", "different-account"])(
     const user = userEvent.setup();
     try {
       await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-      await screen.findByRole("heading", { name: "Welcome back" });
+      await screen.findByRole("heading", { name: "Continue with this key" });
       const before = h.service.snapshot();
       const gate = deferred<void>();
       vi.mocked(h.service.cancelSignIn).mockResolvedValue();
@@ -7100,14 +7142,16 @@ it.each(["cancel", "failure", "same-account", "different-account"])(
       await act(async () => gate.resolve());
       if (outcome === "different-account") {
         expect(
-          await screen.findByRole("heading", { name: "Set up your key" }),
+          await screen.findByRole("heading", { name: "Get started with Buzz" }),
         ).toBeVisible();
         expect(
-          screen.getByText("Signed in as replacement@example.com."),
+          screen.getByText("Signed in as replacement@example.com"),
         ).toBeVisible();
       } else if (outcome === "cancel") {
         expect(
-          await screen.findByRole("heading", { name: "Welcome back" }),
+          await screen.findByRole("heading", {
+            name: "Continue with this key",
+          }),
         ).toBeVisible();
         expect(h.service.snapshot()).toBe(before);
       } else {
@@ -7123,7 +7167,7 @@ it.each(["cancel", "failure", "same-account", "different-account"])(
         else expect(h.service.snapshot()).toBe(before);
         await user.click(screen.getByRole("button", { name: "Back" }));
         expect(
-          screen.getByRole("heading", { name: "Welcome back" }),
+          screen.getByRole("heading", { name: "Continue with this key" }),
         ).toBeVisible();
       }
       expect(h.service.signOut).not.toHaveBeenCalled();
@@ -7152,6 +7196,7 @@ it.each(["account-read-failure", "cancel-after-commit", "commit-after-cancel"])(
     let subject = "original";
     let refuse = false;
     nativeFirstRunReplies(
+      h,
       () => {
         if (refuse) throw new Error("Account read unavailable");
         return { subject, email: `${subject}@example.com` };
@@ -7173,7 +7218,7 @@ it.each(["account-read-failure", "cancel-after-commit", "commit-after-cancel"])(
     const exchange = deferred<void>();
     try {
       await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-      await screen.findByRole("heading", { name: "Welcome back" });
+      await screen.findByRole("heading", { name: "Continue with this key" });
       vi.mocked(h.service.cancelSignIn).mockResolvedValue();
       vi.mocked(h.service.signIn).mockImplementation(async () => {
         if (outcome === "commit-after-cancel") await exchange.promise;
@@ -7198,7 +7243,7 @@ it.each(["account-read-failure", "cancel-after-commit", "commit-after-cancel"])(
             screen.getByRole("button", { name: "Cancel sign-in" }),
           ).toBeDisabled();
           expect(
-            screen.queryByRole("heading", { name: "Welcome back" }),
+            screen.queryByRole("heading", { name: "Continue with this key" }),
           ).toBeNull();
         }
         await act(async () => exchange.resolve());
@@ -7214,10 +7259,10 @@ it.each(["account-read-failure", "cancel-after-commit", "commit-after-cancel"])(
       refuse = false;
       await user.click(screen.getByRole("button", { name: "Try again" }));
       expect(
-        await screen.findByRole("heading", { name: "Set up your key" }),
+        await screen.findByRole("heading", { name: "Get started with Buzz" }),
       ).toBeVisible();
       expect(
-        screen.getByText("Signed in as replacement@example.com."),
+        screen.getByText("Signed in as replacement@example.com"),
       ).toBeVisible();
       expect(h.service.signIn).toHaveBeenCalledTimes(2);
       expect(h.service.signOut).not.toHaveBeenCalled();
@@ -7235,6 +7280,7 @@ it("allows one cancellation per attempt and joins it before allowing another att
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const h = federatedFixture();
   nativeFirstRunReplies(
+    h,
     () => ({ subject: "original", email: "original@example.com" }),
     () => owned.pubkey,
   );
@@ -7256,7 +7302,7 @@ it("allows one cancellation per attempt and joins it before allowing another att
     cancelSecond = deferred<void>();
   try {
     await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-    await screen.findByRole("heading", { name: "Welcome back" });
+    await screen.findByRole("heading", { name: "Continue with this key" });
     vi.mocked(h.service.signIn)
       .mockImplementationOnce(async () => {
         await first.promise;
@@ -7282,7 +7328,7 @@ it("allows one cancellation per attempt and joins it before allowing another att
       screen.getByRole("button", { name: "Cancel sign-in" }),
     ).toBeDisabled();
     await act(async () => first.resolve());
-    await screen.findByRole("heading", { name: "Welcome back" });
+    await screen.findByRole("heading", { name: "Continue with this key" });
     await user.click(
       screen.getByRole("button", { name: "Use a different account" }),
     );
@@ -7293,7 +7339,9 @@ it("allows one cancellation per attempt and joins it before allowing another att
     expect(h.service.cancelSignIn).toHaveBeenCalledTimes(2);
     await act(async () => cancelSecond.resolve());
     await act(async () => second.resolve());
-    expect(screen.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Continue with this key" }),
+    ).toBeVisible();
     expect(h.service.signOut).not.toHaveBeenCalled();
   } finally {
     first.resolve();
@@ -7311,6 +7359,7 @@ it("finishes same-account checks before offering another replacement attempt", a
   const h = federatedFixture();
   let subject = "original";
   nativeFirstRunReplies(
+    h,
     () => ({ subject, email: `${subject}@example.com` }),
     () => (subject === "original" ? owned.pubkey : null),
   );
@@ -7338,7 +7387,7 @@ it("finishes same-account checks before offering another replacement attempt", a
   const user = userEvent.setup();
   try {
     await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-    await screen.findByRole("heading", { name: "Welcome back" });
+    await screen.findByRole("heading", { name: "Continue with this key" });
     vi.mocked(h.service.signIn).mockImplementation(async () => {
       h.publish({ status: "signed-in", revision: `${subject}-renewed` });
       return h.service.snapshot();
@@ -7370,14 +7419,75 @@ it("finishes same-account checks before offering another replacement attempt", a
     gated = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(
-      await screen.findByRole("heading", { name: "Set up your key" }),
+      await screen.findByRole("heading", { name: "Get started with Buzz" }),
     ).toBeVisible();
     expect(
-      screen.getByText("Signed in as replacement@example.com."),
+      screen.getByText("Signed in as replacement@example.com"),
     ).toBeVisible();
     expect(h.service.signOut).not.toHaveBeenCalled();
   } finally {
     read.resolve();
+    view.unmount();
+    identity.dispose();
+  }
+});
+
+it("FI account choice with the linked key already installed preserves main's device sign-out boundary", async () => {
+  const h = federatedFixture();
+  const checked = deferred<string | null>();
+  const linkedKey = vi.fn(() => checked.promise);
+  const signOut = vi.fn(async () => {});
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return null;
+    if (command === "identity_legacy_available") return false;
+    if (command === "identity_create") return owned.pubkey;
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const deviceSignOut = vi
+    .spyOn(identity, "signOut")
+    .mockImplementation(signOut);
+  const user = userEvent.setup();
+  const view = render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      federatedIdentity={h.service}
+      connect={async () => credential}
+      account={(value, id) => ({
+        ...linkedTo(owned.pubkey)(value, id),
+        linkedKey,
+      })}
+    >
+      <p>App open</p>
+    </Welcome>,
+  );
+  try {
+    await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+    await waitFor(() => expect(linkedKey).toHaveBeenCalledOnce());
+    // A native key installation finishes while the account check is pending.
+    await act(async () => {
+      await identity.create();
+      checked.resolve(owned.pubkey);
+    });
+    await screen.findByRole("heading", { name: "Continue with this key" });
+    await user.click(
+      screen.getByRole("button", { name: "Use a different account" }),
+    );
+    expect(deviceSignOut).toHaveBeenCalledExactlyOnceWith({
+      wipe: false,
+      removeAgents: false,
+    });
+    expect(h.service.signIn).not.toHaveBeenCalled();
+    expect(h.service.signOut).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Set me up" })).toBeNull();
+    expect(identity.snapshot()).toMatchObject({
+      status: "ready",
+      viewer: owned.pubkey,
+    });
+  } finally {
+    checked.resolve(owned.pubkey);
     view.unmount();
     identity.dispose();
   }

@@ -14,7 +14,7 @@ import {
 import { enteredRelayOrigin, relayAddress } from "../communities/destination";
 import type { FederatedIdentity } from "../federated-identity/service";
 import type { Host, HostResponse } from "../host/service";
-import type { BuilderlabSession } from "../../bundled/builderlab/session";
+import { readFederatedCredential } from "../../bundled/builderlab/oauth/first-run";
 import { BackupError, backUpWith } from "./backup";
 import type { BackupFailureKind } from "./backup-failure";
 import type { FirstRunAccountSeed } from "./first-run-seed";
@@ -351,38 +351,39 @@ export function federatedBuilderlabAccount(
   federated: Pick<FederatedIdentity, "snapshot" | "request">,
   identity: BackupIdentity,
 ): FirstRunAccount {
+  let currentCredential = credential;
+  const current = async () => {
+    const session = federated.snapshot();
+    if (session.status !== "signed-in" || !session.authority)
+      throw new Error(SIGNED_OUT);
+    if (session.revision !== currentCredential.value) {
+      const next = await readFederatedCredential(federated);
+      if (next.account.subject !== credential.account.subject)
+        throw new DOMException("Builderlab account changed.", "AbortError");
+      currentCredential = next;
+    }
+    return currentCredential;
+  };
   return kgooseAccount(
-    (path, headers, body) => {
+    async (path, headers, body) => {
+      const credential = await current();
       const session = federated.snapshot();
       if (
         session.status !== "signed-in" ||
-        session.revision !== credential.value ||
-        !session.authority
+        !session.authority ||
+        session.revision !== credential.value
       )
-        return Promise.reject(new Error(SIGNED_OUT));
-      return federated.request({
+        throw new Error(SIGNED_OUT);
+      const response = await federated.request({
         path: `${session.authority.apiBasePath}${path.slice(1)}`,
         method: "POST",
         headers,
         body,
       });
+      await current();
+      return response;
     },
-    { federated: credential.value },
-    identity,
-  );
-}
-
-/** Same account contract through the shared native session. */
-export function builderlabSessionAccount(
-  session: BuilderlabSession,
-  identity: BackupIdentity,
-): FirstRunAccount {
-  const credential = session.credential();
-  return kgooseAccount(
-    (path, headers, body) => session.request(credential, {
-      path, method: "POST", headers, body,
-    }),
-    { federated },
+    async () => ({ federated: (await current()).value }),
     identity,
   );
 }

@@ -50,7 +50,7 @@ export function ConnectChoice({
             ? "This community requires account sign-in. Ask its administrator for a supported Buzz build configured for this host and compatible community settings. Your key is kept."
             : requiresSignIn
               ? "This community requires account sign-in, including when you use an existing key. Buzz keeps that key."
-              : "Buzz relies on a key for your identity."}
+              : "Sign in to your Builderlab account with email, or use an existing private key to continue."}
         </p>
         {signInOrigin && !unsupportedSignIn && (
           <p className="mt-2 break-all text-body text-subtle">
@@ -71,14 +71,14 @@ export function ConnectChoice({
         </span>
       </div>
       {!unsupportedSignIn && (
-      <div className="flex flex-col gap-2">
-        <Button variant="prominent" size="lg" onClick={onConnect}>
-          Sign in with Builderlab
-        </Button>
-        <Button size="lg" data-return-focus="import" onClick={onImport}>
-          Use an existing key
-        </Button>
-      </div>
+        <div className="flex flex-col gap-2">
+          <Button variant="prominent" size="lg" onClick={onConnect}>
+            Sign in with Builderlab
+          </Button>
+          <Button size="lg" data-return-focus="import" onClick={onImport}>
+            Use an existing key
+          </Button>
+        </div>
       )}
       <div data-onboarding-actions="">
         <OnboardingBack onClick={onBack} />

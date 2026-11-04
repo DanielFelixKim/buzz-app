@@ -3,7 +3,9 @@ import { BACKUP_FAILURES, type BackupFailureKind } from "./backup-failure";
 import type { Identity } from "./service";
 
 type Send = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
-type BackupCredential = string | Readonly<{ credential: string } | { federated: string }>;
+type BackupCredential =
+  | string
+  | Readonly<{ credential: string } | { federated: string }>;
 
 // Shared by both login owners so re-enabling a plugin cannot reuse an old revision.
 let generation = 0;
@@ -166,7 +168,9 @@ function failure(status: BackupStatus): BackupFailureKind | undefined {
 export async function backUpWith(
   identity: Pick<Identity, "backup" | "setBackupChoice">,
   pubkey: string,
-  credential: BackupCredential | (() => BackupCredential),
+  credential:
+    | BackupCredential
+    | (() => BackupCredential | Promise<BackupCredential>),
   {
     timeout = 60_000,
     after = timer,
@@ -191,7 +195,8 @@ export async function backUpWith(
   let supplied: BackupCredential | undefined;
   try {
     // Native revisions can change while readiness and consent are awaited.
-    supplied = typeof credential === "function" ? credential() : credential;
+    supplied =
+      typeof credential === "function" ? await credential() : credential;
     const ticket = await (typeof supplied === "string"
       ? handoffBackupSession("builderlab", supplied, send)
       : "federated" in supplied
@@ -219,7 +224,10 @@ export async function backUpWith(
     settled.abort();
     // After a timeout this also retires the pass still running. Native
     // refuses an FI revision that is no longer current.
-    await (completed && supplied && typeof supplied !== "string" && "federated" in supplied
+    await (completed &&
+    supplied &&
+    typeof supplied !== "string" &&
+    "federated" in supplied
       ? handoffFederatedBackupSession(supplied.federated, send)
       : handoffBackupSession("builderlab", null, send));
   }

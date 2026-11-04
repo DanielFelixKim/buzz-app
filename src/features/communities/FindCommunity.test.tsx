@@ -1,5 +1,5 @@
-import { requiredFiDiscovery } from "./discovery-fixture";
 // @vitest-environment jsdom
+import { requiredFiDiscovery } from "./discovery-fixture";
 import "@testing-library/jest-dom/vitest";
 import {
   act,

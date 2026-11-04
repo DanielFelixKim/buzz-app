@@ -25,7 +25,7 @@ is added, and a real chooser/cancel run is still a readiness gate.
 First-run account requests obtain the latest credential for the same account
 subject on each request and reject a different subject, including a response
 arriving after an account change. Backup uses the latest public native revision.
-Registration retirement permits one re-registration before dispatch; it does not
+The existing FI service owns registration; retirement permits one re-registration before dispatch; it does not
 replay arbitrary failures or change the request's original session revision.
 
 ## Producer prerequisite and rollout
@@ -88,10 +88,11 @@ native; requests carry only the public session revision. Native validation still
 checks the enabled artifact, authority, operation and current session. A conflicting
 binding stops before a challenge is requested; no automatic unlink is added.
 
-**Draft integration gate:** `App.tsx` must pass
-`federatedIdentity={services.federatedIdentity}` to `Welcome`. That FOUNDATION edit
-needs explicit human guidance under `AGENTS.md`; until supplied, the app's first-run
-FI path is not wired. Component tests alone do not establish packaged support.
+**FOUNDATION boundary:** current main already supplies Welcome with the bundled
+`services.firstRunFederatedIdentity` owner. This PR preserves that composition
+and makes no `App.tsx` changes. Any further FOUNDATION wiring change still needs
+explicit human guidance under `AGENTS.md`. Component tests alone do not establish
+packaged support.
 
 ## Configuration and artifacts
 

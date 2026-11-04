@@ -140,11 +140,7 @@ async function federatedCredential(
       throw new Error(recoveryMessage("sign-in-canceled"));
     if (session.status !== "signed-in")
       throw new Error(recoveryMessage(session.failure ?? ""));
-    const account = await federatedAccount(identity).catch(() => undefined);
-    signal.throwIfAborted();
-    if (!account || identity.snapshot().revision !== session.revision)
-      throw new Error("Could not load your Builderlab account. Try again.");
-    return Object.freeze({ value: session.revision, account });
+    return await readFederatedCredential(identity, signal, session.revision);
   } catch (error) {
     if (signal.aborted) throw new Error("Sign-in canceled.");
     throw error instanceof Error
@@ -154,4 +150,28 @@ async function federatedCredential(
     unsubscribe();
     signal.removeEventListener("abort", cancel);
   }
+}
+
+/** Read the current native account without starting another browser sign-in. */
+export async function readFederatedCredential(
+  identity: Pick<FirstRunIdentity, "snapshot" | "request">,
+  signal?: AbortSignal,
+  expectedRevision?: string,
+): Promise<Credential> {
+  signal?.throwIfAborted();
+  const session = identity.snapshot();
+  if (session.status !== "signed-in")
+    throw new Error("Sign in to Builderlab first.");
+  if (expectedRevision !== undefined && session.revision !== expectedRevision)
+    throw new Error("Could not load your Builderlab account. Try again.");
+  const account = await federatedAccount(identity).catch(() => undefined);
+  signal?.throwIfAborted();
+  const after = identity.snapshot();
+  if (
+    !account ||
+    after.status !== "signed-in" ||
+    after.revision !== session.revision
+  )
+    throw new Error("Could not load your Builderlab account. Try again.");
+  return Object.freeze({ value: session.revision, account });
 }

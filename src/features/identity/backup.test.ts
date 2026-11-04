@@ -292,7 +292,7 @@ it("waits for a native first-run backup using a public revision rather than a re
     host.send.mock.calls.filter(
       ([command]) => command === "nsec_backup_session",
     ),
-  ).toHaveLength(1);
+  ).toHaveLength(2);
 });
 
 it("turns consent on, hands the credential over and waits for the pass its ticket names", async () => {

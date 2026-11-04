@@ -1,8 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
-import { createNativeSession } from "../../bundled/builderlab/session";
-import { federatedFixture } from "../federated-identity/testing";
+import { readFederatedCredential } from "../../bundled/builderlab/oauth/first-run";
 import type { HostRequest } from "../host/service";
 import { BackupError, type BackupStatus, createBackupStatus } from "./backup";
 import { BACKUP_FAILURES } from "./backup-failure";
@@ -11,7 +10,6 @@ import {
   backupOfferedFor,
   builderlabAccount,
   federatedBuilderlabAccount,
-  builderlabSessionAccount,
   seededAccount,
 } from "./builderlab-account";
 
@@ -109,17 +107,16 @@ async function nativeAccountSession() {
         : { identity: null },
     ),
   );
-  const session = createNativeSession(h.service);
-  await session.ensureSignedIn(new AbortController().signal);
+  await h.service.signIn();
+  const initial = await readFederatedCredential(h.service);
   return {
     h,
-    session,
+    account: (identity: BackupIdentity) =>
+      federatedBuilderlabAccount(initial, h.service, identity),
+    session: { dispose() {} },
     async replace(nextSubject: string, revision: string) {
       subject = nextSubject;
       h.publish({ status: "signed-in", revision });
-      await vi.waitFor(() =>
-        expect(session.snapshot().status).toBe("signed-in"),
-      );
     },
   };
 }
@@ -128,7 +125,7 @@ it("first-run requests follow same-account renewal but refuse a different accoun
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const native = await nativeAccountSession();
   try {
-    const account = builderlabSessionAccount(native.session, untouched);
+    const account = native.account(untouched);
     expect(await account.linkedKey()).toBeNull();
     await native.replace("original", "renewed-session");
     expect(await account.linkedKey()).toBeNull();
@@ -137,7 +134,8 @@ it("first-run requests follow same-account renewal but refuse a different accoun
     await expect(account.linkedKey()).rejects.toMatchObject({
       name: "AbortError",
     });
-    expect(native.h.request).toHaveBeenCalledTimes(before);
+    expect(native.h.request).toHaveBeenCalledTimes(before + 1);
+    expect(native.h.request.mock.calls.at(-1)?.[0].path).toMatch(/auth\/me$/);
   } finally {
     native.session.dispose();
   }
@@ -146,7 +144,7 @@ it("first-run requests follow same-account renewal but refuse a different accoun
 it("refuses a first-run response after the account has been retired", async () => {
   const native = await nativeAccountSession();
   try {
-    const account = builderlabSessionAccount(native.session, untouched);
+    const account = native.account(untouched);
     let finish!: (response: ReturnType<typeof answer>) => void;
     native.h.request.mockImplementationOnce(
       () =>
@@ -155,6 +153,7 @@ it("refuses a first-run response after the account has been retired", async () =
         }),
     );
     const result = account.linkedKey();
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     native.h.publish({ status: "signed-out", revision: "retired" });
     finish(answer(200, { identity: { pubkey_hex: pubkey } }));
     await expect(result).rejects.toThrow();
@@ -1146,10 +1145,7 @@ describe("backup", () => {
     const native = host(status(1, 0));
     vi.mocked(invoke).mockResolvedValue(1);
     try {
-      const account = builderlabSessionAccount(
-        nativeSession.session,
-        native.identity,
-      );
+      const account = nativeSession.account(native.identity);
       await nativeSession.replace("original", "renewed-native-revision");
       const done = account.backUp(pubkey);
       await vi.waitFor(() =>
@@ -1163,7 +1159,7 @@ describe("backup", () => {
       );
       native.watchers[0]?.onmessage(status(2, 1, true, "complete"));
       await done;
-      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(invoke).toHaveBeenCalledTimes(2);
     } finally {
       nativeSession.session.dispose();
     }
@@ -1199,10 +1195,7 @@ describe("backup", () => {
         });
       vi.mocked(invoke).mockResolvedValue(1);
       try {
-        const account = builderlabSessionAccount(
-          owner.session,
-          native.identity,
-        );
+        const account = owner.account(native.identity);
         const done = account.backUp(pubkey);
         void done.catch(() => {});
         await ready;
@@ -1473,18 +1466,24 @@ describe("federatedBuilderlabAccount", () => {
     ]);
   });
 
-  it("refuses without a request once the session it signed in with has changed", async () => {
+  it("refuses an account change before sending account operations", async () => {
     const fi = await signedIn();
     const account = federatedBuilderlabAccount(
       fi.credential,
       fi.service,
       untouched,
     );
+    fi.request.mockResolvedValueOnce(
+      answer(200, { subject: "different", email: "different@example.com" }),
+    );
     await fi.service.signIn();
-    await expect(account.linkedKey()).rejects.toThrow(signedOut);
+    await expect(account.linkedKey()).rejects.toThrow(
+      "Builderlab account changed",
+    );
     fi.publish({ status: "signed-out" });
     await expect(account.ownedCommunities()).rejects.toThrow(signedOut);
-    expect(fi.request).not.toHaveBeenCalled();
+    expect(fi.request).toHaveBeenCalledOnce();
+    expect(fi.request.mock.calls[0]?.[0].path).toMatch(/auth\/me$/);
   });
 
   it("refuses without a request while the session it signed in with is unavailable", async () => {
