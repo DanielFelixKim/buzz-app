@@ -275,8 +275,9 @@ immutable native stream events provide preceding evidence while writes are
 pending. Claude's hook timer counts sleep (inferred from its runtime's source, not
 checked live) and most events fail open when it ends, so protected hooks register
 a 7-day CLI timeout; a native watchdog, counting awake time, kills a worker whose
-hook callback stalls for 350 s. A pending review can still fail open across a sleep
-longer than 7 days. Hook-registration errors and Stop terminate the worker. Workspace
+hook callback stalls for 350 s. Buzz first ends a hook review still running after
+330 s, cancelling its checks, and reports that the security review did not finish
+in time. A pending review can still fail open across a sleep longer than 7 days. Hook-registration errors and Stop terminate the worker. Workspace
 instruction loading, attachments, native subagent delegation, background tasks,
 experimental context clearing and fallback rewrites are disabled. Compaction and
 session reset/fork are refused; protected resumes require the same native policy

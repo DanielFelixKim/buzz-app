@@ -110,6 +110,8 @@ const PROTECTED_HOOK_TIMEOUT = 604_800;
 const protectedHook = (id: string) => [
   { hookCallbackIds: [id], timeout: PROTECTED_HOOK_TIMEOUT },
 ];
+/** One protected hook's review, below the native watchdog's 350 s. */
+const REVIEW_HOOK_MS = 330_000;
 const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
  * idle, signed in as `claude auth login` left it, and never as part of a
@@ -839,6 +841,18 @@ export class ClaudeProcess {
         "security-session",
       ].includes(String(request.callback_id))
     ) {
+      // Ends a stalled review with its reason before the native watchdog
+      // kills the worker without one.
+      const late = new AbortController();
+      const deadline = setTimeout(
+        () =>
+          late.abort(new Error("The security review did not finish in time")),
+        REVIEW_HOOK_MS,
+      );
+      const review = AbortSignal.any([
+        this.protectionLifetime.signal,
+        late.signal,
+      ]);
       try {
         const input = request.input as Message;
         if (
@@ -890,7 +904,7 @@ export class ClaudeProcess {
         if (typeof input.transcript_path !== "string")
           throw new Error("Claude omitted the protected conversation");
         const history = await this.protection
-          .history(input.transcript_path, this.protectionLifetime.signal)
+          .history(input.transcript_path, review)
           .catch((error) => {
             if (
               input.hook_event_name === "UserPromptSubmit" &&
@@ -947,10 +961,7 @@ export class ClaudeProcess {
         // first denial cancels the rest before another can start.
         const session = this.sessionId ?? "initial";
         const denied = new AbortController();
-        const signal = AbortSignal.any([
-          this.protectionLifetime.signal,
-          denied.signal,
-        ]);
+        const signal = AbortSignal.any([review, denied.signal]);
         const { gate } = this.protection;
         const slot = limited(4);
         await Promise.all(
@@ -979,11 +990,14 @@ export class ClaudeProcess {
         );
       } catch (error) {
         this.protectionLifetime.abort();
+        const reason = late.signal.aborted ? late.signal.reason : error;
         this.lastError =
-          error instanceof Error ? error.message : "Security review failed";
+          reason instanceof Error ? reason.message : "Security review failed";
         await this.process.kill();
         await this.exited;
         return;
+      } finally {
+        clearTimeout(deadline);
       }
     } else if (request.subtype === "can_use_tool")
       response = success({
