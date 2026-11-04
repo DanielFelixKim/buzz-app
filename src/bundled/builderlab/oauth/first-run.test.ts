@@ -428,3 +428,71 @@ describe("an FI build", () => {
     expect(fi.request).not.toHaveBeenCalled();
   });
 });
+
+it("saves first run's browser sign-in as the plugin's session, now and after a restart", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  let saved: string | null = null;
+  const me = JSON.stringify({ subject: "user", email: "a@example.com" });
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    const input = args as Record<string, unknown> | undefined;
+    switch (command) {
+      case "plugin_catalog":
+        return catalog(true);
+      case "oauth_callback_begin":
+        return { id: "a", callbackUrl: "http://127.0.0.1:1/cb" };
+      case "oauth_callback_wait":
+        return { parameters: [["code", "code"]] };
+      case "builderlab_session_save":
+        saved = input?.value as string;
+        return undefined;
+      case "builderlab_session_load":
+        return saved;
+      case "plugin_host_request": {
+        const { url } = (input as { request: { url: string } }).request;
+        return url.endsWith("/exchange")
+          ? { status: 200, headers: {}, body: '{"session_credential":"token"}' }
+          : { status: 200, headers: {}, body: me };
+      }
+      default:
+        return undefined;
+    }
+  });
+  const { createOAuthSession } = await import("./session");
+  const { onCredentialSaved, restoredCredential, savedCredential } =
+    await import("./browser");
+  const plugin = () => {
+    const acquire = vi.fn(async () => {
+      throw new Error("asked again");
+    });
+    const session = createOAuthSession(acquire, undefined, bundledHost, {
+      restore: (signal) => restoredCredential(bundledHost, signal),
+      save: (credential) => savedCredential.save(credential.value),
+      clear: () => savedCredential.clear(),
+      watch: onCredentialSaved,
+    });
+    return { session, acquire };
+  };
+  // The plugin is already running, signed out, while first run signs in.
+  const running = plugin();
+  await vi.waitFor(() =>
+    expect(running.session.snapshot().status).toBe("signed-out"),
+  );
+  const credential = await firstRunCredential(new AbortController().signal);
+  expect(credential.value).toBe("token");
+  expect(saved).toBe("token");
+  await vi.waitFor(() =>
+    expect(running.session.snapshot().status).toBe("signed-in"),
+  );
+  running.session.dispose();
+  // A restart: a new plugin session restores it without asking.
+  const restarted = plugin();
+  await vi.waitFor(() =>
+    expect(restarted.session.snapshot()).toMatchObject({
+      status: "signed-in",
+      account: { subject: "user" },
+    }),
+  );
+  expect(restarted.session.credential().value).toBe("token");
+  expect(running.acquire).not.toHaveBeenCalled();
+  expect(restarted.acquire).not.toHaveBeenCalled();
+});

@@ -20,9 +20,11 @@ With only the built-in sign-in server (see
 [configuration](configuration.md#federated-identity-build-input)), each
 Builderlab sign-in first sends an uncredentialed `GET {adapterBase}/v1/session`.
 A 404 means the server has no NIP-FI sign-in, so **Sign in with Builderlab** is
-the browser sign-in above, whose credential the plugin keeps in the system
-keychain across restarts (deleted on sign-out or when Builderlab rejects it at
-launch). Any other answer means NIP-FI sign-in, as below; a network error or
+the browser sign-in above. First run saves its credential in the same system
+keychain item the plugin restores, so the plugin is signed in at once and after
+a restart (deleted on sign-out or when Builderlab rejects it at launch).
+Builderlab Decisions is offered only while that browser sign-in is in use;
+native sends no NIP-FI session to it, as in builds that add a server. Any other answer means NIP-FI sign-in, as below; a network error or
 5xx shows the retryable sign-in error and never falls back to the browser. The
 plugin uses the server's native session whenever one exists, such as after a
 community that requires NIP-FI asked for sign-in, and the browser credential

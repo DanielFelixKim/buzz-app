@@ -6,7 +6,12 @@ import type { Host } from "../../../features/host/service";
 import type { StorageResult } from "../../../plugins/types";
 import manifest from "../manifest.json";
 import { autoBuilderlab, federatedAccount, offeredSignIn } from "../session";
-import { browserCredential, oauthTarget, type Credential } from "./browser";
+import {
+  browserCredential,
+  oauthTarget,
+  savedCredential,
+  type Credential,
+} from "./browser";
 
 /**
  * First launch runs before this plugin can share its Settings session, so the
@@ -50,6 +55,7 @@ export type FirstRunIdentity = Pick<
 export async function firstRunCredential(
   signal: AbortSignal,
   federated?: FirstRunIdentity,
+  save: (value: string) => Promise<void> = savedCredential.save,
 ): Promise<Credential> {
   const result = await invoke<StorageResult>("plugin_catalog").catch(() => {
     throw new Error("Could not complete Builderlab sign-in. Try again.");
@@ -78,7 +84,12 @@ export async function firstRunCredential(
         }),
       )) === "browser");
   signal.throwIfAborted();
-  if (browser) return browserCredential(bundledHost, signal);
+  if (browser) {
+    const credential = await browserCredential(bundledHost, signal);
+    // The plugin restores it at launch and, if running, now: one sign-in.
+    await save(credential.value).catch(() => {});
+    return credential;
+  }
   const credential = await federatedCredential(federated, signal);
   federatedCredentials.add(credential);
   return credential;

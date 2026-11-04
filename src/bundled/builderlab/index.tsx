@@ -10,6 +10,7 @@ import {
   browserCredential,
   browserLoginAvailable,
   oauthTarget,
+  onCredentialSaved,
   restoredCredential,
   savedCredential,
 } from "./oauth/browser";
@@ -91,6 +92,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 restore: (signal) => restoredCredential(ctx.host, signal),
                 save: (credential) => savedCredential.save(credential.value),
                 clear: () => savedCredential.clear(),
+                watch: onCredentialSaved,
               }
             : undefined,
         );

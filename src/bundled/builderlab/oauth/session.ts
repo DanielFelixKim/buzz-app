@@ -14,6 +14,8 @@ export type Persistence = Readonly<{
   restore(signal: AbortSignal): Promise<Credential | undefined>;
   save(credential: Credential): Promise<void>;
   clear(): Promise<void>;
+  /** Calls its listener when a credential is saved elsewhere in the app. */
+  watch?(listener: () => void): () => void;
 }>;
 
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
@@ -90,6 +92,11 @@ export function createOAuthSession(
     }
   };
   if (persistence) void run(persistence.restore, true);
+  // First run signs in before this session can share it: restore what it saved.
+  const unwatch = persistence?.watch?.(() => {
+    if (!disposed && !credential && !attempt)
+      void run(persistence.restore, true);
+  });
   return {
     snapshot: () => state,
     subscribe(listener: () => void) {
@@ -157,6 +164,7 @@ export function createOAuthSession(
     },
     dispose() {
       disposed = true;
+      unwatch?.();
       reset();
       listeners.clear();
     },

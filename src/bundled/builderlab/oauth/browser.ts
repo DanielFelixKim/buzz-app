@@ -196,11 +196,23 @@ export type SavedCredential = {
   save(value: string): Promise<void>;
   clear(): Promise<void>;
 };
+const saves = new Set<() => void>();
 export const savedCredential: SavedCredential = {
   load: () => invoke("builderlab_session_load"),
-  save: (value) => invoke("builderlab_session_save", { value }),
+  save: async (value) => {
+    await invoke("builderlab_session_save", { value });
+    for (const listener of [...saves]) listener();
+  },
   clear: () => invoke("builderlab_session_clear"),
 };
+/** Calls `listener` after each save in this app, such as first run's
+ * sign-in, so a running session can restore it. */
+export function onCredentialSaved(listener: () => void) {
+  saves.add(listener);
+  return () => {
+    saves.delete(listener);
+  };
+}
 
 /**
  * The saved credential with its account from `GET v1/auth/me`, or undefined
