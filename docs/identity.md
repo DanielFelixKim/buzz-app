@@ -612,6 +612,11 @@ command permission is not proof of a human gesture.
 
 ## Sign out of Buzz
 
+Settings → Buzz → Identity → **Restore a backed-up key**, shown wherever the
+Key backup row is, opens the same dialog: after signing out, first run's Welcome
+back offers the account's backups (see Restore above), and choosing a key other
+than the linked one relinks it.
+
 Settings → Buzz → Identity → **Sign out of Buzz** removes the private key from this
 device only; the npub and its history stay on relays. The dialog presents two
 layers: the key always goes, and settings, agents and other Buzz data stay unless

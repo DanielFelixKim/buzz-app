@@ -54,12 +54,14 @@ function backupSentence(status: BackupStatus) {
  * Read-only until the consent wording is signed off. Hidden wherever first run
  * would not offer backup, by the same rule.
  */
-function BackupRow({ backup }: { backup: Identity["backup"] }) {
+function BackupRow({
+  backup,
+  offered,
+}: {
+  backup: Identity["backup"];
+  offered: boolean;
+}) {
   const status = useSyncExternalStore(backup.subscribe, backup.snapshot);
-  const [offered, setOffered] = useState(false);
-  useEffect(() => {
-    void backupOfferedFor(backup).then(setOffered);
-  }, [backup]);
   if (!offered || !status) return null;
   return (
     <PreferenceRow
@@ -79,6 +81,10 @@ export function IdentitySettings({
   federatedIdentity?: FederatedIdentity | undefined;
 }) {
   const [signingOut, setSigningOut] = useState(false);
+  const [offered, setOffered] = useState(false);
+  useEffect(() => {
+    if (identity) void backupOfferedFor(identity.backup).then(setOffered);
+  }, [identity]);
   const [copyStatus, setCopyStatus] = useState<{
     message: string;
     failed: boolean;
@@ -151,7 +157,18 @@ export function IdentitySettings({
                 {!signingOut && <PrivateKey identity={identity} />}
               </SettingsGroup>
               <SettingsGroup>
-                <BackupRow backup={identity.backup} />
+                <BackupRow backup={identity.backup} offered={offered} />
+                {offered && (
+                  <PreferenceRow
+                    title="Restore a backed-up key"
+                    subtitle="Replace the key on this device with one backed up to your Builderlab account. Buzz signs you out, then offers your backups when you sign back in."
+                    trailing={
+                      <Button type="button" onClick={() => setSigningOut(true)}>
+                        Restore a backed-up key
+                      </Button>
+                    }
+                  />
+                )}
                 <PreferenceRow
                   title="Sign out of Buzz"
                   subtitle="Remove your private key from this device. Also signs you out of your organization and ends Builderlab and hosted community logins."

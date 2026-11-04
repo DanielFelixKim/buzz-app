@@ -356,3 +356,25 @@ it("follows the status store as it publishes a higher seq", async () => {
   expect(within(row).queryByRole("button")).toBeNull();
   expect(within(row).queryByRole("switch")).toBeNull();
 });
+
+it("offers restoring a backed-up key through sign-out wherever first run offers backup", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "complete" }));
+  const identity = {
+    ...host.identity,
+    wipeRefusal: vi.fn(async () => null),
+  } as Identity;
+  render(<IdentitySettings viewer={viewer} identity={identity} />);
+  await host.settled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Restore a backed-up key" }),
+  );
+  expect(
+    screen.getByRole("alertdialog", { name: "Sign out of Buzz?" }),
+  ).toBeVisible();
+  cleanup();
+  await renderBackup(at(1, { status: "complete" }, false)).settled();
+  expect(
+    screen.queryByRole("button", { name: "Restore a backed-up key" }),
+  ).toBeNull();
+});
