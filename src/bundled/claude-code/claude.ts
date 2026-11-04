@@ -964,8 +964,13 @@ export class ClaudeProcess {
         const signal = AbortSignal.any([review, denied.signal]);
         const { gate } = this.protection;
         const slot = limited(4);
+        // A stream event repeats its transcript row once that row is written,
+        // and identical sources are identical checks.
+        const unique = new Map(
+          sources.map((source) => [JSON.stringify(source), source]),
+        );
         await Promise.all(
-          sources.map((source) =>
+          [...unique.values()].map((source) =>
             slot(async () => {
               signal.throwIfAborted();
               try {

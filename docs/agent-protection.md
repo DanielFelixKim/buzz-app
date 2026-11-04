@@ -277,9 +277,11 @@ checked live) and most events fail open when it ends, so protected hooks registe
 a 7-day CLI timeout; a native watchdog, counting awake time, kills a worker whose
 hook callback stalls for 350 s. Buzz first ends a hook review still running after
 330 s, cancelling its checks, and reports that the security review did not finish
-in time. A pending review can still fail open across a sleep longer than 7 days. Hook-registration errors and Stop terminate the worker. Workspace
-instruction loading, attachments, native subagent delegation, background tasks,
-experimental context clearing and fallback rewrites are disabled. Compaction and
+in time. A pending review can still fail open across a sleep longer than 7 days.
+Hook-registration errors and Stop terminate the worker. A stream event and its
+later transcript row are one source, checked once. Workspace instruction loading,
+attachments, native subagent delegation, background tasks, experimental context
+clearing and fallback rewrites are disabled. Compaction and
 session reset/fork are refused; protected resumes require the same native policy
 state key and readable prior transcript. Start a new conversation when this
 bounded path cannot continue. Do not describe this evidence as a lossless active

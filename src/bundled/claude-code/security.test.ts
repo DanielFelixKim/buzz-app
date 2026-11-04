@@ -497,6 +497,56 @@ it("settles a protected turn its owner stopped as stopped, not failed", async ()
   await expect(sent).resolves.toEqual({ ok: true, stopped: true });
 });
 
+it("checks a prompt once though its transcript rows and stream event repeat it", async () => {
+  const f = fixture();
+  const prompt = { role: "user", content: "authorized task" };
+  Object.assign(f.protection, {
+    history: async () => [
+      { type: "user", uuid: "row", message: prompt },
+      {
+        type: "queue-operation",
+        operation: "enqueue",
+        sessionId: "native",
+        content: prompt.content,
+      },
+    ],
+  });
+  const process = await ClaudeProcess.start(f.spawn, f.launch);
+  const worker = f.processes[0];
+  if (!worker) throw new Error("Claude did not start");
+  worker.emit({ type: "user", session_id: "native", message: prompt });
+  worker.emit({
+    type: "control_request",
+    request_id: "incoming-review",
+    request: {
+      subtype: "hook_callback",
+      callback_id: "security-incoming",
+      input: {
+        session_id: "native",
+        transcript_path: "/native/transcript",
+        hook_event_name: "PostToolUse",
+        tool_response: { stdout: "output" },
+      },
+    },
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(worker.received.some((m) => m.type === "control_response")).toBe(
+        true,
+      ),
+    );
+    const messages = f.check.mock.calls.filter(
+      ([action]) =>
+        (action.content as { source?: string }).source === "message",
+    );
+    expect(messages.map(([action]) => action.content)).toEqual([
+      { source: "message", value: prompt },
+    ]);
+  } finally {
+    await process.kill();
+  }
+});
+
 it("checks a long history four at a time and a denial cancels the rest", async () => {
   const f = fixture();
   Object.assign(f.protection, {
