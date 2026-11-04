@@ -75,6 +75,7 @@ export function MentionPicker({
     search,
     lifetime,
     open && !disabled,
+    !audience,
   );
   const {
     profiles,
@@ -296,6 +297,7 @@ export function MentionPicker({
               variant="capsule"
               inputRef={searchInput}
               label={
+                !audience &&
                 allowsOutsideMentions(channel, draftRoster, inviteAgents)
                   ? "Search community people and agents"
                   : draftRoster
