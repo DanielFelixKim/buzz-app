@@ -176,9 +176,12 @@ describe("harnessKit.conversation", () => {
       await kit.conversation(delivery({ type: "mention", event }), "thread"),
     ).toBeUndefined();
     const workflow = message("3", "@Ampy go", {
+      pubkey: mallory,
       tags: [
         ["h", channel],
-        ["buzz:workflow", "w"],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+        ["buzz:workflow-mention", self],
       ],
     });
     expect(
