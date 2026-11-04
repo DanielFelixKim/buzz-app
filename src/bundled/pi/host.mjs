@@ -1495,9 +1495,18 @@ export function serve({
     const { harness } = opened;
     const block = opened.route?.kind !== "external";
     const doc = (await harness.snapshot(Workforce, context)) ?? {};
-    const reset = key && !manual && doc.resets?.[key];
-    // A reset since it was recorded makes it the reset's first request.
-    let record = block && !reset && doc.requests?.[request];
+    let reset = key && !manual && doc.resets?.[key];
+    let record = block && doc.requests?.[request];
+    if (record && reset) {
+      // A reset since it was recorded makes it the reset's first request,
+      // unless Pi has it already: its run keeps its binding, and the reset
+      // waits for the next.
+      if (
+        await opened.storage.submissionByRequest(conversation, request, context)
+      )
+        reset = undefined;
+      else record = undefined;
+    }
     if (block && !record) {
       // A model Block mode refuses binds nothing; an owner's compaction
       // keeps the model its conversation has.
@@ -1566,7 +1575,8 @@ export function serve({
         const record = doc.requests[request];
         if (
           record &&
-          (record.manual ||
+          (!record.conversation ||
+            record.manual ||
             (await tx.submissionByRequest(record.conversation, request)))
         )
           delete doc.requests[request];
@@ -1932,7 +1942,13 @@ export function serve({
             ? () => call("prompt", { agent, request: turn.request })
             : undefined,
         );
-        if (!submitted) return false;
+        if (!submitted) {
+          // Withdrawn before Pi had it: nothing will dispatch for it.
+          await harness.commit(async (tx) => {
+            delete (await tx.doc(Workforce)).requests[turn.request];
+          }, context);
+          return false;
+        }
         if (session !== undefined) Object.assign(submitted, { session });
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
@@ -2052,15 +2068,20 @@ export function serve({
     async session({ agent, key, action, workforce }) {
       const opened = await agentOf(agent);
       const { harness } = opened;
-      const place = (await harness.snapshot(Places, context))?.[key];
-      const conversation =
-        place && (await harness.conversation(place.conversation, context));
-      if (!conversation) return;
-      if (action === "interrupt") return conversation.abort(context);
-      // After the key's deliveries, so none binds across the reset.
+      const find = async () => {
+        const place = (await harness.snapshot(Places, context))?.[key];
+        return (
+          place && (await harness.conversation(place.conversation, context))
+        );
+      };
+      if (action === "interrupt") return (await find())?.abort(context);
+      // After the key's deliveries, so none binds across the reset, and
+      // one making its conversation has.
       const prior = opened.queues.get(key);
       const acted = (async () => {
         await prior?.catch(() => undefined);
+        const conversation = await find();
+        if (!conversation) return;
         if (action === "new") {
           // Intended in one commit with what the next turn is shown, then
           // done: a host that stops between them does it at the next.
@@ -2092,7 +2113,7 @@ export function serve({
       };
       void acted.then(done, done);
       const task = await acted;
-      if (action === "new") return;
+      if (action === "new" || task === undefined) return;
       const { outcome } = (await harness.waitForTask(task, context)).state;
       if (outcome.status === "failed") throw new Error(outcome.error.message);
       if (outcome.status !== "completed") return;

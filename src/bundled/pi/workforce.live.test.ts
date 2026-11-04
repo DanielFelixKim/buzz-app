@@ -270,6 +270,13 @@ assert.deepEqual(Object.keys(await records()),[]);
  assert.notEqual(sent(from)[0]['x-workforce-launcher-session'],sessionBefore);
  assert.ok(!requests[from].body.messages.some(m=>m.role==='assistant'));
  assert.equal((await harness.snapshot(Workforce,context)).resets['chan/root'],undefined);}
+// A request Pi has already, delivered again after a reset, keeps its binding: the reset waits for the next.
+await pi.rpc('session',{agent,key:'chan/root',action:'new'});
+{const bound=binds.length,record=(await records()).r1;
+ await pi.rpc('deliver',turn('r1'));
+ assert.equal(binds.length,bound);assert.deepEqual((await records()).r1,record);
+ assert.ok((await harness.snapshot(Workforce,context)).resets['chan/root']);
+ assert.equal((await run(pi,'r2')).status,'done');assert.equal(binds.at(-1).event,'reset');}
 result.resetCrash=true;
 
 // Restart mid-run: the next host continues it with the recorded context, binding nothing again.

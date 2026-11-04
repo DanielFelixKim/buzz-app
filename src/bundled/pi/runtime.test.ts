@@ -2659,6 +2659,34 @@ it("fails a turn visibly whose agent's route keeps changing as it opens", async 
   expect(f.host.requests("deliver")).toEqual([]);
 });
 
+it("opens an open agent again whose route changed while another open waited for it", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const f = setup({}, [], undefined, undefined, r.seam);
+  await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const retire = vi.spyOn(f.runtime, "retire");
+  const moved = { ...eligible, identity: { ...identity, community_id: "c2" } };
+  // Seen by the next open as it asks for the route, so its watch stays.
+  const ask = r.seam.routeReady;
+  Object.assign(r.seam, {
+    routeReady: async (...args: Parameters<WorkforceSeam["routeReady"]>) => {
+      r.move(moved);
+      return ask(...args);
+    },
+  });
+  await f.deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
+  await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+  expect(retire).not.toHaveBeenCalled();
+  const methods = f.host.processes.flatMap((item) =>
+    item.requests.map((request) => request.method),
+  );
+  expect(methods.slice(methods.indexOf("open") + 1)).toContain("close");
+  expect(f.host.requests("open").at(-1)?.params.route).toEqual(
+    expect.objectContaining({ identity: moved.identity }),
+  );
+  expect(f.host.requests("deliver")).toHaveLength(2);
+});
+
 it("closes an open agent when its route changes later, and opens it with the new one", async () => {
   const r = routes(eligible);
   r.ready.resolve();

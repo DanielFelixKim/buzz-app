@@ -209,11 +209,11 @@ export class PiRuntime {
     Map<string, { conversation: number; at: number }>
   >();
 
-  /** Each open agent's route watch, which closes it when its route changes
-   * what the host was opened with: that route's key. */
+  /** Each agent's route watch, which closes it when its route changes
+   * from the one the host has it open with: that route's key, if any. */
   private readonly routes = new Map<
     AgentKey,
-    { key: string; unsubscribe: () => void }
+    { key: string | undefined; unsubscribe: () => void }
   >();
   /** Opens of each agent in progress, which see a route change themselves. */
   private readonly opening = new Map<AgentKey, number>();
@@ -1194,17 +1194,24 @@ export class PiRuntime {
           ? await seam.routeReady(agent, AbortSignal.timeout(READ_MS))
           : ({ kind: "external" } as const);
         const key = routeKey(route);
-        if (seam) this.watch(seam, agent, key);
+        const watch = seam && this.watch(seam, agent);
         const changed = () => !!seam && routeKey(seam.routeFor(agent)) !== key;
         // Not if it changed before the watch began.
         if (!changed()) {
+          // The host has it open with another route, which it keeps.
+          if (watch?.key !== undefined && watch.key !== key) {
+            watch.key = undefined;
+            await this.pi.retire(agent);
+          }
           await this.pi.request("open", {
             agent,
             tools: sessionTools(this.added()),
             hint: sessionHint(this.added()),
             route: hostRoute(seam, route),
           });
+          if (watch) watch.key = key;
           if (!changed()) return;
+          if (watch) watch.key = undefined;
           await this.pi.retire(agent);
         }
         if (attempt === 3)
@@ -1219,24 +1226,24 @@ export class PiRuntime {
     }
   }
 
-  /** Watches the agent's route, last opened with the route `key`. */
-  private watch(seam: WorkforceSeam, agent: AgentKey, key: string) {
-    const watch = this.routes.get(agent);
-    if (watch) {
-      watch.key = key;
-      return;
-    }
-    const created = {
-      key,
+  /** The agent's route watch: outside its opens, a change from the route
+   * the host has it open with closes it. */
+  private watch(seam: WorkforceSeam, agent: AgentKey) {
+    const existing = this.routes.get(agent);
+    if (existing) return existing;
+    const watch: { key: string | undefined; unsubscribe: () => void } = {
+      key: undefined,
       unsubscribe: seam.subscribeRoute(agent, () => {
         if (
           !this.opening.has(agent) &&
-          routeKey(seam.routeFor(agent)) !== created.key
+          watch.key !== undefined &&
+          routeKey(seam.routeFor(agent)) !== watch.key
         )
           void this.retire(agent).catch(() => undefined);
       }),
     };
-    this.routes.set(agent, created);
+    this.routes.set(agent, watch);
+    return watch;
   }
 
   /** How a request settles. A host that stopped, or an agent whose storage
