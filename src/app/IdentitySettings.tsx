@@ -19,7 +19,7 @@ import type { Membership } from "../features/communities/service";
 import {
   coveredCommunities,
   serverName,
-} from "../features/federated-identity/community-hosts";
+} from "../features/federated-identity/community-servers";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
 import { PrivateKey } from "../features/identity/PrivateKey";
 import { SignOutDialog } from "../features/identity/SignOut";

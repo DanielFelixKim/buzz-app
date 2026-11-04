@@ -1,5 +1,5 @@
 import type { FoundCommunity } from "../communities/find-community.ts";
-import { coversCommunity } from "../federated-identity/community-hosts.ts";
+import { coversCommunity } from "../federated-identity/community-hosts";
 import {
   signInServers,
   type SessionSnapshot,

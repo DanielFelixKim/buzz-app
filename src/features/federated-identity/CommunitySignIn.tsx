@@ -2,7 +2,7 @@ import { useState, useSyncExternalStore } from "react";
 import type { FederatedIdentity, SessionSnapshot } from "./service";
 import type { Membership } from "../communities/service";
 import { communityDestination } from "../communities/destination";
-import { coveredCommunities, serverName } from "./community-hosts";
+import { coveredCommunities, serverName } from "./community-servers";
 import { Button } from "../../shared/design-system/ui/Button";
 
 export function recoveryMessage(code: string) {
