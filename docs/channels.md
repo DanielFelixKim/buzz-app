@@ -1761,7 +1761,7 @@ When sending media, the app copies `dim` from the relay's upload result.
 After the original decodes, its natural dimensions replace metadata and the
 loading frame. Loaded previews follow the image's aspect ratio with no grey
 backing or letterboxing, bounded to 360px wide and 320px tall. Exceptionally thin
-originals retain at least one CSS pixel on each axis. Decode failure retains the
+originals retain at least one CSS pixel on each axis. Decode rejection retains the
 loading preview; retargeting retires the old source's pixels and dimensions.
 Virtualized remounts start with loading geometry again. The timeline preserves
 the first visible message or bottom-following intent as frames resize. Resizing
@@ -1776,13 +1776,28 @@ blurhash. PNG, GIF, WebP and AVIF originals request the WebP variant, which keep
 transparency; uploads that predate it fail and keep the blurhash. Third-party
 images and re-adopted decoded originals request none, and a failed thumbnail
 leaves the blurhash. These previews are removed entirely
-(including behind transparency) only after the lazy original decodes; failure
-retains them. Missing/invalid hashes or canvas
+(including behind transparency) only after the lazy original decodes; a failed load
+keeps them under Retry. Missing/invalid hashes or canvas
 failures keep the existing background. Syntax validation bounds hashes to 166
 base83 characters / 9×9 components; folding does no pixel work. Blurhash work is
 per-mounted-image and uncached, visibility-gated even in nonvirtualized threads.
 Without IntersectionObserver, no blurhash is painted.
 This favors bounded visible work over instant offscreen previews on scrolling.
+An original that fails to load keeps its frame and preview under a dark scrim
+with "Couldn't load image" and Retry. That frame is no longer the viewer link; a
+"+N" tile stays the gallery link. Failed frames grow to at least 2.5rem so Retry
+fits, and the overlay's own size picks its layout in rem, so larger text steps
+down a layout: under 5.5rem wide or 4rem tall, a round Retry named and titled
+"Couldn't load image. Retry"; under 10rem by 6rem, icon and Retry with the
+sentence kept for screen readers; otherwise icon, sentence and Retry. Retry is
+busy until the fresh request settles and ignores repeated presses. Another failure
+returns to the error; success restores the link and moves a focused Retry's focus
+to it. The viewer shows the same recovery above its toolbar, disables zoom, and
+hides copy, download and open. Failures are shared by media source across mounted
+views, so Retry in a row or the viewer recovers both, while a view whose original
+already decoded keeps it. A failure is forgotten once no view of its source is
+mounted, so remounting requests the original again. Decode rejection is not a
+load failure. There is no automatic retry or cache-busting.
 `tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
 bottom following, reading anchors and narrow layout in Chromium and WebKit.
 

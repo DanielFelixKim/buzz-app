@@ -364,7 +364,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   send it names. If a background send fails, its notice names that conversation
   and, when you are elsewhere, can open it (except a huddle). Your message and
   files are back in that conversation's composer. Do not
-  promise support for every file type or size.
+  promise support for every file type or size. An image in a message or the viewer
+  that can't load shows "Couldn't load image" and **Retry**; small images show a
+  round Retry button.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.
