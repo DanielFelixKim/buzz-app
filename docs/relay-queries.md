@@ -507,10 +507,11 @@ The timeline, channel-list preview and filtered plugin views share that operatio
 ## Bounds and lifecycle
 
 - Reads: three active slots, at most one background request, 128 pending distinct
-  requests, ten-second deadlines including queue time, four filters per request,
-  500 per-filter limit, 64 KiB keys, and an 8 MiB result budget. Full-roster
-  discovery reads (scan pages and omission confirmation) and the read-state
-  snapshot, whose results can approach that budget, get 30 seconds
+  requests, ten-second deadlines including queue time, four filters per request
+  (the workflow-definition, sidebar-preference and unread-repair batch shapes
+  may carry up to 128), 500 per-filter limit, 64 KiB keys, and an 8 MiB result
+  budget. Full-roster discovery reads (scan pages and omission confirmation) and
+  the read-state snapshot, whose results can approach that budget, get 30 seconds
   (`LARGE_READ_DEADLINE_MS`, the native per-request ceiling); a read-state
   operation that takes a snapshot gets that plus its usual ten seconds. This lets
   the measured large reads finish on a slow link; one that needs longer still
