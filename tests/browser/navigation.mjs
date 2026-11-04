@@ -176,11 +176,12 @@ export async function chooseColorMode(page, name) {
 // Positions compared across separate reads must wait for both: each read sees
 // a different offset, so a fixed gap between controls can appear to overlap.
 export async function settlePanelMotion(page) {
-  await page
-    .locator("[data-panel-dock]")
-    .evaluateAll((docks) =>
-      Promise.allSettled(
-        docks.flatMap((dock) =>
+  // Query and read animations in one evaluation: a closing dock can detach
+  // between evaluateAll's selector query and its callback.
+  await page.evaluate(() =>
+    Promise.allSettled(
+      Array.from(document.querySelectorAll("[data-panel-dock]")).flatMap(
+        (dock) =>
           [
             ...dock.getAnimations({ subtree: true }),
             ...dock.parentElement.getAnimations(),
@@ -190,9 +191,9 @@ export async function settlePanelMotion(page) {
                 animation.effect?.getComputedTiming().endTime !== Infinity,
             )
             .map((animation) => animation.finished),
-        ),
       ),
-    );
+    ),
+  );
 }
 
 // Dialogs enter with a short upward transform (overlays.css). Positions
