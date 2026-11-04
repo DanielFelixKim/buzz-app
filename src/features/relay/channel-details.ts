@@ -7,6 +7,7 @@ import type { RelayEvent } from "./events";
 import { PublishRejected } from "./outbox";
 import { lifecycleChannelId } from "./channel-lifecycle-protocol";
 import {
+  changesDefault,
   detailsSettings,
   detailsTemplate,
   sameLabels,
@@ -124,6 +125,10 @@ export function createChannelDetails({
       details.visibility !== draft.visibility ||
       details.ttlSeconds !== draft.ttlSeconds ||
       (draft.joinRole !== undefined && details.joinRole !== draft.joinRole) ||
+      // A channel made private no longer reports its default setting.
+      (draft.autoJoin !== undefined &&
+        details.autoJoin !== undefined &&
+        details.autoJoin !== draft.autoJoin) ||
       (draft.labels !== undefined &&
         JSON.stringify([...new Set(draft.labels)].sort()) !==
           JSON.stringify([...(details.labels ?? [])].sort()))
@@ -180,6 +185,7 @@ export function createChannelDetails({
       if (attempts.has(id))
         throw new Error("Check the previous change before saving again.");
       validateDetailsDraft(input);
+      const defaultChange = changesDefault(input, base);
       // Renaming a Solo chat records that its title is chosen, not automatic.
       const chosenName =
         soloLabels(base.labels) &&
@@ -224,7 +230,12 @@ export function createChannelDetails({
           async (signal) => {
             const authorize = async () => {
               const { details } = await read(id, signal);
-              if (!details.canEdit)
+              // The relay decides the community owner/admin role a default needs.
+              if (
+                defaultChange
+                  ? details.autoJoin === undefined
+                  : !details.canEdit
+              )
                 throw new Error(
                   "You no longer have permission to edit this channel.",
                 );
