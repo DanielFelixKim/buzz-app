@@ -1818,7 +1818,7 @@ export class CodexRuntime {
       });
     let followed = observe(),
       recovered = false;
-    const recover = async () => {
+    const recover = async (threadId: string) => {
       recovered = true;
       followed.stop();
       active.recovery = new AbortController();
@@ -1826,7 +1826,7 @@ export class CodexRuntime {
         await this.compact(
           server.rpc,
           AbortSignal.any([signal, active.recovery.signal]),
-          active.threadId!,
+          threadId,
           agent.key,
           key,
         );
@@ -1909,7 +1909,7 @@ export class CodexRuntime {
       signal.throwIfAborted();
       if (!fresh && existing?.needsCompaction) {
         ready();
-        await recover();
+        await recover(started.thread.id);
       }
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
@@ -2007,7 +2007,7 @@ export class CodexRuntime {
         if (saved)
           this.save(request, entry, key, { ...saved, needsCompaction: true });
         await active.steering;
-        await recover();
+        await recover(started.thread.id);
         signal.throwIfAborted();
         const continued = await rpc.request<{ turn: { id: string } }>(
           "turn/start",
