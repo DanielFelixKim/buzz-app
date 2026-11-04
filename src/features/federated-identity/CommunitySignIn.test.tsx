@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import type { SessionSnapshot } from "./service";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { CommunitySignIn } from "./CommunitySignIn";
@@ -138,4 +139,98 @@ it("closes the switch prompt on Not now without changing any session", async () 
   expect(pub.service.signIn).not.toHaveBeenCalled();
   expect(retry).not.toHaveBeenCalled();
   expect(pub.service.snapshot().status).toBe("signed-in");
+});
+
+function gate<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it("keeps the switch's controls through sign-out, a pending sign-in, Cancel and Try again", async () => {
+  const pub = publicServer();
+  const signedOut = gate<void>();
+  const signIns: ReturnType<typeof gate<SessionSnapshot>>[] = [];
+  vi.mocked(pub.service.signOut).mockImplementation(() => signedOut.promise);
+  vi.mocked(pub.service.signIn).mockImplementation(() => {
+    const next = gate<SessionSnapshot>();
+    signIns.push(next);
+    return next.promise;
+  });
+  const retry = vi.fn();
+  render(
+    <CommunitySignIn
+      identity={pub.service}
+      error="authorization-denied"
+      retry={retry}
+      relay="wss://kalvin.communities.buzz.xyz"
+      memberships={memberships}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Switch account" }));
+  // Sign-out ends the signed-in state that offered the switch.
+  await act(async () => {
+    pub.publish({ status: "signed-out", email: null });
+    signedOut.resolve();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Switching your Builderlab account",
+  );
+  act(() => pub.publish({ status: "signing-in" }));
+  await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+  expect(pub.service.cancelSignIn).toHaveBeenCalledOnce();
+  // Native answers the canceled sign-in with a snapshot, not an error.
+  await act(async () => {
+    pub.publish({ status: "signed-out", failure: "sign-in-canceled" });
+    signIns[0]?.resolve(pub.service.snapshot());
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn’t switch your Builderlab account. Sign-in was canceled.",
+  );
+  expect(retry).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(pub.service.signOut).toHaveBeenCalledOnce();
+  expect(pub.service.signIn).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    pub.publish({
+      status: "signed-in",
+      failure: null,
+      email: "other@example.com",
+    });
+    signIns[1]?.resolve(pub.service.snapshot());
+  });
+  expect(retry).toHaveBeenCalledOnce();
+});
+
+it("reports a refused sign-in during a switch even when native doesn't throw", async () => {
+  const pub = publicServer();
+  const signIn = gate<SessionSnapshot>();
+  vi.mocked(pub.service.signIn).mockImplementation(() => signIn.promise);
+  const retry = vi.fn();
+  render(
+    <CommunitySignIn
+      identity={pub.service}
+      error="binding-mismatch"
+      retry={retry}
+      memberships={memberships}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Switch account" }));
+  await act(async () => {
+    signIn.resolve({
+      ...pub.service.snapshot(),
+      status: "signed-out",
+      failure: "login-refused",
+    });
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn’t switch your Builderlab account.",
+  );
+  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  expect(retry).not.toHaveBeenCalled();
 });

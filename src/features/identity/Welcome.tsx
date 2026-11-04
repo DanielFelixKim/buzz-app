@@ -171,6 +171,16 @@ export function Welcome({
   // discovery lookup; after setup, the Join Community page. Cleared on every
   // return to the landing or choices page.
   const [finding, setFinding] = useState<string>();
+  // Counts hosted-server lookups for a found community; a lookup's answer
+  // applies only while it is the latest (see FindCommunity's onFound).
+  const lookups = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new address, or unmount, retires the lookup.
+  useEffect(
+    () => () => {
+      lookups.current++;
+    },
+    [finding],
+  );
   // The code of the invite link `finding` came from, claimed on Join; "" for
   // a bare address. Every submit sets it with `finding`.
   const [inviteCode, setInviteCode] = useState("");
@@ -439,6 +449,7 @@ export function Welcome({
   };
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
+    lookups.current++;
     setOtherOptions(false);
     setFinding(undefined);
     setInviteCode("");
@@ -978,7 +989,11 @@ export function Welcome({
           url={finding}
           onCancel={backToLanding}
           onFound={(found) => {
+            // Fenced to this lookup: Cancel, another destination or unmount
+            // starts a new one, and a late answer then does nothing.
+            const lookup = ++lookups.current;
             void hostedByThisBuilderlab(found, servers).then((hosted) => {
+              if (lookup !== lookups.current) return;
               if (hosted) void signIn();
               else pause("connect-choice");
             });

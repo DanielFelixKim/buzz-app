@@ -441,3 +441,41 @@ it("keeps the first server's sign-in row when no server is signed in", async () 
   expect(screen.getByText(/block\.builderlab\.xyz login/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
+
+it("keeps a per-server sign-out that native couldn't finish visible, named, with Try again", async () => {
+  const { block, pub, root, servers } = twoServers();
+  block.publish({ status: "signed-in", email: "will@block.xyz" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
+  // Native resolves a storage failure as an unavailable snapshot.
+  vi.mocked(pub.service.signOut).mockImplementation(async () => {
+    pub.publish({ status: "unavailable", failure: "storage-denied" });
+  });
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={root}
+      memberships={memberships}
+      servers={servers}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Sign out of app.builderlab.xyz",
+    }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t sign out of app.builderlab.xyz. Sign-in could not access secure storage.",
+  );
+  // Its row is gone, the other server's stays.
+  expect(screen.getByText("Block (block.builderlab.xyz)")).toBeVisible();
+  expect(block.service.snapshot().status).toBe("signed-in");
+  vi.mocked(pub.service.signOut).mockImplementation(async () => {
+    pub.publish({ status: "signed-out", failure: null });
+  });
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(pub.service.signOut).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(block.service.signOut).not.toHaveBeenCalled();
+});

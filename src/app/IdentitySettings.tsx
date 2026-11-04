@@ -273,11 +273,63 @@ function OrganizationSignIns({
     [identity, ids],
   );
   const states = useSessions(sessions);
+  // Kept here, not in a row: a sign-out that fails still leaves signed-in,
+  // so its row goes, and the failure must outlive it.
+  const [failures, setFailures] = useState<
+    ReadonlyMap<FederatedIdentity, SignOutFailure>
+  >(new Map());
+  const report = (session: FederatedIdentity, failure?: SignOutFailure) =>
+    setFailures((current) => {
+      const next = new Map(current);
+      if (failure) next.set(session, failure);
+      else next.delete(session);
+      return next;
+    });
+  const signOut = (session: FederatedIdentity) => {
+    const authority = session.snapshot().authority;
+    if (!authority) return;
+    report(session);
+    void session
+      .signOut()
+      .then(() => {
+        // Native reports a sign-out it couldn't finish, such as a storage
+        // failure, as an unavailable snapshot rather than an error.
+        const after = session.snapshot();
+        if (after.status === "unavailable")
+          report(session, { authority, failure: after.failure ?? "" });
+      })
+      .catch((error: unknown) =>
+        report(session, {
+          authority,
+          failure: error instanceof Error ? error.message : "",
+        }),
+      );
+  };
   const signedIn = sessions.filter(
     (_, index) =>
       states[index]?.status === "signed-in" && states[index]?.authority,
   );
-  if (signedIn.length === 0) return <OrganizationSignIn identity={identity} />;
+  const problems = [...failures].map(([session, { authority, failure }]) => (
+    <div key={authority.id}>
+      <p role="alert" className="text-body-sm text-danger">
+        {`Couldn’t sign out of ${serverName(authority)}. ${recoveryMessage(failure)}`}
+      </p>
+      <Button type="button" onClick={() => signOut(session)}>
+        Try again
+      </Button>
+    </div>
+  ));
+  // The first server's own row would repeat its failure without naming it.
+  const firstFailed = [...failures.values()].some(
+    ({ authority }) => authority.id === identity.snapshot().authority?.id,
+  );
+  if (signedIn.length === 0)
+    return (
+      <>
+        {!firstFailed && <OrganizationSignIn identity={identity} />}
+        {problems}
+      </>
+    );
   return (
     <section className="mt-6" aria-labelledby="organization-sign-in-title">
       <InlineHeader
@@ -290,27 +342,34 @@ function OrganizationSignIns({
             key={session.snapshot().authority?.id}
             session={session}
             memberships={memberships}
+            onSignOut={() => signOut(session)}
           />
         ))}
+        {problems}
       </SettingsGroup>
     </section>
   );
 }
 
+type SignOutFailure = Readonly<{
+  authority: NonNullable<SessionSnapshot["authority"]>;
+  failure: string;
+}>;
+
 function ServerSession({
   session,
   memberships,
+  onSignOut,
 }: {
   session: FederatedIdentity;
   memberships: readonly Membership[];
+  onSignOut: () => void;
 }) {
   const state = useSyncExternalStore(
     session.subscribe,
     session.snapshot,
     session.snapshot,
   );
-  const [failure, setFailure] = useState("");
-  const problem = failure || state.failure;
   if (!state.authority) return null;
   const host = new URL(state.authority.identityOrigin).host;
   const name = serverName(state.authority);
@@ -325,48 +384,30 @@ function ServerSession({
       })
     : "";
   return (
-    <>
-      <PreferenceRow
-        title={name === host ? host : `${name} (${host})`}
-        subtitle={
-          <>
-            {`Signed in as ${state.email ?? "your organization account"}`}
-            {expires && ` · Expires at ${expires}`}
-            {usedBy.length > 0 && (
-              <>
-                <br />
-                {`Used by: ${usedBy.join(", ")}`}
-              </>
-            )}
-          </>
-        }
-        trailing={
-          <Button
-            type="button"
-            aria-label={`Sign out of ${host}`}
-            onClick={() => {
-              setFailure("");
-              void session
-                .signOut()
-                .catch((error: unknown) =>
-                  setFailure(
-                    error instanceof Error
-                      ? error.message
-                      : "Sign-in unavailable",
-                  ),
-                );
-            }}
-          >
-            Sign out
-          </Button>
-        }
-      />
-      {problem && (
-        <p role="alert" className="text-body-sm text-danger">
-          {recoveryMessage(problem)}
-        </p>
-      )}
-    </>
+    <PreferenceRow
+      title={name === host ? host : `${name} (${host})`}
+      subtitle={
+        <>
+          {`Signed in as ${state.email ?? "your organization account"}`}
+          {expires && ` · Expires at ${expires}`}
+          {usedBy.length > 0 && (
+            <>
+              <br />
+              {`Used by: ${usedBy.join(", ")}`}
+            </>
+          )}
+        </>
+      }
+      trailing={
+        <Button
+          type="button"
+          aria-label={`Sign out of ${host}`}
+          onClick={onSignOut}
+        >
+          Sign out
+        </Button>
+      }
+    />
   );
 }
 

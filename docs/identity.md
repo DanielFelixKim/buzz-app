@@ -45,7 +45,12 @@ its first sign-in server, and a community is hosted by it when that server's
 end reads native's compiled server list and matches with native's own rules
 (`community-hosts.ts`, kept equal to `matches_relay` by shared fixtures): an
 exact host, or one label under a wildcard on the default port. A relay's NIP-11
-`self` key never decides. A build without a sign-in server hosts none. Such a
+`self` key never decides. A build without a sign-in server whose
+`BUZZ_BUILDERLAB_URL` is the built-in Builderlab (`isBuiltInBuilderlab`: the
+pinned development broker, or FI set empty) matches the built-in server's
+`communityHosts` from `built-in-server.json`, as on main; with another or an
+empty Builderlab URL it hosts none. The answer applies only to the lookup that
+asked: Cancel, another address or leaving the screen discards it. Such a
 community requires Builderlab sign-in, so it starts at once there, exactly as
 the welcome screen's own button does, and the welcome screen shows it pending
 (**Cancel sign-in**, with the field disabled); setup then lands on **Join
@@ -54,8 +59,8 @@ instead. Cancel sign-in, and **Back** from a sign-in or setup failure, return
 to the welcome screen with the address kept and do not look it up again. A
 canceled sign-in that finishes later is ignored: it cannot restart setup or use
 a later sign-in's account. Any other found community, including one run by
-another Builderlab deployment, and every community in a build without a
-sign-in server, pauses on **Connect to
+another Builderlab deployment, and every community in a build with neither a
+sign-in server nor the built-in Builderlab URL, pauses on **Connect to
 {host}**: nothing a relay publishes names its sign-in portal, so the user
 chooses. The page says only that Buzz relies on a key for the user's identity; its choices are
 **Sign in with Builderlab**, which signs in at `BUZZ_BUILDERLAB_URL` and
@@ -930,15 +935,19 @@ Apps' agent tools still need the legacy login and are absent in FI builds.
 Settings → Identity → Organization sign-in is the same whichever community is
 open. It lists each server you are signed in to, with its name and origin, the
 account and expiry, **Used by:** the joined communities its hosts cover, and a
-**Sign out** that ends that server's session only. Communities no server covers
-are not listed. With no server signed in, it shows the build's Builderlab row to
+**Sign out** that ends that server's session only. A sign-out native could not
+finish (for example, secure storage refused) stays below the list, naming the
+server, with **Try again**. Communities no server covers are not listed. With no server signed in, it shows the build's Builderlab row to
 sign in from, as before.
 
 When a community refuses a signed-in account (`authorization-denied` or
 `binding-mismatch`), its prompt names the community's server and account, and
 the other joined communities that server covers, and offers **Switch account**:
 it signs out of that server only, signs in to it again, and retries. Other
-servers' sessions are not touched. Binding-mismatch recovery points to that
+servers' sessions are not touched. While it runs the prompt says so, with
+**Cancel sign-in** during the browser step; a canceled, refused or failed step
+names the server and offers **Try again**. **Not now** closes the prompt and
+changes nothing. Binding-mismatch recovery points to that
 server's identity origin.
 
 ### Sign in at launch

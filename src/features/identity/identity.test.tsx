@@ -6833,3 +6833,56 @@ it.each(["unavailable", "not_offered"] as const)(
     identity.dispose();
   },
 );
+
+it("ignores a hosted-server answer that arrives after Cancel or a newer lookup", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  const relay = landingRelay("https://design.communities.buzz.xyz");
+  relay.info.resolve();
+  const answers: ReturnType<typeof deferred<SessionSnapshot[]>>[] = [];
+  const servers = () => {
+    const answer = deferred<SessionSnapshot[]>();
+    answers.push(answer);
+    return answer.promise;
+  };
+  const connect = vi
+    .fn<(signal: AbortSignal) => Promise<Credential>>()
+    .mockImplementation(() => new Promise(() => {}));
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinked}
+      connect={connect}
+      servers={servers}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("button", { name: SIGN_IN });
+  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(1));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  // A late "hosted" after Cancel neither signs in nor leaves the landing.
+  await act(async () => answers[0]?.resolve(await publicServers()));
+  expect(connect).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
+  // A newer lookup starts; the older one's late "not hosted" is ignored too.
+  await user.clear(urlField());
+  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(2));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.type(urlField(), "{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(3));
+  await act(async () => answers[1]?.resolve([]));
+  expect(
+    screen.queryByRole("heading", { name: "Connect to your community" }),
+  ).toBeNull();
+  expect(connect).not.toHaveBeenCalled();
+  // The latest lookup's answer still applies.
+  await act(async () => answers[2]?.resolve(await publicServers()));
+  await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  identity.dispose();
+});
