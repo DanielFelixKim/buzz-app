@@ -294,6 +294,7 @@ available rather than silently discarding it.
 
 ## Optional features and limits
 
+- Plugins may request permission to read conversations and agent memory when a new agent turn starts, and add selected context to that request. The installation review describes this access; copied excerpts may be retained or sent to your Decisions provider.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
 - Some plugins let the person's other agents on this computer, such as Claude

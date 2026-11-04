@@ -184,3 +184,25 @@ it("uses the existing unchanged disclosure for managed saves", () => {
     screen.getByRole("button", { name: /Save temporary plugin files/ }),
   ).toBeVisible();
 });
+
+it("discloses turn-scoped reads and retained copies", async () => {
+  render(
+    <PluginAccessReview
+      manifest={{
+        id: "recall",
+        name: "Recall",
+        apiVersion: 1,
+        host: { turnContext: true },
+      }}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /Read conversations and memory/ }),
+  );
+  await waitFor(() =>
+    expect(screen.getByText(/Copied text cannot/)).toBeVisible(),
+  );
+  expect(
+    screen.getByText(/Excerpts may be sent to your Decisions provider/),
+  ).toBeVisible();
+});

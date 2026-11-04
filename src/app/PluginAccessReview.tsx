@@ -55,6 +55,24 @@ function hostDeclarations(
   types: readonly RegisteredAgentType[],
 ) {
   return [
+    ...(manifest.host?.turnContext
+      ? [
+          {
+            key: "turnContext",
+            signature: "Agent turn context",
+            title: "Agent turn context:",
+            label: "Read conversations and memory when an agent starts a turn",
+            hint: "Can retain copies in memory and add context to the agent's request.",
+            icon: PlugIcon,
+            details: (
+              <p>
+                Reads are limited to each turn preparation. Copied text cannot
+                be revoked. Excerpts may be sent to your Decisions provider.
+              </p>
+            ),
+          },
+        ]
+      : []),
     ...(manifest.host?.agentHooks ?? []).map((harness) => ({
       key: `agentHooks:${harness}`,
       signature: `Agent hooks: ${harness}`,

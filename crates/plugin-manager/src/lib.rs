@@ -58,6 +58,9 @@ pub struct HostGrants {
     /// Hook callbacks may observe and influence these agent types.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_hooks: Vec<String>,
+    /// Read and contribute context during an admitted agent turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn_context: bool,
     #[serde(default)]
     pub commands: Vec<HostCommand>,
     #[serde(default)]
@@ -2598,6 +2601,24 @@ mod tests {
         assert!(plugin.enabled);
         assert_eq!(plugin.revision, first);
         assert_eq!(plugin.previous, None);
+    }
+    #[test]
+    fn validates_turn_context_grant() {
+        for enabled in [true, false] {
+            let manifest: super::Manifest = serde_json::from_value(serde_json::json!({
+                "id": "recall", "name": "Recall", "apiVersion": 1,
+                "host": { "turnContext": enabled },
+            }))
+            .unwrap();
+            assert!(manifest.validate().is_ok());
+            assert_eq!(manifest.host.unwrap().turn_context, enabled);
+        }
+        assert!(
+            serde_json::from_value::<super::HostGrants>(serde_json::json!({
+                "turnContext": "true"
+            }))
+            .is_err()
+        );
     }
     #[test]
     fn validates_agent_hook_grants() {
