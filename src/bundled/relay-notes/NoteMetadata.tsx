@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { NoteEvent } from "../../features/notes/model";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
@@ -9,14 +8,12 @@ export function NoteByline({
   author,
   picture,
   status,
-  children,
   isAgent = false,
 }: {
   note: NoteEvent;
   author: string;
   picture?: string | undefined;
   status?: string | undefined;
-  children?: ReactNode;
   isAgent?: boolean;
 }) {
   return (
@@ -31,7 +28,6 @@ export function NoteByline({
           </>
         )}
       </span>
-      {children}
     </p>
   );
 }

@@ -143,7 +143,6 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await expect(
     document.getByRole("textbox", { name: "Document body", exact: true }),
   ).toHaveText("Keep my unsaved research");
-  await document.getByRole("button", { name: "Discard changes" }).click();
   await document
     .getByRole("button", { name: "Share note", exact: true })
     .click();
@@ -264,7 +263,6 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await expect(
     research.getByRole("textbox", { name: "Document body", exact: true }),
   ).toHaveText("Unsaved pane research");
-  await research.getByRole("button", { name: "Discard changes" }).click();
   await research
     .getByRole("button", { name: "Share note", exact: true })
     .click();
@@ -418,9 +416,13 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(initialBody).toContainText(
     "Written by Carl. Appended at the end.",
   );
-  await document
-    .getByRole("button", { name: "Discard changes", exact: true })
-    .click();
+  await expect(
+    document.getByRole("button", { name: "Discard changes" }),
+  ).toHaveCount(0);
+  await initialBody.press("ControlOrMeta+z");
+  await expect(initialBody).not.toContainText("Appended at the end.");
+  await mode.click();
+  await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await expect(mode).toContainText("Viewing");
   await expect(document).toContainText("Carl");
   await expect(document).toContainText("Saved");

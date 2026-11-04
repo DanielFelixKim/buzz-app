@@ -7,7 +7,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import {
@@ -127,6 +126,9 @@ it("saves changed content after idle, stays in Editing and skips unchanged conte
   f.change("New plan");
   expect(screen.getByRole("status")).toHaveTextContent("Saving…");
   expect(
+    screen.queryByRole("button", { name: "Discard changes" }),
+  ).not.toBeInTheDocument();
+  expect(
     screen
       .getByRole("status")
       .parentElement?.querySelector("[data-avatar-shape]"),
@@ -149,23 +151,6 @@ it("saves changed content after idle, stays in Editing and skips unchanged conte
   f.change("Final plan");
   await advance(10_000);
   expect(f.save).toHaveBeenCalledOnce();
-});
-
-it("discards a queued edit from the save-status row before auto-save starts", async () => {
-  const f = await fixture();
-  f.change("Discard this edit");
-  const row = screen.getByRole("status").parentElement;
-  if (!row) throw new Error("Missing save-status row");
-  fireEvent.click(within(row).getByRole("button", { name: "Discard changes" }));
-  expect(f.title).toHaveValue("Plan");
-  expect(f.title).toHaveAttribute("readonly");
-  expect(screen.getByRole("status")).toHaveTextContent("Saved");
-  expect(
-    screen.queryByRole("button", { name: "Discard changes" }),
-  ).not.toBeInTheDocument();
-  await advance(10_000);
-  expect(f.save).not.toHaveBeenCalled();
-  expect(f.workspace.drafts.size).toBe(0);
 });
 
 it("saves by ten seconds during continuous typing and waits for composition to finish", async () => {
@@ -197,9 +182,6 @@ it("keeps typing during a pending save and bases the next save on its accepted r
   f.change("First edit");
   await advance(1500);
   expect(screen.getByRole("status")).toHaveTextContent("Saving");
-  expect(
-    screen.getByRole("button", { name: "Discard changes" }),
-  ).toBeDisabled();
   expect(f.title).toBeEnabled();
   f.change("Typed during save");
   expect(f.title).toHaveValue("Typed during save");

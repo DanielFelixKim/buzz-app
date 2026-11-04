@@ -32,7 +32,6 @@ import {
   ArrowsClockwiseIcon,
   DotsThreeIcon,
   ShareIcon,
-  StopIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -515,19 +514,6 @@ export function NoteDocument({
       setStatus("Note link copied");
     });
   };
-  const discardChanges = note && (dirty || restoreFrom) && (
-    <IconButton
-      aria-label="Discard changes"
-      title="Discard changes"
-      size="sm"
-      icon={<StopIcon size={16} aria-hidden="true" />}
-      disabled={busy || saving}
-      onClick={() => {
-        adopt(note);
-        setEditing(false);
-      }}
-    />
-  );
   return (
     <article
       className={styles.documentPane}
@@ -597,12 +583,7 @@ export function NoteDocument({
             isAgent={!!profile?.isAgent}
             author={authorName}
             picture={avatarMedia(profile?.picture, workspace.session.media)}
-          >
-            {discardChanges}
-          </NoteByline>
-        )}
-        {unavailable && discardChanges && (
-          <div className={readerStyles.byline}>{discardChanges}</div>
+          />
         )}
         <div className={styles.actions}>
           {note && canEdit && !note.deleted && (
