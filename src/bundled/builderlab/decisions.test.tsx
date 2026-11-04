@@ -227,7 +227,7 @@ it("follows the sign-in in use: the browser's answers, a NIP-FI session withdraw
     for (const listener of listeners) listener();
   };
   const identity = {
-    snapshot: () => ({ status: nativeState.status }),
+    snapshot: () => ({ status: nativeState.status, revision: "native" }),
     subscribe: native.subscribe,
   } as never;
   const session = createAutoSession(

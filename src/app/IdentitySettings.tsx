@@ -42,10 +42,6 @@ const WAITING = {
 
 /** Unavailable for want of native, not because an operation failed. */
 const NOT_SIGN_OUT = new Set(["native-unavailable", "desktop-required"]);
-/** Servers whose sign-out this app started and native has not finished.
- * Any other unavailable server failed to restore, such as offline at launch;
- * native finishes an earlier run's sign-out as it restores. */
-const signingOut = new Set<string>();
 
 /** One sentence per uploader status; failures read as first run's copy. */
 function backupSentence(status: BackupStatus) {
@@ -296,19 +292,12 @@ function OrganizationSignIns({
     const authority = session.snapshot().authority;
     if (!authority) return;
     report(session);
-    signingOut.add(authority.id);
-    void session
-      .signOut()
-      .then(() => {
-        if (session.snapshot().status !== "unavailable")
-          signingOut.delete(authority.id);
-      })
-      .catch((error: unknown) =>
-        report(session, {
-          authority,
-          failure: error instanceof Error ? error.message : "",
-        }),
-      );
+    void session.signOut().catch((error: unknown) =>
+      report(session, {
+        authority,
+        failure: error instanceof Error ? error.message : "",
+      }),
+    );
   };
   const signedIn = sessions.filter(
     (_, index) =>
@@ -326,10 +315,10 @@ function OrganizationSignIns({
       state.authority &&
       !NOT_SIGN_OUT.has(state.failure ?? "")
     )
-      (signingOut.has(state.authority.id) ? unfinished : unrestored).set(
-        session,
-        { authority: state.authority, failure: state.failure ?? "" },
-      );
+      (state.signOutUnfinished ? unfinished : unrestored).set(session, {
+        authority: state.authority,
+        failure: state.failure ?? "",
+      });
   });
   const problem = (
     { authority, failure }: SignOutFailure,

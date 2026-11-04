@@ -6,29 +6,21 @@ import {
   type Credential as Owner,
   type LoginSnapshot,
 } from "../session";
-import { oauthTarget, type Credential } from "./browser";
+import { oauthTarget, type Credential, type SavedSignIn } from "./browser";
 
-/** Where a session keeps its credential across restarts. */
-export type Persistence = Readonly<{
-  /** The saved credential, verified; undefined when there is none. */
-  restore(signal: AbortSignal): Promise<Credential | undefined>;
-  save(credential: Credential): Promise<void>;
-  clear(): Promise<void>;
-  /** Calls its listener when a credential is saved elsewhere in the app. */
-  watch?(listener: () => void): () => void;
-}>;
-
+const CLEANUP_FAILED =
+  "Couldn’t finish removing your old Builderlab sign-in. Buzz keeps trying.";
 const SIGN_OUT_FAILED = "Couldn’t finish signing out of Builderlab. Try again.";
 
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
 export function createOAuthSession(
   acquire: (signal: AbortSignal) => Promise<Credential>,
-  release?: (credential: Credential) => void,
+  release?: (credential: Credential) => void | Promise<void>,
   /** Carries `request`; without it, requests are refused. */
   host?: Pick<Host, "request">,
-  /** With it, creation restores the saved sign-in, each sign-in is saved,
-   * and sign-out or a rejected credential deletes it. */
-  persistence?: Persistence,
+  /** With it, the session follows the shared saved sign-in: creation
+   * restores it, each sign-in is saved there, and sign-out deletes it. */
+  saved?: SavedSignIn,
 ) {
   let credential: Credential | undefined;
   let attempt: AbortController | undefined;
@@ -37,20 +29,24 @@ export function createOAuthSession(
   let disposed = false;
   let state: LoginSnapshot = { status: "signed-out" };
   const listeners = new Set<() => void>();
-  // Saves and deletes run in order, so a save still running when sign-out
-  // starts finishes before its delete.
-  let stored: Promise<unknown> = Promise.resolve();
-  const store = (operation: () => Promise<void>) => {
-    const next = stored.then(operation);
-    stored = next.catch(() => {});
-    return next;
-  };
-  let signingOut: Promise<void> | undefined;
   const publish = (next: LoginSnapshot) => {
     state = next;
     for (const listener of listeners) listener();
   };
-  const reset = (revoke = false, announce = true, clear = revoke) => {
+  const revoke = async (owner: Credential) => {
+    await release?.(owner);
+  };
+  const signedOut = (): LoginSnapshot =>
+    saved?.failed()
+      ? { status: "signed-out", error: CLEANUP_FAILED }
+      : { status: "signed-out" };
+  const adopt = (next: Credential, storage: string) => {
+    credential = next;
+    viewerLifetime = new AbortController();
+    viewer = { credential: next.value, storage, signal: viewerLifetime.signal };
+    publish({ status: "signed-in", account: next.account });
+  };
+  const reset = (revoke = false, announce = true) => {
     attempt?.abort();
     attempt = undefined;
     viewerLifetime?.abort();
@@ -58,9 +54,10 @@ export function createOAuthSession(
     viewer = undefined;
     const previous = credential;
     credential = undefined;
-    if (previous && revoke) release?.(previous);
-    if (clear && persistence) void store(persistence.clear).catch(() => {});
-    if (announce) publish({ status: "signed-out" });
+    if (previous && revoke)
+      if (saved) saved.current() === previous && saved.retire();
+      else void Promise.resolve(release?.(previous)).catch(() => {});
+    if (announce) publish(signedOut());
   };
   /** Signs in with `obtain`; a restore is pending without a browser step and
    * leaves the session signed out, without an error, when nothing is saved. */
@@ -76,32 +73,15 @@ export function createOAuthSession(
     try {
       const result = await obtain(current.signal);
       const storage = result && (await accountStorage(result.account.subject));
+      if (result && saved && !restoring)
+        await saved.accept(result, revoke, current.signal);
       current.signal.throwIfAborted();
       if (attempt !== current || disposed) return;
       if (!result || !storage) {
-        publish({ status: "signed-out" });
+        publish(signedOut());
         return;
       }
-      if (!restoring && persistence) {
-        try {
-          await store(() => persistence.save(result));
-        } catch {
-          release?.(result);
-          throw new Error("Could not save your Builderlab sign-in. Try again.");
-        }
-        if (attempt !== current || disposed) {
-          release?.(result);
-          return;
-        }
-      }
-      credential = result;
-      viewerLifetime = new AbortController();
-      viewer = {
-        credential: result.value,
-        storage,
-        signal: viewerLifetime.signal,
-      };
-      publish({ status: "signed-in", account: result.account });
+      adopt(result, storage);
     } catch (error) {
       if (attempt !== current || disposed) return;
       publish({
@@ -113,12 +93,25 @@ export function createOAuthSession(
       if (attempt === current) attempt = undefined;
     }
   };
-  if (persistence) void run(persistence.restore, true);
-  // First run signs in before this session can share it: restore what it saved.
-  const unwatch = persistence?.watch?.(() => {
-    if (!disposed && !credential && !attempt)
-      void run(persistence.restore, true);
-  });
+  // Follows the shared sign-in when Welcome replaces it or NIP-FI retires it.
+  const follow = async () => {
+    const next = saved?.current();
+    if (disposed || attempt) return;
+    if (next === credential) {
+      if (!next) publish(signedOut());
+      return;
+    }
+    reset(false, !next);
+    if (!next) return;
+    const storage = await accountStorage(next.account.subject);
+    if (!disposed && !attempt && !credential && saved?.current() === next)
+      adopt(next, storage);
+  };
+  const unwatch = saved?.subscribe(() => void follow());
+  if (saved && host) {
+    const restoring = host;
+    void run((signal) => saved.restore(restoring, signal), true);
+  }
   return {
     snapshot: () => state,
     subscribe(listener: () => void) {
@@ -133,6 +126,9 @@ export function createOAuthSession(
     },
     async request(owner: Owner, input: BuilderlabRequest) {
       if (!host) throw new Error("Builderlab requests are unavailable.");
+      // A retired or replaced sign-in sends nothing, even from a running call.
+      if (owner !== credential)
+        throw new DOMException("Builderlab session changed.", "AbortError");
       return host.request({
         url: `${oauthTarget()}${input.path}`,
         ...(input.method ? { method: input.method } : {}),
@@ -181,35 +177,29 @@ export function createOAuthSession(
     /** Deletes the saved sign-in first; until that succeeds the sign-out is
      * unfinished, still signed in with an error, and signing out tries again. */
     signOut() {
-      if (!persistence) return reset(true);
-      signingOut ??= (async () => {
-        attempt?.abort();
-        attempt = undefined;
-        const previous = credential;
-        try {
-          await store(persistence.clear);
-        } catch {
-          if (disposed) return;
-          publish(
-            previous && credential === previous
-              ? {
-                  status: "signed-in",
-                  account: previous.account,
-                  error: SIGN_OUT_FAILED,
-                }
-              : { status: "signed-out", error: SIGN_OUT_FAILED },
-          );
-          return;
-        } finally {
-          signingOut = undefined;
-        }
-        if (credential === previous) reset(true, true, false);
-      })();
-      return signingOut;
+      if (!saved) return reset(true);
+      const previous = credential;
+      attempt?.abort();
+      attempt = undefined;
+      return saved.signOut().then(
+        () => {
+          if (!disposed && !credential) publish(signedOut());
+        },
+        () => {
+          if (!disposed && previous && credential === previous)
+            publish({
+              status: "signed-in",
+              account: previous.account,
+              error: SIGN_OUT_FAILED,
+            });
+        },
+      );
     },
+    /** NIP-FI took over: stop using this sign-in now and retire it. */
+    retire: () => (saved ? saved.retire() : reset(true)),
     async signIn() {
       if (disposed || attempt) return;
-      reset(true, false, !!credential);
+      reset(!saved, false);
       await run(acquire, false);
     },
     dispose() {

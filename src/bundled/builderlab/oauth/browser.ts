@@ -196,23 +196,154 @@ export type SavedCredential = {
   save(value: string): Promise<void>;
   clear(): Promise<void>;
 };
-const saves = new Set<() => void>();
 export const savedCredential: SavedCredential = {
   load: () => invoke("builderlab_session_load", { target: oauthTarget() }),
-  save: async (value) => {
-    await invoke("builderlab_session_save", { target: oauthTarget(), value });
-    for (const listener of [...saves]) listener();
-  },
+  save: (value) =>
+    invoke("builderlab_session_save", { target: oauthTarget(), value }),
   clear: () => invoke("builderlab_session_clear", { target: oauthTarget() }),
 };
-/** Calls `listener` after each save in this app, such as first run's
- * sign-in, so a running session can restore it. */
-export function onCredentialSaved(listener: () => void) {
-  saves.add(listener);
-  return () => {
-    saves.delete(listener);
+
+/** Ends `credential` at Builderlab, with every viewer child; rejects when
+ * Builderlab could not take it, so it is tried again. */
+export const logout =
+  (host: Pick<Host, "request">) => async (credential: Credential) => {
+    const { status } = await host.request({
+      url: `${oauthTarget()}/v1/auth/logout`,
+      method: "POST",
+      headers: { "X-BB-Session-Credential": credential.value },
+    });
+    if (status >= 500) throw new Error("Builderlab logout failed");
+  };
+
+type Revoke = (credential: Credential) => Promise<void>;
+const RETRY_MS = 5000;
+
+/**
+ * The one owner of the build's saved browser sign-in, shared by Welcome and
+ * the plugin: the active credential, its ordered keychain writes and the
+ * cleanup of every credential it retires, retried until it succeeds.
+ */
+export function createSavedSignIn(store: SavedCredential = savedCredential) {
+  type Held = Readonly<{ credential: Credential; revoke: Revoke }>;
+  let active: Held | undefined;
+  let generation = 0;
+  let revoking: Held[] = [];
+  let deleting = false;
+  let failed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let queue: Promise<unknown> = Promise.resolve();
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of [...listeners]) listener();
+  };
+  const write = (operation: () => Promise<void>) => {
+    const next = queue.then(operation);
+    queue = next.catch(() => {});
+    return next;
+  };
+  const cleanup = async () => {
+    clearTimeout(timer);
+    try {
+      if (deleting) {
+        await write(store.clear);
+        deleting = false;
+      }
+      for (const held of [...revoking]) {
+        await held.revoke(held.credential);
+        revoking = revoking.filter((other) => other !== held);
+      }
+      if (failed) {
+        failed = false;
+        notify();
+      }
+    } catch {
+      if (!failed) {
+        failed = true;
+        notify();
+      }
+      timer = setTimeout(() => void cleanup(), RETRY_MS);
+    }
+  };
+  const retiring = (held: Held | undefined, remove: boolean) => {
+    if (held) revoking.push(held);
+    if (remove) deleting = true;
+    void cleanup();
+  };
+  const ordered = { ...store, clear: () => write(store.clear) };
+  const current = () => active?.credential;
+  return {
+    current,
+    /** A retired sign-in's cleanup has failed so far; it keeps retrying. */
+    failed: () => failed,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    /** The saved sign-in, verified, unless a sign-in or retirement came
+     * first; a retired item is never restored. */
+    async restore(host: Pick<Host, "request">, signal: AbortSignal) {
+      if (active || deleting) return active?.credential;
+      const mine = generation;
+      const credential = await restoredCredential(host, signal, ordered);
+      if (!credential || mine !== generation || deleting) return current();
+      active = { credential, revoke: logout(host) };
+      notify();
+      return credential;
+    },
+    /** Saves `credential` as the active sign-in, retiring the one before.
+     * A failed save revokes it; a sign-in canceled or replaced meanwhile is
+     * revoked, and its write undone. */
+    async accept(credential: Credential, revoke: Revoke, signal: AbortSignal) {
+      const mine = ++generation;
+      const held = { credential, revoke };
+      try {
+        await write(() => store.save(credential.value));
+      } catch {
+        retiring(held, false);
+        throw new Error("Could not save your Builderlab sign-in. Try again.");
+      }
+      if (mine !== generation || signal.aborted) {
+        if (mine === generation) {
+          generation++;
+          const kept: Held | undefined = active;
+          if (kept) void write(() => store.save(kept.credential.value));
+          retiring(held, !kept);
+        } else retiring(held, false);
+        signal.throwIfAborted();
+        throw new DOMException("Sign-in replaced.", "AbortError");
+      }
+      const previous = active;
+      active = held;
+      retiring(previous, false);
+      notify();
+    },
+    /** Sign-out: deletes the item first, and rejects, still signed in,
+     * when it can't; then revokes. */
+    async signOut() {
+      const held = active;
+      generation++;
+      await write(store.clear);
+      if (active !== held) return;
+      active = undefined;
+      retiring(held, false);
+      notify();
+    },
+    /** Stops using the sign-in now, such as when NIP-FI takes over or
+     * Builderlab rejects it; deleting and revoking it retry until done. */
+    retire() {
+      const held = active;
+      generation++;
+      active = undefined;
+      retiring(held, true);
+      notify();
+    },
   };
 }
+export type SavedSignIn = ReturnType<typeof createSavedSignIn>;
+/** This build's: one per profile and Builderlab server. */
+export const savedSignIn = createSavedSignIn();
 
 /**
  * The saved credential with its account from `GET v1/auth/me`, or undefined

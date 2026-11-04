@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { Credential } from "./browser";
+import { createSavedSignIn, type Credential as Saved } from "./browser";
 import { createOAuthSession } from "./session";
 import { deferred } from "../test-helpers";
 
@@ -161,51 +162,71 @@ it("ensureSignedIn starts and joins a fresh Settings login from signed-out", asy
   session.dispose();
 });
 
-it("restores a saved sign-in, saves a new one and deletes it on sign-out", async () => {
-  const restored = { ...credential, value: "saved-token" };
-  const persistence = {
-    restore: vi.fn(async () => restored),
-    save: vi.fn(async () => {}),
-    clear: vi.fn(async () => {}),
+/** One app launch's keychain item, the shared owner over it and a host
+ * whose `v1/auth/me` accepts whatever is saved. */
+function keychain(value: string | null = null) {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const store = {
+    value,
+    load: vi.fn(async () => store.value),
+    save: vi.fn(async (next: string) => {
+      store.value = next;
+    }),
+    clear: vi.fn(async () => {
+      store.value = null;
+    }),
   };
-  const release = vi.fn();
-  const session = createOAuthSession(
-    async () => credential,
+  const host = {
+    request: vi.fn(async () => ({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ subject: "user", email: "a@example.com" }),
+    })),
+  };
+  const saved = createSavedSignIn(store);
+  const plugin = (acquire = async () => credential, release = vi.fn()) => ({
     release,
-    undefined,
-    persistence,
-  );
+    session: createOAuthSession(acquire, release, host, saved),
+  });
+  return { store, host, saved, plugin };
+}
+const as = (value: string): Saved => ({ ...credential, value });
+
+it("restores a saved sign-in, saves a new one and deletes it on sign-out", async () => {
+  const k = keychain("saved-token");
+  const { session, release } = k.plugin();
   expect(session.snapshot()).toEqual({ status: "pending", checking: true });
   await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
-  expect(session.credential()).toBe(restored);
-  expect(persistence.save).not.toHaveBeenCalled();
+  expect(session.credential().value).toBe("saved-token");
+  expect(k.store.save).not.toHaveBeenCalled();
   await session.signOut();
-  expect(release).toHaveBeenCalledWith(restored);
-  expect(persistence.clear).toHaveBeenCalledTimes(1);
+  expect(k.store.value).toBeNull();
+  // A restored sign-in is revoked by the shared owner's logout.
+  await vi.waitFor(() =>
+    expect(k.host.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        headers: { "X-BB-Session-Credential": "saved-token" },
+      }),
+    ),
+  );
+  expect(release).not.toHaveBeenCalled();
   await session.signIn();
-  expect(persistence.save).toHaveBeenCalledWith(credential);
+  expect(k.store.value).toBe("private-token");
 });
 
 it("shows a failed save as a retryable error and a failed delete as an unfinished sign-out", async () => {
-  const persistence = {
-    restore: async () => undefined,
-    save: vi.fn().mockRejectedValueOnce(new Error("denied")),
-    clear: vi.fn().mockRejectedValueOnce(new Error("denied")),
-  };
-  const release = vi.fn();
-  const session = createOAuthSession(
-    async () => credential,
-    release,
-    undefined,
-    persistence,
-  );
+  const k = keychain();
+  k.store.save.mockRejectedValueOnce(new Error("denied"));
+  k.store.clear.mockRejectedValueOnce(new Error("denied"));
+  const { session, release } = k.plugin();
   await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-out"));
   await session.signIn();
   expect(session.snapshot()).toEqual({
     status: "signed-out",
     error: "Could not save your Builderlab sign-in. Try again.",
   });
-  expect(release).toHaveBeenCalledWith(credential);
+  await vi.waitFor(() => expect(release).toHaveBeenCalledWith(credential));
   await session.signIn();
   expect(session.snapshot().status).toBe("signed-in");
   await session.signOut();
@@ -214,57 +235,119 @@ it("shows a failed save as a retryable error and a failed delete as an unfinishe
     account: credential.account,
     error: "Couldn’t finish signing out of Builderlab. Try again.",
   });
-  expect(session.credential()).toBe(credential);
-  expect(release).toHaveBeenCalledTimes(1);
+  expect(k.store.value).toBe("private-token");
   await session.signOut();
   expect(session.snapshot()).toEqual({ status: "signed-out" });
-  expect(release).toHaveBeenCalledTimes(2);
-  expect(persistence.clear).toHaveBeenCalledTimes(2);
+  expect(k.store.value).toBeNull();
 });
 
 it("deletes after a save still running at sign-out, so the save cannot bring it back", async () => {
+  const k = keychain();
   const saving = deferred<void>();
-  const order: string[] = [];
-  const persistence = {
-    restore: async () => undefined,
-    save: vi.fn(async () => {
-      await saving.promise;
-      order.push("save");
-    }),
-    clear: vi.fn(async () => {
-      order.push("clear");
-    }),
-  };
-  const release = vi.fn();
-  const session = createOAuthSession(
-    async () => credential,
-    release,
-    undefined,
-    persistence,
-  );
+  k.store.save.mockImplementationOnce(async (next) => {
+    await saving.promise;
+    k.store.value = next;
+  });
+  const { session, release } = k.plugin();
   await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-out"));
   const signingIn = session.signIn();
-  await vi.waitFor(() => expect(persistence.save).toHaveBeenCalled());
+  await vi.waitFor(() => expect(k.store.save).toHaveBeenCalled());
   const signingOut = session.signOut();
   saving.resolve();
   await Promise.all([signingIn, signingOut]);
-  expect(order).toEqual(["save", "clear"]);
+  expect(k.store.value).toBeNull();
   expect(session.snapshot()).toEqual({ status: "signed-out" });
   // The discarded sign-in is revoked, not left running.
-  expect(release).toHaveBeenCalledWith(credential);
+  await vi.waitFor(() => expect(release).toHaveBeenCalledWith(credential));
+});
+
+it("leaves nothing saved when Welcome cancels a held save and the plugin signs out", async () => {
+  const k = keychain();
+  const saving = deferred<void>();
+  k.store.save.mockImplementationOnce(async (next) => {
+    await saving.promise;
+    k.store.value = next;
+  });
+  const { session } = k.plugin();
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-out"));
+  const welcome = new AbortController();
+  const revoke = vi.fn(async () => {});
+  const accepting = k.saved.accept(as("welcome"), revoke, welcome.signal);
+  welcome.abort();
+  const signingOut = session.signOut();
+  saving.resolve();
+  await expect(accepting).rejects.toThrow();
+  await signingOut;
+  await vi.waitFor(() => expect(revoke).toHaveBeenCalled());
+  expect(k.store.value).toBeNull();
+  expect(session.snapshot().status).toBe("signed-out");
+});
+
+it("follows a second Welcome sign-in: the plugin shows B and retires A", async () => {
+  const k = keychain();
+  const { session } = k.plugin();
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-out"));
+  const revokeA = vi.fn(async () => {});
+  const a = as("a");
+  await k.saved.accept(a, revokeA, new AbortController().signal);
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+  const viewerA = session.viewerSession();
+  const b = { value: "b", account: { ...credential.account, subject: "b" } };
+  await k.saved.accept(b, vi.fn(), new AbortController().signal);
+  await vi.waitFor(() => expect(session.credential()).toBe(b));
+  expect(session.snapshot().account?.subject).toBe("b");
+  expect(viewerA.signal.aborted).toBe(true);
+  expect(k.store.value).toBe("b");
+  await vi.waitFor(() => expect(revokeA).toHaveBeenCalledWith(a));
+  await expect(session.request(a, { path: "/v1/apps" })).rejects.toThrow(
+    "session changed",
+  );
+});
+
+it("retires the browser sign-in at once when NIP-FI takes over, retrying its delete until it succeeds", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const k = keychain("a");
+    const { session, release } = k.plugin();
+    await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+    const a = session.credential();
+    k.store.clear.mockRejectedValueOnce(new Error("busy"));
+    k.host.request.mockClear();
+    session.retire();
+    // Unusable now: a running Apps operation's next call sends nothing as A.
+    expect(session.snapshot().status).toBe("signed-out");
+    await expect(session.request(a, { path: "/v1/apps" })).rejects.toThrow(
+      "session changed",
+    );
+    await vi.waitFor(() =>
+      expect(session.snapshot().error).toMatch(/keeps trying/),
+    );
+    // The retained item is never restored meanwhile.
+    expect(k.store.value).toBe("a");
+    const restarted = k.plugin();
+    await vi.waitFor(() =>
+      expect(restarted.session.snapshot().status).toBe("signed-out"),
+    );
+    expect(k.host.request).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(k.store.value).toBeNull();
+    await vi.waitFor(() =>
+      expect(k.host.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: "POST",
+          headers: { "X-BB-Session-Credential": "a" },
+        }),
+      ),
+    );
+    expect(release).not.toHaveBeenCalled();
+    expect(session.snapshot()).toEqual({ status: "signed-out" });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("starts signed out, without an error, when nothing saved is accepted", async () => {
-  const session = createOAuthSession(
-    async () => credential,
-    undefined,
-    undefined,
-    {
-      restore: async () => undefined,
-      save: async () => {},
-      clear: async () => {},
-    },
-  );
+  const { session } = keychain().plugin();
   await vi.waitFor(() =>
     expect(session.snapshot()).toEqual({ status: "signed-out" }),
   );

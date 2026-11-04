@@ -459,18 +459,14 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
     }
   });
   const { createOAuthSession } = await import("./session");
-  const { onCredentialSaved, restoredCredential, savedCredential } =
-    await import("./browser");
+  const { createSavedSignIn } = await import("./browser");
+  // Each launch has one shared owner for Welcome and the plugin.
+  let saved = createSavedSignIn();
   const plugin = () => {
     const acquire = vi.fn(async () => {
       throw new Error("asked again");
     });
-    const session = createOAuthSession(acquire, undefined, bundledHost, {
-      restore: (signal) => restoredCredential(bundledHost, signal),
-      save: (credential) => savedCredential.save(credential.value),
-      clear: () => savedCredential.clear(),
-      watch: onCredentialSaved,
-    });
+    const session = createOAuthSession(acquire, undefined, bundledHost, saved);
     return { session, acquire };
   };
   // The plugin is already running, signed out, while first run signs in.
@@ -478,7 +474,11 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
   await vi.waitFor(() =>
     expect(running.session.snapshot().status).toBe("signed-out"),
   );
-  const credential = await firstRunCredential(new AbortController().signal);
+  const credential = await firstRunCredential(
+    new AbortController().signal,
+    undefined,
+    saved,
+  );
   expect(credential.value).toBe("token");
   expect([...items]).toEqual([
     ["https://app.builderlab.xyz/api/goose", "token"],
@@ -488,6 +488,7 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
   );
   running.session.dispose();
   // A restart: a new plugin session restores it without asking.
+  saved = createSavedSignIn();
   const restarted = plugin();
   await vi.waitFor(() =>
     expect(restarted.session.snapshot()).toMatchObject({
@@ -501,6 +502,7 @@ it("saves first run's browser sign-in as the plugin's session, now and after a r
   restarted.session.dispose();
   // A build for another Builderlab never reads or sends this one.
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  saved = createSavedSignIn();
   const other = plugin();
   await vi.waitFor(() =>
     expect(other.session.snapshot()).toEqual({ status: "signed-out" }),

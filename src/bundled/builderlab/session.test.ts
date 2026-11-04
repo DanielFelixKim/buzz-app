@@ -159,6 +159,7 @@ it("never falls back to the browser on a network error or 5xx", async () => {
 function fake(): BuilderlabSession & {
   set(next: LoginSnapshot): void;
   signIn: ReturnType<typeof vi.fn>;
+  retire: () => void;
 } {
   let state: LoginSnapshot = { status: "signed-out" };
   const listeners = new Set<() => void>();
@@ -182,6 +183,7 @@ function fake(): BuilderlabSession & {
     cancel: vi.fn(),
     abandon: vi.fn(),
     signOut: vi.fn(),
+    retire: vi.fn<() => void>(),
     dispose: vi.fn(),
   };
   return session as never;
@@ -190,7 +192,7 @@ function fake(): BuilderlabSession & {
 function owner(status = "signed-out") {
   const listeners = new Set<() => void>();
   return {
-    snapshot: () => ({ status }) as never,
+    snapshot: () => ({ status, revision: "native" }) as never,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
@@ -247,8 +249,9 @@ it("prefers an existing NIP-FI session, showing its account read, and retires th
   native.set(failed);
   identity.set("signed-in");
   expect(session.snapshot()).toEqual({ ...failed, federated: true });
-  // Taking over signs the browser sign-in out, which revokes and deletes it.
-  expect(browser.signOut).toHaveBeenCalledTimes(2);
+  // Taking over retires the browser sign-in, once per NIP-FI session.
+  expect(browser.retire).toHaveBeenCalledTimes(1);
+  expect(browser.signOut).toHaveBeenCalledTimes(1);
   await session.signIn();
   expect(native.signIn).toHaveBeenCalledTimes(1);
   expect(browser.signIn).not.toHaveBeenCalled();

@@ -448,7 +448,11 @@ it("keeps a per-server sign-out that native couldn't finish visible, named, with
   pub.publish({ status: "signed-in", email: "will@example.com" });
   // Native resolves a storage failure as an unavailable snapshot.
   vi.mocked(pub.service.signOut).mockImplementation(async () => {
-    pub.publish({ status: "unavailable", failure: "storage-denied" });
+    pub.publish({
+      status: "unavailable",
+      failure: "storage-denied",
+      signOutUnfinished: true,
+    });
   });
   render(
     <IdentitySettings
@@ -485,7 +489,11 @@ it("restores an unfinished per-server sign-out's Try again when Settings opens a
   block.publish({ status: "signed-in", email: "will@block.xyz" });
   pub.publish({ status: "signed-in", email: "will@example.com" });
   vi.mocked(pub.service.signOut).mockImplementation(async () => {
-    pub.publish({ status: "unavailable", failure: "storage-denied" });
+    pub.publish({
+      status: "unavailable",
+      failure: "storage-denied",
+      signOutUnfinished: true,
+    });
   });
   const settings = () => (
     <IdentitySettings
@@ -515,6 +523,42 @@ it("restores an unfinished per-server sign-out's Try again when Settings opens a
   });
   await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(pub.service.signOut).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("retries a Switch account sign-out that failed outside Settings as a sign-out", async () => {
+  const { block, pub, root, servers } = twoServers();
+  block.publish({ status: "signed-in", email: "will@block.xyz" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
+  vi.mocked(pub.service.signOut).mockImplementation(async () => {
+    pub.publish({
+      status: "unavailable",
+      failure: "storage-denied",
+      signOutUnfinished: true,
+    });
+  });
+  // The community's Switch account signs out through the same server session.
+  await root.forServer?.("bb-public")?.signOut();
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={root}
+      memberships={memberships}
+      servers={servers}
+    />,
+    { wrapper: ToastProvider },
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t sign out of app.builderlab.xyz.",
+  );
+  vi.mocked(pub.service.signOut).mockImplementation(async () => {
+    pub.publish({ status: "signed-out", failure: null });
+  });
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Try again" }));
+  expect(pub.service.signOut).toHaveBeenCalledTimes(2);
+  expect(pub.service.restore).not.toHaveBeenCalled();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 

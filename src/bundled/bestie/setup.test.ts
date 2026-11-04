@@ -7,6 +7,18 @@ import { bestieFixture, cleanups, HOME, MODEL } from "./testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
+// Each test gets its own shared browser sign-in, as each launch does.
+const shared = vi.hoisted(() => ({ current: undefined as unknown }));
+vi.mock("../builderlab/oauth/browser", async (original) => {
+  const actual = await original<typeof import("../builderlab/oauth/browser")>();
+  return {
+    ...actual,
+    get savedSignIn() {
+      shared.current ??= actual.createSavedSignIn();
+      return shared.current;
+    },
+  };
+});
 
 beforeEach(() => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
@@ -38,6 +50,7 @@ beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 afterEach(async () => {
+  shared.current = undefined;
   for (const dispose of cleanups.splice(0).reverse()) await dispose();
   localStorage.clear();
   native.invoke.mockReset();

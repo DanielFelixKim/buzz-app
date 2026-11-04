@@ -37,6 +37,18 @@ import { federatedFixture } from "../../features/federated-identity/testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
+// Each test is a fresh app launch: its own shared saved sign-in.
+const saved = vi.hoisted(() => ({ current: undefined as unknown }));
+vi.mock("./oauth/browser", async (original) => {
+  const actual = await original<typeof import("./oauth/browser")>();
+  return {
+    ...actual,
+    get savedSignIn() {
+      saved.current ??= actual.createSavedSignIn();
+      return saved.current;
+    },
+  };
+});
 stubAvatarBrowserApis();
 function provideKnownCommunities(root: Context, viewer: string) {
   const knownCommunities: KnownCommunities = {
@@ -75,6 +87,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  saved.current = undefined;
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   localStorage.clear();
   native.invoke.mockReset();
@@ -932,8 +945,14 @@ it.each([
     if (!fresh) throw new Error("Missing reactivated Builderlab login card");
     const FreshCard = fresh.component;
     render(<FreshCard active={() => true} />);
+    if (flow === "shared login and re-enable") {
+      // The saved sign-in outlives the plugin, as it does a restart.
+      expect(screen.getAllByRole("status")[0]).toHaveTextContent(
+        "Signed in as a@example.com.",
+      );
+      return;
+    }
     expect(screen.getByRole("status")).toHaveTextContent("Sign in securely");
-    if (flow === "shared login and re-enable") return;
     if (flow === "instructions and deletion") {
       await act(async () => {
         await agents.create({

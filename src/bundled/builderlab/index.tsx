@@ -10,9 +10,8 @@ import {
   browserCredential,
   browserLoginAvailable,
   oauthTarget,
-  onCredentialSaved,
-  restoredCredential,
-  savedCredential,
+  logout,
+  savedSignIn,
 } from "./oauth/browser";
 import { brokerBuilderlab, createDevSession } from "./dev-session";
 import { createOAuthSession } from "./oauth/session";
@@ -75,26 +74,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
               );
             return browserCredential(ctx.host, signal);
           },
-          (credential) => {
-            // Local guest teardown is immediate; the parent logout also revokes every server-side viewer child.
-            void ctx.host
-              .request({
-                url: `${oauthTarget()}/v1/auth/logout`,
-                method: "POST",
-                headers: { "X-BB-Session-Credential": credential.value },
-              })
-              .catch(() => {});
-          },
+          // Local guest teardown is immediate; the parent logout also
+          // revokes every server-side viewer child.
+          logout(ctx.host),
           ctx.host,
           // The desktop app keeps the sign-in in the OS secure store.
-          browserLoginAvailable() && !unavailable
-            ? {
-                restore: (signal) => restoredCredential(ctx.host, signal),
-                save: (credential) => savedCredential.save(credential.value),
-                clear: () => savedCredential.clear(),
-                watch: onCredentialSaved,
-              }
-            : undefined,
+          browserLoginAvailable() && !unavailable ? savedSignIn : undefined,
         );
   const session =
     dev?.session ??

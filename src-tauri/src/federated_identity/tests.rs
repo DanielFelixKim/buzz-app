@@ -255,6 +255,8 @@ async fn failed_sign_out_refuses_the_record_on_restart_until_deletion_succeeds()
     let signed_out = host.sign_out().await;
     assert!(signed_out.status == Status::Unavailable);
     assert_eq!(signed_out.failure, Some("storage-denied"));
+    // Every sign-out caller's failure says so; a failed restore does not.
+    assert!(signed_out.sign_out_unfinished);
     assert!(!host.current(&old_revision));
     assert!(host.state().session.is_none());
     assert_eq!(
@@ -262,7 +264,8 @@ async fn failed_sign_out_refuses_the_record_on_restart_until_deletion_succeeds()
         Some(session.record.revision.as_str())
     );
     let restart = super::tests::host(store.clone());
-    assert!(restart.restore().await.status == Status::Unavailable);
+    let restored = restart.restore().await;
+    assert!(restored.status == Status::Unavailable && !restored.sign_out_unfinished);
     assert!(restart.state().session.is_none());
     store.denied.store(false, Ordering::SeqCst);
     assert!(restart.restore().await.status == Status::SignedOut);
@@ -308,7 +311,7 @@ async fn corrupt_storage_is_unavailable_and_public_snapshots_have_no_secret() {
         state.snapshot.status = Status::SignedIn;
     }
     let public = serde_json::to_value(host.snapshot()).unwrap();
-    assert_eq!(public.as_object().unwrap().len(), 7);
+    assert_eq!(public.as_object().unwrap().len(), 8);
     assert!(!public.to_string().contains("fixture-session-token"));
 }
 

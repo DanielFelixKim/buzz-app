@@ -99,11 +99,13 @@ unconfigured). A server the build adds signs in with its native session. The
 built-in server signs in with its native session only when its
 `v1/session` answers with a status other than 404, and on a 404 with the browser
 sign-in (`/v1/auth/login`); a network error or 5xx is a retryable error, never
-the browser sign-in. Both are kept in the system keyring and survive a restart
-(see [identity](identity.md)). Unset or set to
+the browser sign-in. Both are kept in the system keyring and survive a restart;
+first run and the plugin share the one browser sign-in (see
+[identity](identity.md)). Unset or set to
 `https://app.builderlab.xyz`, `BUZZ_BUILDERLAB_URL` keeps the built-in server.
 Another origin, or an empty value, turns it off when nothing is added, and the
-bundled Builderlab plugin keeps its own in-memory login against this origin.
+bundled Builderlab plugin keeps an in-memory login against this origin, which
+is not saved.
 Alongside an added sign-in server, a nonempty `BUZZ_BUILDERLAB_URL` fails the
 build.
 

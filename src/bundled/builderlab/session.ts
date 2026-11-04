@@ -104,11 +104,11 @@ export async function offeredSignIn(
  * requires NIP-FI asked for sign-in, and otherwise the browser sign-in. A
  * sign-in asks `offered` which one the server has, and Cancel ends that
  * question too. Once a NIP-FI session is signed in, the browser sign-in is
- * signed out, revoked and deleted, so it never comes back.
+ * retired: unusable at once, then deleted and revoked, so it never comes back.
  */
 export function createAutoSession(
   native: BuilderlabSession,
-  browser: BuilderlabSession,
+  browser: BuilderlabSession & Readonly<{ retire(): void }>,
   offered: () => Promise<"browser" | "federated">,
   identity: Pick<FederatedIdentity, "snapshot" | "subscribe">,
 ): BuilderlabSession {
@@ -116,6 +116,7 @@ export function createAutoSession(
   let error: string | undefined;
   let probe: { promise?: Promise<BuilderlabSession | undefined> } | undefined;
   let state: LoginSnapshot = { status: "signed-out" };
+  let retired: string | undefined;
   const listeners = new Set<() => void>();
   const owned = () =>
     [
@@ -126,11 +127,13 @@ export function createAutoSession(
     ].includes(identity.snapshot().status);
   const active = () => (owned() || chosen === native ? native : browser);
   const project = () => {
-    if (
-      identity.snapshot().status === "signed-in" &&
-      browser.snapshot().status !== "signed-out"
-    )
-      browser.signOut();
+    // Once per NIP-FI session, even when nothing was restored: a retained
+    // item whose restore failed is deleted too.
+    const nip = identity.snapshot();
+    if (nip.status === "signed-in" && retired !== nip.revision) {
+      retired = nip.revision;
+      browser.retire();
+    }
     const current = active();
     const inner = current.snapshot();
     const next: LoginSnapshot = probe

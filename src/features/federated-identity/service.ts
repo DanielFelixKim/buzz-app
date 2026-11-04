@@ -31,6 +31,9 @@ export type SessionSnapshot = Readonly<{
   expiresAt: string | null;
   /** The session ends soon; signing in again now keeps the app open. */
   expiring: boolean;
+  /** Unavailable because a sign-out, by any caller, did not finish, not
+   * because restoring failed; signing out again retries it. */
+  signOutUnfinished?: boolean;
 }>;
 export type AuthenticatedRequest = Readonly<{
   path: string;

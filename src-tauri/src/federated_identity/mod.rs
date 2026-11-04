@@ -65,6 +65,9 @@ pub(crate) struct Snapshot {
     expires_at: Option<String>,
     /// The session ends soon; signing in again now keeps the app open.
     expiring: bool,
+    /// Unavailable because a sign-out, by any caller, did not finish, rather
+    /// than because restoring failed; signing out again retries it.
+    sign_out_unfinished: bool,
 }
 
 // No Debug, no IPC serialization. Only the secure store serializes this record.
@@ -213,6 +216,7 @@ impl FederatedIdentity {
             failure: None,
             expires_at: None,
             expiring: false,
+            sign_out_unfinished: false,
         };
         let (changes, _) = watch::channel(snapshot.clone());
         let (account_changes, _) = watch::channel(None);
@@ -345,6 +349,7 @@ impl FederatedIdentity {
     /// Make `session` current and watch for its expiry. The caller publishes.
     fn install_session(&self, state: &mut State, session: Arc<Session>) {
         state.snapshot.status = Status::SignedIn;
+        state.snapshot.sign_out_unfinished = false;
         state.snapshot.revision = session.record.revision.clone();
         state.snapshot.email = session.record.email.clone();
         state.snapshot.failure = None;
@@ -439,6 +444,17 @@ impl FederatedIdentity {
         }
         state.snapshot.status = status;
         state.snapshot.failure = failure;
+        state.snapshot.sign_out_unfinished = false;
+        self.publish(&state);
+    }
+    fn fail_sign_out(&self, revision: &str, failure: &'static str) {
+        let mut state = self.state();
+        if state.closed || state.snapshot.revision != revision {
+            return;
+        }
+        state.snapshot.status = Status::Unavailable;
+        state.snapshot.failure = Some(failure);
+        state.snapshot.sign_out_unfinished = true;
         self.publish(&state);
     }
     fn retire_state(
@@ -450,6 +466,7 @@ impl FederatedIdentity {
         self.reset(state);
         state.snapshot.revision = uuid::Uuid::new_v4().to_string();
         state.snapshot.status = status;
+        state.snapshot.sign_out_unfinished = false;
         state.snapshot.email = None;
         state.snapshot.failure = failure;
         state.snapshot.expires_at = None;
@@ -698,6 +715,7 @@ impl FederatedIdentity {
             _ => None,
         };
         state.restored = true;
+        state.snapshot.sign_out_unfinished = false;
         match result {
             Ok(Some(session)) => self.install_session(&mut state, session),
             Ok(None) => state.snapshot.status = Status::SignedOut,
@@ -1029,7 +1047,7 @@ impl FederatedIdentity {
             .await
         };
         if let Err(failure) = result {
-            self.change_current(&revision, Status::Unavailable, Some(failure.code));
+            self.fail_sign_out(&revision, failure.code);
         }
         self.snapshot()
     }
