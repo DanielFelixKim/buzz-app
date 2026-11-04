@@ -596,15 +596,21 @@ it("keeps protected metadata discovery pinned, contained and free of workspace t
   expect(worker.options.protection?.readOnlyPaths).toContain(
     "~/Library/Application Support/Buzz/claude-code",
   );
-  expect(worker.received[0]).toMatchObject({
-    request: {
+  // Claude's hook timer counts sleep, so it must outlast the native watchdog's
+  // 350 awake seconds; its milliseconds must still fit a JavaScript timer.
+  const hook = (id: string) => [{ hookCallbackIds: [id], timeout: 604_800 }];
+  expect(worker.received[0]?.request).toEqual(
+    expect.objectContaining({
       hooks: {
-        PreToolUse: [{ hookCallbackIds: ["security-tool"], timeout: 600 }],
-        PostToolBatch: [
-          { hookCallbackIds: ["security-incoming"], timeout: 600 },
-        ],
+        PreToolUse: hook("security-tool"),
+        PreCompact: hook("security-incomplete"),
+        SessionStart: hook("security-session"),
+        UserPromptSubmit: hook("security-incoming"),
+        PostToolBatch: hook("security-incoming"),
+        PostToolUseFailure: hook("security-incoming"),
+        PostToolUse: hook("security-incoming"),
       },
-    },
-  });
+    }),
+  );
   expect(worker.killed).toBe(true);
 });

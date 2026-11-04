@@ -102,6 +102,14 @@ export type Settled = Readonly<{
   stopped?: true;
 }>;
 
+/** Claude's hook timer counts macOS sleep, and most events fail open when it
+ * ends, while the native watchdog (claude_hooks.rs, 350 s) counts awake time:
+ * so the CLI waits a week and the watchdog always ends a stalled review first.
+ * Under 2_147_483 s, so its milliseconds still fit a JavaScript timer. */
+const PROTECTED_HOOK_TIMEOUT = 604_800;
+const protectedHook = (id: string) => [
+  { hookCallbackIds: [id], timeout: PROTECTED_HOOK_TIMEOUT },
+];
 const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
  * idle, signed in as `claude auth login` left it, and never as part of a
@@ -411,36 +419,12 @@ export class ClaudeProcess {
               hooks: {
                 ...(launch.protection
                   ? {
-                      PreToolUse: [
-                        { hookCallbackIds: ["security-tool"], timeout: 600 },
-                      ],
-                      PreCompact: [
-                        {
-                          hookCallbackIds: ["security-incomplete"],
-                          timeout: 600,
-                        },
-                      ],
-                      SessionStart: [
-                        { hookCallbackIds: ["security-session"], timeout: 600 },
-                      ],
-                      UserPromptSubmit: [
-                        {
-                          hookCallbackIds: ["security-incoming"],
-                          timeout: 600,
-                        },
-                      ],
-                      PostToolBatch: [
-                        {
-                          hookCallbackIds: ["security-incoming"],
-                          timeout: 600,
-                        },
-                      ],
-                      PostToolUseFailure: [
-                        {
-                          hookCallbackIds: ["security-incoming"],
-                          timeout: 600,
-                        },
-                      ],
+                      PreToolUse: protectedHook("security-tool"),
+                      PreCompact: protectedHook("security-incomplete"),
+                      SessionStart: protectedHook("security-session"),
+                      UserPromptSubmit: protectedHook("security-incoming"),
+                      PostToolBatch: protectedHook("security-incoming"),
+                      PostToolUseFailure: protectedHook("security-incoming"),
                     }
                   : Object.fromEntries(
                       CLAUDE_HOOK_EVENTS.map((event) => [
@@ -450,7 +434,7 @@ export class ClaudeProcess {
                     )),
                 PostToolUse: [
                   ...(launch.protection
-                    ? [{ hookCallbackIds: ["security-incoming"], timeout: 600 }]
+                    ? protectedHook("security-incoming")
                     : [{ hookCallbackIds: ["buzz:PostToolUse"] }]),
                   ...(launch.tools
                     ? [{ matcher: FINAL_TOOL, hookCallbackIds: ["final"] }]
