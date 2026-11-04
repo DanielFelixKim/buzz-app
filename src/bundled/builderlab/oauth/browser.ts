@@ -217,6 +217,8 @@ export const logout =
 
 type Revoke = (credential: Credential) => Promise<void>;
 const RETRY_MS = 5000;
+export const CLEANUP_FAILED =
+  "Couldn’t finish removing your old Builderlab sign-in. Buzz keeps trying.";
 
 /**
  * The one owner of the build's saved browser sign-in, shared by Welcome and
@@ -231,24 +233,29 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
   let deleting = false;
   let failed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
   let queue: Promise<unknown> = Promise.resolve();
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const listener of [...listeners]) listener();
   };
-  const write = (operation: () => Promise<void>) => {
+  const write = <T>(operation: () => Promise<T>) => {
     const next = queue.then(operation);
     queue = next.catch(() => {});
     return next;
   };
   const cleanup = async () => {
     clearTimeout(timer);
+    if (disposed) return;
     try {
-      if (deleting) {
-        await write(store.clear);
+      // A replacement saved since then supersedes the delete.
+      await write(async () => {
+        if (!deleting) return;
+        await store.clear();
         deleting = false;
-      }
+      });
       for (const held of [...revoking]) {
+        if (disposed) return;
         await held.revoke(held.credential);
         revoking = revoking.filter((other) => other !== held);
       }
@@ -261,18 +268,20 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
         failed = true;
         notify();
       }
-      timer = setTimeout(() => void cleanup(), RETRY_MS);
+      if (!disposed) timer = setTimeout(() => void cleanup(), RETRY_MS);
     }
   };
   const retiring = (held: Held | undefined, remove: boolean) => {
     if (held) revoking.push(held);
     if (remove) deleting = true;
-    void cleanup();
+    return cleanup();
   };
-  const ordered = { ...store, clear: () => write(store.clear) };
   const current = () => active?.credential;
   return {
     current,
+    /** Changes with every sign-in, sign-out and retirement: an attempt
+     * started at one acts only while it is still current. */
+    generation: () => generation,
     /** A retired sign-in's cleanup has failed so far; it keeps retrying. */
     failed: () => failed,
     subscribe(listener: () => void) {
@@ -286,7 +295,14 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
     async restore(host: Pick<Host, "request">, signal: AbortSignal) {
       if (active || deleting) return active?.credential;
       const mine = generation;
-      const credential = await restoredCredential(host, signal, ordered);
+      // A rejected item is deleted only if nothing replaced it meanwhile.
+      const credential = await restoredCredential(host, signal, {
+        ...store,
+        clear: () =>
+          write(async () => {
+            if (mine === generation && !active) await store.clear();
+          }),
+      });
       if (!credential || mine !== generation || deleting) return current();
       active = { credential, revoke: logout(host) };
       notify();
@@ -294,29 +310,43 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
     },
     /** Saves `credential` as the active sign-in, retiring the one before.
      * A failed save revokes it; a sign-in canceled or replaced meanwhile is
-     * revoked, and its write undone. */
-    async accept(credential: Credential, revoke: Revoke, signal: AbortSignal) {
-      const mine = ++generation;
+     * revoked, and its write undone. Started at `mine`, it does nothing once that is no longer current.
+     * Failures settle after the cleanup's first try, so `failed` is current. */
+    async accept(
+      credential: Credential,
+      revoke: Revoke,
+      signal: AbortSignal,
+      mine = generation,
+    ) {
       const held = { credential, revoke };
+      let written: boolean;
       try {
-        await write(() => store.save(credential.value));
+        written = await write(async () => {
+          if (mine !== generation || signal.aborted) return false;
+          await store.save(credential.value);
+          if (mine === generation) {
+            mine = ++generation;
+            deleting = false;
+          }
+          return true;
+        });
       } catch {
-        retiring(held, false);
+        await retiring(held, false);
         throw new Error("Could not save your Builderlab sign-in. Try again.");
       }
-      if (mine !== generation || signal.aborted) {
-        if (mine === generation) {
+      if (!written || mine !== generation || signal.aborted) {
+        if (written && mine === generation) {
           generation++;
           const kept: Held | undefined = active;
           if (kept) void write(() => store.save(kept.credential.value));
-          retiring(held, !kept);
-        } else retiring(held, false);
+          await retiring(held, !kept);
+        } else await retiring(held, false);
         signal.throwIfAborted();
         throw new DOMException("Sign-in replaced.", "AbortError");
       }
       const previous = active;
       active = held;
-      retiring(previous, false);
+      void retiring(previous, false);
       notify();
     },
     /** Sign-out: deletes the item first, and rejects, still signed in,
@@ -327,7 +357,7 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
       await write(store.clear);
       if (active !== held) return;
       active = undefined;
-      retiring(held, false);
+      void retiring(held, false);
       notify();
     },
     /** Stops using the sign-in now, such as when NIP-FI takes over or
@@ -336,8 +366,14 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
       const held = active;
       generation++;
       active = undefined;
-      retiring(held, true);
+      void retiring(held, true);
       notify();
+    },
+    /** Stops retrying and lets queued writes settle, such as between tests. */
+    dispose() {
+      disposed = true;
+      clearTimeout(timer);
+      return queue;
     },
   };
 }

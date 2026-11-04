@@ -160,6 +160,7 @@ function fake(): BuilderlabSession & {
   set(next: LoginSnapshot): void;
   signIn: ReturnType<typeof vi.fn>;
   retire: () => void;
+  cleanupFailed: ReturnType<typeof vi.fn<() => boolean>>;
 } {
   let state: LoginSnapshot = { status: "signed-out" };
   const listeners = new Set<() => void>();
@@ -184,6 +185,7 @@ function fake(): BuilderlabSession & {
     abandon: vi.fn(),
     signOut: vi.fn(),
     retire: vi.fn<() => void>(),
+    cleanupFailed: vi.fn<() => boolean>(() => false),
     dispose: vi.fn(),
   };
   return session as never;
@@ -251,6 +253,19 @@ it("prefers an existing NIP-FI session, showing its account read, and retires th
   expect(session.snapshot()).toEqual({ ...failed, federated: true });
   // Taking over retires the browser sign-in, once per NIP-FI session.
   expect(browser.retire).toHaveBeenCalledTimes(1);
+  // Its unfinished removal shows on the native surface the user sees.
+  native.set({ status: "signed-in", account });
+  browser.cleanupFailed.mockReturnValue(true);
+  browser.set({ status: "signed-out" });
+  expect(session.snapshot()).toEqual({
+    status: "signed-in",
+    account,
+    federated: true,
+    error:
+      "Couldn’t finish removing your old Builderlab sign-in. Buzz keeps trying.",
+  });
+  browser.cleanupFailed.mockReturnValue(false);
+  native.set(failed);
   expect(browser.signOut).toHaveBeenCalledTimes(1);
   await session.signIn();
   expect(native.signIn).toHaveBeenCalledTimes(1);

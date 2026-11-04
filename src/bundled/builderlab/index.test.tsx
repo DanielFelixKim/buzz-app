@@ -29,7 +29,7 @@ import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
-import type { OAuthCallback } from "./oauth/browser";
+import type { OAuthCallback, SavedSignIn } from "./oauth/browser";
 import { deferred } from "./test-helpers";
 import { communityFixture } from "./agents/community-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -85,8 +85,10 @@ beforeEach(() => {
     },
   });
 });
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  // Its retries and queued cleanup must not reach the next test's mocks.
+  await (saved.current as SavedSignIn | undefined)?.dispose();
   saved.current = undefined;
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   localStorage.clear();

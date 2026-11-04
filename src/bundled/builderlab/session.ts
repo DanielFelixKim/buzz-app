@@ -1,6 +1,7 @@
 import type { BuilderlabViewerSession } from "../../features/browser/api";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { HostResponse } from "../../features/host/service";
+import { CLEANUP_FAILED } from "./oauth/browser";
 
 export type Account = Readonly<{
   subject: string;
@@ -108,7 +109,8 @@ export async function offeredSignIn(
  */
 export function createAutoSession(
   native: BuilderlabSession,
-  browser: BuilderlabSession & Readonly<{ retire(): void }>,
+  browser: BuilderlabSession &
+    Readonly<{ retire(): void; cleanupFailed(): boolean }>,
   offered: () => Promise<"browser" | "federated">,
   identity: Pick<FederatedIdentity, "snapshot" | "subscribe">,
 ): BuilderlabSession {
@@ -141,7 +143,14 @@ export function createAutoSession(
       : error && inner.status === "signed-out"
         ? { status: "signed-out", error }
         : current === native
-          ? { ...inner, federated: true }
+          ? {
+              ...inner,
+              federated: true,
+              // The retired browser sign-in's removal shows here too.
+              ...(!inner.error && browser.cleanupFailed()
+                ? { error: CLEANUP_FAILED }
+                : {}),
+            }
           : inner;
     if (
       next.status !== state.status ||

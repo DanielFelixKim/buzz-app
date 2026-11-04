@@ -5,6 +5,7 @@ import type {
   HostResponse,
   HostUpload,
 } from "../../../features/host/service";
+import { createSavedSignIn } from "../oauth/browser";
 import { createOAuthSession } from "../oauth/session";
 import { createAppsClient } from "./client";
 import { controlPlane, isAppUrl } from "./environment";
@@ -110,6 +111,48 @@ it("preserves the reserved app ID when sign-out interrupts initialization", asyn
   held.resolve(json(201, { app_id: "demo" }));
   await rejected;
   expect(request).toHaveBeenCalledTimes(3);
+});
+
+it("a running operation sends nothing as A once NIP-FI retires the saved browser sign-in", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  try {
+    let value: string | null = "a";
+    const store = {
+      load: async () => value,
+      save: async (next: string) => {
+        value = next;
+      },
+      clear: async () => {
+        value = null;
+      },
+    };
+    const me = json(200, { subject: "a", email: "" });
+    const owner = createSavedSignIn(store);
+    const session = createOAuthSession(
+      vi.fn(),
+      vi.fn(),
+      { request: vi.fn(async () => me) },
+      owner,
+    );
+    await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+    const held = deferred<HostResponse>();
+    const request = vi.fn((_: HostRequest) => held.promise);
+    const client = createAppsClient(
+      { request } as unknown as Host,
+      session,
+      BASE,
+    );
+    const pending = client.create("Demo");
+    const rejected = expect(pending).rejects.toThrow(/not signed in/);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    owner.retire();
+    held.resolve(contract());
+    await rejected;
+    expect(request).toHaveBeenCalledTimes(1);
+    await owner.dispose();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 async function setup(responses: HostResponse[], signedIn = true, dev = false) {

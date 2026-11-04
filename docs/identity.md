@@ -828,9 +828,10 @@ the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in
 with the same key finds it. Native federated sessions are removed by the same
-sign-out owner across indexed profiles and configurations. Without FI, Builderlab and
-hosted-community logins live only in memory and end with the restart; an FI build signs
-them in through the native FI session instead, which restores after it. Kept agents start only while the signed-in key
+sign-out owner across indexed profiles and configurations. Without FI, the Builderlab
+browser sign-in, which hosted communities use, is kept in the system keyring and
+restored after the restart; an FI build signs them in through the native FI session
+instead, which restores after it. Kept agents start only while the signed-in key
 matches the owner in their saved attestation, checked before their key is read.
 
 ## Automatic backup consent hooks

@@ -4,6 +4,21 @@ import { createSavedSignIn, type Credential as Saved } from "./browser";
 import { createOAuthSession } from "./session";
 import { deferred } from "../test-helpers";
 
+// A test can hold the account-storage step that follows a restore.
+const storage = vi.hoisted(() => ({
+  gate: undefined as Promise<void> | undefined,
+}));
+vi.mock("../session", async (original) => {
+  const actual = await original<typeof import("../session")>();
+  return {
+    ...actual,
+    accountStorage: async (subject: string) => {
+      await storage.gate;
+      return actual.accountStorage(subject);
+    },
+  };
+});
+
 const credential: Credential = {
   value: "private-token",
   account: {
@@ -314,7 +329,7 @@ it("retires the browser sign-in at once when NIP-FI takes over, retrying its del
     k.store.clear.mockRejectedValueOnce(new Error("busy"));
     k.host.request.mockClear();
     session.retire();
-    // Unusable now: a running Apps operation's next call sends nothing as A.
+    // Unusable now: a running call's next request sends nothing as A.
     expect(session.snapshot().status).toBe("signed-out");
     await expect(session.request(a, { path: "/v1/apps" })).rejects.toThrow(
       "session changed",
@@ -351,4 +366,117 @@ it("starts signed out, without an error, when nothing saved is accepted", async 
   await vi.waitFor(() =>
     expect(session.snapshot()).toEqual({ status: "signed-out" }),
   );
+});
+
+const b = {
+  ...credential,
+  value: "b",
+  account: { ...credential.account, subject: "b" },
+};
+const ok = {
+  status: 200,
+  headers: {},
+  body: JSON.stringify({ subject: "user", email: "a@example.com" }),
+};
+
+it("a restore held across a NIP-FI takeover never brings A back", async () => {
+  const k = keychain("a");
+  const held = deferred<void>();
+  storage.gate = held.promise;
+  const { session } = k.plugin();
+  try {
+    await vi.waitFor(() => expect(k.saved.current()?.value).toBe("a"));
+    session.retire();
+    held.resolve();
+    await vi.waitFor(() => expect(k.store.value).toBeNull());
+  } finally {
+    storage.gate = undefined;
+  }
+  // Native B signing out later finds nothing to reselect.
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(k.saved.current()).toBeUndefined();
+  expect(session.snapshot()).toEqual({ status: "signed-out" });
+  expect(() => session.credential()).toThrow("Sign in");
+});
+
+it("a browser sign-in held across a NIP-FI takeover saves nothing and is revoked", async () => {
+  const k = keychain();
+  const acquired = deferred<Saved>();
+  const { session, release } = k.plugin(() => acquired.promise);
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-out"));
+  const signingIn = session.signIn();
+  session.retire();
+  acquired.resolve(as("a"));
+  await signingIn;
+  expect(k.store.save).not.toHaveBeenCalled();
+  expect(k.store.value).toBeNull();
+  expect(k.saved.current()).toBeUndefined();
+  expect(session.snapshot().status).toBe("signed-out");
+  await vi.waitFor(() =>
+    expect(release).toHaveBeenCalledWith(
+      expect.objectContaining({ value: "a" }),
+    ),
+  );
+});
+
+it("an A check held while Welcome saves B, then a delayed 401, keeps B saved across a restart", async () => {
+  const k = keychain("a");
+  const held = deferred<typeof ok>();
+  k.host.request.mockImplementationOnce(() => held.promise);
+  const { session } = k.plugin();
+  await vi.waitFor(() => expect(k.host.request).toHaveBeenCalled());
+  await k.saved.accept(
+    b,
+    vi.fn(async () => {}),
+    new AbortController().signal,
+  );
+  // The plugin follows B although its restore of A was still pending.
+  await vi.waitFor(() => expect(session.credential()).toBe(b));
+  held.resolve({ ...ok, status: 401 });
+  await vi.waitFor(() => expect(k.store.load).toHaveBeenCalledTimes(1));
+  await createSavedSignIn(k.store).dispose();
+  expect(k.store.clear).not.toHaveBeenCalled();
+  expect(k.store.value).toBe("b");
+  const restarted = createOAuthSession(
+    vi.fn(),
+    vi.fn(),
+    k.host,
+    createSavedSignIn(k.store),
+  );
+  await vi.waitFor(() => expect(restarted.snapshot().status).toBe("signed-in"));
+  expect(restarted.credential().value).toBe("b");
+});
+
+it("A, a denied delete at takeover, NIP-FI sign-out, then browser B: B stays saved", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const k = keychain("a");
+    const { session } = k.plugin(async () => b);
+    await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+    k.store.clear.mockRejectedValueOnce(new Error("denied"));
+    session.retire();
+    await vi.waitFor(() => expect(k.saved.failed()).toBe(true));
+    await session.signIn();
+    expect(session.credential()).toBe(b);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(k.store.value).toBe("b");
+    expect(session.credential()).toBe(b);
+    expect(k.saved.failed()).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("a failed Welcome save settles after its revoke's first try, so Welcome can show a failed cleanup", async () => {
+  const k = keychain();
+  k.store.save.mockRejectedValueOnce(new Error("denied"));
+  const revoke = vi.fn(async () => {
+    throw new Error("offline");
+  });
+  await expect(
+    k.saved.accept(as("w"), revoke, new AbortController().signal),
+  ).rejects.toThrow("Could not save");
+  expect(revoke).toHaveBeenCalledOnce();
+  expect(k.saved.failed()).toBe(true);
+  await k.saved.dispose();
 });

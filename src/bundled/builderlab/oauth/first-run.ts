@@ -11,6 +11,7 @@ import {
   oauthTarget,
   logout,
   savedSignIn,
+  CLEANUP_FAILED,
   type Credential,
 } from "./browser";
 
@@ -88,7 +89,15 @@ export async function firstRunCredential(
   if (browser) {
     const credential = await browserCredential(bundledHost, signal);
     // The plugin restores it at launch and, if running, now: one sign-in.
-    await saved.accept(credential, logout(bundledHost), signal);
+    // A sign-in Welcome could not keep is removed; say if that is unfinished.
+    await saved
+      .accept(credential, logout(bundledHost), signal)
+      .catch((error: unknown) => {
+        if (!saved.failed()) throw error;
+        throw new Error(
+          `${error instanceof Error ? error.message : ""} ${CLEANUP_FAILED}`.trim(),
+        );
+      });
     return credential;
   }
   const credential = await federatedCredential(federated, signal);

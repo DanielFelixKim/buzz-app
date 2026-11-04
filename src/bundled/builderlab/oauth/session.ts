@@ -6,10 +6,13 @@ import {
   type Credential as Owner,
   type LoginSnapshot,
 } from "../session";
-import { oauthTarget, type Credential, type SavedSignIn } from "./browser";
+import {
+  CLEANUP_FAILED,
+  oauthTarget,
+  type Credential,
+  type SavedSignIn,
+} from "./browser";
 
-const CLEANUP_FAILED =
-  "Couldn’t finish removing your old Builderlab sign-in. Buzz keeps trying.";
 const SIGN_OUT_FAILED = "Couldn’t finish signing out of Builderlab. Try again.";
 
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
@@ -24,6 +27,10 @@ export function createOAuthSession(
 ) {
   let credential: Credential | undefined;
   let attempt: AbortController | undefined;
+  // The shared sign-in's generation the attempt started at, and its own
+  // sign-in once accepted there.
+  let started = 0;
+  let claimed: Credential | undefined;
   let viewer: BuilderlabViewerSession | undefined;
   let viewerLifetime: AbortController | undefined;
   let disposed = false;
@@ -67,14 +74,18 @@ export function createOAuthSession(
   ) => {
     const current = new AbortController();
     attempt = current;
+    started = saved?.generation() ?? 0;
+    claimed = undefined;
     publish(
       restoring ? { status: "pending", checking: true } : { status: "pending" },
     );
     try {
       const result = await obtain(current.signal);
       const storage = result && (await accountStorage(result.account.subject));
-      if (result && saved && !restoring)
-        await saved.accept(result, revoke, current.signal);
+      if (result && saved && !restoring) {
+        claimed = result;
+        await saved.accept(result, revoke, current.signal, started);
+      }
       current.signal.throwIfAborted();
       if (attempt !== current || disposed) return;
       if (!result || !storage) {
@@ -93,10 +104,15 @@ export function createOAuthSession(
       if (attempt === current) attempt = undefined;
     }
   };
-  // Follows the shared sign-in when Welcome replaces it or NIP-FI retires it.
+  // Follows the shared sign-in when Welcome replaces it or NIP-FI retires it,
+  // ending a pending attempt that no longer owns it.
   const follow = async () => {
     const next = saved?.current();
-    if (disposed || attempt) return;
+    if (disposed) return;
+    if (attempt) {
+      if (started === saved?.generation() || (next && next === claimed)) return;
+      reset(false, false);
+    }
     if (next === credential) {
       if (!next) publish(signedOut());
       return;
@@ -197,6 +213,8 @@ export function createOAuthSession(
     },
     /** NIP-FI took over: stop using this sign-in now and retire it. */
     retire: () => (saved ? saved.retire() : reset(true)),
+    /** Removing a retired sign-in keeps failing; shown where it's active. */
+    cleanupFailed: () => saved?.failed() === true,
     async signIn() {
       if (disposed || attempt) return;
       reset(!saved, false);

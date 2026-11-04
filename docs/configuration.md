@@ -104,8 +104,8 @@ first run and the plugin share the one browser sign-in (see
 [identity](identity.md)). Unset or set to
 `https://app.builderlab.xyz`, `BUZZ_BUILDERLAB_URL` keeps the built-in server.
 Another origin, or an empty value, turns it off when nothing is added, and the
-bundled Builderlab plugin keeps an in-memory login against this origin, which
-is not saved.
+bundled Builderlab plugin signs in against this origin; that browser sign-in
+is kept in the system keyring for this origin and survives a restart.
 Alongside an added sign-in server, a nonempty `BUZZ_BUILDERLAB_URL` fails the
 build.
 
