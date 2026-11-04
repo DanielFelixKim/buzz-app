@@ -105,7 +105,9 @@ function Action({
         mismatch={mismatch}
         others={othersAffected(state.authority, relay, memberships)}
         onSwitch={(authority) =>
-          setSwitching(startSwitch(identity, authority, setSwitching, retry))
+          setSwitching(
+            runSwitch(identity, authority, "sign-out", setSwitching, retry),
+          )
         }
       />
     );
@@ -210,55 +212,61 @@ function SwitchAccount({
 }
 
 type Authority = NonNullable<SessionSnapshot["authority"]>;
-/** A switch on one server: running, or failed with a recovery code. */
-type Switching = Readonly<{ authority: Authority; failure: string }>;
+/** A switch on one server: the step it is on, and whether that step
+ * finished without succeeding (with its recovery code, possibly empty). */
+type Switching = Readonly<{
+  authority: Authority;
+  step: "sign-out" | "sign-in";
+  failed: boolean;
+  failure: string;
+}>;
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "Sign-in unavailable";
 
-/** Signs in to the server again; only a signed-in result retries. An
- * unsuccessful snapshot is a failure even though native did not throw. */
-function signInAgain(
+/** Runs the switch from `step`: signs out of this server only, then in
+ * again. Sign-in starts only after a sign-out native finished, so a retry
+ * never renews the old account; only a signed-in result retries admission.
+ * Any other outcome, thrown or not, fails the step it happened in. */
+function runSwitch(
   identity: FederatedIdentity,
   authority: Authority,
-  report: (next: Switching | null) => void,
-  retry: () => void,
-) {
-  void identity
-    .signIn()
-    .then((next) => {
-      if (next.status !== "signed-in")
-        return report({ authority, failure: next.failure ?? "" });
-      report(null);
-      retry();
-    })
-    .catch((error: unknown) => report({ authority, failure: message(error) }));
-}
-
-/** Signs out of the server only, then in again. A sign-out native could not
- * finish (an unavailable snapshot) stops there. */
-function startSwitch(
-  identity: FederatedIdentity,
-  authority: Authority,
+  step: Switching["step"],
   report: (next: Switching | null) => void,
   retry: () => void,
 ): Switching {
-  void identity
-    .signOut()
-    .then(() => {
-      const after = identity.snapshot();
-      if (after.status === "unavailable")
-        return report({ authority, failure: after.failure ?? "" });
-      signInAgain(identity, authority, report, retry);
-    })
-    .catch((error: unknown) => report({ authority, failure: message(error) }));
-  return { authority, failure: "" };
+  const fail = (at: Switching["step"], failure: string) =>
+    report({ authority, step: at, failed: true, failure });
+  const signIn = () => {
+    report({ authority, step: "sign-in", failed: false, failure: "" });
+    void identity
+      .signIn()
+      .then((next) => {
+        if (next.status !== "signed-in")
+          return fail("sign-in", next.failure ?? "");
+        report(null);
+        retry();
+      })
+      .catch((error: unknown) => fail("sign-in", message(error)));
+  };
+  if (step === "sign-in") signIn();
+  else
+    void identity
+      .signOut()
+      .then(() => {
+        const after = identity.snapshot();
+        if (after.status === "unavailable" || after.status === "signed-in")
+          return fail("sign-out", after.failure ?? "");
+        signIn();
+      })
+      .catch((error: unknown) => fail("sign-out", message(error)));
+  return { authority, step, failed: false, failure: "" };
 }
 
 function SwitchProgress({
   identity,
   state,
-  switching: { authority, failure },
+  switching: { authority, step, failed, failure },
   onChange,
   retry,
 }: {
@@ -269,17 +277,16 @@ function SwitchProgress({
   retry: () => void;
 }) {
   const server = serverName(authority);
-  if (failure || state.status === "unavailable")
+  if (failed)
     return (
       <>
         <p role="alert" className="text-body-sm text-danger">
-          {`Couldn’t switch your ${server} account. ${recoveryMessage(failure || state.failure || "")}`}
+          {`Couldn’t switch your ${server} account. ${recoveryMessage(failure)}`}
         </p>
         <Button
-          onClick={() => {
-            onChange({ authority, failure: "" });
-            signInAgain(identity, authority, onChange, retry);
-          }}
+          onClick={() =>
+            onChange(runSwitch(identity, authority, step, onChange, retry))
+          }
         >
           Try again
         </Button>
@@ -293,11 +300,14 @@ function SwitchProgress({
       {state.status === "signing-in" && (
         <Button
           onClick={() =>
-            void identity
-              .cancelSignIn()
-              .catch((error: unknown) =>
-                onChange({ authority, failure: message(error) }),
-              )
+            void identity.cancelSignIn().catch((error: unknown) =>
+              onChange({
+                authority,
+                step,
+                failed: true,
+                failure: message(error),
+              }),
+            )
           }
         >
           Cancel sign-in

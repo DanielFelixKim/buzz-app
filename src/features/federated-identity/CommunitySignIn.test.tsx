@@ -182,14 +182,16 @@ it("keeps the switch's controls through sign-out, a pending sign-in, Cancel and 
   act(() => pub.publish({ status: "signing-in" }));
   await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
   expect(pub.service.cancelSignIn).toHaveBeenCalledOnce();
-  // Native answers the canceled sign-in with a snapshot, not an error.
+  // Native answers the canceled sign-in with a plain signed-out snapshot:
+  // no error and no failure code.
   await act(async () => {
-    pub.publish({ status: "signed-out", failure: "sign-in-canceled" });
+    pub.publish({ status: "signed-out", failure: null });
     signIns[0]?.resolve(pub.service.snapshot());
   });
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Couldn’t switch your Builderlab account. Sign-in was canceled.",
+    "Couldn’t switch your Builderlab account.",
   );
+  expect(screen.queryByRole("status")).toBeNull();
   expect(retry).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(pub.service.signOut).toHaveBeenCalledOnce();
@@ -234,3 +236,47 @@ it("reports a refused sign-in during a switch even when native doesn't throw", a
   expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   expect(retry).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["rejects", () => Promise.reject(new Error("storage-denied"))],
+  ["leaves native unavailable", "unavailable"],
+] as const)(
+  "redoes a failed sign-out before signing in again when it %s",
+  async (_, outcome) => {
+    const pub = publicServer();
+    const signOut = vi.mocked(pub.service.signOut);
+    if (typeof outcome === "function") signOut.mockImplementationOnce(outcome);
+    else
+      signOut.mockImplementationOnce(async () =>
+        pub.publish({ status: "unavailable", failure: "storage-denied" }),
+      );
+    const retry = vi.fn();
+    render(
+      <CommunitySignIn
+        identity={pub.service}
+        error="authorization-denied"
+        retry={retry}
+        memberships={memberships}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Switch account" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn’t switch your Builderlab account.",
+    );
+    expect(pub.service.signIn).not.toHaveBeenCalled();
+    // The old account is still signed in: retrying must not renew it.
+    act(() => pub.publish({ status: "signed-in", email: "will@example.com" }));
+    signOut.mockImplementationOnce(async () => {});
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(signOut).toHaveBeenCalledTimes(2);
+    expect(pub.service.signIn).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeVisible();
+    // A sign-out that ends the session lets the sign-in start.
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(signOut).toHaveBeenCalledTimes(3);
+    expect(pub.service.signIn).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledOnce();
+  },
+);

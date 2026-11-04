@@ -6834,10 +6834,21 @@ it.each(["unavailable", "not_offered"] as const)(
   },
 );
 
-it("ignores a hosted-server answer that arrives after Cancel or a newer lookup", async () => {
+/** A compiled list whose only server hosts none of the landing's communities. */
+const blockServers = async (): Promise<SessionSnapshot[]> =>
+  (await publicServers()).map((server) => ({
+    ...server,
+    authority: server.authority && {
+      ...server.authority,
+      id: "bb-block",
+      identityOrigin: "https://block.builderlab.xyz",
+      communityHosts: ["buzz.block.builderlab.xyz"],
+    },
+  }));
+
+function lookupWelcome() {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
-  const relay = landingRelay("https://design.communities.buzz.xyz");
-  relay.info.resolve();
+  landingRelay().info.resolve();
   const answers: ReturnType<typeof deferred<SessionSnapshot[]>>[] = [];
   const servers = () => {
     const answer = deferred<SessionSnapshot[]>();
@@ -6848,8 +6859,7 @@ it("ignores a hosted-server answer that arrives after Cancel or a newer lookup",
     .fn<(signal: AbortSignal) => Promise<Credential>>()
     .mockImplementation(() => new Promise(() => {}));
   const identity = createIdentity();
-  const user = userEvent.setup();
-  render(
+  const view = render(
     <Welcome
       identity={identity}
       communities={noJoin}
@@ -6861,28 +6871,59 @@ it("ignores a hosted-server answer that arrives after Cancel or a newer lookup",
       <p>Signed in</p>
     </Welcome>,
   );
+  return { answers, connect, identity, view, user: userEvent.setup() };
+}
+
+it("ignores a hosted-server answer that arrives after Cancel", async () => {
+  const { answers, connect, identity, user } = lookupWelcome();
   await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
   await waitFor(() => expect(answers).toHaveLength(1));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  // A late "hosted" after Cancel neither signs in nor leaves the landing.
   await act(async () => answers[0]?.resolve(await publicServers()));
   expect(connect).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
-  // A newer lookup starts; the older one's late "not hosted" is ignored too.
-  await user.clear(urlField());
+  identity.dispose();
+});
+
+it("ignores a lookup for an earlier address once another address is looked up", async () => {
+  const { answers, connect, identity, user } = lookupWelcome();
+  await screen.findByRole("button", { name: SIGN_IN });
   await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
-  await waitFor(() => expect(answers).toHaveLength(2));
+  await waitFor(() => expect(answers).toHaveLength(1));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  await user.type(urlField(), "{Enter}");
-  await waitFor(() => expect(answers).toHaveLength(3));
-  await act(async () => answers[1]?.resolve([]));
-  expect(
-    screen.queryByRole("heading", { name: "Connect to your community" }),
-  ).toBeNull();
+  await user.clear(urlField());
+  await user.type(urlField(), "kalvin.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(2));
+  // The earlier address's late "hosted" does not sign in…
+  await act(async () => answers[0]?.resolve(await publicServers()));
   expect(connect).not.toHaveBeenCalled();
-  // The latest lookup's answer still applies.
-  await act(async () => answers[2]?.resolve(await publicServers()));
+  // …and the new address's genuine "not hosted" still applies.
+  await act(async () => answers[1]?.resolve(await blockServers()));
+  expect(
+    await screen.findByRole("heading", { name: "Connect to your community" }),
+  ).toBeVisible();
+  expect(connect).not.toHaveBeenCalled();
+  identity.dispose();
+});
+
+it("ignores a hosted-server answer that arrives after unmount", async () => {
+  const { answers, connect, identity, user, view } = lookupWelcome();
+  await screen.findByRole("button", { name: SIGN_IN });
+  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(1));
+  view.unmount();
+  await act(async () => answers[0]?.resolve(await publicServers()));
+  expect(connect).not.toHaveBeenCalled();
+  identity.dispose();
+});
+
+it("applies the latest lookup's answer", async () => {
+  const { answers, connect, identity, user } = lookupWelcome();
+  await screen.findByRole("button", { name: SIGN_IN });
+  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(1));
+  await act(async () => answers[0]?.resolve(await publicServers()));
   await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
   identity.dispose();
 });
