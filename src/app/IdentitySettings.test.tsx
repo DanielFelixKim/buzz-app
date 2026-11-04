@@ -20,7 +20,7 @@ import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { backupOfferedFor } from "../features/identity/builderlab-account";
 import type { Identity } from "../features/identity/service";
 import type { FederatedIdentity } from "../features/federated-identity/service";
-import { IdentitySettings } from "./IdentitySettings";
+import { IdentitySettings, newestEventAt } from "./IdentitySettings";
 import { federatedFixture } from "../features/federated-identity/testing";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
@@ -387,9 +387,11 @@ it("lists the account's backed-up keys with their last activity and switches thr
           backup_nostr_pubkeys: [viewer, other],
         }),
   );
-  const lastActive = vi.fn(async (pubkey: string) =>
-    pubkey === other ? Date.now() / 1000 - 7200 : undefined,
-  );
+  const lastActive = vi.fn(async (pubkey: string) => {
+    if (pubkey === other) return Date.now() / 1000 - 7200;
+    throw new Error("relay refused");
+  });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
   render(
     <IdentitySettings
       viewer={viewer}
@@ -409,11 +411,13 @@ it("lists the account's backed-up keys with their last activity and switches thr
   expect(
     await within(list).findByText(/Last active 2 hours ago/),
   ).toBeVisible();
-  expect(within(list).getByText(/No activity here/)).toBeVisible();
+  expect(within(list).getByText(/Couldn’t check activity/)).toBeVisible();
   expect(within(list).getByText(npubEncode(other))).toBeVisible();
   const swap = screen.getByRole("button", { name: "Switch to this key" });
   expect(swap).toBeDisabled();
-  await userEvent.click(radios[1]!);
+  await userEvent.click(
+    within(list).getByRole("radio", { checked: false, name: "Backed-up key" }),
+  );
   await userEvent.click(swap);
   expect(
     screen.getByRole("alertdialog", { name: "Sign out of Buzz?" }),
@@ -423,7 +427,16 @@ it("lists the account's backed-up keys with their last activity and switches thr
   expect(localStorage.getItem("buzz.restore-choice")).toBeNull();
 });
 
-it("hides backed-up keys when only this device's key is backed up", async () => {
+it.each([
+  ["only this device's key is backed up", viewer, [viewer]],
+  // First run's Welcome back would offer no restore for these.
+  ["no key is linked", null, ["cd".repeat(32)]],
+  [
+    "the linked key has no backup and only one other does",
+    viewer,
+    ["cd".repeat(32)],
+  ],
+])("hides backed-up keys when %s", async (_label, linked, backups) => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const host = backupHost(at(1, { status: "complete" }));
   const fi = federatedFixture();
@@ -433,8 +446,8 @@ it("hides backed-up keys when only this device's key is backed up", async () => 
     headers: {},
     body: JSON.stringify(
       path.endsWith("/nostr-identities/current")
-        ? { identity: { pubkey_hex: viewer } }
-        : { current_nostr_pubkey: viewer, backup_nostr_pubkeys: [viewer] },
+        ? { identity: linked && { pubkey_hex: linked } }
+        : { current_nostr_pubkey: linked, backup_nostr_pubkeys: backups },
     ),
   }));
   render(
@@ -450,3 +463,20 @@ it("hides backed-up keys when only this device's key is backed up", async () => 
   expect(screen.queryByText("Backed-up keys")).toBeNull();
   expect(screen.queryByText("Checking your backups…")).toBeNull();
 });
+
+it.each([
+  ["no events", [], undefined],
+  ["events", [{ created_at: 5 }, { created_at: 9 }], 9],
+] as const)(
+  "reads the newest event time from a relay with %s",
+  async (_label, events, newest) => {
+    const read = vi.fn(async () => events);
+    const relay = {
+      snapshot: () => ({ status: "ready", session: { read } }),
+    } as unknown as Parameters<typeof newestEventAt>[0];
+    await expect(newestEventAt(relay, viewer)).resolves.toBe(newest);
+    expect(read).toHaveBeenCalledWith([{ authors: [viewer], limit: 1 }], {
+      priority: "background",
+    });
+  },
+);

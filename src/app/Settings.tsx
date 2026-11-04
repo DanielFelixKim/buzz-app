@@ -62,7 +62,7 @@ import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
-import { IdentitySettings } from "./IdentitySettings";
+import { IdentitySettings, newestEventAt } from "./IdentitySettings";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
 
@@ -1207,15 +1207,7 @@ export function Settings({
     );
   };
   const lastActive = useCallback(
-    async (pubkey: string) => {
-      const connection = communities.relay.snapshot();
-      if (connection.status !== "ready") return undefined;
-      const events = await connection.session.read(
-        [{ authors: [pubkey], limit: 1 }],
-        { priority: "background" },
-      );
-      return Math.max(...events.map((event) => event.created_at)) || undefined;
-    },
+    (pubkey: string) => newestEventAt(communities.relay, pubkey),
     [communities.relay],
   );
   const authorizePluginGit = async (repository: string) => {

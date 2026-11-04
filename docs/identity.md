@@ -615,9 +615,10 @@ command permission is not proof of a human gesture.
 Settings → Buzz → Identity → **Backed-up keys**, wherever the Key backup row
 shows and the organization is signed in, reads (through the Builderlab plugin's bundled session, as first run does) the account's linked key and
 `nsec-backups/status` as first run does. It appears once a backed-up key is not
-this device's, and lists each npub, tagged *This device* and *Linked*, with its
+this device's and Welcome back would offer a restore (the linked key is backed up,
+or several keys are), and lists each npub, tagged *This device* and *Linked*, with its
 newest event time on the current community relay (*No activity here* without
-one). **Switch to this key** remembers the choice in WebView storage and opens
+one, *Couldn’t check activity* when the read fails). **Switch to this key** remembers the choice in WebView storage and opens
 Sign out; after the restart, first run's Restore list preselects it (a wipe
 clears it). Closing the dialog forgets it, and an installed restore clears it.
 

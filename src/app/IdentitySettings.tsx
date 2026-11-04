@@ -20,6 +20,8 @@ import { Field } from "../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { relativeTimestamp } from "../shared/relative-timestamp";
 import { restoreChoice } from "../features/identity/restore-choice";
+import { canRestore } from "../features/identity/Welcome";
+import type { RelayData } from "../features/relay/service";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { CopyIcon } from "../shared/design-system/icons";
@@ -78,6 +80,22 @@ function BackupRow({
   );
 }
 
+/** The newest event time by `pubkey` on the current community's relay, if any. */
+export async function newestEventAt(
+  relay: Pick<RelayData, "snapshot">,
+  pubkey: string,
+) {
+  const connection = relay.snapshot();
+  if (connection.status !== "ready") return undefined;
+  const events = await connection.session.read(
+    [{ authors: [pubkey], limit: 1 }],
+    { priority: "background" },
+  );
+  return events.length
+    ? Math.max(...events.map((event) => event.created_at))
+    : undefined;
+}
+
 type BackedUp =
   | { revision: string; linked: string | null; backups: readonly string[] }
   | { revision: string; failed: string };
@@ -110,9 +128,10 @@ function BackedUpKeys({
       ? session.revision
       : undefined;
   const [read, setRead] = useState<BackedUp>();
-  const [active, setActive] = useState<Readonly<Record<string, number | null>>>(
-    {},
-  );
+  // null: no events there; false: the read failed.
+  const [active, setActive] = useState<
+    Readonly<Record<string, number | null | false>>
+  >({});
   const [picked, setPicked] = useState<string>();
   useEffect(() => {
     if (!revision) return;
@@ -132,7 +151,10 @@ function BackedUpKeys({
             (at) => {
               if (current) setActive((all) => ({ ...all, [key]: at ?? null }));
             },
-            () => {},
+            (error: unknown) => {
+              console.warn("Couldn’t read a backed-up key’s activity", error);
+              if (current) setActive((all) => ({ ...all, [key]: false }));
+            },
           );
       },
       (error: unknown) => {
@@ -171,7 +193,13 @@ function BackedUpKeys({
         }
       />
     );
-  if (!shown.backups.some((key) => key !== viewer)) return null;
+  // Only a switch first run's Welcome back can finish: it restores from
+  // the account's linked key and its backups.
+  if (
+    !shown.backups.some((key) => key !== viewer) ||
+    !canRestore(shown.linked ?? undefined, shown.backups)
+  )
+    return null;
   const choice = shown.backups.includes(picked ?? "") ? picked : undefined;
   return (
     <PreferenceRow
@@ -208,10 +236,13 @@ function BackedUpKeys({
                         {npubEncode(key)}
                       </code>
                       {lastActive &&
-                        at !== undefined &&
-                        (at === null
-                          ? "No activity here"
-                          : `Last active ${relativeTimestamp(at)}`)}
+                        (at === undefined
+                          ? "Checking activity…"
+                          : at === null
+                            ? "No activity here"
+                            : at === false
+                              ? "Couldn’t check activity"
+                              : `Last active ${relativeTimestamp(at)}`)}
                     </>
                   }
                 />

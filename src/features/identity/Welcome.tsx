@@ -1026,7 +1026,7 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
  * Welcome back offers a restore of the linked key's backup, or a choice among
  * several backups, which may relink the account to another backed-up key.
  */
-function canRestore(
+export function canRestore(
   linked: string | undefined,
   backups: readonly string[] | undefined,
 ) {
