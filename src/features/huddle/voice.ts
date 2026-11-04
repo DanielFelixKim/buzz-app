@@ -45,6 +45,8 @@ export function createHuddleVoices(
     let starting: Promise<void> | undefined;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let sending = false;
+    // Keep at most 160 ms of waiting audio; one 20 ms frame may be in flight.
+    const pending: number[][] = [];
     const fail = (error?: unknown) => {
       if (abort.signal.aborted) return;
       void stop();
@@ -56,6 +58,7 @@ export function createHuddleVoices(
     function stop() {
       if (closing) return closing;
       abort.abort();
+      pending.length = 0;
       clearInterval(heartbeat);
       closing = Promise.allSettled([
         starting,
@@ -110,10 +113,16 @@ export function createHuddleVoices(
           signal: abort.signal,
           ended: fail,
           async output(samples) {
-            if (abort.signal.aborted || sending) return;
+            if (abort.signal.aborted) return;
+            if (pending.length === 8) pending.shift();
+            pending.push(samples);
+            if (sending) return;
             sending = true;
             try {
-              await bridge.send(id, samples);
+              while (!abort.signal.aborted && pending.length) {
+                const frame = pending.shift();
+                if (frame) await bridge.send(id, frame);
+              }
             } catch (error) {
               fail(error);
             } finally {

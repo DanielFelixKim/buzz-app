@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { openVoice } from "./voice";
+import { createHuddleVoices } from "../../features/huddle/voice";
+import type { Agents } from "../../features/agents/service";
+import type { RelayData } from "../../features/relay/service";
 import type { AppServer, Wire } from "./rpc";
 
 function deferred<T>() {
@@ -102,12 +105,12 @@ function fixture(resume = Promise.resolve()) {
   const abort = new AbortController();
   const ended = vi.fn();
   const output = vi.fn(async (_samples: number[]) => {});
-  const open = () =>
+  const open = (send: (samples: number[]) => Promise<void> = output) =>
     openVoice(
       rpc as unknown as AppServer,
       "thread",
       abort.signal,
-      output,
+      send,
       ended,
       "instructions",
     );
@@ -125,7 +128,7 @@ function fixture(resume = Promise.resolve()) {
     listeners,
   };
 }
-it("bounds output while native send is pending and cuts it on close", async () => {
+it("forwards output while the seat is busy and cuts it on close", async () => {
   const f = fixture();
   const connection = await f.open();
   expect(f.rpc.request).toHaveBeenCalledWith(
@@ -141,7 +144,7 @@ it("bounds output while native send is pending and cuts it on close", async () =
   const frame = { data: new Float32Array(960).fill(0.2) };
   f.capture.port.onmessage?.(frame);
   f.capture.port.onmessage?.(frame);
-  expect(f.output).toHaveBeenCalledTimes(1);
+  expect(f.output).toHaveBeenCalledTimes(2);
   f.abort.abort();
   await connection.close();
   sending.resolve();
@@ -220,4 +223,97 @@ it("rejects empty and oversized owner frames before allocating audio", async () 
   expect(f.context.createBuffer).not.toHaveBeenCalled();
   expect(f.source.start).not.toHaveBeenCalled();
   await connection.close();
+});
+
+it("delivers every captured frame through the real seat during a slow bridge send", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const send = vi.fn(async (_id: string, _samples: number[]) => gate.promise);
+  const subscribe = () => () => {};
+  const destination = {
+    viewer: "owner",
+    scope: "scope",
+    relayUrl: "https://relay.example.com",
+    channelId: "parent",
+    channelName: "Parent",
+  };
+  const dispose = createHuddleVoices(
+    {
+      snapshot: () => ({
+        phase: "connected",
+        id: "call",
+        room: "room",
+        muted: false,
+        participants: ["owner"],
+        destination,
+      }),
+      subscribe,
+      voiceListening: vi.fn(),
+    },
+    {
+      snapshot: () => ({
+        status: "ready",
+        running: [
+          {
+            pubkey: "agent",
+            key: "agent",
+            owner: "owner",
+            name: "Agent",
+            type: "codex",
+            place: "here",
+            relay: destination.relayUrl,
+          },
+        ],
+      }),
+      subscribe,
+      types: () => [
+        {
+          key: "codex",
+          voice: (seat: { output(samples: number[]): Promise<void> }) =>
+            f.open(seat.output),
+        },
+      ],
+    } as unknown as Agents,
+    {
+      snapshot: () => ({
+        status: "ready",
+        scope: "scope",
+        viewer: "owner",
+        session: {
+          channels: {
+            subscribeList: subscribe,
+            get: () => ({ members: ["agent"] }),
+          },
+        },
+      }),
+      subscribe,
+    } as unknown as RelayData,
+    {
+      available: true,
+      open: async () => {},
+      close: async () => {},
+      touch: async () => {},
+      send,
+    },
+    vi.fn(),
+  );
+  try {
+    await vi.waitFor(() => expect(f.peer.connectionState).toBe("connected"));
+    // Five worklet frames (100 ms) arrive before the first invoke completes.
+    for (let i = 0; i < 5; i++)
+      f.capture.port.onmessage?.({ data: new Float32Array(960).fill(i / 8) });
+    expect(send).toHaveBeenCalledTimes(1);
+    gate.resolve();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(5));
+    expect(send.mock.calls.map(([, samples]) => samples[0])).toEqual([
+      0,
+      1 / 8,
+      2 / 8,
+      3 / 8,
+      4 / 8,
+    ]);
+  } finally {
+    gate.resolve();
+    await dispose();
+  }
 });

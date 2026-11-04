@@ -27,7 +27,6 @@ export async function openVoice(
   let closed = false;
   let closing: Promise<void> | undefined;
   let starting: Promise<unknown> | undefined;
-  let sending = false;
   let cancel!: (error: Error) => void;
   const cancelled = new Promise<never>((_, reject) => {
     cancel = reject;
@@ -95,13 +94,9 @@ export async function openVoice(
       throw new Error("Agent voice requires 48 kHz audio");
     capture = new AudioWorkletNode(context, "buzz-huddle-capture");
     capture.port.onmessage = ({ data }: MessageEvent<Float32Array>) => {
-      if (closed || sending) return;
-      sending = true;
-      void output(Array.from(data))
-        .catch(fail)
-        .finally(() => {
-          sending = false;
-        });
+      if (closed) return;
+      // The Huddle seat owns bounded buffering and serial native sends.
+      void output(Array.from(data)).catch(fail);
     };
     capture.connect(context.destination); // Existing capture worklet emits silence.
     peer.ontrack = ({ track }) => {

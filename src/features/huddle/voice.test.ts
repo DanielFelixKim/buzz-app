@@ -106,7 +106,7 @@ function setup() {
     ),
     close: vi.fn(async () => {}),
     touch: vi.fn(async () => {}),
-    send: vi.fn(async () => {}),
+    send: vi.fn<HuddleBridge["send"]>(async () => {}),
   };
   const resolveRoom = vi.fn(async () => {});
   let snapshot = {
@@ -433,3 +433,62 @@ it("reports a rejected room resolution with the originating call id", async () =
     ),
   );
 });
+
+it("retains the newest eight waiting frames and serializes bridge sends", async () => {
+  const f = setup();
+  f.agents([agent("a")]);
+  f.start();
+  await vi.waitFor(() => expect(f.connections.size).toBe(1));
+  const gate = deferred<void>();
+  f.bridge.send.mockImplementationOnce(() => gate.promise);
+  const output = required(f.seatArgs.get("a")).output;
+  const draining = output(Array(960).fill(0));
+  try {
+    for (let i = 1; i <= 12; i++) await output(Array(960).fill(i / 16));
+    expect(f.bridge.send).toHaveBeenCalledTimes(1);
+  } finally {
+    gate.resolve();
+  }
+  await draining;
+  expect(f.bridge.send.mock.calls.map(([, samples]) => samples[0])).toEqual([
+    0,
+    5 / 16,
+    6 / 16,
+    7 / 16,
+    8 / 16,
+    9 / 16,
+    10 / 16,
+    11 / 16,
+    12 / 16,
+  ]);
+});
+
+it.each(["abort", "failure"])(
+  "discards waiting audio on %s",
+  async (reason) => {
+    const f = setup();
+    f.agents([agent("a")]);
+    f.start();
+    await vi.waitFor(() => expect(f.connections.size).toBe(1));
+    const gate = deferred<void>();
+    f.bridge.send.mockImplementationOnce(async () => {
+      await gate.promise;
+      if (reason === "failure") throw new Error("send failed");
+    });
+    const seat = required(f.seatArgs.get("a"));
+    const draining = seat.output(Array(960).fill(0));
+    await seat.output(Array(960).fill(0.5));
+    if (reason === "abort") f.call({ phase: "idle" });
+    gate.resolve();
+    await draining;
+    await seat.output(Array(960).fill(0.75));
+    expect(f.bridge.send).toHaveBeenCalledTimes(1);
+    expect(seat.signal.aborted).toBe(true);
+    if (reason === "failure")
+      expect(f.report).toHaveBeenCalledExactlyOnceWith(
+        "human",
+        "a: send failed. Leave and rejoin the Huddle to retry.",
+      );
+    else expect(f.report).not.toHaveBeenCalled();
+  },
+);
