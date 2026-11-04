@@ -264,7 +264,8 @@ export class ClaudeProcess {
         // Settings files can set env, hooks and apiKeyHelper, and a contained
         // worker can write them: no pinned launch reads them. Claude still
         // reads its folder's sign-in and cached managed settings: a review's
-        // own folder (`review`), and `~/.claude` for protected runs.
+        // own folder (`review`), and `~/.claude` for protected runs, where the
+        // security plugin keeps both read-only for contained workers.
         ...(pinned ? ["--setting-sources", ""] : []),
         ...(security
           ? [

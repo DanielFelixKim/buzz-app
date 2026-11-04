@@ -203,11 +203,14 @@ fails the review closed and carries on for later reviews.
 Known Claude gaps: while a review runs, other processes of yours, likely
 contained agents too (not checked against the pinned release), can read its
 sign-in from the review's process environment. Protected Claude agents, unlike
-reviews, still use `~/.claude`, which other contained agents can write, so one
-can plant a sign-in there, or cached managed settings that carry hooks and env
-into a protected run's checks. Their transcripts live in `~/.claude/projects`
-too, so a contained agent can swap one between a run's checks or before it
-resumes.
+reviews, still use `~/.claude`. Security plugin releases after
+`v0.3.0-preview.9` make its sign-in file and cached managed settings
+(`.credentials.json`, `remote-settings.json`) read-only for contained agents, so
+none can plant a sign-in or settings that carry hooks and env into a protected
+run's checks; earlier releases leave them writable. Claude's Keychain sign-in
+and `~/.claude.json` are not covered (not checked live). Transcripts in
+`~/.claude/projects` stay writable, so a contained agent can swap one between a
+run's checks or before it resumes.
 Broader restrictions on workspace writes, startup files and login jobs belong to
 Sandpit.
 
