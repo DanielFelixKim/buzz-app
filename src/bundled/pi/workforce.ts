@@ -58,14 +58,12 @@ export type HostRoute =
     }
   | { kind: "blocked"; gatewayOrigin?: string; message: string };
 
-export async function hostRoute(
+export function hostRoute(
   seam: WorkforceSeam | undefined,
-  key: AgentKey,
-  signal: AbortSignal,
-): Promise<HostRoute> {
-  if (!seam) return { kind: "external" };
-  const route = await seam.routeReady(key, signal);
+  route: WorkforceRoute,
+): HostRoute {
   if (route.kind !== "eligible") return route;
+  if (!seam) return { kind: "external" };
   const discovery = seam.discoveryBundle(route);
   return discovery.ok
     ? {

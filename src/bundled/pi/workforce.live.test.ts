@@ -17,7 +17,9 @@ import {PassThrough} from 'node:stream';
 import {createInterface} from 'node:readline';
 import {createModels} from '@earendil-works/pi-ai/models';
 import {fauxProvider,fauxAssistantMessage} from '@earendil-works/pi-ai/providers/faux';
-import {serve,composeWorkforce,routeModels,WORKFORCE} from './host.mjs';
+import {Harness,defineDoc} from '@earendil-works/pi-durable';
+import {BACKGROUND_CONTEXT as context,withTelemetry} from '@earendil-works/chord/context';
+import {serve,composeWorkforce,routeModels,requestTelemetry,requestOf,WORKFORCE} from './host.mjs';
 const data=process.argv[2], agent='b'.repeat(64), outside='c'.repeat(64);
 const faux=fauxProvider(), models=createModels(); models.setProvider(faux.provider);
 const ORIGIN='https://gateway.test', result={};
@@ -30,12 +32,38 @@ const sse=chunks=>new Response(chunks.map(c=>'data: '+JSON.stringify(c)+'\n\n').
 const say=text=>()=>sse([chunk({role:'assistant',content:text}),chunk({},'stop')]);
 const send=(used)=>()=>sse([chunk({role:'assistant',tool_calls:[{index:0,id:'call_1',type:'function',function:{name:'send',arguments:'{"text":"hi"}'}}]}),chunk({},'tool_calls',used)]);
 const listings=[], requests=[], replies=[];
+// Summaries answer apart from turns, which may run beside them; failing ones until let through.
+let summaries=true;const summarized=[];
+const summary=body=>JSON.stringify(body.messages[0]).includes('context summarization assistant');
 globalThis.fetch=async(url,init={})=>{
  const headers=Object.fromEntries(new Headers(init.headers));
  if(String(url).endsWith('/serving-endpoints')){listings.push({url:String(url),headers});return Response.json({endpoints});}
- requests.push({url:String(url),headers,body:JSON.parse(init.body)});
+ const body=JSON.parse(init.body);
+ requests.push({url:String(url),headers,body});
+ if(summary(body)){summarized.push({headers,ok:summaries});return summaries?say('Summary.')():new Response('Internal error',{status:500});}
  return (replies.shift()??say('ok'))(init);
 };
+// The host's own Harness, to read its records and to fail a reset's write as a crash would.
+const Workforce=defineDoc({kind:'buzz.workforce',version:1,scope:'session',initial:()=>({places:{},resets:{},requests:{}})});
+let harness, crashReset=false;const resets=[];
+const open=Harness.open;
+Harness.open=async(...args)=>{
+ const opened=await open.apply(Harness,args);harness=opened;
+ const conversation=opened.conversation.bind(opened);
+ opened.conversation=async(...a)=>{
+  const found=await conversation(...a);
+  if(!found)return found;
+  const submit=found.submit.bind(found);
+  found.submit=async(draft,c)=>{
+   if(draft.entry?.kind!=='pi.reset')return submit(draft,c);
+   if(crashReset){crashReset=false;throw new Error('crashed before the reset');}
+   const handle=await submit(draft,c);resets.push({request:draft.requestId,id:handle.id});return handle;
+  };
+  return found;
+ };
+ return opened;
+};
+const records=async()=>(await harness.snapshot(Workforce,context))?.requests??{};
 // The plugin: Buzz tools, protection, and the DXA-1152 seam's answers.
 let admit=()=>({ok:true}), gate=Promise.resolve(), sessions=0;
 const binds=[], actions=[];
@@ -75,6 +103,18 @@ assert.throws(()=>composeWorkforce({},{},undefined),/no session/);
 const routed=routeModels(models,async()=>({}));
 for(const name of ['streamDeferred','fetchDeferred','cancelDeferred','generateImages','classify'])assert.throws(()=>routed[name](),/does not support/);
 result.composition=true;
+
+// The carrier: one request; an input's admission takes its caller's from its first link only.
+{const root=requestTelemetry(),a=requestTelemetry('a'),b=requestTelemetry('b');
+ assert.deepEqual(root.propagation.inject(a),{buzz:'a'});assert.equal(root.propagation.inject(root),undefined);
+ assert.equal(requestOf(root.propagation.extract({buzz:'a'})),'a');assert.equal(requestOf(root.propagation.extract({other:'a'})),undefined);
+ const admit=async(parent,links)=>parent.startSpan({name:'pi.durable.submit'},span=>{for(const context of links)span.addLink({context});return requestOf(span);});
+ assert.equal(await admit(root,[a,b]),'a');
+ assert.equal(await admit(root,[root,b]),undefined);
+ assert.equal(await admit(a,[b]),'a');
+ assert.equal(await root.startSpan({name:'pi.durable.phase'},span=>{span.addLink({context:b});return requestOf(span);}),undefined);
+ assert.equal(await a.startSpan({name:'pi.durable.phase'},span=>span.startSpan({name:'x'},child=>requestOf(child))),'a');}
+result.carrier=true;
 
 let pi=start();
 // An external agent never reaches the gateway, and keeps Pi's providers.
@@ -131,11 +171,15 @@ assert.equal(refused.status,'unanswered');assert.match(refused.detail,/Sign in t
 assert.equal(requests.length,from);admit=()=>({ok:true});
 result.invalidated=true;
 
-// A new session rotates the binding.
+// A new session rotates the binding. The next turn asks for its reset again, by its request: nothing more is written.
 await pi.rpc('session',{agent,key:'chan/root',action:'new'});
+assert.equal(resets.length,1);assert.match(resets[0].request,/^reset\//);
 from=requests.length;
 assert.equal((await run(pi,'e4')).status,'done');
+assert.deepEqual(resets,[resets[0],resets[0]]);
+assert.ok(!requests[from].body.messages.some(m=>m.role==='assistant'));
 assert.equal(binds.at(-1).event,'reset');
+assert.equal((await harness.snapshot(Workforce,context)).resets['chan/root'],undefined);
 assert.equal(sent(from)[0]['x-workforce-launcher-session'],'00000000-0000-4000-8000-000000000002');
 result.reset=true;
 
@@ -149,20 +193,84 @@ result.standalone=true;
 
 // Compaction in a run, without the native session pi-ai drops for it: the run's context, the native affinity.
 assert.equal((await run(pi,'e6a',{text:'word '.repeat(30000)})).status,'done');
-from=requests.length;replies.push(send(125000),say('Summary.'),say('done'));
+from=requests.length;replies.push(send(125000),say('done'));
 assert.equal((await run(pi,'e6')).status,'done');
-const compaction=requests.slice(from).find(r=>JSON.stringify(r.body.messages).includes('ummar'));
+const compaction=requests.slice(from).find(r=>summary(r.body));
 assert.ok(compaction,'no compaction request');
 assert.equal(compaction.headers.session_id,undefined);
 for(const h of sent(from)){assert.equal(h['x-workforce-buzz-trigger-id'],'e6');assert.equal(h['x-session-affinity'],sent(from)[0]['x-session-affinity']);}
 result.compaction=true;
-// One the owner asks for between runs has the last run's.
+// One the owner asks for is its own request, with a manual trigger, in the key's session as it is.
 for(const request of ['e7a','e7b'])assert.equal((await run(pi,request,{text:'word '.repeat(30000)})).status,'done');
-from=requests.length;replies.push(say('Summary again.'));
-await pi.rpc('session',{agent,key:'chan/root',action:'compact'});
+from=requests.length;
+await pi.rpc('session',{agent,key:'chan/root',action:'compact',workforce:{trigger_id:'m1'}});
 assert.ok(requests.length>from,'no manual compaction request');
-assert.equal(sent(from)[0]['x-workforce-buzz-trigger-id'],'e7b');
+assert.equal(binds.at(-1).event,'resume');assert.equal(binds.at(-1).saved.client_session_id,'00000000-0000-4000-8000-000000000002');
+for(const h of sent(from)){assert.equal(h['x-workforce-buzz-trigger-id'],'m1');assert.equal(h['x-workforce-launcher-session'],'00000000-0000-4000-8000-000000000002');}
+assert.ok(Object.keys(await records()).some(r=>r.startsWith('manual/')));
 result.manualCompaction=true;
+
+// A run queued behind another has its own context, also in its blocking compaction.
+{let release;const held=new Promise(r=>{release=r;});from=requests.length;
+ replies.push(async()=>{await held;return say('first')();},send(125000),say('second'));
+ const a=await pi.rpc('deliver',turn('q1',{text:'word '.repeat(30000)}));
+ await until(()=>requests.length>from);
+ const b=await pi.rpc('deliver',turn('q2',{text:'word '.repeat(30000),steer:'word '.repeat(30000)}));
+ release();
+ assert.equal((await pi.rpc('wait',{agent,submission:a.submission,request:'q1'})).status,'done');
+ assert.equal((await pi.rpc('wait',{agent,submission:b.submission,request:'q2'})).status,'done');
+ // q1's own background compaction may run beside q2; q2's blocking one is in its run.
+ const of=kind=>requests.slice(from).filter(r=>summary(r.body)===kind).map(r=>r.headers['x-workforce-buzz-trigger-id']);
+ assert.deepEqual(of(false),['q1','q2','q2']);assert.deepEqual(of(true).sort(),['q1','q2']);}
+result.queued=true;
+
+// No provenance, an unknown request, or another conversation's: refused before anything is sent.
+{const Places=defineDoc({kind:'buzz.places',version:1,scope:'session',initial:()=>({})});
+ const place=(await harness.snapshot(Places,context))['chan/root'];
+ const conversation=await harness.conversation(place.conversation,context);
+ const other=Object.entries(await records()).find(([,r])=>r.conversation!==place.conversation)[0];
+ for(const [carrier,error] of [[undefined,/no Buzz context/],['ghost',/no Buzz context/],[other,/another conversation's/]]){
+  from=requests.length;
+  const handle=await conversation.submit({type:'input',content:'Do it',whenBusy:'steer'},carrier?withTelemetry(requestTelemetry(carrier),context):context);
+  const settled=await handle.wait(context);
+  assert.equal(requests.length,from,'sent without provenance');
+  assert.equal(settled.status,'unanswered');assert.match(JSON.stringify(settled),error);
+ }}
+result.provenance=true;
+
+// A background compaction keeps its run's context through a failed attempt, a restart while its
+// retry sleeps, and the next run starting before it: the record outlives its request until then.
+assert.equal((await run(pi,'b0',{text:'word '.repeat(30000)})).status,'done');
+summaries=false;summarized.length=0;from=requests.length;replies.push(send(90000),say('done'));
+assert.equal((await run(pi,'b1')).status,'done');
+await until(()=>summarized.length>0);
+await pi.stop();
+pi=start();await pi.rpc('open',{agent,tools,route});
+assert.ok((await records()).b1,'pruned while its compaction lives');
+summaries=true;const later=requests.length;
+assert.equal((await run(pi,'b2')).status,'done');
+await until(()=>summarized.some(s=>s.ok));
+for(const {headers} of summarized)assert.equal(headers['x-workforce-buzz-trigger-id'],'b1');
+const turns=requests.slice(later).filter(r=>!summary(r.body));
+assert.ok(turns.length>0&&requests.slice(later).findIndex(r=>summary(r.body))>requests.slice(later).indexOf(turns[0]));
+for(const r of turns)assert.equal(r.headers['x-workforce-buzz-trigger-id'],'b2');
+result.background=true;
+
+// A crash between a reset's intent and its write: the next turn does it, then binds the reset.
+crashReset=true;
+await assert.rejects(pi.rpc('session',{agent,key:'chan/root',action:'new'}),/crashed before the reset/);
+assert.ok((await harness.snapshot(Workforce,context)).resets['chan/root']);
+await pi.stop();
+pi=start();await pi.rpc('open',{agent,tools,route});
+// Settled requests whose work has ended are forgotten; none was left unsubmitted.
+assert.deepEqual(Object.keys(await records()),[]);
+{const count=resets.length,sessionBefore=binds.filter(b=>b.saved).at(-1).saved.client_session_id;from=requests.length;
+ assert.equal((await run(pi,'r1')).status,'done');
+ assert.equal(resets.length,count+1);assert.equal(binds.at(-1).event,'reset');
+ assert.notEqual(sent(from)[0]['x-workforce-launcher-session'],sessionBefore);
+ assert.ok(!requests[from].body.messages.some(m=>m.role==='assistant'));
+ assert.equal((await harness.snapshot(Workforce,context)).resets['chan/root'],undefined);}
+result.resetCrash=true;
 
 // Restart mid-run: the next host continues it with the recorded context, binding nothing again.
 // Held until the stopping host aborts it.
@@ -218,6 +326,7 @@ it.skipIf(!deps)(
         Object.fromEntries(
           [
             "composition",
+            "carrier",
             "external",
             "discovery",
             "firstTurn",
@@ -227,6 +336,10 @@ it.skipIf(!deps)(
             "standalone",
             "compaction",
             "manualCompaction",
+            "queued",
+            "provenance",
+            "background",
+            "resetCrash",
             "restart",
             "protected",
           ].map((key) => [key, true]),

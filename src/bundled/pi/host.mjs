@@ -7,6 +7,7 @@
 // are installed in.
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
@@ -16,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   awaitWithContext,
   BACKGROUND_CONTEXT,
+  withTelemetry,
 } from "@earendil-works/chord/context";
 import {
   clampThinkingLevel,
@@ -37,9 +39,9 @@ import {
   defineTool,
   Harness,
   hook,
-  LiveDoc,
   ToolTask,
   ProviderDoc,
+  ResetEntry,
   SessionFailed,
   section,
   UsageDoc,
@@ -272,6 +274,50 @@ export function composeWorkforce(assembled, bundle, session) {
   return { ...headers, ...bundle, "x-session-affinity": session };
 }
 
+const REQUEST = Symbol("buzz.request");
+/** The Buzz request a context's durable work serves, if it carries one. */
+export const requestOf = (telemetry) => telemetry?.[REQUEST];
+/** Telemetry that records nothing and carries only a Buzz request. Pi keeps
+ * the carrier in each submission's and task's trace and gives every model
+ * call its task's context, so a request's work, its compactions and retries,
+ * queued or continued after a restart, carries that request. An input's
+ * admission, whose parent is the root, takes its caller's request from its
+ * first link only: a later one, as a steer's to its run, never replaces it. */
+export function requestTelemetry(request) {
+  const propagation = {
+    inject: (telemetry) => {
+      const carried = requestOf(telemetry);
+      return carried === undefined ? undefined : { buzz: carried };
+    },
+    extract: (carrier) =>
+      context(typeof carrier?.buzz === "string" ? carrier.buzz : undefined),
+  };
+  const context = (request, admission = false) => {
+    let linked = false;
+    return {
+      get [REQUEST]() {
+        return request;
+      },
+      propagation,
+      startSpan: async (options, callback) =>
+        callback(
+          context(
+            request,
+            request === undefined && options.name === "pi.durable.submit",
+          ),
+        ),
+      addLink(link) {
+        if (admission && !linked) request = requestOf(link?.context);
+        linked = true;
+      },
+      addEvent() {},
+      setAttributes() {},
+      setStatus() {},
+    };
+  };
+  return context(request);
+}
+
 /** Models that send every request with its run's Buzz context, after any
  * caller's header transform (protection's review). Requests the gateway's
  * protocols do not cover fail closed. */
@@ -304,7 +350,11 @@ export function routeModels(models, contextFor) {
           ...options,
           transformHeaders: async (assembled) => {
             const headers = caller ? await caller(assembled) : assembled;
-            const bundle = await contextFor(options.sessionId, options.signal);
+            const bundle = await contextFor(
+              options.sessionId,
+              options.telemetry,
+              options.signal,
+            );
             return composeWorkforce(headers, bundle, options.sessionId);
           },
         });
@@ -432,14 +482,15 @@ const Replies = defineDoc({
   initial: () => ({}),
   checkpointWhen,
 });
-/** Block mode: each conversation key's session binding, the keys reset since
- * their last turn, and each request's Buzz context, recorded before it is
- * submitted, so a run continued after a restart dispatches with it. */
+/** Block mode: each conversation key's session binding; each key's reset
+ * intent, until its next binding replaces it; and each request's Buzz
+ * context, recorded before it is submitted, so its work dispatches with it,
+ * also continued after a restart. */
 const Workforce = defineDoc({
   kind: "buzz.workforce",
   version: 1,
   scope: "session",
-  initial: () => ({ places: {}, resets: {}, requests: {}, latest: {} }),
+  initial: () => ({ places: {}, resets: {}, requests: {} }),
   checkpointWhen,
 });
 /** Why a request in a conversation Pi parked a task of is unanswered. */
@@ -985,24 +1036,22 @@ export function serve({
           throw new Error("Pi model request has an unknown session");
         return sessions.get(sessionId);
       };
-      /** A Block mode request's Buzz context: its run's first request's,
-       * recorded before that was submitted; outside a run, as a compaction
-       * after it, the last run's. Only while the plugin still admits the
+      /** A Block mode request's Buzz context: that of the Buzz request its
+       * durable task serves, as the task's trace carries it, recorded before
+       * that request was submitted. Only while the plugin still admits the
        * binding it was made with. */
-      const contextFor = async (sessionId, signal) => {
+      const contextFor = async (sessionId, telemetry, signal) => {
         const conversation = await conversationFor(sessionId);
-        const live = await harness.snapshot(LiveDoc, conversation, context);
-        const input = live?.run?.inputs?.[0];
-        const submission =
-          input !== undefined && (await harness.submission(input, context));
-        const request =
-          submission && (await submission.status(context)).requestId;
-        const doc = await harness.snapshot(Workforce, context);
-        const record = live?.run
-          ? request && doc?.requests?.[request]
-          : doc?.latest?.[conversation];
+        const request = requestOf(telemetry);
+        const record =
+          request !== undefined &&
+          (await harness.snapshot(Workforce, context))?.requests?.[request];
         if (!record)
           throw new Error("Block mode model request has no Buzz context");
+        if (record.conversation !== conversation)
+          throw new Error(
+            "Block mode model request has another conversation's Buzz context",
+          );
         const admitted = await call(
           "workforce",
           { op: "admit", agent, binding: record.binding },
@@ -1058,6 +1107,7 @@ export function serve({
             : routed,
           registry,
           settings: SETTINGS,
+          telemetry: requestTelemetry(),
           env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? homedir() }),
           onReport: (error, info) => {
             console.error(`Pi reported ${info.type}`, error);
@@ -1102,8 +1152,10 @@ export function serve({
         conversations.add(place.conversation);
         opened.contexts.set(place.conversation, place.context);
       }
-      for (const submission of (await harness.inspect(context)).submissions)
+      const live = await harness.inspect(context);
+      for (const submission of live.submissions)
         conversations.add(submission.conversationId);
+      await prune(harness, live);
       return opened;
     } catch (error) {
       await release().catch(() => undefined);
@@ -1429,38 +1481,39 @@ export function serve({
     return !submissions.some((s) => s.conversationId === conversation);
   }
 
-  /** Starts a request in a conversation configured for this turn. One that
-   * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. The agent's `core` memory read for it is the
-   * conversation's latest; a failed read shows it none if not yet shown. */
   /** Records a Block mode request's binding and Buzz context before it is
    * submitted, with its reply destination, in one commit. One already
-   * recorded, by a host that stopped before submitting it, is kept. */
+   * recorded, by a host that stopped before submitting it, is kept. A
+   * `manual` request, an owner's compaction, binds its key's session as it
+   * is and changes nothing of the key's. */
   async function bind(
     opened,
     turn,
-    { key, fresh, workforce, reply, conversation, starts },
+    { key, fresh, workforce, reply, conversation, manual },
   ) {
     const { request } = turn;
     const { harness } = opened;
-    let record =
-      opened.route?.kind !== "external" &&
-      (await harness.snapshot(Workforce, context))?.requests?.[request];
-    if (opened.route?.kind !== "external" && !record) {
-      // A model Block mode refuses binds nothing.
-      await choose(turn, opened);
-      const saved = key && (await harness.snapshot(Workforce, context));
+    const block = opened.route?.kind !== "external";
+    const doc = (await harness.snapshot(Workforce, context)) ?? {};
+    const reset = key && !manual && doc.resets?.[key];
+    // A reset since it was recorded makes it the reset's first request.
+    let record = block && !reset && doc.requests?.[request];
+    if (block && !record) {
+      // A model Block mode refuses binds nothing; an owner's compaction
+      // keeps the model its conversation has.
+      if (!manual) await choose(turn, opened);
       const bound = await call("workforce", {
         op: "bind",
         agent: opened.agent,
-        event: !key
-          ? "standalone"
-          : fresh
-            ? "new_generation"
-            : saved?.resets?.[key]
-              ? "reset"
-              : "resume",
-        saved: key ? saved?.places?.[key] : undefined,
+        event:
+          !key && !manual
+            ? "standalone"
+            : fresh
+              ? "new_generation"
+              : reset
+                ? "reset"
+                : "resume",
+        saved: key ? doc.places?.[key] : undefined,
         turn: workforce,
       });
       if (bound?.ok !== true)
@@ -1468,26 +1521,79 @@ export function serve({
           bound?.message || "This agent can't use Block's model gateway now",
         );
       record = {
+        conversation,
         binding: bound.binding,
         bundle: bound.bundle,
-        persist: bound.persist,
+        ...(manual ? { manual } : { persist: bound.persist }),
       };
     }
-    if (!record && !reply) return;
+    if (!record && !reply && !reset) return;
     await harness.commit(async (tx) => {
+      const doc = await tx.doc(Workforce);
       if (record) {
-        const doc = await tx.doc(Workforce);
         if (key && record.persist) doc.places[key] = record.binding;
-        if (key) delete doc.resets[key];
-        const recorded = { binding: record.binding, bundle: record.bundle };
-        doc.requests[request] = recorded;
-        // What runs in the conversation once its runs end.
-        if (starts) doc.latest[conversation] = recorded;
+        doc.requests[request] = record;
       }
+      // A reset is done once its key has the binding that replaces it.
+      if (reset) delete doc.resets[key];
       if (reply) (await tx.doc(Replies))[request] = reply;
     }, context);
   }
 
+  /** Forgets the Buzz context of requests no durable work carries any
+   * longer, read from a complete picture of that work taken before Pi has
+   * scheduled any: a submitted request's once its submission settled and no
+   * task's trace has it, a manual one's once none has it. One not yet
+   * submitted, by a host that stopped before submitting it, is kept. */
+  async function prune(harness, { scheduling, tasks, submissions }) {
+    if (scheduling !== "paused") return;
+    const carried = new Set();
+    for (const { record } of tasks)
+      for (const trace of [record.trace, ...(record.links ?? [])])
+        if (typeof trace?.buzz === "string") carried.add(trace.buzz);
+    for (const submission of submissions) {
+      if (submission.requestId) carried.add(submission.requestId);
+      if (typeof submission.trace?.buzz === "string")
+        carried.add(submission.trace.buzz);
+    }
+    const { requests } = (await harness.snapshot(Workforce, context)) ?? {};
+    if (!requests) return;
+    const stale = Object.keys(requests).filter((r) => !carried.has(r));
+    if (!stale.length) return;
+    await harness.commit(async (tx) => {
+      const doc = await tx.doc(Workforce);
+      for (const request of stale) {
+        const record = doc.requests[request];
+        if (
+          record &&
+          (record.manual ||
+            (await tx.submissionByRequest(record.conversation, request)))
+        )
+          delete doc.requests[request];
+      }
+    }, context);
+  }
+
+  /** Completes a key's `new` session: its reset intent's write, submitted
+   * once by its request id, so asking again submits nothing more. The
+   * intent stays until the key's next binding replaces it. */
+  async function resetPending(harness, conversation, key) {
+    const reset = (await harness.snapshot(Workforce, context))?.resets?.[key];
+    if (!reset) return;
+    await conversation.submit(
+      {
+        type: "write",
+        entry: { kind: ResetEntry.kind, head: "self" },
+        requestId: reset.request,
+      },
+      context,
+    );
+  }
+
+  /** Starts a request in a conversation configured for this turn. One that
+   * steers a run working in it, `busy`, changes only what its owner picked,
+   * as in Claude. The agent's `core` memory read for it is the
+   * conversation's latest; a failed read shows it none if not yet shown. */
   async function submit(opened, conversation, turn, busy, refresh) {
     opened.cores.set(conversation.id, turn.core);
     const steers = busy && turn.steer;
@@ -1512,6 +1618,7 @@ export function serve({
       if (!prompt) return;
       turn = { ...turn, ...prompt };
     }
+    // Its work carries its request: see `requestTelemetry`.
     const submission = await conversation.submit(
       {
         type: "input",
@@ -1519,7 +1626,7 @@ export function serve({
         whenBusy: "steer",
         requestId: turn.request,
       },
-      context,
+      withTelemetry(requestTelemetry(turn.request), context),
     );
     return { submission: submission.id, conversation: conversation.id };
   }
@@ -1803,6 +1910,7 @@ export function serve({
         opened.conversations.add(conversation.id);
         opened.contexts.set(conversation.id, tools);
         const { busy } = await watch(opened, conversation.id);
+        await resetPending(harness, conversation, key);
         // Read before the turn is submitted: what Pi then holds decides it.
         const session =
           !busy && (await firstTurn(opened, conversation.id))
@@ -1814,7 +1922,6 @@ export function serve({
           workforce,
           reply,
           conversation: conversation.id,
-          starts: !busy,
         });
         const submitted = await submit(
           opened,
@@ -1855,11 +1962,7 @@ export function serve({
         { ownership: { kind: "ownerless" } },
         context,
       );
-      await bind(opened, turn, {
-        workforce,
-        conversation: conversation.id,
-        starts: true,
-      });
+      await bind(opened, turn, { workforce, conversation: conversation.id });
       opened.conversations.add(conversation.id);
       return submit(opened, conversation, turn, false);
     },
@@ -1873,9 +1976,10 @@ export function serve({
       const replies = (await opened.harness.snapshot(Replies, context)) ?? {};
       return {
         submissions: submissions.flatMap(
-          ({ id, conversationId, requestId }) => {
+          ({ id, type, conversationId, requestId }) => {
             const place = opened.contexts.get(conversationId);
-            return requestId
+            // A reset intent's write has a request id too.
+            return requestId && type === "input"
               ? [
                   {
                     submission: id,
@@ -1926,9 +2030,10 @@ export function serve({
         (result.status === "done" || result.status === "unanswered")
       ) {
         try {
+          // Its Buzz context stays while its work may still dispatch, as a
+          // compaction it left: `prune` forgets it.
           await opened.harness.commit(async (tx) => {
             delete (await tx.doc(Replies))[request];
-            delete (await tx.doc(Workforce)).requests[request];
           }, context);
         } catch (error) {
           console.warn("Pi could not clear a wake's reply destination", error);
@@ -1944,28 +2049,51 @@ export function serve({
      * one: `interrupt` aborts its run and any compaction, `compact` summarizes
      * it and settles once the summary is placed, and `new` starts a new
      * context, shown the whole Buzz conversation at its next turn. */
-    async session({ agent, key, action }) {
-      const { harness } = await agentOf(agent);
+    async session({ agent, key, action, workforce }) {
+      const opened = await agentOf(agent);
+      const { harness } = opened;
       const place = (await harness.snapshot(Places, context))?.[key];
       const conversation =
         place && (await harness.conversation(place.conversation, context));
       if (!conversation) return;
       if (action === "interrupt") return conversation.abort(context);
-      if (action === "new") {
-        await conversation.reset(undefined, context);
-        await harness.commit(async (tx) => {
-          const places = await tx.doc(Places);
-          if (places[key]) places[key] = { ...places[key], seen: 0 };
-          (await tx.doc(Workforce)).resets[key] = true;
-        }, context);
-        return;
-      }
-      const { outcome } = (
-        await harness.waitForTask(
-          await conversation.compact(undefined, context),
-          context,
-        )
-      ).state;
+      // After the key's deliveries, so none binds across the reset.
+      const prior = opened.queues.get(key);
+      const acted = (async () => {
+        await prior?.catch(() => undefined);
+        if (action === "new") {
+          // Intended in one commit with what the next turn is shown, then
+          // done: a host that stops between them does it at the next.
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            if (places[key]) places[key] = { ...places[key], seen: 0 };
+            (await tx.doc(Workforce)).resets[key] = {
+              request: `reset/${randomUUID()}`,
+            };
+          }, context);
+          return resetPending(harness, conversation, key);
+        }
+        await resetPending(harness, conversation, key);
+        // The compaction's own request, which its task's trace carries.
+        const request = `manual/${randomUUID()}`;
+        await bind(
+          opened,
+          { request },
+          { key, workforce, conversation: conversation.id, manual: true },
+        );
+        return conversation.compact(
+          undefined,
+          withTelemetry(requestTelemetry(request), context),
+        );
+      })();
+      opened.queues.set(key, acted);
+      const done = () => {
+        if (opened.queues.get(key) === acted) opened.queues.delete(key);
+      };
+      void acted.then(done, done);
+      const task = await acted;
+      if (action === "new") return;
+      const { outcome } = (await harness.waitForTask(task, context)).state;
       if (outcome.status === "failed") throw new Error(outcome.error.message);
       if (outcome.status !== "completed") return;
       const { submissionId } = outcome.result;

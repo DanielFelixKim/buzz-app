@@ -17,6 +17,7 @@ import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { deferred, fakeHost, type Handler } from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
+import type { WorkforceRoute, WorkforceSeam } from "./workforce";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -59,6 +60,7 @@ function setup(
   /** The channel's Canvas, as it reads now. */
   canvas?: { content: string; pubkey?: string },
   repositories?: (scope: string | undefined) => string,
+  workforce?: WorkforceSeam,
 ) {
   let submissions = 0;
   const host = fakeHost({
@@ -135,6 +137,10 @@ function setup(
       connection.live && key === self
         ? (agent as unknown as AgentHandle)
         : undefined,
+    undefined,
+    undefined,
+    undefined,
+    workforce,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -2509,3 +2515,160 @@ it.each(["stop", "retire"])(
     expect(check).not.toHaveBeenCalled();
   },
 );
+
+/** A DXA-1152 seam whose route the test moves, telling subscribers as the
+ * real one does; `routeReady` waits for `ready` while the route is pending. */
+function routes(
+  initial: WorkforceRoute,
+  /** Runs as the route is found ready, before `routeReady` returns. */
+  onReady = () => {},
+) {
+  let route = initial;
+  const listeners = new Set<() => void>();
+  const ready = deferred<void>();
+  /** Opens that have asked for the route to be ready. */
+  const asked = { count: 0 };
+  const move = (next: WorkforceRoute) => {
+    route = next;
+    for (const listener of [...listeners]) listener();
+  };
+  const seam: WorkforceSeam = {
+    routeReady: async () => {
+      asked.count++;
+      await ready.promise;
+      const found = route;
+      onReady();
+      return found;
+    },
+    routeFor: () => route,
+    subscribeRoute: (_key, listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    bindSession: () => ({ ok: true, binding: {}, persist: true }),
+    inferenceBundle: () => ({ ok: true, value: {} }),
+    discoveryBundle: () => ({ ok: true, value: {} }),
+    bindingAdmits: () => ({ ok: true }),
+    turnContext: () => ({ trigger_id: "t" }),
+  };
+  return { seam, move, ready, asked };
+}
+const identity = {
+  community_id: "c1",
+  human_pubkey: alice,
+  agent_pubkey: self,
+};
+const eligible: WorkforceRoute = {
+  kind: "eligible",
+  gatewayOrigin: "https://gateway.test",
+  identity,
+  access: "unrestricted",
+};
+const pending: WorkforceRoute = {
+  kind: "blocked",
+  gatewayOrigin: "https://gateway.test",
+  reason: "pending",
+  message: "Block mode is starting",
+};
+
+it("opens an agent whose route becomes ready while it waits, and keeps it open", async () => {
+  const r = routes(pending);
+  const f = setup({}, [], undefined, undefined, r.seam);
+  const retire = vi.spyOn(f.runtime, "retire");
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await vi.waitFor(() => expect(r.asked.count).toBe(1));
+  r.move(eligible);
+  r.ready.resolve();
+  await turn.run;
+  expect(f.host.requests("open")[0]?.params.route).toEqual({
+    kind: "eligible",
+    gatewayOrigin: "https://gateway.test",
+    identity,
+    discovery: {},
+  });
+  expect(f.host.requests("deliver")).toHaveLength(1);
+  expect(retire).not.toHaveBeenCalled();
+});
+
+it("opens an agent again whose route changes while the host opens it", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const opening = deferred<object>();
+  const f = setup(
+    {
+      open: () => (f.host.requests("open").length === 1 ? opening.promise : {}),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await vi.waitFor(() => expect(f.host.requests("open")).toHaveLength(1));
+  const moved = { ...eligible, identity: { ...identity, community_id: "c2" } };
+  r.move(moved);
+  opening.resolve({});
+  await turn.run;
+  // Closed before it opens again; Pi's own policy check may close it twice.
+  const methods = f.host.processes.flatMap((item) =>
+    item.requests.map((request) => request.method),
+  );
+  expect(methods.slice(0, methods.lastIndexOf("open"))).toContain("close");
+  expect(
+    f.host.requests("open").map((request) => request.params.route),
+  ).toEqual([
+    expect.objectContaining({ identity }),
+    expect.objectContaining({ identity: moved.identity }),
+  ]);
+  expect(f.host.requests("deliver")).toHaveLength(1);
+});
+
+it("opens an agent with the route it changed to after it was ready, before its watch began", async () => {
+  let moved = false;
+  const r = routes(eligible, () => {
+    if (moved) return;
+    moved = true;
+    r.move({ kind: "external" });
+  });
+  r.ready.resolve();
+  const f = setup({}, [], undefined, undefined, r.seam);
+  await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(f.host.requests("close")).toEqual([]);
+  expect(
+    f.host.requests("open").map((request) => request.params.route),
+  ).toEqual([{ kind: "external" }]);
+  expect(f.host.requests("deliver")).toHaveLength(1);
+});
+
+it("fails a turn visibly whose agent's route keeps changing as it opens", async () => {
+  let community = 1;
+  const r = routes(eligible, () =>
+    r.move({
+      ...eligible,
+      identity: { ...identity, community_id: `c${++community}` },
+    }),
+  );
+  r.ready.resolve();
+  const f = setup({}, [], undefined, undefined, r.seam);
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(f.settled(turn)).resolves.toEqual({
+    ok: false,
+    error: "This agent's model route keeps changing. Try again.",
+  });
+  expect(f.host.requests("deliver")).toEqual([]);
+});
+
+it("closes an open agent when its route changes later, and opens it with the new one", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const f = setup({}, [], undefined, undefined, r.seam);
+  await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(f.host.requests("close")).toEqual([]);
+  r.move({ kind: "external" });
+  await vi.waitFor(() => expect(f.host.requests("close")).toHaveLength(1));
+  await f.deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
+  expect(f.host.requests("open").at(-1)?.params.route).toEqual({
+    kind: "external",
+  });
+});

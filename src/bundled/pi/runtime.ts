@@ -210,8 +210,13 @@ export class PiRuntime {
   >();
 
   /** Each open agent's route watch, which closes it when its route changes
-   * what the host must open it with. */
-  private readonly routes = new Map<AgentKey, () => void>();
+   * what the host was opened with: that route's key. */
+  private readonly routes = new Map<
+    AgentKey,
+    { key: string; unsubscribe: () => void }
+  >();
+  /** Opens of each agent in progress, which see a route change themselves. */
+  private readonly opening = new Map<AgentKey, number>();
 
   /** The Pi host every agent of this type runs in, started when needed. */
   private readonly pi: Pi;
@@ -283,7 +288,7 @@ export class PiRuntime {
   }
 
   async retire(pubkey: string) {
-    this.routes.get(pubkey)?.();
+    this.routes.get(pubkey)?.unsubscribe();
     this.routes.delete(pubkey);
     const entry = this.agents.get(pubkey);
     if (entry) {
@@ -502,7 +507,21 @@ export class PiRuntime {
         if ([...entry.receipts.values()].some((taken) => taken.key === key))
           throw new Error("Wait for the active turn to finish first.");
       }
-      await this.pi.request("session", { agent: agent.key, key, action });
+      await this.pi.request("session", {
+        agent: agent.key,
+        key,
+        action,
+        // An owner's compaction is its own request, with a manual trigger.
+        ...(action === "compact" && this.workforce
+          ? {
+              workforce: this.workforce.turnContext({
+                manual: action,
+                agent,
+                place,
+              }),
+            }
+          : {}),
+      });
     };
     if (action === "interrupt") {
       this.controls.interrupt(control);
@@ -1163,26 +1182,61 @@ export class PiRuntime {
     await this.adopted(entry, agent, { again: true });
   }
 
+  /** Opens the agent in the host with its route, once that is ready. One
+   * that changes while it opens is opened again, with the new one; one that
+   * changes after, closes it: the next request opens it again. */
   private async open(agent: AgentKey) {
     const seam = this.workforce;
-    if (seam && !this.routes.has(agent)) {
-      let key = routeKey(seam.routeFor(agent));
-      this.routes.set(
-        agent,
-        seam.subscribeRoute(agent, () => {
-          const next = routeKey(seam.routeFor(agent));
-          if (next === key) return;
-          key = next;
-          void this.retire(agent).catch(() => undefined);
-        }),
-      );
+    this.opening.set(agent, (this.opening.get(agent) ?? 0) + 1);
+    try {
+      for (let attempt = 1; ; attempt++) {
+        const route = seam
+          ? await seam.routeReady(agent, AbortSignal.timeout(READ_MS))
+          : ({ kind: "external" } as const);
+        const key = routeKey(route);
+        if (seam) this.watch(seam, agent, key);
+        const changed = () => !!seam && routeKey(seam.routeFor(agent)) !== key;
+        // Not if it changed before the watch began.
+        if (!changed()) {
+          await this.pi.request("open", {
+            agent,
+            tools: sessionTools(this.added()),
+            hint: sessionHint(this.added()),
+            route: hostRoute(seam, route),
+          });
+          if (!changed()) return;
+          await this.pi.retire(agent);
+        }
+        if (attempt === 3)
+          throw new Error(
+            "This agent's model route keeps changing. Try again.",
+          );
+      }
+    } finally {
+      const left = (this.opening.get(agent) ?? 1) - 1;
+      if (left) this.opening.set(agent, left);
+      else this.opening.delete(agent);
     }
-    await this.pi.request("open", {
-      agent,
-      tools: sessionTools(this.added()),
-      hint: sessionHint(this.added()),
-      route: await hostRoute(seam, agent, AbortSignal.timeout(READ_MS)),
-    });
+  }
+
+  /** Watches the agent's route, last opened with the route `key`. */
+  private watch(seam: WorkforceSeam, agent: AgentKey, key: string) {
+    const watch = this.routes.get(agent);
+    if (watch) {
+      watch.key = key;
+      return;
+    }
+    const created = {
+      key,
+      unsubscribe: seam.subscribeRoute(agent, () => {
+        if (
+          !this.opening.has(agent) &&
+          routeKey(seam.routeFor(agent)) !== created.key
+        )
+          void this.retire(agent).catch(() => undefined);
+      }),
+    };
+    this.routes.set(agent, created);
   }
 
   /** How a request settles. A host that stopped, or an agent whose storage

@@ -49,20 +49,16 @@ function seam(route: WorkforceRoute, overrides: Partial<WorkforceSeam> = {}) {
 }
 
 describe("hostRoute", () => {
-  it("is external only without a seam or for an external route", async () => {
-    const signal = new AbortController().signal;
-    expect(await hostRoute(undefined, agent, signal)).toEqual({
-      kind: "external",
-    });
-    expect(await hostRoute(seam({ kind: "external" }), agent, signal)).toEqual({
-      kind: "external",
-    });
-    expect(await hostRoute(seam(blocked), agent, signal)).toBe(blocked);
+  it("is external only without a seam or for an external route", () => {
+    expect(hostRoute(undefined, eligible)).toEqual({ kind: "external" });
+    expect(hostRoute(seam({ kind: "external" }), { kind: "external" })).toEqual(
+      { kind: "external" },
+    );
+    expect(hostRoute(seam(blocked), blocked)).toBe(blocked);
   });
 
-  it("opens an eligible agent with its discovery headers, or blocked", async () => {
-    const signal = new AbortController().signal;
-    expect(await hostRoute(seam(eligible), agent, signal)).toEqual({
+  it("opens an eligible agent with its discovery headers, or blocked", () => {
+    expect(hostRoute(seam(eligible), eligible)).toEqual({
       kind: "eligible",
       gatewayOrigin: "https://gateway.test",
       identity,
@@ -71,7 +67,7 @@ describe("hostRoute", () => {
     const invalid = seam(eligible, {
       discoveryBundle: () => ({ ok: false, message: "Context is invalid" }),
     });
-    expect(await hostRoute(invalid, agent, signal)).toEqual({
+    expect(hostRoute(invalid, eligible)).toEqual({
       kind: "blocked",
       gatewayOrigin: "https://gateway.test",
       message: "Context is invalid",

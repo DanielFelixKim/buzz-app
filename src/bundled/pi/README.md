@@ -68,7 +68,12 @@ levels, a 128k context window, a 16k output limit, and no cost. Images are
 the endpoint's `image_input`.
 
 Every model request carries:
-- its run's Buzz context headers, recorded before the run was submitted;
+- the Buzz context headers of the request its durable task serves, recorded
+  before that request was submitted. Pi durable keeps the request in each
+  submission's and task's trace (the host's telemetry adapter carries only
+  that ID and records nothing), so a queued run, its compactions and
+  retries, before or after a restart, carry their own request. An owner's
+  Compact is its own request, with a manual trigger;
 - `x-session-affinity`, set to Pi's native session ID. This is the
   conversation's `ProviderDoc` session, not the Buzz session. pi-ai drops
   its own session headers when compaction disables caching, so without this
@@ -76,7 +81,14 @@ Every model request carries:
 
 Buzz context a caller set is replaced. A request whose other session
 headers name a different session is refused. A request is also refused
-while its binding is no longer admitted.
+while its binding is no longer admitted, and when its task carries no
+request, or one recorded for another conversation.
+
+New session is recorded as an intent, with what the next turn is shown,
+before its reset is written by a request ID, so a host that stops between
+them writes it at the next turn and writing it again adds nothing. The
+intent is cleared only with the binding that replaces the session, before
+that turn is submitted.
 
 Responses transport is verified. Gateway `9fc567e` attributes it through
 affinity, but its harness attribution is still pending integrated and
