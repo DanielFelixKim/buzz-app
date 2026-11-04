@@ -913,17 +913,24 @@ export function serve({
       route.kind === "external"
         ? "external"
         : `${route.kind} ${route.gatewayOrigin} ${route.identity?.community_id ?? ""}`;
-    if (opened.route && opened.routeKey !== key)
+    const changed = () => opened.route && opened.routeKey !== key;
+    if (changed())
       throw new Error("This agent's model route changed. Try again.");
-    if (route.kind === "eligible" && opened.routeKey !== key)
-      opened.catalog = workforceModels(
-        route.gatewayOrigin,
-        await discoverWorkforce(
-          route.gatewayOrigin,
-          route.discovery,
-          AbortSignal.timeout(TEST_TIMEOUT_MS),
-        ),
-      );
+    const catalog =
+      route.kind === "eligible" && opened.routeKey !== key
+        ? workforceModels(
+            route.gatewayOrigin,
+            await discoverWorkforce(
+              route.gatewayOrigin,
+              route.discovery,
+              AbortSignal.timeout(TEST_TIMEOUT_MS),
+            ),
+          )
+        : opened.catalog;
+    // Another open took a route while this one discovered.
+    if (changed())
+      throw new Error("This agent's model route changed. Try again.");
+    opened.catalog = catalog;
     opened.route = route;
     opened.routeKey = key;
   }
@@ -1496,6 +1503,7 @@ export function serve({
     const block = opened.route?.kind !== "external";
     const doc = (await harness.snapshot(Workforce, context)) ?? {};
     let reset = key && !manual && doc.resets?.[key];
+    let persist;
     let record = block && doc.requests?.[request];
     if (record && reset) {
       // A reset since it was recorded makes it the reset's first request,
@@ -1533,14 +1541,17 @@ export function serve({
         conversation,
         binding: bound.binding,
         bundle: bound.bundle,
-        ...(manual ? { manual } : { persist: bound.persist }),
+        ...(manual ? { manual } : {}),
       };
+      // The key's session from now on; a record kept from before has its
+      // own, which its first commit published with it.
+      if (key && !manual && bound.persist) persist = bound.binding;
     }
     if (!record && !reply && !reset) return;
     await harness.commit(async (tx) => {
       const doc = await tx.doc(Workforce);
       if (record) {
-        if (key && record.persist) doc.places[key] = record.binding;
+        if (persist) doc.places[key] = persist;
         doc.requests[request] = record;
       }
       // A reset is done once its key has the binding that replaces it.

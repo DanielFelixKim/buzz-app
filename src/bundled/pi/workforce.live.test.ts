@@ -35,9 +35,11 @@ const listings=[], requests=[], replies=[];
 // Summaries answer apart from turns, which may run beside them; failing ones until let through.
 let summaries=true;const summarized=[];
 const summary=body=>JSON.stringify(body.messages[0]).includes('context summarization assistant');
+// A listing from a held origin waits for its release.
+const held=new Map();
 globalThis.fetch=async(url,init={})=>{
  const headers=Object.fromEntries(new Headers(init.headers));
- if(String(url).endsWith('/serving-endpoints')){listings.push({url:String(url),headers});return Response.json({endpoints});}
+ if(String(url).endsWith('/serving-endpoints')){listings.push({url:String(url),headers});await held.get(new URL(url).origin)?.promise;return Response.json({endpoints});}
  const body=JSON.parse(init.body);
  requests.push({url:String(url),headers,body});
  if(summary(body)){summarized.push({headers,ok:summaries});return summaries?say('Summary.')():new Response('Internal error',{status:500});}
@@ -137,6 +139,19 @@ assert.equal(providers[0].id,WORKFORCE);assert.ok(providers.find(p=>p.id==='faux
 assert.ok(!(await pi.rpc('providers',{})).providers.some(p=>p.id===WORKFORCE));
 await assert.rejects(pi.rpc('deliver',turn('bad',{key:'chan/bad',provider:'faux',model:'faux-1'})),/unavailable in Block mode/);assert.equal(binds.length,0);
 result.discovery=true;
+
+// Overlapping opens: one that discovered an older route never takes the host from a newer one.
+{const racer='d'.repeat(64),older={...route,gatewayOrigin:'https://older.test'},release=Promise.withResolvers(),own=harness;
+ held.set(older.gatewayOrigin,release);
+ const first=pi.rpc('open',{agent:racer,tools,route:older});
+ await until(()=>listings.some(l=>l.url.startsWith(older.gatewayOrigin)));
+ await pi.rpc('open',{agent:racer,tools,route});
+ release.resolve();
+ await assert.rejects(first,/model route changed/);
+ await pi.rpc('open',{agent:racer,tools,route});
+ assert.deepEqual((await pi.rpc('models',{agent:racer,provider:WORKFORCE})).map(m=>m.id),['databricks-gpt-oss-20b','databricks-claude-x']);
+ harness=own;}
+result.overlap=true;
 
 // A turn: bound before submission, nothing sent until then; tool call and continuation carry its context.
 binds.length=0;let release;gate=new Promise(r=>{release=r;});replies.push(send(),say('done'));
@@ -276,7 +291,15 @@ await pi.rpc('session',{agent,key:'chan/root',action:'new'});
  await pi.rpc('deliver',turn('r1'));
  assert.equal(binds.length,bound);assert.deepEqual((await records()).r1,record);
  assert.ok((await harness.snapshot(Workforce,context)).resets['chan/root']);
- assert.equal((await run(pi,'r2')).status,'done');assert.equal(binds.at(-1).event,'reset');}
+ assert.equal((await run(pi,'r2')).status,'done');assert.equal(binds.at(-1).event,'reset');
+ // Delivered again once the new session has a turn, it leaves that session the key's.
+ const current=binds.at(-1);from=requests.length;
+ await pi.rpc('deliver',turn('r1'));
+ assert.equal((await run(pi,'r3')).status,'done');
+ assert.equal(binds.at(-1).event,'resume');
+ assert.notEqual(sent(from)[0]['x-workforce-launcher-session'],record.client_session_id??'');
+ assert.equal(sent(from).at(-1)['x-workforce-launcher-session'],(await harness.snapshot(Workforce,context)).places['chan/root'].client_session_id);
+ assert.equal((await records()).r3.binding.client_session_id,(await records()).r2.binding.client_session_id);}
 result.resetCrash=true;
 
 // Restart mid-run: the next host continues it with the recorded context, binding nothing again.
@@ -336,6 +359,7 @@ it.skipIf(!deps)(
             "carrier",
             "external",
             "discovery",
+            "overlap",
             "firstTurn",
             "secondTurn",
             "invalidated",

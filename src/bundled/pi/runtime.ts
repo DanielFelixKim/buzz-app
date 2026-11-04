@@ -215,8 +215,9 @@ export class PiRuntime {
     AgentKey,
     { key: string | undefined; unsubscribe: () => void }
   >();
-  /** Opens of each agent in progress, which see a route change themselves. */
-  private readonly opening = new Map<AgentKey, number>();
+  /** Each agent's latest open, in progress: its opens run one at a time, so
+   * an older one never closes the host a newer one returned with. */
+  private readonly opening = new Map<AgentKey, Promise<void>>();
 
   /** The Pi host every agent of this type runs in, started when needed. */
   private readonly pi: Pi;
@@ -1181,43 +1182,48 @@ export class PiRuntime {
    * that changes while it opens is opened again, with the new one; one that
    * changes after, closes it: the next request opens it again. */
   private async open(agent: AgentKey) {
-    const seam = this.workforce;
-    this.opening.set(agent, (this.opening.get(agent) ?? 0) + 1);
+    const prior = this.opening.get(agent);
+    const opening = (async () => {
+      await prior?.catch(() => undefined);
+      await this.openOnce(agent);
+    })();
+    this.opening.set(agent, opening);
     try {
-      for (let attempt = 1; ; attempt++) {
-        const route = seam
-          ? await seam.routeReady(agent, AbortSignal.timeout(READ_MS))
-          : ({ kind: "external" } as const);
-        const key = routeKey(route);
-        const watch = seam && this.watch(seam, agent);
-        const changed = () => !!seam && routeKey(seam.routeFor(agent)) !== key;
-        // Not if it changed before the watch began.
-        if (!changed()) {
-          // The host has it open with another route, which it keeps.
-          if (watch?.key !== undefined && watch.key !== key) {
-            watch.key = undefined;
-            await this.pi.retire(agent);
-          }
-          await this.pi.request("open", {
-            agent,
-            tools: sessionTools(this.added()),
-            hint: sessionHint(this.added()),
-            route: hostRoute(seam, route),
-          });
-          if (watch) watch.key = key;
-          if (!changed()) return;
-          if (watch) watch.key = undefined;
+      await opening;
+    } finally {
+      if (this.opening.get(agent) === opening) this.opening.delete(agent);
+    }
+  }
+
+  private async openOnce(agent: AgentKey) {
+    const seam = this.workforce;
+    for (let attempt = 1; ; attempt++) {
+      const route = seam
+        ? await seam.routeReady(agent, AbortSignal.timeout(READ_MS))
+        : ({ kind: "external" } as const);
+      const key = routeKey(route);
+      const watch = seam && this.watch(seam, agent);
+      const changed = () => !!seam && routeKey(seam.routeFor(agent)) !== key;
+      // Not if it changed before the watch began.
+      if (!changed()) {
+        // The host has it open with another route, which it keeps.
+        if (watch?.key !== undefined && watch.key !== key) {
+          watch.key = undefined;
           await this.pi.retire(agent);
         }
-        if (attempt === 3)
-          throw new Error(
-            "This agent's model route keeps changing. Try again.",
-          );
+        await this.pi.request("open", {
+          agent,
+          tools: sessionTools(this.added()),
+          hint: sessionHint(this.added()),
+          route: hostRoute(seam, route),
+        });
+        if (watch) watch.key = key;
+        if (!changed()) return;
+        if (watch) watch.key = undefined;
+        await this.pi.retire(agent);
       }
-    } finally {
-      const left = (this.opening.get(agent) ?? 1) - 1;
-      if (left) this.opening.set(agent, left);
-      else this.opening.delete(agent);
+      if (attempt === 3)
+        throw new Error("This agent's model route keeps changing. Try again.");
     }
   }
 

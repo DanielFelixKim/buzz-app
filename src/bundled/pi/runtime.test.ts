@@ -2691,6 +2691,54 @@ it("opens an open agent again whose route changed while another open waited for 
   expect(f.host.requests("deliver")).toHaveLength(2);
 });
 
+it("never closes the host a newer open returned with, when an older open finishes after it", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const opening = deferred<object>();
+  const f = setup(
+    {
+      open: () => (f.host.requests("open").length === 1 ? opening.promise : {}),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  const open = vi.spyOn(
+    f.runtime as unknown as { open(agent: string): Promise<void> },
+    "open",
+  );
+  const older = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await vi.waitFor(() => expect(f.host.requests("open")).toHaveLength(1));
+  const moved = { ...eligible, identity: { ...identity, community_id: "c2" } };
+  r.move(moved);
+  // Another conversation's turn opens the agent while the older open waits.
+  const newer = f.deliver({
+    type: "mention",
+    event: message("9", "@Pi other", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  // Released only once the newer open began, and had time to finish.
+  await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  opening.resolve({});
+  await Promise.all([older.run, newer.run]);
+  const methods = f.host.processes.flatMap((item) =>
+    item.requests.map((request) => request.method),
+  );
+  expect(methods.filter((method) => method === "deliver")).toHaveLength(2);
+  // Nothing closes the agent once either turn was delivered to it.
+  expect(methods.slice(methods.indexOf("deliver"))).not.toContain("close");
+  for (const request of f.host.requests("open").slice(1))
+    expect(request.params.route).toEqual(
+      expect.objectContaining({ identity: moved.identity }),
+    );
+});
+
 it("closes an open agent when its route changes later, and opens it with the new one", async () => {
   const r = routes(eligible);
   r.ready.resolve();
