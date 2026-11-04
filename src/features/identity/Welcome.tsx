@@ -74,6 +74,7 @@ import {
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
 import { WelcomeBack } from "./WelcomeBack";
+import { restoreChoice } from "./restore-choice";
 import { WireframeScreen } from "./Wireframe";
 
 /**
@@ -711,6 +712,7 @@ export function Welcome({
             recovery={current.recovery}
             email={auth.account?.email}
             subject={auth.account?.subject}
+            preferredPubkey={restoreChoice.get()}
             expectedPubkey={linked}
             onBack={() => back("welcome-back", "restore")}
             onImport={() => pause("key-import")}
@@ -723,6 +725,7 @@ export function Welcome({
             onInstalled={() => {
               const restored = identity.snapshot();
               if (restored.status !== "ready") return;
+              restoreChoice.set(undefined);
               if (restored.viewer === linked) return void setup.start(finish());
               setLinked(undefined);
               setOwned(undefined);

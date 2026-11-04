@@ -20,6 +20,7 @@ export function KeyRestore({
   recovery,
   expectedPubkey,
   subject,
+  preferredPubkey,
   email,
   onBack,
   onLost,
@@ -30,6 +31,8 @@ export function KeyRestore({
   expectedPubkey: string;
   /** The signed-in account's subject, which recovery's must match to offer other keys. */
   subject?: string | undefined;
+  /** Preselected over the linked key when listed: the key Settings chose to switch to. */
+  preferredPubkey?: string | undefined;
   email?: string | undefined;
   onBack: () => void;
   onLost?: (() => void) | undefined;
@@ -49,7 +52,10 @@ export function KeyRestore({
   const [picked, setPicked] = useState<string>();
   const handle = choices.some((item) => item.handle === picked)
     ? picked
-    : choices.find((item) => item.pubkey === expectedPubkey)?.handle;
+    : (
+        choices.find((item) => item.pubkey === preferredPubkey) ??
+        choices.find((item) => item.pubkey === expectedPubkey)
+      )?.handle;
   const labels = publicKeyLabels(choices.map((item) => item.pubkey));
   const installedHandle = useRef<string | undefined>(undefined);
   useEffect(() => {

@@ -612,10 +612,14 @@ command permission is not proof of a human gesture.
 
 ## Sign out of Buzz
 
-Settings → Buzz → Identity → **Restore a backed-up key**, shown wherever the
-Key backup row is, opens the same dialog: after signing out, first run's Welcome
-back offers the account's backups (see Restore above), and choosing a key other
-than the linked one relinks it.
+Settings → Buzz → Identity → **Backed-up keys**, wherever the Key backup row
+shows and the organization is signed in, reads the account's linked key and
+`nsec-backups/status` as first run does. It appears once a backed-up key is not
+this device's, and lists each npub, tagged *This device* and *Linked*, with its
+newest event time on the current community relay (*No activity here* without
+one). **Switch to this key** remembers the choice in WebView storage and opens
+Sign out; after the restart, first run's Restore list preselects it (a wipe
+clears it). Closing the dialog forgets it, and an installed restore clears it.
 
 Settings → Buzz → Identity → **Sign out of Buzz** removes the private key from this
 device only; the npub and its history stay on relays. The dialog presents two

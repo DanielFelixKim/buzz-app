@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { npubEncode } from "nostr-tools/nip19";
@@ -357,24 +364,89 @@ it("follows the status store as it publishes a higher seq", async () => {
   expect(within(row).queryByRole("switch")).toBeNull();
 });
 
-it("offers restoring a backed-up key through sign-out wherever first run offers backup", async () => {
+it("lists the account's backed-up keys with their last activity and switches through sign-out", async () => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const other = "cd".repeat(32);
   const host = backupHost(at(1, { status: "complete" }));
   const identity = {
     ...host.identity,
     wipeRefusal: vi.fn(async () => null),
   } as Identity;
-  render(<IdentitySettings viewer={viewer} identity={identity} />);
-  await host.settled();
-  await userEvent.click(
-    screen.getByRole("button", { name: "Restore a backed-up key" }),
+  const fi = federatedFixture();
+  fi.publish({ status: "signed-in", email: "a@example.com" });
+  const answer = (body: object) => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify(body),
+  });
+  fi.request.mockImplementation(async ({ path }) =>
+    path.endsWith("/nostr-identities/current")
+      ? answer({ identity: { pubkey_hex: viewer } })
+      : answer({
+          current_nostr_pubkey: viewer,
+          backup_nostr_pubkeys: [viewer, other],
+        }),
   );
+  const lastActive = vi.fn(async (pubkey: string) =>
+    pubkey === other ? Date.now() / 1000 - 7200 : undefined,
+  );
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      identity={identity}
+      federatedIdentity={fi.service}
+      lastActive={lastActive}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const list = await screen.findByRole("radiogroup", {
+    name: "Backed-up keys",
+  });
+  const radios = within(list).getAllByRole("radio");
+  expect(radios).toHaveLength(2);
+  expect(radios[0]).toHaveAccessibleName("This device, Linked");
+  expect(radios[0]).toHaveAttribute("aria-disabled", "true");
+  expect(
+    await within(list).findByText(/Last active 2 hours ago/),
+  ).toBeVisible();
+  expect(within(list).getByText(/No activity here/)).toBeVisible();
+  expect(within(list).getByText(npubEncode(other))).toBeVisible();
+  const swap = screen.getByRole("button", { name: "Switch to this key" });
+  expect(swap).toBeDisabled();
+  await userEvent.click(radios[1]!);
+  await userEvent.click(swap);
   expect(
     screen.getByRole("alertdialog", { name: "Sign out of Buzz?" }),
   ).toBeVisible();
-  cleanup();
-  await renderBackup(at(1, { status: "complete" }, false)).settled();
-  expect(
-    screen.queryByRole("button", { name: "Restore a backed-up key" }),
-  ).toBeNull();
+  expect(localStorage.getItem("buzz.restore-choice")).toBe(other);
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(localStorage.getItem("buzz.restore-choice")).toBeNull();
+});
+
+it("hides backed-up keys when only this device's key is backed up", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "complete" }));
+  const fi = federatedFixture();
+  fi.publish({ status: "signed-in", email: "a@example.com" });
+  fi.request.mockImplementation(async ({ path }) => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify(
+      path.endsWith("/nostr-identities/current")
+        ? { identity: { pubkey_hex: viewer } }
+        : { current_nostr_pubkey: viewer, backup_nostr_pubkeys: [viewer] },
+    ),
+  }));
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      identity={host.identity}
+      federatedIdentity={fi.service}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(2));
+  await act(async () => {});
+  expect(screen.queryByText("Backed-up keys")).toBeNull();
+  expect(screen.queryByText("Checking your backups…")).toBeNull();
 });

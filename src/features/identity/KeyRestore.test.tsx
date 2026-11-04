@@ -223,3 +223,29 @@ it("retries installation when a new attempt returns the same handle", async () =
   await waitFor(() => expect(stub.installRecovery).toHaveBeenCalledTimes(2));
   expect(stub.cancelRecovery).toHaveBeenCalledTimes(1);
 });
+
+it("preselects the key Settings chose to switch to over the linked one", () => {
+  render(
+    <KeyRestore
+      recovery={recovery({
+        status: "choosing",
+        candidates: [
+          { handle: "linked", pubkey: linked },
+          { handle: "other", pubkey: other },
+        ],
+        currentPubkey: linked,
+        failedCount: 0,
+        subject,
+      })}
+      expectedPubkey={linked}
+      subject={subject}
+      preferredPubkey={other}
+      onBack={() => {}}
+      onImport={() => {}}
+      onInstalled={() => {}}
+    />,
+  );
+  expect(
+    screen.getByRole("radio", { checked: true }),
+  ).toHaveAccessibleDescription(expect.stringContaining("Other identity"));
+});

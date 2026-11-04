@@ -33,6 +33,7 @@ import {
   type ReactNode,
   forwardRef,
   type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -1202,6 +1203,18 @@ export function Settings({
       </PluginListEntry>
     );
   };
+  const lastActive = useCallback(
+    async (pubkey: string) => {
+      const connection = communities.relay.snapshot();
+      if (connection.status !== "ready") return undefined;
+      const events = await connection.session.read(
+        [{ authors: [pubkey], limit: 1 }],
+        { priority: "background" },
+      );
+      return Math.max(...events.map((event) => event.created_at)) || undefined;
+    },
+    [communities.relay],
+  );
   const authorizePluginGit = async (repository: string) => {
     const connection = communities.relay.snapshot();
     return connection.status === "ready"
@@ -1336,6 +1349,7 @@ export function Settings({
             viewer={client.viewer}
             identity={identity}
             federatedIdentity={federatedIdentity}
+            lastActive={lastActive}
           />
         )}
         {developerMode && (

@@ -2,7 +2,10 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import type { BackupStatus } from "../features/identity/backup";
 import { BACKUP_FAILURES } from "../features/identity/backup-failure";
-import { backupOfferedFor } from "../features/identity/builderlab-account";
+import {
+  backupOfferedFor,
+  federatedBuilderlabAccount,
+} from "../features/identity/builderlab-account";
 import type { Identity } from "../features/identity/service";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
@@ -13,6 +16,10 @@ import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { Button } from "../shared/design-system/ui/Button";
+import { Field } from "../shared/design-system/ui/Field";
+import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
+import { relativeTimestamp } from "../shared/relative-timestamp";
+import { restoreChoice } from "../features/identity/restore-choice";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { CopyIcon } from "../shared/design-system/icons";
@@ -71,14 +78,166 @@ function BackupRow({
   );
 }
 
+type BackedUp =
+  | { revision: string; linked: string | null; backups: readonly string[] }
+  | { revision: string; failed: true };
+
+/**
+ * The account's backed-up keys, read with the organization sign-in as first
+ * run reads them (`nsec-backups/status`), shown once one isn't this device's.
+ * Switching signs out; first-run recovery then preselects the chosen key.
+ */
+function BackedUpKeys({
+  viewer,
+  identity,
+  federated,
+  lastActive,
+  onSwitch,
+}: {
+  viewer: string;
+  identity: Identity;
+  federated: FederatedIdentity;
+  lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
+  onSwitch: (pubkey: string) => void;
+}) {
+  const session = useSyncExternalStore(
+    federated.subscribe,
+    federated.snapshot,
+    federated.snapshot,
+  );
+  const revision =
+    session.status === "signed-in" && session.authority
+      ? session.revision
+      : undefined;
+  const [read, setRead] = useState<BackedUp>();
+  const [active, setActive] = useState<Readonly<Record<string, number | null>>>(
+    {},
+  );
+  const [picked, setPicked] = useState<string>();
+  useEffect(() => {
+    if (!revision) return;
+    let current = true;
+    const account = federatedBuilderlabAccount(
+      { value: revision },
+      federated,
+      identity,
+    );
+    Promise.all([account.linkedKey(), account.backupStatus()]).then(
+      ([linked, backups]) => {
+        if (!current) return;
+        const keys = backups === "unavailable" ? [] : backups;
+        setRead({ revision, linked, backups: keys });
+        for (const key of keys)
+          void lastActive?.(key).then(
+            (at) => {
+              if (current) setActive((all) => ({ ...all, [key]: at ?? null }));
+            },
+            () => {},
+          );
+      },
+      () => {
+        if (current) setRead({ revision, failed: true });
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [revision, federated, identity, lastActive]);
+  const shown = read?.revision === revision ? read : undefined;
+  if (!revision)
+    return (
+      <PreferenceRow
+        title="Backed-up keys"
+        subtitle="Sign in to your organization to see your backed-up keys."
+      />
+    );
+  if (!shown)
+    return (
+      <PreferenceRow
+        title="Backed-up keys"
+        subtitle={<span role="status">Checking your backups…</span>}
+      />
+    );
+  if ("failed" in shown)
+    return (
+      <PreferenceRow
+        title="Backed-up keys"
+        subtitle={<span role="alert">Couldn’t check your backups.</span>}
+      />
+    );
+  if (!shown.backups.some((key) => key !== viewer)) return null;
+  const choice = shown.backups.includes(picked ?? "") ? picked : undefined;
+  return (
+    <PreferenceRow
+      title="Backed-up keys"
+      subtitle={
+        <Field
+          label="Backed-up keys"
+          labelVisibility="hidden"
+          nativeLabel={false}
+        >
+          <RadioGroup
+            aria-label="Backed-up keys"
+            value={choice ?? null}
+            onValueChange={(value) => value && setPicked(value)}
+          >
+            {shown.backups.map((key) => {
+              const at = active[key];
+              return (
+                <Radio
+                  key={key}
+                  value={key}
+                  disabled={key === viewer}
+                  label={
+                    [
+                      key === viewer && "This device",
+                      key === shown.linked && "Linked",
+                    ]
+                      .filter(Boolean)
+                      .join(", ") || "Backed-up key"
+                  }
+                  description={
+                    <>
+                      <code className={`text-mono ${styles.identityValue}`}>
+                        {npubEncode(key)}
+                      </code>
+                      {lastActive &&
+                        at !== undefined &&
+                        (at === null
+                          ? "No activity here"
+                          : `Last active ${relativeTimestamp(at)}`)}
+                    </>
+                  }
+                />
+              );
+            })}
+          </RadioGroup>
+        </Field>
+      }
+      trailing={
+        <Button
+          type="button"
+          disabled={!choice}
+          onClick={() => choice && onSwitch(choice)}
+        >
+          Switch to this key
+        </Button>
+      }
+    />
+  );
+}
+
 export function IdentitySettings({
   viewer,
   identity,
   federatedIdentity,
+  lastActive,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
+  /** The newest event time by `pubkey` on the current community's relay. */
+  lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
 }) {
   const [signingOut, setSigningOut] = useState(false);
   const [offered, setOffered] = useState(false);
@@ -158,15 +317,16 @@ export function IdentitySettings({
               </SettingsGroup>
               <SettingsGroup>
                 <BackupRow backup={identity.backup} offered={offered} />
-                {offered && (
-                  <PreferenceRow
-                    title="Restore a backed-up key"
-                    subtitle="Replace the key on this device with one backed up to your Builderlab account. Buzz signs you out, then offers your backups when you sign back in."
-                    trailing={
-                      <Button type="button" onClick={() => setSigningOut(true)}>
-                        Restore a backed-up key
-                      </Button>
-                    }
+                {offered && federatedIdentity && (
+                  <BackedUpKeys
+                    viewer={viewer}
+                    identity={identity}
+                    federated={federatedIdentity}
+                    lastActive={lastActive}
+                    onSwitch={(pubkey) => {
+                      restoreChoice.set(pubkey);
+                      setSigningOut(true);
+                    }}
                   />
                 )}
                 <PreferenceRow
@@ -182,7 +342,10 @@ export function IdentitySettings({
               {signingOut && (
                 <SignOutDialog
                   identity={identity}
-                  onClose={() => setSigningOut(false)}
+                  onClose={() => {
+                    restoreChoice.set(undefined);
+                    setSigningOut(false);
+                  }}
                 />
               )}
             </div>
