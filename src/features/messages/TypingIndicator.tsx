@@ -15,6 +15,7 @@ import {
 } from "react";
 import {
   openProfileTranscript,
+  profileActivityViewKey,
   profileActivityViewTarget,
 } from "../profiles/target";
 import {
@@ -25,14 +26,8 @@ import { localWorkLabel, type LocalWork } from "../agents/local-activity";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { ActivityStepPreview, activityStepLabel } from "./ActivityStepPreview";
 import { AgentActivityRow } from "../agents/AgentActivityRow";
-import {
-  NavigationCard,
-  NavigationItem,
-} from "../../shared/design-system/ui/NavigationItem";
-import {
-  ArrowUpRightIcon,
-  OctagonIcon,
-} from "../../shared/design-system/icons";
+import { NavigationCard } from "../../shared/design-system/ui/NavigationItem";
+import { OctagonIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentsContext, useAgentsSnapshot } from "../agents/react";
 import { conversationWorkStops } from "../agents/work-stop";
@@ -67,9 +62,85 @@ const sameActivity = (
     );
   });
 
+type AgentSession = ComposerSession &
+  Partial<Pick<RelaySession, "agentActivity">>;
+// Public identity classifies typing only; it grants no access to step details.
+function knownAgentsOf(
+  choices: ReturnType<AgentSession["agentChoices"]["snapshot"]>,
+  entries: ReturnType<AgentSession["typing"]["snapshot"]>,
+  profiles: ReturnType<AgentSession["profiles"]["snapshot"]>,
+) {
+  const known = new Set(choices.identities.map(({ pubkey }) => pubkey));
+  for (const entry of entries)
+    if (profiles.get(entry.pubkey)?.isAgent) known.add(entry.pubkey);
+  return known;
+}
+const threadRootsOf = (rows: readonly { id: string; replyCount: number }[]) =>
+  new Set(rows.filter((row) => row.replyCount > 0).map((row) => row.id));
+function channelRowsOf(
+  session: AgentSession,
+  channelId: string,
+  watchChannel: boolean,
+) {
+  return watchChannel
+    ? (session.channels?.window?.(channelId).rows ?? noRows)
+    : noRows;
+}
+
+/** The working agents' keys only, for hosts that do not show their details:
+ * re-render when that list changes, not on every typing or profile update. */
+export function useLiveConversationAgents(
+  session: AgentSession,
+  channelId: string,
+  threadRootId: string | undefined,
+  includeThreads = true,
+): readonly string[] {
+  const replaced = useReplacedTypers(session, channelId, threadRootId);
+  const watchChannel = !threadRootId && !includeThreads;
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const stops = [
+        session.typing.subscribe(listener),
+        session.agentChoices.subscribe(listener),
+        session.profiles.subscribe(listener),
+        session.agentActivity?.subscribe(listener),
+        watchChannel
+          ? session.channels?.subscribeWindow?.(channelId, listener)
+          : undefined,
+      ];
+      return () => {
+        for (const stop of stops) stop?.();
+      };
+    },
+    [session, channelId, watchChannel],
+  );
+  const getKey = () => {
+    const entries = session.typing.snapshot();
+    const details = currentActivity(
+      (session.agentActivity?.snapshot ?? noActivity)(),
+      entries,
+      knownAgentsOf(
+        session.agentChoices.snapshot(),
+        entries,
+        session.profiles.snapshot(),
+      ),
+      channelId,
+      threadRootId,
+      includeThreads,
+      threadRootsOf(channelRowsOf(session, channelId, watchChannel)),
+    );
+    return [...details.keys()]
+      .filter((key) => !replaced.has(key))
+      .sort()
+      .join(",");
+  };
+  const key = useSyncExternalStore(subscribe, getKey, getKey);
+  return useMemo(() => (key ? key.split(",") : []), [key]);
+}
+
 /** Agents working in one conversation, over existing stores; no reads or capture. */
 export function useConversationAgents(
-  session: ComposerSession & Partial<Pick<RelaySession, "agentActivity">>,
+  session: AgentSession,
   channelId: string,
   threadRootId: string | undefined,
   includeThreads = true,
@@ -97,24 +168,16 @@ export function useConversationAgents(
     [session, channelId, watchChannel],
   );
   const channelRows = useSyncExternalStore(subscribeChannel, () =>
-    watchChannel
-      ? (session.channels?.window?.(channelId).rows ?? noRows)
-      : noRows,
+    channelRowsOf(session, channelId, watchChannel),
   );
   const channelThreadRoots = useMemo(
-    () =>
-      new Set(
-        channelRows.filter((row) => row.replyCount > 0).map((row) => row.id),
-      ),
+    () => threadRootsOf(channelRows),
     [channelRows],
   );
-  // Public identity classifies typing only; it grants no access to step details.
-  const knownAgents = useMemo(() => {
-    const known = new Set(choices.identities.map(({ pubkey }) => pubkey));
-    for (const entry of entries)
-      if (profiles.get(entry.pubkey)?.isAgent) known.add(entry.pubkey);
-    return known;
-  }, [choices, entries, profiles]);
+  const knownAgents = useMemo(
+    () => knownAgentsOf(choices, entries, profiles),
+    [choices, entries, profiles],
+  );
   // Subscribe to what this indicator shows, not every observer frame.
   const last = useRef<ReadonlyMap<string, CurrentActivity>>(new Map());
   const getDetails = () => {
@@ -144,6 +207,12 @@ export function useConversationAgents(
     agents,
     knownAgents,
   };
+}
+
+// Base UI mounts popup content only while open; building the rows inside a
+// component keeps their per-request activity lookups off closed renders.
+function ChooserItems({ items }: { items: () => ReactNode }) {
+  return items();
 }
 
 /** Incoming conversation activity over existing stores; no reads or capture. */
@@ -275,14 +344,16 @@ export function TypingIndicator({
     return rootId ? { rootId } : undefined;
   };
   // Only work in one known conversation opens straight to its transcript.
-  const activityTarget = (pubkey: string) => {
+  const knownConversation = (pubkey: string) => {
     const roots = details.get(pubkey)?.roots ?? [];
-    const known =
+    return (
       !!threadRootId ||
-      (roots.length === 1 && (roots[0] === null || !!roots[0]));
-    return profileActivityViewTarget(pubkey, { transcript: known });
+      (roots.length === 1 && (roots[0] === null || !!roots[0]))
+    );
   };
-  const directTarget = firstAgent ? activityTarget(firstAgent) : undefined;
+  const directTarget = firstAgent
+    ? profileActivityViewTarget(firstAgent)
+    : undefined;
   const agentStatus = (
     pubkey: string,
     navigate: (target: string, origin?: MessageLinkOrigin) => void,
@@ -299,7 +370,7 @@ export function TypingIndicator({
         ).get(pubkey)
       : details.get(pubkey);
     if (!detail) return null;
-    const target = activityTarget(pubkey);
+    const target = profileActivityViewTarget(pubkey);
     const canOpen = !!target && !!openActivity && !!canOpenActivity?.(target);
     const knownRoots = detail.roots.filter(
       (value) => typeof value === "string",
@@ -324,13 +395,8 @@ export function TypingIndicator({
       detail.roots.length === 1 && detail.roots[0] === null
         ? undefined
         : scopeLabel(pubkey, workRoot);
-    const viewActivity =
-      canOpen && target
-        ? () => navigate(target, activityOrigin(pubkey))
-        : undefined;
-    // Going to the conversation already shown would do nothing, so the row
-    // opens its activity instead.
-    if (viewActivity && conversationRoot === threadRootId)
+    // The row is the way into an agent's transcript for this work.
+    if (canOpen && target)
       return (
         <AgentActivityRow
           name={name(pubkey)}
@@ -338,7 +404,12 @@ export function TypingIndicator({
           status={status}
           scope={scope}
           openLabel={`View ${name(pubkey)} activity`}
-          onOpen={viewActivity}
+          onOpen={() =>
+            navigate(
+              target,
+              workRoot ? { rootId: workRoot } : activityOrigin(pubkey),
+            )
+          }
         />
       );
     return (
@@ -429,18 +500,18 @@ export function TypingIndicator({
                 }
                 openTarget={
                   openActivity &&
-                  ((target, origin) =>
-                    openProfileTranscript(target, (next) =>
-                      openActivity(next, origin),
-                    ))
+                  ((target, origin) => {
+                    const agent = profileActivityViewKey(target);
+                    const show = (next: string) => openActivity(next, origin);
+                    return agent && (origin?.rootId || knownConversation(agent))
+                      ? openProfileTranscript(target, show)
+                      : show(target);
+                  })
                 }
                 directTarget={
                   directTarget && canOpenActivity?.(directTarget)
                     ? directTarget
                     : undefined
-                }
-                directOrigin={
-                  firstAgent ? activityOrigin(firstAgent) : undefined
                 }
               >
                 {(navigate) =>
@@ -498,7 +569,6 @@ function AgentChooser({
   content,
   openTarget,
   directTarget,
-  directOrigin,
   children,
 }: {
   label: string;
@@ -507,7 +577,6 @@ function AgentChooser({
     | ((target: string, origin?: MessageLinkOrigin) => boolean)
     | undefined;
   directTarget?: string | undefined;
-  directOrigin?: MessageLinkOrigin | undefined;
   children(
     navigate: (target: string, origin?: MessageLinkOrigin) => void,
   ): ReactNode;
@@ -622,17 +691,7 @@ function AgentChooser({
           className={activityStyles.activityList}
           aria-label="Agents working now"
         >
-          <NavigationItem
-            variant="option"
-            label="Activity"
-            aria-label="View full activity"
-            trailing={<ArrowUpRightIcon aria-hidden="true" />}
-            disabled={!directTarget || !openTarget}
-            onClick={() => {
-              if (directTarget) navigate(directTarget, directOrigin);
-            }}
-          />
-          {children(navigate)}
+          <ChooserItems items={() => children(navigate)} />
         </section>
       </PopoverPopup>
     </PopoverRoot>

@@ -1,11 +1,12 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
-import { TypingIndicator, useConversationAgents } from "./TypingIndicator";
+import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import {
   activityPresentation,
   activityDisplayRows,
-  useActivitySnapshot,
+  useChannelActivitySnapshot,
+  useStableRowActivity,
 } from "./activity-presentation";
 import { activityRuns } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
@@ -39,7 +40,11 @@ import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import type { ThreadRetarget, ThreadView } from "../relay/threads";
+import {
+  threadFailure,
+  type ThreadRetarget,
+  type ThreadView,
+} from "../relay/threads";
 import { useProfileGeneration, useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
@@ -561,7 +566,8 @@ function ThreadMessages({
       if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
         return channel.channelType === "stream" ||
-          channel.channelType === "forum"
+          channel.channelType === "forum" ||
+          (channel.channelType === "solo" && channel.joinRole === "guest")
           ? "joinable"
           : "preview";
       }
@@ -585,7 +591,12 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
-  const activitySnapshot = useActivitySnapshot(session.agentActivity);
+  const threadChannels = useMemo(() => new Set([channelId]), [channelId]);
+  const activitySnapshot = useChannelActivitySnapshot(
+    session.agentActivity,
+    threadChannels,
+  );
+  const stableActivity = useStableRowActivity();
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;
@@ -988,28 +999,12 @@ function ThreadMessages({
       withdrawn.current = record;
     };
   }, [navigation, active, returning, rootTarget, revealed]);
+  const failure = threadFailure(snapshot, rootTarget);
   useEffect(() => {
-    if (!navigation || navigation.signal.aborted) return;
+    if (!navigation || navigation.signal.aborted || !failure) return;
     // Each failure is shown in the thread, next to its own Try again.
-    if (rootTarget && snapshot.status === "error")
-      navigation.complete({
-        status: "failed",
-        reason: "unavailable",
-        presented: true,
-      });
-    else if (snapshot.targetStatus === "unavailable")
-      navigation.complete({
-        status: "failed",
-        reason: "not-found",
-        presented: true,
-      });
-    else if (snapshot.targetStatus === "error")
-      navigation.complete({
-        status: "failed",
-        reason: "unavailable",
-        presented: true,
-      });
-  }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
+    navigation.complete({ status: "failed", reason: failure, presented: true });
+  }, [navigation, failure]);
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
   useEffect(() => {
@@ -1042,20 +1037,20 @@ function ThreadMessages({
     request: number;
   }>();
   const rootId = snapshot.root?.id;
-  const rootPresentation = activityPresentation(
-    snapshot.root?.audience === "agents"
-      ? [snapshot.root, ...snapshot.replies]
-      : snapshot.replies,
-    activitySnapshot,
-    agentPubkeys,
-    rootId,
+  const rootPresentation = useMemo(
+    () =>
+      activityPresentation(
+        snapshot.root?.audience === "agents"
+          ? [snapshot.root, ...snapshot.replies]
+          : snapshot.replies,
+        activitySnapshot,
+        agentPubkeys,
+        rootId,
+      ),
+    [snapshot.root, snapshot.replies, activitySnapshot, agentPubkeys, rootId],
   );
   const rootActivity = rootId ? rootPresentation.byRow.get(rootId) : undefined;
-  const { agents: liveAgents } = useConversationAgents(
-    session,
-    channelId,
-    rootId,
-  );
+  const liveAgents = useLiveConversationAgents(session, channelId, rootId);
   const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
   const joinsLive =
     !!lastMessage &&
@@ -1521,15 +1516,15 @@ function ThreadMessages({
         return (
           <MessageRow
             keepMounted={keepActivityMounted}
-            representedAgents={presentation.representedAgents.get(row.id)}
-            recordedActivity={
-              recordedActivity && {
-                ...recordedActivity,
-                container: groupedIds.has(row.id)
-                  ? "history"
-                  : recordedActivity.container,
-              }
-            }
+            representedAgents={stableActivity.agents(
+              row.id,
+              presentation.representedAgents.get(row.id),
+            )}
+            recordedActivity={stableActivity.activity(
+              row.id,
+              recordedActivity,
+              groupedIds.has(row.id) ? "history" : recordedActivity?.container,
+            )}
             viewer={session.viewer}
             extensions={extensions}
             session={session}
@@ -1852,12 +1847,15 @@ function ThreadMessages({
               onReply={soloConversation ? undefined : focusReply}
               stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
               row={snapshot.root}
-              representedAgents={rootPresentation.representedAgents.get(
+              representedAgents={stableActivity.agents(
                 snapshot.root.id,
+                rootPresentation.representedAgents.get(snapshot.root.id),
               )}
-              recordedActivity={
-                rootActivity && { ...rootActivity, container: "history" }
-              }
+              recordedActivity={stableActivity.activity(
+                snapshot.root.id,
+                rootActivity,
+                "history",
+              )}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}

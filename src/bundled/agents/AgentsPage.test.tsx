@@ -402,6 +402,7 @@ function setup(
     addedTabs: () => [],
     registerTab: () => {},
     controlAttention: () => {},
+    harness: {} as Agents["harness"],
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
