@@ -4,6 +4,25 @@
 #[allow(dead_code)]
 mod browser;
 
+// The real module needs the plugin manager and OAuth host. Builderlab sign-in
+// is outside this fixture, so attach sees an identity with no session.
+#[allow(dead_code)]
+mod federated_identity {
+    pub struct Config {
+        pub identity_origin: String,
+        pub api_base_path: String,
+    }
+    pub struct FederatedIdentity;
+    impl FederatedIdentity {
+        pub fn with_session<T>(
+            &self,
+            _: impl FnOnce(&zeroize::Zeroizing<String>, &str, &Config) -> T,
+        ) -> Option<T> {
+            None
+        }
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 fn main() {
     panic!("This fixture requires macOS");
@@ -24,7 +43,7 @@ fn main() {
         net::TcpListener,
         time::Duration,
     };
-    use tauri::{LogicalPosition, LogicalSize, WebviewBuilder, WebviewUrl, WindowBuilder};
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
     std::thread::spawn(move || {
@@ -39,17 +58,15 @@ fn main() {
     context.config_mut().app.windows.clear();
     tauri::Builder::default()
         .setup(move |app| {
-            let window = WindowBuilder::new(app, "main")
+            app.manage(federated_identity::FederatedIdentity);
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse().unwrap()))
                 .title("Buzz browser control acceptance")
                 .inner_size(800.0, 600.0).build()?;
-            window.add_child(WebviewBuilder::new("main", WebviewUrl::External(
-                url.parse().unwrap()
-            )), LogicalPosition::new(0, 0), LogicalSize::new(800, 600))?;
             let app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let result: Result<(), String> = async {
                     let bounds = BrowserBounds { x: 10.0, y: 70.0, width: 780.0, height: 500.0 };
-                    let id = browser_attach(app.clone(), url.clone(), bounds, None).await?;
+                    let id = browser_attach(app.clone(), url.clone(), bounds, None, None, app.state()).await?;
                     browser_set_bounds(app.clone(), id.clone(), bounds, true).await?;
                     tokio::time::timeout(Duration::from_secs(15), async {
                         loop {
