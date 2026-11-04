@@ -266,6 +266,7 @@ available rather than silently discarding it.
   uses. Available types and models depend on the platform, active plugins, and
   provider setup. Tools and connections depend on that agent's configuration;
   naming a service or adding instructions does not connect it.
+- If a Codex conversation exceeds its model's context window, Buzz tries native compaction and continues the interrupted work once in the same session. If compaction fails or the continuation still exceeds the limit, the next mention must compact successfully before sending more work. Interrupt can stop recovery.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**

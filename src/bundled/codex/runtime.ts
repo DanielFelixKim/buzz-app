@@ -129,6 +129,7 @@ type Saved = {
   at?: number;
   tools?: string;
   protection?: string;
+  needsCompaction?: boolean;
 };
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
@@ -141,6 +142,7 @@ type Active = {
   finished: boolean;
   /** The owner stopped it, so its interruption is not reported. */
   stopped?: boolean;
+  recovery?: AbortController;
   /** The one interrupt every Stop of this turn shares. */
   stopping?: Promise<void>;
   /** What the turn runs on, once resolved; a differing pick queues a turn. */
@@ -317,7 +319,11 @@ export class CodexRuntime {
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
-    if (this.controls.compacting(`${agent.key}/${key}`)) return "compacting";
+    if (
+      this.controls.compacting(`${agent.key}/${key}`) ||
+      this.entries.get(agent.key)?.lanes.get(key)?.active?.recovery
+    )
+      return "compacting";
     return this.controls.active(`${agent.key}/${key}`) ||
       this.entries.get(agent.key)?.lanes.has(key)
       ? "active"
@@ -385,6 +391,10 @@ export class CodexRuntime {
         });
         signal.throwIfAborted();
         await this.compact(rpc, signal, thread.threadId, agent.key, key);
+        if (thread.needsCompaction) {
+          entry.saved[key] = { ...thread, needsCompaction: false };
+          await this.storage.set(entry.storageKey, JSON.stringify(entry.saved));
+        }
         this.status(agent.key, key, "Idle");
       } catch (error) {
         this.status(
@@ -1013,6 +1023,7 @@ export class CodexRuntime {
               // for it too. A turn the owner stopped takes nothing more.
               if (
                 active.finished ||
+                active.recovery ||
                 active.stopped ||
                 lane.queued ||
                 request.conversation.topLevel !==
@@ -1244,8 +1255,13 @@ export class CodexRuntime {
         new Error("Codex has not started on this message yet"),
       );
     const active = entry.lanes.get(key)?.active;
-    if (!active?.requests.includes(request) || active.finished)
+    if (!active?.requests.includes(request)) return Promise.resolve();
+    if (active.recovery) {
+      active.stopped = true;
+      active.recovery.abort(new Error("Context recovery interrupted"));
       return Promise.resolve();
+    }
+    if (active.finished) return Promise.resolve();
     active.stopped = true;
     active.stopping ??= (async () => {
       try {
@@ -1784,21 +1800,46 @@ export class CodexRuntime {
     void active.ready.catch(() => undefined);
     lane.active = active;
     const { settings, agent } = request;
-    const followed = follow(server.rpc, signal, active, (method, item) => {
-      const step = method === "item/started" ? codexStep(item) : undefined;
-      if (step)
-        for (const taken of active.activity.values())
-          taken.step?.(step.tool, step.target);
-      if (method === "item/started" && item.command)
-        this.status(agent.key, key, "Working", item.command);
-      if (method === "item/completed" && item.type === "commandExecution")
-        this.status(
+    const observe = () =>
+      follow(server.rpc, signal, active, (method, item) => {
+        const step = method === "item/started" ? codexStep(item) : undefined;
+        if (step)
+          for (const taken of active.activity.values())
+            taken.step?.(step.tool, step.target);
+        if (method === "item/started" && item.command)
+          this.status(agent.key, key, "Working", item.command);
+        if (method === "item/completed" && item.type === "commandExecution")
+          this.status(
+            agent.key,
+            key,
+            "Working",
+            `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
+          );
+      });
+    let followed = observe(),
+      recovered = false;
+    const recover = async () => {
+      recovered = true;
+      followed.stop();
+      active.recovery = new AbortController();
+      try {
+        await this.compact(
+          server.rpc,
+          AbortSignal.any([signal, active.recovery.signal]),
+          active.threadId!,
           agent.key,
           key,
-          "Working",
-          `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
         );
-    });
+        const saved = entry.saved[key];
+        if (saved)
+          this.save(request, entry, key, { ...saved, needsCompaction: false });
+      } finally {
+        delete active.recovery;
+      }
+      active.finished = false;
+      delete active.turnId;
+      followed = observe();
+    };
     let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
     try {
       const rpc = await server.opening;
@@ -1866,6 +1907,10 @@ export class CodexRuntime {
       bridge?.bind(active.threadId);
       server.threads.set(active.threadId, agent.key);
       signal.throwIfAborted();
+      if (!fresh && existing?.needsCompaction) {
+        ready();
+        await recover();
+      }
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
         name: sessionName(agent, request.conversation),
@@ -1906,6 +1951,11 @@ export class CodexRuntime {
         additionalContext,
       });
       active.turnId = turn.turn.id;
+      if (active.stopped)
+        await rpc.request("turn/interrupt", {
+          threadId: active.threadId,
+          turnId: active.turnId,
+        });
       if (fresh)
         void this.prompts(agent.key).save(active.threadId, [
           {
@@ -1942,7 +1992,44 @@ export class CodexRuntime {
       });
       ready();
       this.status(agent.key, key, "Working");
-      const status = await followed.completed;
+      let status: string;
+      try {
+        status = await followed.completed;
+      } catch (error) {
+        if (
+          !(error instanceof ContextWindowExceeded) ||
+          recovered ||
+          signal.aborted ||
+          active.stopped
+        )
+          throw error;
+        const saved = entry.saved[key];
+        if (saved)
+          this.save(request, entry, key, { ...saved, needsCompaction: true });
+        await active.steering;
+        await recover();
+        signal.throwIfAborted();
+        const continued = await rpc.request<{ turn: { id: string } }>(
+          "turn/start",
+          {
+            threadId: active.threadId,
+            input: input(
+              "Continue the interrupted work from the compacted conversation. Do not repeat completed actions.",
+            ),
+            model,
+            effort,
+            ...summary,
+          },
+        );
+        active.turnId = continued.turn.id;
+        if (active.stopped)
+          await rpc.request("turn/interrupt", {
+            threadId: active.threadId,
+            turnId: active.turnId,
+          });
+        this.status(agent.key, key, "Working");
+        status = await followed.completed;
+      }
       await active.steering;
       signal.throwIfAborted();
       if (status === "interrupted" && active.stopped) {
@@ -1968,6 +2055,19 @@ export class CodexRuntime {
         this.status(agent.key, key, "Idle");
       }
     } catch (error) {
+      if (error instanceof ContextWindowExceeded && entry.saved[key])
+        this.save(request, entry, key, {
+          ...entry.saved[key],
+          needsCompaction: true,
+        });
+      if (active.stopped && recovered && !signal.aborted) {
+        active.finished = true;
+        notReady(error);
+        await active.steering;
+        for (const taken of active.requests) taken.answered(true);
+        this.status(agent.key, key, "Stopped");
+        return;
+      }
       // Refused before any turn began, it took nothing in.
       if (error instanceof Refused && !active.turnId) restoreNotes(request);
       for (const taken of active.requests) taken.failActivity(message(error));
@@ -2014,6 +2114,8 @@ export class CodexRuntime {
     }
   }
 }
+class ContextWindowExceeded extends Error {}
+
 /** A started or completed item, as the app-server reports it. */
 type Item = {
   type: string;
@@ -2045,7 +2147,11 @@ function follow(
       | {
           threadId?: string;
           message?: string;
-          turn?: { id: string; status: string; error?: { message: string } };
+          turn?: {
+            id: string;
+            status: string;
+            error?: { message: string; codexErrorInfo?: unknown };
+          };
           item?: Item;
         }
       | undefined;
@@ -2059,7 +2165,11 @@ function follow(
     if (wire.method === "turn/completed" && p.turn) {
       turn.finished = true;
       if (p.turn.status === "failed")
-        fail(new Error(p.turn.error?.message ?? "Codex turn failed"));
+        fail(
+          p.turn.error?.codexErrorInfo === "contextWindowExceeded"
+            ? new ContextWindowExceeded(p.turn.error.message)
+            : new Error(p.turn.error?.message ?? "Codex turn failed"),
+        );
       else finish(p.turn.status);
     }
   });

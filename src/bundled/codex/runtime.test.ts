@@ -2651,6 +2651,214 @@ it("answers another agent its owner attested, telling the owner of failures", as
   expect(failure.tags).toContainEqual(["p", owner]);
   expect(failure.tags).not.toContainEqual(["p", sibling]);
 });
+it("compacts a context-exhausted thread and resumes its work once", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("keep working"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: {
+        id: "turn-1",
+        status: "failed",
+        error: {
+          message: "context full",
+          codexErrorInfo: "contextWindowExceeded",
+        },
+      },
+    },
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.map((w) => w.method)).toContain("thread/compact/start"),
+  );
+  expect(f.publish).not.toHaveBeenCalled();
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "compact", status: "completed" },
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+  expect(inputText(f.starts()[1])).toContain("Continue");
+  // A second context failure stops recovery rather than compacting forever.
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: {
+        id: "turn-2",
+        status: "failed",
+        error: {
+          message: "still full",
+          codexErrorInfo: "contextWindowExceeded",
+        },
+      },
+    },
+  });
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(
+    f.sent.map((w) => w.method).filter((m) => m === "thread/compact/start"),
+  ).toHaveLength(1);
+  expect(
+    [...f.storage.values()].some((s) => s.includes('"needsCompaction":true')),
+  ).toBe(true);
+  await f.runtime.run(f.delivery("next wake"));
+  await vi.waitFor(() =>
+    expect(
+      f.sent.map((w) => w.method).filter((m) => m === "thread/compact/start"),
+    ).toHaveLength(2),
+  );
+  // The next wake compacts before sending another oversized model turn.
+  expect(f.starts()).toHaveLength(2);
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "compact-next", status: "completed" },
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  await f.complete(2, "");
+});
+
+it("continues after compaction without replaying the user's original request", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("perform a one-time action"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: {
+        id: "turn-1",
+        status: "failed",
+        error: {
+          message: "context full",
+          codexErrorInfo: "contextWindowExceeded",
+        },
+      },
+    },
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(true),
+  );
+  const queued = f.runtime.run(f.delivery("later request"));
+  await queued;
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Starting"),
+  );
+  expect(f.starts()).toHaveLength(1);
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "compact", status: "completed" },
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).not.toContain("perform a one-time action");
+  await f.complete(1, "");
+  await queued;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(inputText(f.starts()[2])).toContain("later request");
+  await f.complete(2, "");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("interrupts context recovery without starting a continuation", async () => {
+  const f = fixture();
+  const delivery = f.delivery("work");
+  const agent = {
+    ...delivery.agent,
+    config: delivery.config,
+  } as unknown as Agent;
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: {
+        id: "turn-1",
+        status: "failed",
+        error: {
+          message: "context full",
+          codexErrorInfo: "contextWindowExceeded",
+        },
+      },
+    },
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(true),
+  );
+  expect(f.runtime.sessionState(agent, { channelId: "channel", root })).toBe(
+    "compacting",
+  );
+  await f.runtime.session(agent, { channelId: "channel", root }, "interrupt");
+  f.emit({
+    method: "turn/started",
+    params: { threadId: "thread-1", turn: { id: "compact" } },
+  });
+  await vi.waitFor(() =>
+    expect(
+      f.sent.some(
+        (w) =>
+          w.method === "turn/interrupt" &&
+          (w.params as { turnId: string }).turnId === "compact",
+      ),
+    ).toBe(true),
+  );
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, { channelId: "channel", root })).toBe(
+      "idle",
+    ),
+  );
+  expect(f.starts()).toHaveLength(1);
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("does not retry model work when context recovery compaction fails", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.failing.add("thread/compact/start");
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: {
+        id: "turn-1",
+        status: "failed",
+        error: {
+          message: "context full",
+          codexErrorInfo: "contextWindowExceeded",
+        },
+      },
+    },
+  });
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.sent.map((w) => w.method)).toContain("thread/compact/start");
+  expect(f.starts()).toHaveLength(1);
+  await f.runtime.run(f.delivery("next wake"));
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  expect(f.starts()).toHaveLength(1);
+  const reloaded = fixture();
+  for (const [key, value] of f.storage) reloaded.storage.set(key, value);
+  reloaded.failing.add("thread/compact/start");
+  await reloaded.runtime.run(reloaded.delivery("wake after reload"));
+  await vi.waitFor(() => expect(reloaded.publish).toHaveBeenCalledTimes(1));
+  expect(reloaded.sent.some((w) => w.method === "thread/compact/start")).toBe(
+    true,
+  );
+  expect(reloaded.starts()).toHaveLength(0);
+});
+
 it("ends a turn without a reply silently, and publishes an unexpected exit", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
