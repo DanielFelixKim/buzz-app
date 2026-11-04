@@ -133,9 +133,22 @@ that agent in Buzz; they do not notify the external app through this connection.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
   an agent, and send a message. Solo conversations continue at the chat's top
-  level rather than requiring a new thread for each reply. Solo chats can also
-  be shared with other people; do not describe every Solo chat as visible only
-  to its creator.
+  level rather than requiring a new thread for each reply. Where available, use
+  **Model and effort** in the composer before sending; Solo keeps those choices
+  for that chat until you reset them in the same control, even if its available
+  models change. Wait for saved choices to load before sending; an unreadable
+  store never silently falls back to defaults. If choices cannot be read, use
+  **Retry saved choices** before sending. If their agent catalog cannot be loaded, retry
+  or reset them in the model control. If New chat cannot clear
+  its choices after sending, reset them before starting another chat. Wait for
+  pending model changes to save before sending. If saving fails, the current
+  composer keeps your unsaved selection; other windows may not see it.
+  If a refused start offers **Retry restoring message**, it keeps the original
+  message, attachments, and choices while this window stays open. Retry never
+  replaces a newer New chat draft or a later Reset. Reloading or dismissing that
+  notice ends this recovery option.
+  Solo chats can also be shared with other people; do not describe every Solo
+  chat as visible only to its creator.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
@@ -163,7 +176,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   Mute suppresses notifications for messages that do not mention you; mentions can still notify
   you. Unmute restores ordinary unread emphasis and dots. Manual **Mark as unread**
   can still make the name bold. Muted rows show no unread dots, including thread
-  dots; muting does not mark messages or threads as read.
+  dots, and do not contribute to the sidebar’s floating **N unread** buttons or
+  their avatar previews. Muting does not mark messages or threads as read.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have
@@ -231,7 +245,21 @@ that agent in Buzz; they do not notify the external app through this connection.
   between pages set to three fingers (or two or three fingers). Two-finger
   scrolling does not navigate.
 - **Sharing a Solo chat** grants access to its conversation history, not only
-  the next message. Its access dialog offers **View only** for community reading
+  the next message. Search for a channel in its access dialog and click **Share**
+  beside the result. This makes a Private chat **View only** and posts a link
+  there, after confirming community
+  access to the full history and Canvas. Chats already set to View only get a
+  delivery confirmation and keep their access. Public chats post directly.
+  The success toast confirms any change to View only and offers **View** to open
+  the posted link in the destination channel.
+  Opening a shared chat link creates no sidebar entry.
+  Direct invitations still add members. Pasting a link to a Private chat you own into a channel, thread or DM
+  uses the same confirmation, then sends your original message. Owned View only
+  chat links also confirm delivery. Other chat links send without changing access;
+  recipients still need permission to read.
+  If an owned chat's access or details change during confirmation, review the
+  refreshed consent and choose **Share** again before sending.
+  The access dialog offers **View only** for community reading
   or **Private** for people added to the chat. Public is not offered in
   this UI; a Public policy set through another client appears as
   **Public (existing)**. This is not protocol enforcement. View-only visitors
@@ -239,7 +267,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   about retained viewers unless verified roles show no Guests, including while
   roles load or fail to load; remove them in People to end their access. Public
   (existing) → Private also warns that joined members retain their access.
-  Public (existing) → View only confirms that existing
+  Manually changing Public (existing) to View only confirms that existing
   members keep their access. Agents the owner adds through
   access search or a composer mention receive Bot access so they can reply,
   including with a Guest admission default. Conversion to a channel offers
@@ -260,10 +288,19 @@ that agent in Buzz; they do not notify the external app through this connection.
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose
   **Open in browser**.
+- **Inbox preview**: with a mouse or trackpad, rest the pointer on **Inbox** in
+  the sidebar to see recent mentions, DMs, and thread replies without opening
+  the Inbox page. Archived conversations are not shown. Clicking a conversation
+  opens it directly; **Open Inbox** opens the page. The card's **Unread only**
+  switch is separate from the Inbox page's filters. The preview is not shown on
+  touch devices or while the Inbox page is open.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
+- **Sidebar sections**: in **All**, use the arrow beside **Solo** or **Team** to
+  collapse either section independently. Buzz remembers the collapsed sections
+  for that community and identity.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Inbox list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.
@@ -422,3 +459,7 @@ Release builds ignore this optional helper.
 ### Builderlab in development
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
+
+### Reconnecting an old agent in a DM
+
+On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose a harness if the old type is unavailable; settings that were not saved use the selected type’s defaults. Review the inline controls, complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you mention an eligible agent you own. Only you see it, once per agent in the loaded conversation. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
