@@ -40,6 +40,9 @@ const WAITING = {
   not_linked: BACKUP_FAILURES.not_linked.message,
 } as const;
 
+/** Unavailable for want of native, not because a sign-out didn't finish. */
+const NOT_SIGN_OUT = new Set(["native-unavailable", "desktop-required"]);
+
 /** One sentence per uploader status; failures read as first run's copy. */
 function backupSentence(status: BackupStatus) {
   switch (status.status) {
@@ -289,27 +292,34 @@ function OrganizationSignIns({
     const authority = session.snapshot().authority;
     if (!authority) return;
     report(session);
-    void session
-      .signOut()
-      .then(() => {
-        // Native reports a sign-out it couldn't finish, such as a storage
-        // failure, as an unavailable snapshot rather than an error.
-        const after = session.snapshot();
-        if (after.status === "unavailable")
-          report(session, { authority, failure: after.failure ?? "" });
-      })
-      .catch((error: unknown) =>
-        report(session, {
-          authority,
-          failure: error instanceof Error ? error.message : "",
-        }),
-      );
+    void session.signOut().catch((error: unknown) =>
+      report(session, {
+        authority,
+        failure: error instanceof Error ? error.message : "",
+      }),
+    );
   };
   const signedIn = sessions.filter(
     (_, index) =>
       states[index]?.status === "signed-in" && states[index]?.authority,
   );
-  const problems = [...failures].map(([session, { authority, failure }]) => (
+  // Native reports a sign-out it couldn't finish, such as a storage failure,
+  // as that server's unavailable snapshot rather than an error. Read from the
+  // session, it survives Settings closing and a reload until cleanup ends.
+  const unfinished = new Map(failures);
+  sessions.forEach((session, index) => {
+    const state = states[index];
+    if (
+      state?.status === "unavailable" &&
+      state.authority &&
+      !NOT_SIGN_OUT.has(state.failure ?? "")
+    )
+      unfinished.set(session, {
+        authority: state.authority,
+        failure: state.failure ?? "",
+      });
+  });
+  const problems = [...unfinished].map(([session, { authority, failure }]) => (
     <div key={authority.id}>
       <p role="alert" className="text-body-sm text-danger">
         {`Couldn’t sign out of ${serverName(authority)}. ${recoveryMessage(failure)}`}
@@ -320,7 +330,7 @@ function OrganizationSignIns({
     </div>
   ));
   // The first server's own row would repeat its failure without naming it.
-  const firstFailed = [...failures.values()].some(
+  const firstFailed = [...unfinished.values()].some(
     ({ authority }) => authority.id === identity.snapshot().authority?.id,
   );
   if (signedIn.length === 0)

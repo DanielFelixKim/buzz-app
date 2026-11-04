@@ -479,3 +479,41 @@ it("keeps a per-server sign-out that native couldn't finish visible, named, with
   expect(screen.queryByRole("alert")).toBeNull();
   expect(block.service.signOut).not.toHaveBeenCalled();
 });
+
+it("restores an unfinished per-server sign-out's Try again when Settings opens again", async () => {
+  const { block, pub, root, servers } = twoServers();
+  block.publish({ status: "signed-in", email: "will@block.xyz" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
+  vi.mocked(pub.service.signOut).mockImplementation(async () => {
+    pub.publish({ status: "unavailable", failure: "storage-denied" });
+  });
+  const settings = () => (
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={root}
+      memberships={memberships}
+      servers={servers}
+    />
+  );
+  const first = render(settings(), { wrapper: ToastProvider });
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Sign out of app.builderlab.xyz",
+    }),
+  );
+  expect(await screen.findByRole("alert")).toBeVisible();
+  // Closing Settings and opening it again, as a reload does.
+  first.unmount();
+  render(settings(), { wrapper: ToastProvider });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t sign out of app.builderlab.xyz. Sign-in could not access secure storage.",
+  );
+  expect(screen.getByText("Block (block.builderlab.xyz)")).toBeVisible();
+  vi.mocked(pub.service.signOut).mockImplementation(async () => {
+    pub.publish({ status: "signed-out", failure: null });
+  });
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(pub.service.signOut).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
