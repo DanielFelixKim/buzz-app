@@ -124,9 +124,10 @@ sign-in skips linking and backup. Importing without a Builderlab account never u
 identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
 line under the body. A linked key does not mean a
-backed-up one, so only when the lookup lists the linked key does the page also
-offer **Restore from backup** (primary), with **Enter your private key** as a
-smaller choice; otherwise **Enter your private key** is primary. It opens the
+backed-up one, so only when the lookup lists the linked key, or more than one
+key, does the page also offer **Restore from backup** (primary), with **Enter
+your private key** as a smaller choice; otherwise **Enter your private key** is
+primary. It opens the
 same import page, which here accepts only the linked key: any other valid nsec
 is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
@@ -139,8 +140,13 @@ lists it, a successful import automatically backs up the key as on a new
 account; a listed key continues without another upload.
 
 **Restore your key** opens native recovery in a separate browser sign-in.
-Only the account’s linked key can be installed. While waiting, **Cancel** cancels
-the attempt; during installation, navigation is disabled. A successful install
+With one backup, only the account’s linked key can be installed. With several,
+the page lists them, the linked key preselected when it came back, and **Restore
+this identity** installs the chosen one; another key than the linked one then
+unlinks the old key and links the restored one, as Start over does, with no
+backup step. **Enter my private key**, **I lost my key** and, after a partial
+recovery, **Try again** stay offered beside the list. While waiting, **Cancel**
+cancels the attempt; during installation, navigation is disabled. A successful install
 continues directly to community restoration and the next required step, without
 another Welcome back confirmation. One status screen shows **Restoring your key…**
 throughout recovery, with a browser sign-in hint while waiting. Failure shows **Couldn’t restore your key**,
