@@ -47,6 +47,7 @@ import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
 import { SoloNavigationService } from "../features/channel-navigation/solo-navigation";
 import { SidebarSectionsService } from "../features/channel-navigation/sidebar-sections-service";
+import { SidebarScopeService } from "../features/channel-navigation/sidebar-scope-service";
 import { bundledPlugins } from "../bundled";
 import { bundledFederatedIdentity } from "../bundled/builderlab/oauth/first-run";
 import {
@@ -54,6 +55,7 @@ import {
   nativeBuilderlab,
 } from "../bundled/builderlab/session";
 import { conversationFeatures } from "./conversation-features";
+import { PluginDevelopmentService } from "../features/plugin-development/service";
 import { createPluginManager } from "../plugins/manager";
 import {
   createPluginInstallCore,
@@ -82,6 +84,7 @@ export function createServices() {
     bundled: bundledPlugins,
     builtIn: conversationFeatures,
   });
+  new PluginDevelopmentService(ctx, () => plugins);
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
   const navigationHost = provideNavigation(ctx);
@@ -99,6 +102,7 @@ export function createServices() {
       navigation.open({ version: 1, kind: "settings", section: "plugins" }),
   });
   createPluginInstallerService(ctx, { core: pluginInstallCore });
+  const sidebarScope = new SidebarScopeService(ctx);
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -238,7 +242,10 @@ export function createServices() {
   );
   if (notifications.indicator.available)
     ctx.effect(() =>
-      bindUnreadIndicator(communities, notifications.indicator.setUnread),
+      bindUnreadIndicator(communities, notifications.indicator.setUnread, {
+        allows: (target) => notifications.gated(target),
+        subscribe: notifications.subscribeGates,
+      }),
     );
   let disposal: Promise<void> | undefined;
   return {
@@ -260,6 +267,7 @@ export function createServices() {
     pages,
     sidebarSections,
     pluginInstallRequests,
+    sidebarScope,
     panels,
     plugins,
     federatedIdentity,

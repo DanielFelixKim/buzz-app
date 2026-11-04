@@ -1,7 +1,10 @@
 import { expect, it } from "vitest";
 import { relayOrigin } from "../communities/destination";
 import type { SessionSnapshot } from "../federated-identity/service";
-import { hostedByThisBuilderlab } from "./builderlab-hosted";
+import {
+  atPublicBuilderlab,
+  hostedByThisBuilderlab,
+} from "./builderlab-hosted";
 
 const server = (id: string, communityHosts: string[]) =>
   ({
@@ -78,4 +81,25 @@ it("treats every community as unhosted without a compiled server or the built-in
       () => Promise.reject(new Error("native unavailable")),
     ),
   ).toBe(false);
+});
+
+it.each([
+  "https://app.builderlab.xyz",
+  "https://app.builderlab.xyz/",
+  // A federated-identity build at the public portal, as vite.config.ts
+  // derives it from an `apiBasePath` of /buzz/api/goose/.
+  "https://app.builderlab.xyz/buzz",
+])("%s is the public Builderlab", (build) => {
+  expect(atPublicBuilderlab(build)).toBe(true);
+});
+
+it.each([
+  "",
+  "not a url",
+  "http://app.builderlab.xyz",
+  "https://app.builderlab.xyz:8443",
+  "https://staging.app.builderlab.xyz",
+  "https://builderlab.example",
+])("%s is not the public Builderlab", (build) => {
+  expect(atPublicBuilderlab(build)).toBe(false);
 });
