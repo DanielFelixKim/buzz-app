@@ -271,8 +271,10 @@ it.each([
   ["Darwin x86_64", "claude-protected-x64"],
   ["Linux x86_64", undefined],
 ])("picks the pinned release declared for %s", async (platform, id) => {
+  let asked = 0;
   const spawn: Spawn = async (process, options) => {
     expect(process).toBe("platform");
+    asked++;
     options?.onStdout?.(`${platform}\n`);
     return {
       write: async () => {},
@@ -281,11 +283,14 @@ it.each([
       exited: Promise.resolve(0),
     };
   };
-  if (id) await expect(protectedRuntime(spawn)).resolves.toBe(id);
-  else
-    await expect(protectedRuntime(spawn)).rejects.toThrow(
-      "Protected Claude needs a Mac",
-    );
+  for (const _ of [1, 2])
+    if (id) await expect(protectedRuntime(spawn)).resolves.toBe(id);
+    else
+      await expect(protectedRuntime(spawn)).rejects.toThrow(
+        "Protected Claude needs a Mac",
+      );
+  // An answer is remembered for its spawn; a failure is not.
+  expect(asked).toBe(id ? 1 : 2);
 });
 
 it("requires hook registration acknowledgment before returning a protected process", async () => {
