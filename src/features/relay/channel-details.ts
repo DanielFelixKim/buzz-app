@@ -21,6 +21,8 @@ import { SOLO_NAMED_LABEL, soloLabels } from "../solo/labels";
 export type DetailsAttempt = Readonly<{
   draft: ChannelDetailsDraft;
   status: "saving" | "unconfirmed";
+  /** A default-channel command confirms only when the readback shows it. */
+  defaultChange?: true;
 }>;
 export interface ChannelDetailsCapability {
   readonly available: boolean;
@@ -112,7 +114,7 @@ export function createChannelDetails({
   }
   async function confirm(
     id: string,
-    draft: ChannelDetailsDraft,
+    { draft, defaultChange }: DetailsAttempt,
     signal: AbortSignal,
   ) {
     const { details, metadata } = await read(id, signal);
@@ -125,10 +127,9 @@ export function createChannelDetails({
       details.visibility !== draft.visibility ||
       details.ttlSeconds !== draft.ttlSeconds ||
       (draft.joinRole !== undefined && details.joinRole !== draft.joinRole) ||
-      // A channel made private no longer reports its default setting.
-      (draft.autoJoin !== undefined &&
-        details.autoJoin !== undefined &&
-        details.autoJoin !== draft.autoJoin) ||
+      // Other saves never send the setting. Archived and private channels
+      // keep it without reporting it, so missing state proves nothing.
+      (defaultChange && details.autoJoin !== draft.autoJoin) ||
       (draft.labels !== undefined &&
         JSON.stringify([...new Set(draft.labels)].sort()) !==
           JSON.stringify([...(details.labels ?? [])].sort()))
@@ -168,7 +169,7 @@ export function createChannelDetails({
           const attempt = attempts.get(id);
           if (attempt?.status !== "unconfirmed")
             throw new Error("No unconfirmed change to check.");
-          await confirm(id, attempt.draft, signal);
+          await confirm(id, attempt, signal);
         },
         caller,
       );
@@ -220,9 +221,15 @@ export function createChannelDetails({
         !sameLabels(draft.labels, base.labels ?? [])
       )
         throw channelIdentityUnsupported();
+      const attempt = (status: DetailsAttempt["status"]): DetailsAttempt =>
+        Object.freeze({
+          draft,
+          status,
+          ...(defaultChange ? { defaultChange } : {}),
+        });
       let publicationStarted = false;
       let phase = "Could not verify current channel access";
-      attempts.set(id, Object.freeze({ draft, status: "saving" }));
+      attempts.set(id, attempt("saving"));
       emit();
       try {
         await owned(
@@ -266,14 +273,13 @@ export function createChannelDetails({
               throw new DOMException("Channel edit cancelled", "AbortError");
             publicationStarted = true;
             await writer.publish(signed, signal);
-            await confirm(id, draft, signal);
+            await confirm(id, attempt("saving"), signal);
           },
           caller,
         );
       } catch (error) {
         if (publicationStarted && !(error instanceof PublishRejected)) {
-          if (!closed)
-            attempts.set(id, Object.freeze({ draft, status: "unconfirmed" }));
+          if (!closed) attempts.set(id, attempt("unconfirmed"));
           throw new Error(uncertain);
         }
         attempts.delete(id);

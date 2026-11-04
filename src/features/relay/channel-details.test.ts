@@ -1200,6 +1200,38 @@ it("sets and clears a default channel with the exact narrow command, without cha
   expect(h.publish).toHaveBeenCalledTimes(2);
 });
 
+it("keeps a default channel change uncertain while archived metadata cannot show it", async () => {
+  const h = harness("member");
+  const tags = h.metadata().tags.slice(1);
+  const flagged = h.record(39000, [...tags, ["auto_join"]]);
+  const archived = h.record(39000, [...tags, ["archived", "true"]]);
+  h.set([flagged, ...h.events().slice(1)]);
+  const base = await h.owner.capability.load(id);
+  // Archived before the relay applied the change: nothing confirms it.
+  h.publish.mockImplementationOnce(async () => {
+    h.set([archived, ...h.events().slice(1)]);
+  });
+  await expect(
+    h.owner.capability.save(base, { ...base, autoJoin: false }),
+  ).rejects.toThrow("may have been saved");
+  await expect(h.owner.capability.check(id)).rejects.toThrow(
+    "may have been saved",
+  );
+  expect(h.owner.capability.snapshot(id)).toMatchObject({
+    status: "unconfirmed",
+    defaultChange: true,
+  });
+  // Unarchived with the flag still stored: the change did not take.
+  h.set([flagged, ...h.events().slice(1)]);
+  await expect(h.owner.capability.check(id)).rejects.toThrow(
+    "may have been saved",
+  );
+  h.set([h.metadata(), ...h.events().slice(1)]);
+  await h.owner.capability.check(id);
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+
 it.each([
   {
     case: "private",

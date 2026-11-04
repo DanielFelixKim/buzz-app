@@ -345,6 +345,23 @@ function ChannelGeneralAccessEditor({
             />
           </div>
         </div>
+        {base?.autoJoin !== undefined &&
+          !solo &&
+          !community.manager &&
+          community.readError && (
+            <div className={styles.accessFeedback}>
+              <p role="alert" className="text-body-sm text-danger">
+                Couldn’t check your community role, so the default channel
+                setting is unavailable.
+              </p>
+              <Button
+                disabled={community.refreshing}
+                onClick={() => void community.refresh()}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
         {base?.autoJoin !== undefined && !solo && community.manager && (
           <SwitchPreferenceRow
             label="Default channel"

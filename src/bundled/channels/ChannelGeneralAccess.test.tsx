@@ -619,3 +619,31 @@ it.each([
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   },
 );
+
+it("explains a failed community role read beside the setting and retries it in place", async () => {
+  const h = harness();
+  const reader = roster("admin");
+  reader.read.mockRejectedValueOnce(new Error("offline"));
+  h.load.mockResolvedValue({ ...base, autoJoin: false });
+  const user = userEvent.setup();
+  render(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      roster={reader}
+      viewer={viewer}
+    />,
+  );
+  expect(
+    await screen.findByText(/Couldn’t check your community role/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(
+    await screen.findByRole("switch", { name: "Default channel" }),
+  ).not.toBeChecked();
+  expect(
+    screen.queryByText(/Couldn’t check your community role/),
+  ).not.toBeInTheDocument();
+  expect(reader.read).toHaveBeenCalledTimes(2);
+});
