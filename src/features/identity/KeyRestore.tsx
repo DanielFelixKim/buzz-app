@@ -10,13 +10,16 @@ import { OnboardingScreen } from "./OnboardingScreen";
 import { recoveryOff } from "./service";
 
 /**
- * First-run recovery installs the key linked to the current account. With
- * several backups the user picks one, the linked key preselected; another
- * key is relinked by the caller once installed.
+ * First-run recovery installs the key linked to the current account. When
+ * recovery signed into that same account (`subject`) and returned another
+ * key, the user picks one, the linked key preselected; another key is
+ * relinked by the caller once installed. A different account's backups only
+ * ever yield the linked key.
  */
 export function KeyRestore({
   recovery,
   expectedPubkey,
+  subject,
   email,
   onBack,
   onLost,
@@ -25,6 +28,8 @@ export function KeyRestore({
 }: {
   recovery: Recovery;
   expectedPubkey: string;
+  /** The signed-in account's subject, which recovery's must match to offer other keys. */
+  subject?: string | undefined;
   email?: string | undefined;
   onBack: () => void;
   onLost?: (() => void) | undefined;
@@ -33,7 +38,11 @@ export function KeyRestore({
 }) {
   const state = useSyncExternalStore(recovery.subscribe, recovery.snapshot);
   const choices = state?.status === "choosing" ? state.candidates : [];
-  const picking = choices.length > 1;
+  const picking =
+    state?.status === "choosing" &&
+    !!subject &&
+    state.subject === subject &&
+    choices.some((item) => item.pubkey !== expectedPubkey);
   const candidate = picking
     ? undefined
     : choices.find((item) => item.pubkey === expectedPubkey);

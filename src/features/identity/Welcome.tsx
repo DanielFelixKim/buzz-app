@@ -703,12 +703,14 @@ export function Welcome({
         ) : null;
       case "key-restore":
         // A restored key is already backed up, so no backup step follows.
-        // Another backed-up key the user picked replaces the linked one, as
-        // Start over's new key does: unlinked, then linked.
+        // Another key of this account's backups replaces the linked one as
+        // Start over's new key does: unlinked, then linked, and the old key's
+        // communities are not offered to it.
         return linked ? (
           <KeyRestore
             recovery={current.recovery}
             email={auth.account?.email}
+            subject={auth.account?.subject}
             expectedPubkey={linked}
             onBack={() => back("welcome-back", "restore")}
             onImport={() => pause("key-import")}
@@ -721,11 +723,13 @@ export function Welcome({
             onInstalled={() => {
               const restored = identity.snapshot();
               if (restored.status !== "ready") return;
+              if (restored.viewer === linked) return void setup.start(finish());
+              setLinked(undefined);
+              setOwned(undefined);
               void setup.start([
-                ...(restored.viewer !== linked
-                  ? [unlinkKey(identity, current, linked), link]
-                  : []),
-                ...finish(),
+                unlinkKey(identity, current, linked),
+                link,
+                ...restore(),
               ]);
             }}
           />

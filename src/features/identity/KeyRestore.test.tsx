@@ -12,6 +12,8 @@ afterEach(cleanup);
 
 const linked = "a".repeat(64);
 const other = "b".repeat(64);
+/** The signed-in first-run account. */
+const subject = "account-a";
 function recovery(state: RecoveryState, canceled = true) {
   return {
     subscribe: () => () => {},
@@ -27,6 +29,7 @@ function mount(state: RecoveryState, canceled?: boolean) {
     <KeyRestore
       recovery={stub}
       expectedPubkey={linked}
+      subject={subject}
       onBack={() => {}}
       onImport={() => {}}
       onInstalled={() => {}}
@@ -83,7 +86,7 @@ it("starts no new attempt when the live one could not be canceled", async () => 
   expect(stub.beginRecovery).not.toHaveBeenCalled();
 });
 
-it("with several backups, preselects the linked identity and installs the one picked", async () => {
+it("with several backups of this account, preselects the linked identity and installs the one picked", async () => {
   const onInstalled = vi.fn();
   const stub = recovery({
     status: "choosing",
@@ -93,11 +96,13 @@ it("with several backups, preselects the linked identity and installs the one pi
     ],
     currentPubkey: linked,
     failedCount: 0,
+    subject,
   });
   render(
     <KeyRestore
       recovery={stub}
       expectedPubkey={linked}
+      subject={subject}
       onBack={() => {}}
       onImport={() => {}}
       onInstalled={onInstalled}
@@ -118,15 +123,13 @@ it("with several backups, preselects the linked identity and installs the one pi
   await waitFor(() => expect(onInstalled).toHaveBeenCalledTimes(1));
 });
 
-it("a partial recovery with several backups still offers Try again and Enter my private key beside the choice", async () => {
+it("a partial recovery still offers its surviving other key, with Try again and Enter my private key beside the choice", async () => {
   const stub = mount({
     status: "choosing",
-    candidates: [
-      { handle: "b", pubkey: other },
-      { handle: "c", pubkey: "c".repeat(64) },
-    ],
+    candidates: [{ handle: "b", pubkey: other }],
     currentPubkey: linked,
     failedCount: 1,
+    subject,
   });
   // The linked key's backup may be the one that failed: nothing is preselected.
   expect(screen.queryByRole("radio", { checked: true })).toBeNull();
@@ -141,6 +144,40 @@ it("a partial recovery with several backups still offers Try again and Enter my 
   await waitFor(() => expect(stub.beginRecovery).toHaveBeenCalledTimes(1));
   expect(stub.installRecovery).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["another account", "account-b"],
+  ["an unknown account", undefined],
+])(
+  "backups recovered from %s offer only the linked key and never another",
+  async (_label, recovered) => {
+    const choosing = (candidates: { handle: string; pubkey: string }[]) =>
+      ({
+        status: "choosing",
+        candidates,
+        currentPubkey: other,
+        failedCount: 0,
+        subject: recovered,
+      }) satisfies RecoveryState;
+    const stub = mount(
+      choosing([
+        { handle: "other", pubkey: other },
+        { handle: "linked", pubkey: linked },
+      ]),
+    );
+    await waitFor(() =>
+      expect(stub.installRecovery).toHaveBeenCalledExactlyOnceWith("linked"),
+    );
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    cleanup();
+    const none = mount(choosing([{ handle: "other", pubkey: other }]));
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "none contains the key linked to your account",
+    );
+    expect(none.installRecovery).not.toHaveBeenCalled();
+  },
+);
 
 it("retries installation when a new attempt returns the same handle", async () => {
   const candidate: RecoveryState = {

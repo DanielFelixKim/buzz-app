@@ -140,11 +140,13 @@ lists it, a successful import automatically backs up the key as on a new
 account; a listed key continues without another upload.
 
 **Restore your key** opens native recovery in a separate browser sign-in.
-With one backup, only the account’s linked key can be installed. With several,
-the page lists them, the linked key preselected when it came back, and **Restore
-this identity** installs the chosen one; another key than the linked one then
-unlinks the old key and links the restored one, as Start over does, with no
-backup step. **Enter my private key**, **I lost my key** and, after a partial
+Only the account’s linked key installs automatically. When recovery signed into
+the same Builderlab account (matching `/v1/auth/me` subject) and returned
+another key, the page lists them instead, the linked key preselected when it
+came back, and **Restore this identity** installs the chosen one; another key
+than the linked one then unlinks the old key and links the restored one, as
+Start over does, with no backup step and no old-key communities offered.
+Backups recovered from a different account only ever yield the linked key. **Enter my private key**, **I lost my key** and, after a partial
 recovery, **Try again** stay offered beside the list. While waiting, **Cancel**
 cancels the attempt; during installation, navigation is disabled. A successful install
 continues directly to community restoration and the next required step, without

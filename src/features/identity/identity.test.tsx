@@ -5149,7 +5149,11 @@ it("Restore from backup recovers through its own browser sign-in, installs the l
   identity.dispose();
 });
 
-it("with several backups, restoring another key than the linked one unlinks the linked key, links the restored one, and backs up nothing", async () => {
+/**
+ * Native recovery holding backups of the linked key and `stranger`, signed
+ * into `subject`, installing `installed`.
+ */
+function recoveringAs(subject: string, installed: string) {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "nsec_backup_choice")
       return { available: false, pubkey: viewer, automatic: null };
@@ -5157,10 +5161,19 @@ it("with several backups, restoring another key than the linked one unlinks the 
     if (command === "identity_legacy_available") return false;
     if (command === "nsec_restore_begin") return { attempt: "attempt-1" };
     if (command === "nsec_restore_wait")
-      return backupsOf(owned.pubkey, stranger.pubkey);
-    if (command === "nsec_restore_install") return stranger.pubkey;
+      return { ...backupsOf(owned.pubkey, stranger.pubkey), subject };
+    if (command === "nsec_restore_install") return installed;
     throw new Error(`Unexpected command ${command}`);
   });
+}
+
+it("with several backups of the signed-in account, restoring another key than the linked one unlinks the linked key, links the restored one, backs up nothing and offers none of the old key's communities", async () => {
+  recoveringAs(credential.account.subject, stranger.pubkey);
+  const ownedCommunities = vi.fn(() =>
+    Promise.resolve([
+      { host: "old.example.com", url: "https://old.example.com" },
+    ]),
+  );
   const calls: string[] = [];
   const record = (name: string) => (pubkey: string) => {
     calls.push(`${name} ${pubkey}`);
@@ -5176,7 +5189,7 @@ it("with several backups, restoring another key than the linked one unlinks the 
   await welcomeBackPage(
     user,
     identity,
-    replacedBy(unbind, record("bind"), undefined, {
+    replacedBy(unbind, record("bind"), ownedCommunities, {
       backupStatus: () => Promise.resolve([owned.pubkey, stranger.pubkey]),
       backUp,
       recovery: recoveryFor(identity),
@@ -5207,6 +5220,47 @@ it("with several backups, restoring another key than the linked one unlinks the 
     `bind ${stranger.pubkey}`,
   ]);
   expect(backUp).not.toHaveBeenCalled();
+  // As after Start over, the old key's communities are not offered.
+  expect(ownedCommunities).not.toHaveBeenCalled();
+  expect(screen.queryByRole("list")).toBeNull();
+  identity.dispose();
+});
+
+it("backups recovered from another account than the signed-in one offer no choice and change no binding", async () => {
+  recoveringAs("another-account", owned.pubkey);
+  const changed = (name: string) => () =>
+    Promise.reject(new Error(`Welcome called ${name}`));
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      connect={vi.fn().mockResolvedValue(credential)}
+      account={replacedBy(changed("unbind"), changed("bind"), undefined, {
+        backupStatus: () => Promise.resolve([owned.pubkey, stranger.pubkey]),
+        backUp: changed("backUp"),
+        recovery: recoveryFor(identity),
+      })}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  // Only the linked key installs, as with a single backup.
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_install", {
+    attempt: "attempt-1",
+    handle: "backup-0",
+  });
   identity.dispose();
 });
 
