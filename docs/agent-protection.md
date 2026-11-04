@@ -63,8 +63,8 @@ configuration. Codex reads the workspace from the sign-in's unsigned fields
 (`tokens.account_id` and the `id_token` payload, whose signature it never
 checks), so a replacement that names the pinned workspace with another
 account's tokens is stopped only if OpenAI's servers bind the
-`ChatGPT-Account-ID` header to the bearer token, which Buzz has not verified.
-Existing users must sign in through Buzz once, with
+`ChatGPT-Account-ID` header to the bearer token,
+which Buzz has not verified. Existing users must sign in through Buzz once, with
 **Sign in again** in Codex's harness defaults: until then, and while the shared
 sign-in is an API key or names another workspace, Codex reviews fail closed with
 a message saying where to sign in. API key sign-ins, keyring sign-in and custom
