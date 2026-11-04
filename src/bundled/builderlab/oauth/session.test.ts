@@ -160,3 +160,44 @@ it("ensureSignedIn starts and joins a fresh Settings login from signed-out", asy
   expect(session.viewerSession().signal.aborted).toBe(false);
   session.dispose();
 });
+
+it("restores a saved sign-in, saves a new one and deletes it on sign-out", async () => {
+  const restored = { ...credential, value: "saved-token" };
+  const persistence = {
+    restore: vi.fn(async () => restored),
+    save: vi.fn(async () => {}),
+    clear: vi.fn(async () => {}),
+  };
+  const release = vi.fn();
+  const session = createOAuthSession(
+    async () => credential,
+    release,
+    undefined,
+    persistence,
+  );
+  expect(session.snapshot()).toEqual({ status: "pending", checking: true });
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+  expect(session.credential()).toBe(restored);
+  expect(persistence.save).not.toHaveBeenCalled();
+  session.signOut();
+  expect(release).toHaveBeenCalledWith(restored);
+  expect(persistence.clear).toHaveBeenCalledTimes(1);
+  await session.signIn();
+  expect(persistence.save).toHaveBeenCalledWith(credential);
+});
+
+it("starts signed out, without an error, when nothing saved is accepted", async () => {
+  const session = createOAuthSession(
+    async () => credential,
+    undefined,
+    undefined,
+    {
+      restore: async () => undefined,
+      save: async () => {},
+      clear: async () => {},
+    },
+  );
+  await vi.waitFor(() =>
+    expect(session.snapshot()).toEqual({ status: "signed-out" }),
+  );
+});

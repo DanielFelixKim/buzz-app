@@ -17,6 +17,9 @@ export type LoginSnapshot = Readonly<{
   /** Pending with no browser step, such as restoring a saved sign-in or
    * reading its account; it cannot be cancelled. */
   checking?: boolean;
+  /** Signed in through the native NIP-FI session, whose sign-out is managed
+   * in Identity; in an FI build that is every sign-in. */
+  federated?: boolean;
 }>;
 /** A call under the Builderlab API root; `path` starts with `/`. */
 export type BuilderlabRequest = Readonly<{
@@ -69,6 +72,135 @@ export async function accountStorage(subject: string) {
 /** Whether this build signs in to Builderlab with the native NIP-FI session. */
 export const nativeBuilderlab = () =>
   import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY === "1";
+/** Whether this build's Builderlab is the built-in sign-in server, whose
+ * sign-in is NIP-FI where it offers it and the browser's otherwise. */
+export const autoBuilderlab = () =>
+  import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY === "auto";
+
+/**
+ * Which sign-in a server offers, from an uncredentialed `GET v1/session` at
+ * its adapter: 404 has no NIP-FI sign-in, so `"browser"`; any other answer
+ * is `"federated"`. Rejects on a network error or 5xx, which never falls
+ * back to the browser.
+ */
+export async function offeredSignIn(
+  probe: () => Promise<HostResponse>,
+): Promise<"browser" | "federated"> {
+  let status: number;
+  try {
+    status = (await probe()).status;
+  } catch {
+    status = 0;
+  }
+  if (status === 404) return "browser";
+  if (status < 100 || status >= 500)
+    throw new Error("Could not reach Builderlab. Try again.");
+  return "federated";
+}
+
+/**
+ * The built-in server's Builderlab session: its native NIP-FI session
+ * whenever one exists or is starting, such as after a community that
+ * requires NIP-FI asked for sign-in, and otherwise the browser sign-in. A
+ * sign-in asks `offered` which one the server has.
+ */
+export function createAutoSession(
+  native: BuilderlabSession,
+  browser: BuilderlabSession,
+  offered: () => Promise<"browser" | "federated">,
+): BuilderlabSession {
+  let chosen: BuilderlabSession | undefined;
+  let error: string | undefined;
+  let probing = false;
+  let state: LoginSnapshot = { status: "signed-out" };
+  const listeners = new Set<() => void>();
+  const active = () => {
+    const status = native.snapshot().status;
+    return status === "signed-in" ||
+      (status === "pending" && browser.snapshot().status !== "signed-in") ||
+      (chosen === native && browser.snapshot().status !== "signed-in")
+      ? native
+      : browser;
+  };
+  const project = () => {
+    const current = active();
+    const inner = current.snapshot();
+    const next: LoginSnapshot = probing
+      ? { status: "pending" }
+      : error && inner.status === "signed-out"
+        ? { status: "signed-out", error }
+        : current === native
+          ? { ...inner, federated: true }
+          : inner;
+    if (
+      next.status !== state.status ||
+      next.account !== state.account ||
+      next.error !== state.error ||
+      next.checking !== state.checking ||
+      next.federated !== state.federated
+    ) {
+      state = Object.freeze(next);
+      for (const listener of [...listeners]) listener();
+    }
+  };
+  const stops = [native.subscribe(project), browser.subscribe(project)];
+  project();
+  const choose = async () => {
+    error = undefined;
+    probing = true;
+    project();
+    try {
+      chosen = (await offered()) === "browser" ? browser : native;
+      return chosen;
+    } catch (failure) {
+      error =
+        failure instanceof Error
+          ? failure.message
+          : "Sign-in failed. Try again.";
+      throw failure;
+    } finally {
+      probing = false;
+      project();
+    }
+  };
+  const signedIn = () => state.status === "signed-in";
+  return {
+    snapshot: () => state,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    credential: () => active().credential(),
+    request: (credential, input) => active().request(credential, input),
+    expired: (credential) => active().expired(credential),
+    viewerSession: () => active().viewerSession(),
+    async ensureSignedIn(signal) {
+      signal.throwIfAborted();
+      if (signedIn()) return;
+      if (state.status === "pending" && !probing)
+        return active().ensureSignedIn(signal);
+      const session = await choose();
+      signal.throwIfAborted();
+      return session.ensureSignedIn(signal);
+    },
+    async signIn() {
+      if (signedIn() || probing) return;
+      const session = await choose().catch(() => undefined);
+      await session?.signIn();
+    },
+    cancel: () => active().cancel(),
+    abandon: () => active().abandon(),
+    signOut: () => active().signOut(),
+    dispose() {
+      for (const stop of stops) stop();
+      listeners.clear();
+      native.dispose();
+      browser.dispose();
+    },
+  };
+}
 
 /**
  * The current NIP-FI session's account from Builderlab's `GET v1/auth/me`,

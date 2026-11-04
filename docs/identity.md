@@ -16,12 +16,21 @@ wireframes. When a page replaces another, focus moves to the new page's
 heading unless the page focuses a field itself, and **Back** returns focus to
 the choice that opened the page.
 
-In builds with a sign-in server, which is every build unless it opts out or
-names another Builderlab deployment (see
-[configuration](configuration.md#federated-identity-build-input)), the
-bundled Builderlab plugin has no network grant of its own: its Builderlab calls
-go through the native FI session (#1461). There, **Sign in with Builderlab** is the
-native [organization sign-in](#native-federated-session-module), whose browser
+With only the built-in sign-in server (see
+[configuration](configuration.md#federated-identity-build-input)), each
+Builderlab sign-in first sends an uncredentialed `GET {adapterBase}/v1/session`.
+A 404 means the server has no NIP-FI sign-in, so **Sign in with Builderlab** is
+the browser sign-in above, whose credential the plugin keeps in the system
+keychain across restarts (deleted on sign-out or when Builderlab rejects it at
+launch). Any other answer means NIP-FI sign-in, as below; a network error or
+5xx shows the retryable sign-in error and never falls back to the browser. The
+plugin uses the server's native session whenever one exists, such as after a
+community that requires NIP-FI asked for sign-in, and the browser credential
+otherwise, so it holds both grants.
+
+In builds that add a sign-in server, the bundled Builderlab plugin has no
+network grant of its own: its Builderlab calls go through the native FI session
+(#1461). There, **Sign in with Builderlab** is always the native [organization sign-in](#native-federated-session-module), whose browser
 step, code exchange and token stay native. A session that already exists,
 including one saved by an earlier run, signs in again, so the browser can
 choose the account; if that sign-in is canceled, first run stops rather than
@@ -872,8 +881,12 @@ The app's `federatedIdentity` service exposes this public state to the shared
 sign-in UI. Session record revision survives restore and scopes account caches
 without inventing a NIP-FA subject.
 
-NIP-11 discovery from the exact relay carries no FI credential. Valid absent or
-false FI flags retain ordinary Nostr transport. A true flag requires the supported
+NIP-11 discovery from the exact relay carries no FI credential. The community
+requires NIP-FI when its top-level `requires_nip_fi` is true; when that flag is
+absent, `limitation.federated_identity` decides, as before it existed. A false
+`requires_nip_fi` means not required even where the host supports NIP-FI (as a
+shadow-mode host advertises), and a non-boolean one is invalid discovery. Not
+required retains ordinary Nostr transport. Required needs the supported
 client-attached/offline-jwt descriptor and compiled authority mapping. Assertions
 are acquired with native same-key NIP-98 proof and checked for exact audience,
 key, and lifetime. Native HTTP, media, repository Git reads/imports, and socket

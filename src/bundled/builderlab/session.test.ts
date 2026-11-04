@@ -1,6 +1,12 @@
 import { expect, it, vi } from "vitest";
 import { federatedFixture } from "../../features/federated-identity/testing";
-import { createNativeSession } from "./session";
+import {
+  type BuilderlabSession,
+  type LoginSnapshot,
+  createAutoSession,
+  createNativeSession,
+  offeredSignIn,
+} from "./session";
 
 const me = (subject: string) => ({
   status: 200,
@@ -124,4 +130,110 @@ it("shows a session the adapter ended as signed out, asking to sign in again", a
     error: "Your Builderlab sign-in ended. Sign in again.",
   });
   session.dispose();
+});
+
+it.each([
+  [404, "browser"],
+  [401, "federated"],
+  [200, "federated"],
+] as const)(
+  "a %i from v1/session offers the %s sign-in",
+  async (status, offer) => {
+    await expect(
+      offeredSignIn(async () => ({ status, headers: {}, body: "" })),
+    ).resolves.toBe(offer);
+  },
+);
+
+it("never falls back to the browser on a network error or 5xx", async () => {
+  await expect(
+    offeredSignIn(async () => ({ status: 503, headers: {}, body: "" })),
+  ).rejects.toThrow("Could not reach Builderlab");
+  await expect(
+    offeredSignIn(async () => {
+      throw new Error("offline");
+    }),
+  ).rejects.toThrow("Could not reach Builderlab");
+});
+
+function fake(): BuilderlabSession & {
+  set(next: LoginSnapshot): void;
+  signIn: ReturnType<typeof vi.fn>;
+} {
+  let state: LoginSnapshot = { status: "signed-out" };
+  const listeners = new Set<() => void>();
+  const credential = { account: { subject: "x" } } as never;
+  const session = {
+    set(next: LoginSnapshot) {
+      state = next;
+      for (const listener of listeners) listener();
+    },
+    snapshot: () => state,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    credential: () => credential,
+    request: vi.fn(),
+    expired: vi.fn(),
+    viewerSession: vi.fn(),
+    ensureSignedIn: vi.fn(async () => {}),
+    signIn: vi.fn(async () => {}),
+    cancel: vi.fn(),
+    abandon: vi.fn(),
+    signOut: vi.fn(),
+    dispose: vi.fn(),
+  };
+  return session as never;
+}
+const account = {
+  subject: "user",
+  email: "",
+  canUseRemoteAgents: false,
+  canUseBuilderlabDecisions: false,
+};
+
+it("signs in with the sign-in the server offers, and shows a probe failure", async () => {
+  const native = fake();
+  const browser = fake();
+  const offered = vi
+    .fn<() => Promise<"browser" | "federated">>()
+    .mockResolvedValueOnce("browser")
+    .mockResolvedValueOnce("federated")
+    .mockRejectedValueOnce(new Error("Could not reach Builderlab. Try again."));
+  const session = createAutoSession(native, browser, offered);
+  await session.signIn();
+  expect(browser.signIn).toHaveBeenCalledTimes(1);
+  expect(native.signIn).not.toHaveBeenCalled();
+  await session.signIn();
+  expect(native.signIn).toHaveBeenCalledTimes(1);
+  await session.signIn();
+  expect(session.snapshot()).toEqual({
+    status: "signed-out",
+    error: "Could not reach Builderlab. Try again.",
+  });
+  expect(browser.signIn).toHaveBeenCalledTimes(1);
+  expect(native.signIn).toHaveBeenCalledTimes(1);
+});
+
+it("prefers an existing NIP-FI session over a saved browser credential", async () => {
+  const native = fake();
+  const browser = fake();
+  const offered = vi.fn(async () => "browser" as const);
+  const session = createAutoSession(native, browser, offered);
+  browser.set({ status: "signed-in", account });
+  expect(session.snapshot()).toEqual({ status: "signed-in", account });
+  session.signOut();
+  expect(browser.signOut).toHaveBeenCalledTimes(1);
+  // A community that requires NIP-FI signed the server in.
+  native.set({ status: "signed-in", account });
+  expect(session.snapshot()).toEqual({
+    status: "signed-in",
+    account,
+    federated: true,
+  });
+  session.signOut();
+  expect(native.signOut).toHaveBeenCalledTimes(1);
+  await session.signIn();
+  expect(offered).not.toHaveBeenCalled();
 });

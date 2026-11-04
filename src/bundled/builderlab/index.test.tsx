@@ -60,6 +60,8 @@ beforeEach(() => {
   // jsdom lacks it; the agent form reveals a failed setup's error with it.
   Element.prototype.scrollIntoView = () => {};
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  // Native commands a test does not answer settle empty: no saved sign-in.
+  native.invoke.mockResolvedValue(null);
   vi.stubGlobal("navigator", {
     platform: "MacIntel",
     locks: {

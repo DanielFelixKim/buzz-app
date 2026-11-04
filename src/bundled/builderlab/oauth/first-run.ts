@@ -5,8 +5,8 @@ import type { FederatedIdentity } from "../../../features/federated-identity/ser
 import type { Host } from "../../../features/host/service";
 import type { StorageResult } from "../../../plugins/types";
 import manifest from "../manifest.json";
-import { federatedAccount } from "../session";
-import { browserCredential, type Credential } from "./browser";
+import { autoBuilderlab, federatedAccount, offeredSignIn } from "../session";
+import { browserCredential, oauthTarget, type Credential } from "./browser";
 
 /**
  * First launch runs before this plugin can share its Settings session, so the
@@ -66,10 +66,29 @@ export async function firstRunCredential(
     throw new Error(
       "Builderlab is turned off on this device, so you can't sign in with email. Enter a community address instead.",
     );
-  return federated
-    ? federatedCredential(federated, signal)
-    : browserCredential(bundledHost, signal);
+  // The built-in server signs in with NIP-FI only where it offers it.
+  const browser =
+    !federated ||
+    (autoBuilderlab() &&
+      (await offeredSignIn(() =>
+        bundledHost.request({
+          url: `${oauthTarget()}/v1/session`,
+          method: "GET",
+          headers: { Accept: "application/json" },
+        }),
+      )) === "browser");
+  signal.throwIfAborted();
+  if (browser) return browserCredential(bundledHost, signal);
+  const credential = await federatedCredential(federated, signal);
+  federatedCredentials.add(credential);
+  return credential;
 }
+
+const federatedCredentials = new WeakSet<Credential>();
+/** Whether first run's `credential` is a NIP-FI session's, whose value is
+ * that session's public revision rather than a Builderlab credential. */
+export const isFederatedCredential = (credential: Credential) =>
+  federatedCredentials.has(credential);
 
 // Native rejects with a bare failure code, such as a refused renewal's.
 const signIn = (identity: FirstRunIdentity) =>

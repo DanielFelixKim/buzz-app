@@ -14,6 +14,7 @@ import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import {
   bundledHost,
   firstRunCredential,
+  isFederatedCredential,
   type FirstRunIdentity,
 } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
@@ -96,7 +97,7 @@ const firstRunAccount = (
   );
   return seed
     ? seededAccount(seed, identity)
-    : federated
+    : federated && isFederatedCredential(credential)
       ? federatedBuilderlabAccount(credential, federated, identity)
       : builderlabAccount(credential, bundledHost.request, identity);
 };

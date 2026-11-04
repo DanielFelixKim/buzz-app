@@ -8,12 +8,23 @@ import {
 } from "../session";
 import { oauthTarget, type Credential } from "./browser";
 
+/** Where a session keeps its credential across restarts. */
+export type Persistence = Readonly<{
+  /** The saved credential, verified; undefined when there is none. */
+  restore(signal: AbortSignal): Promise<Credential | undefined>;
+  save(credential: Credential): Promise<void>;
+  clear(): Promise<void>;
+}>;
+
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
 export function createOAuthSession(
   acquire: (signal: AbortSignal) => Promise<Credential>,
   release?: (credential: Credential) => void,
   /** Carries `request`; without it, requests are refused. */
   host?: Pick<Host, "request">,
+  /** With it, creation restores the saved sign-in, each sign-in is saved,
+   * and sign-out or a rejected credential deletes it. */
+  persistence?: Persistence,
 ) {
   let credential: Credential | undefined;
   let attempt: AbortController | undefined;
@@ -35,8 +46,50 @@ export function createOAuthSession(
     const previous = credential;
     credential = undefined;
     if (previous && revoke) release?.(previous);
+    if (revoke) void persistence?.clear().catch(() => {});
     if (announce) publish({ status: "signed-out" });
   };
+  /** Signs in with `obtain`; a restore is pending without a browser step and
+   * leaves the session signed out, without an error, when nothing is saved. */
+  const run = async (
+    obtain: (signal: AbortSignal) => Promise<Credential | undefined>,
+    restoring: boolean,
+  ) => {
+    const current = new AbortController();
+    attempt = current;
+    publish(
+      restoring ? { status: "pending", checking: true } : { status: "pending" },
+    );
+    try {
+      const result = await obtain(current.signal);
+      const storage = result && (await accountStorage(result.account.subject));
+      current.signal.throwIfAborted();
+      if (attempt !== current || disposed) return;
+      if (!result || !storage) {
+        publish({ status: "signed-out" });
+        return;
+      }
+      credential = result;
+      viewerLifetime = new AbortController();
+      viewer = {
+        credential: result.value,
+        storage,
+        signal: viewerLifetime.signal,
+      };
+      if (!restoring) void persistence?.save(result).catch(() => {});
+      publish({ status: "signed-in", account: result.account });
+    } catch (error) {
+      if (attempt !== current || disposed) return;
+      publish({
+        status: "signed-out",
+        error:
+          error instanceof Error ? error.message : "Sign-in failed. Try again.",
+      });
+    } finally {
+      if (attempt === current) attempt = undefined;
+    }
+  };
+  if (persistence) void run(persistence.restore, true);
   return {
     snapshot: () => state,
     subscribe(listener: () => void) {
@@ -100,34 +153,7 @@ export function createOAuthSession(
     async signIn() {
       if (disposed || attempt) return;
       reset(true, false);
-      const current = new AbortController();
-      attempt = current;
-      publish({ status: "pending" });
-      try {
-        const result = await acquire(current.signal);
-        const storage = await accountStorage(result.account.subject);
-        current.signal.throwIfAborted();
-        if (attempt !== current || disposed) return;
-        credential = result;
-        viewerLifetime = new AbortController();
-        viewer = {
-          credential: result.value,
-          storage,
-          signal: viewerLifetime.signal,
-        };
-        publish({ status: "signed-in", account: result.account });
-      } catch (error) {
-        if (attempt !== current || disposed) return;
-        publish({
-          status: "signed-out",
-          error:
-            error instanceof Error
-              ? error.message
-              : "Sign-in failed. Try again.",
-        });
-      } finally {
-        if (attempt === current) attempt = undefined;
-      }
+      await run(acquire, false);
     },
     dispose() {
       disposed = true;

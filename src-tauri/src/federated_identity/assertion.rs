@@ -193,13 +193,21 @@ fn evaluate_discovery(document: &serde_json::Value) -> Result<bool, &'static str
     if !document.is_object() {
         return Err("Invalid federated community discovery");
     }
-    let requires = match document.get("limitation") {
+    let supports = match document.get("limitation") {
         Some(value) if !value.is_object() => return Err("Invalid federated community discovery"),
         value => match value.and_then(|v| v.get("federated_identity")) {
             None | Some(serde_json::Value::Bool(false)) => false,
             Some(serde_json::Value::Bool(true)) => true,
             _ => return Err("Invalid federated community discovery"),
         },
+    };
+    // `limitation.federated_identity` says a host supports NIP-FI, as a
+    // shadow-mode host does too; `requires_nip_fi` says this community
+    // requires it. A relay without the flag requires what it supports.
+    let requires = match document.get("requires_nip_fi") {
+        None => supports,
+        Some(serde_json::Value::Bool(requires)) => *requires,
+        Some(_) => return Err("Invalid federated community discovery"),
     };
     if !requires {
         return Ok(false);
@@ -1131,6 +1139,31 @@ mod tests {
             serde_json::json!({"limitation":{"federated_identity":true}}),
         ] {
             assert!(evaluate_discovery(&doc).is_err());
+        }
+    }
+    #[test]
+    fn requires_nip_fi_decides_when_present_and_capability_otherwise() {
+        let supported = serde_json::json!({"limitation":{"federated_identity":true},"federated_identity":{"core":"client-attached","assertion_freshness":{"class":"offline-jwt"}}});
+        let with = |flag: serde_json::Value| {
+            let mut doc = supported.clone();
+            doc["requires_nip_fi"] = flag;
+            doc
+        };
+        // Required: the descriptor checks still apply.
+        assert!(evaluate_discovery(&with(serde_json::json!(true))).unwrap());
+        let mut bare = with(serde_json::json!(true));
+        bare.as_object_mut().unwrap().remove("federated_identity");
+        assert!(evaluate_discovery(&bare).is_err());
+        // Supported but not required, as a shadow-mode host says.
+        assert!(!evaluate_discovery(&with(serde_json::json!(false))).unwrap());
+        // Absent: the capability decides, as before the flag.
+        assert!(evaluate_discovery(&supported).unwrap());
+        for flag in [
+            serde_json::json!("true"),
+            serde_json::json!(1),
+            serde_json::Value::Null,
+        ] {
+            assert!(evaluate_discovery(&with(flag)).is_err());
         }
     }
     #[tokio::test]

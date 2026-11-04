@@ -375,22 +375,26 @@ pub fn bundled_manifests() -> Vec<Manifest> {
     .expect("builderlab manifest");
     let origin = BUILDERLAB_ORIGIN;
     let descriptor = env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG");
+    // The browser sign-in's renderer network origins.
+    let network = || HostGrants {
+        files: apps_control_plane(origin).is_some(),
+        network_origins: if origin.is_empty() {
+            vec![]
+        } else {
+            std::iter::once(origin)
+                .chain(apps_control_plane(origin))
+                .map(Into::into)
+                .collect()
+        },
+        ..HostGrants::default()
+    };
     builderlab.host = Some(if descriptor.is_empty() {
-        HostGrants {
-            files: apps_control_plane(origin).is_some(),
-            network_origins: if origin.is_empty() {
-                vec![]
-            } else {
-                std::iter::once(origin)
-                    .chain(apps_control_plane(origin))
-                    .map(Into::into)
-                    .collect()
-            },
-            ..HostGrants::default()
-        }
+        network()
     } else {
-        // An FI build reaches Builderlab only through the native session
-        // forwarder: no renderer network or file access.
+        // The native session forwarder. A server the build adds is reached
+        // only through it: no renderer network or file access. The built-in
+        // server may not offer NIP-FI sign-in, so the browser sign-in keeps
+        // its origins beside it.
         let config: serde_json::Value =
             serde_json::from_str(descriptor).expect("validated FI descriptor");
         let base = config["apiBasePath"].as_str().expect("API base");
@@ -409,7 +413,11 @@ pub fn bundled_manifests() -> Vec<Manifest> {
                     })
                     .collect(),
             }),
-            ..HostGrants::default()
+            ..if env!("BUZZ_BUILD_FEDERATED_IDENTITY_ADDED").is_empty() {
+                network()
+            } else {
+                HostGrants::default()
+            }
         }
     });
     vec![
@@ -2347,9 +2355,13 @@ mod tests {
             );
             assert_eq!(grants.federated_identity, None);
         } else {
-            // An FI build grants only the native session's Builderlab routes.
-            assert!(!grants.files);
-            assert!(grants.network_origins.is_empty());
+            // A build that adds a server grants only the native session's
+            // Builderlab routes; the built-in one keeps the browser origins.
+            let network = !env!("BUZZ_BUILD_FEDERATED_IDENTITY_ADDED").is_empty();
+            assert_eq!(grants.network_origins.is_empty(), network);
+            if network {
+                assert!(!grants.files);
+            }
             let grant = grants.federated_identity.clone().unwrap();
             let base = super::BUILDERLAB_API_BASE_PATH;
             let operations: Vec<_> = grant
