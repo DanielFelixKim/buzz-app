@@ -21,6 +21,7 @@ const signedOut: SessionSnapshot = {
     apiBasePath: "/api/",
     signIn: "on-demand",
     organization: null,
+    communityHosts: ["relay.example"],
   },
   revision: "out",
   email: null,
@@ -342,6 +343,7 @@ const peer = {
   apiBasePath: "/api/",
   signIn: "on-demand",
   organization: null,
+  communityHosts: ["*.communities.example"],
 } as const;
 
 it("signs in to a community's own server and follows only that server", async () => {
@@ -379,6 +381,29 @@ it("signs in to a community's own server and follows only that server", async ()
   expect(invoke).toHaveBeenCalledWith("federated_identity_sign_in", {
     relay: "wss://team.communities.example",
   });
+});
+
+it("addresses a server by id, for its own Settings row", async () => {
+  const handlers = new Map<string, typeof publish>();
+  vi.mocked(listen).mockImplementation(async (name, handler) => {
+    handlers.set(name, handler as typeof publish);
+    return unlisten;
+  });
+  const { service } = setup();
+  vi.mocked(invoke).mockResolvedValue({ ...signedIn, authority: peer });
+  const server = service.forServer("peer");
+  expect(service.forServer("peer")).toBe(server);
+  server.subscribe(() => {});
+  await vi.waitFor(() => expect(server.snapshot().status).toBe("signed-in"));
+  expect(invoke).toHaveBeenCalledWith("federated_identity_snapshot", {
+    server: "peer",
+  });
+  vi.mocked(invoke).mockResolvedValue({ ...signedOut, authority: peer });
+  await server.signOut();
+  expect(invoke).toHaveBeenLastCalledWith("federated_identity_sign_out", {
+    server: "peer",
+  });
+  expect(server.snapshot().status).toBe("signed-out");
 });
 
 it("reauthorizes communities when another server signs in", async () => {

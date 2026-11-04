@@ -29,6 +29,9 @@ pub(crate) struct Authority {
     api_base_path: String,
     sign_in: config::SignIn,
     organization: Option<String>,
+    /// The community hosts this server covers, matched as `matches_relay`
+    /// does; the front end routes with them instead of its own rules.
+    community_hosts: Vec<String>,
 }
 #[derive(Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -203,6 +206,7 @@ impl FederatedIdentity {
                 api_base_path: c.api_base_path.clone(),
                 sign_in: c.sign_in,
                 organization: c.organization.clone(),
+                community_hosts: c.community_hosts.clone(),
             }),
             revision: uuid::Uuid::new_v4().to_string(),
             email: None,
@@ -252,11 +256,28 @@ impl FederatedIdentity {
         }
         Ok(self.clone())
     }
-    /// The server named by a sign-in command: this one without a relay.
-    fn server_for_command(&self, relay: Option<&str>) -> Result<Self, String> {
-        match relay {
-            Some(relay) => self.server_for(&config::canonical_relay(relay)?),
-            None => Ok(self.clone()),
+    /// This server, then its peers: every configured sign-in server.
+    fn servers(&self) -> impl Iterator<Item = &Self> {
+        std::iter::once(self)
+            .chain(&self.0.peers)
+            .filter(|server| server.0.config.is_some())
+    }
+    /// The server named by a sign-in command, by community or by id: this
+    /// one with neither.
+    fn server_for_command(
+        &self,
+        relay: Option<&str>,
+        server: Option<&str>,
+    ) -> Result<Self, String> {
+        match (relay, server) {
+            (Some(relay), None) => self.server_for(&config::canonical_relay(relay)?),
+            (None, Some(id)) => self
+                .servers()
+                .find(|server| server.0.config.as_ref().is_some_and(|c| c.id == id))
+                .cloned()
+                .ok_or_else(|| "Unknown sign-in server".into()),
+            (None, None) => Ok(self.clone()),
+            (Some(_), Some(_)) => Err("Name a community or a sign-in server, not both".into()),
         }
     }
     pub(crate) fn is(&self, other: &Self) -> bool {
@@ -1046,29 +1067,48 @@ fn due(now: i64, warn: i64, expires: i64, warned: bool) -> Due {
     }
 }
 
-// `relay` names the community a sign-in is for; without one, the build's Builderlab.
+// `relay` names the community a sign-in is for and `server` a sign-in
+// server's id; with neither, the build's Builderlab.
 #[tauri::command]
 pub(crate) async fn federated_identity_snapshot(
     host: tauri::State<'_, FederatedIdentity>,
     relay: Option<String>,
+    server: Option<String>,
 ) -> Result<Snapshot, String> {
-    Ok(host.server_for_command(relay.as_deref())?.restore().await)
+    Ok(host
+        .server_for_command(relay.as_deref(), server.as_deref())?
+        .restore()
+        .await)
+}
+/// Every configured sign-in server's session, the build's Builderlab first.
+#[tauri::command]
+pub(crate) async fn federated_identity_servers(
+    host: tauri::State<'_, FederatedIdentity>,
+) -> Result<Vec<Snapshot>, String> {
+    let mut snapshots = Vec::new();
+    for server in host.servers() {
+        snapshots.push(server.restore().await);
+    }
+    Ok(snapshots)
 }
 #[tauri::command]
 pub(crate) async fn federated_identity_sign_in<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, FederatedIdentity>,
     relay: Option<String>,
+    server: Option<String>,
 ) -> Result<Snapshot, String> {
-    let server = host.server_for_command(relay.as_deref())?;
+    let server = host.server_for_command(relay.as_deref(), server.as_deref())?;
     server.sign_in(&app).await.map_err(String::from)
 }
 #[tauri::command]
 pub(crate) fn federated_identity_cancel_sign_in(
     host: tauri::State<'_, FederatedIdentity>,
     relay: Option<String>,
+    server: Option<String>,
 ) -> Result<(), String> {
-    host.server_for_command(relay.as_deref())?.cancel_sign_in();
+    host.server_for_command(relay.as_deref(), server.as_deref())?
+        .cancel_sign_in();
     Ok(())
 }
 #[tauri::command]
@@ -1076,8 +1116,9 @@ pub(crate) async fn federated_identity_sign_out(
     host: tauri::State<'_, FederatedIdentity>,
     tokens: tauri::State<'_, agent::AgentTokens>,
     relay: Option<String>,
+    server: Option<String>,
 ) -> Result<Snapshot, String> {
-    let server = host.server_for_command(relay.as_deref())?;
+    let server = host.server_for_command(relay.as_deref(), server.as_deref())?;
     match tokens.for_server(&server) {
         Some(tokens) => tokens.sign_out().await,
         None => Ok(server.sign_out().await),

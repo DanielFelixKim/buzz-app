@@ -10,6 +10,7 @@ import {
   relayOrigin,
 } from "./src/features/communities/destination.ts";
 import { parseFirstRunAccountSeed } from "./src/features/identity/first-run-seed.ts";
+import { isBuiltInBuilderlab } from "./src/features/federated-identity/community-hosts.ts";
 
 /** `BUZZ_BUILDERLAB_URL` from the process or `.env.local`, or undefined when unset. */
 function sharedBuilderlabUrl() {
@@ -34,20 +35,6 @@ function sharedBuilderlabUrl() {
 /** The built-in sign-in server's Builderlab, in the legacy URL's shape. Keep
  * in step with `BUILT_IN` in src-tauri/src/federated_identity/config.rs. */
 const BUILT_IN_BUILDERLAB = "https://app.builderlab.xyz";
-
-function isBuiltInBuilderlab(raw: string) {
-  try {
-    const url = new URL(raw);
-    return (
-      url.origin === BUILT_IN_BUILDERLAB &&
-      url.pathname.replace(/\/+$/, "") === "" &&
-      !url.search &&
-      !url.hash
-    );
-  } catch {
-    return false;
-  }
-}
 
 /** An FI build signs in to Builderlab through its first sign-in server's
  * identity origin and API base, in the legacy URL's shape

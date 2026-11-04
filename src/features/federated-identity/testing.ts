@@ -19,6 +19,7 @@ export function federatedFixture(
       apiBasePath: "/api/goose/",
       signIn: "on-demand",
       organization: null,
+      communityHosts: ["relay.example"],
     },
     revision: `${revision}:0`,
     email: null,

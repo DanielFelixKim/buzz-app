@@ -132,6 +132,14 @@ or credential field. For `just desktop` and
 `just desktop-bundle`, it can be set in `.env.local` (single-quote the JSON);
 see [launch environment](#launch-environment).
 
+The development broker turns FI off by itself: a `tauri dev` run with
+`BUZZ_DEV_VIEWER` pinned and this input unset compiles no sign-in servers, so
+developers don't set it empty for the broker. Packaged builds (`just
+desktop-bundle`, debug or release) and the standalone plugin manager keep FI on
+whatever the pin. A `tauri dev` run that adds servers keeps them. Tauri marks
+the run (`DEP_TAURI_DEV`); Vite's dev server likewise leaves FI off and the
+broker on.
+
 ```json
 {
   "version": 1,

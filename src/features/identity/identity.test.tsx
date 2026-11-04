@@ -51,6 +51,8 @@ import {
   profile,
   signed,
 } from "../relay/testing";
+import type { SessionSnapshot } from "../federated-identity/service";
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => true),
@@ -1635,8 +1637,27 @@ it("a landing URL that cannot be reached fails before sign-in, and Cancel keeps 
   identity.dispose();
 });
 
+/** A build whose first compiled sign-in server is bb-public. */
+const publicServers = async (): Promise<SessionSnapshot[]> => [
+  {
+    status: "signed-out",
+    authority: {
+      id: "bb-public",
+      identityOrigin: "https://app.builderlab.xyz",
+      apiBasePath: "/api/goose/",
+      signIn: "on-demand",
+      organization: null,
+      communityHosts: ["*.communities.buzz.xyz", "communities.buzz.xyz"],
+    },
+    revision: "",
+    email: null,
+    failure: null,
+    expiresAt: null,
+    expiring: false,
+  },
+];
+
 it("a landing URL hosted by this build's Builderlab signs in at once, with no connect choice", async () => {
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
   const relay = landingRelay("https://design.communities.buzz.xyz");
   relay.info.resolve();
   const connect = vi
@@ -1651,6 +1672,7 @@ it("a landing URL hosted by this build's Builderlab signs in at once, with no co
       invites={invites}
       account={unlinked}
       connect={connect}
+      servers={publicServers}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -1669,12 +1691,11 @@ it("a landing URL hosted by this build's Builderlab signs in at once, with no co
 });
 
 it.each([
-  ["https://app.builderlab.xyz", "buzz.block.builderlab.xyz"],
-  ["", "design.communities.buzz.xyz"],
+  ["bb-public", publicServers, "buzz.block.builderlab.xyz"],
+  ["no", async () => [], "design.communities.buzz.xyz"],
 ])(
-  "a build whose Builderlab (%j) does not host a landing URL pauses on the ordinary connect choice: %s",
-  async (build, host) => {
-    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", build);
+  "a build with %s sign-in server that does not cover a landing URL pauses on the ordinary connect choice: %s",
+  async (_, servers, host) => {
     const relay = landingRelay(`https://${host}`);
     const connect = vi.fn();
     const identity = createIdentity();
@@ -1686,6 +1707,7 @@ it.each([
         invites={invites}
         account={unlinked}
         connect={connect}
+        servers={servers}
       >
         <p>Signed in</p>
       </Welcome>,

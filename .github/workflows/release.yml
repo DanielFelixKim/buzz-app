@@ -55,7 +55,11 @@ jobs:
         shell: bash
         env:
           SERVERS: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
-        run: printf 'BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG=%s\n' "$SERVERS" >> "$GITHUB_ENV"
+        # The delimiter form keeps a pretty-printed, multiline value intact.
+        run: |
+          delimiter="FI_${RANDOM}${RANDOM}${RANDOM}"
+          [[ "$SERVERS" != *"$delimiter"* ]]
+          printf 'BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG<<%s\n%s\n%s\n' "$delimiter" "$SERVERS" "$delimiter" >> "$GITHUB_ENV"
       - name: Require main and signing configuration
         env:
           SOURCE_REF: ${{ github.ref }}
@@ -340,7 +344,11 @@ jobs:
         shell: bash
         env:
           SERVERS: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
-        run: printf 'BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG=%s\n' "$SERVERS" >> "$GITHUB_ENV"
+        # The delimiter form keeps a pretty-printed, multiline value intact.
+        run: |
+          delimiter="FI_${RANDOM}${RANDOM}${RANDOM}"
+          [[ "$SERVERS" != *"$delimiter"* ]]
+          printf 'BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG<<%s\n%s\n%s\n' "$delimiter" "$SERVERS" "$delimiter" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -436,7 +444,11 @@ jobs:
         shell: bash
         env:
           SERVERS: ${{ vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG }}
-        run: printf 'BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG=%s\n' "$SERVERS" >> "$GITHUB_ENV"
+        # The delimiter form keeps a pretty-printed, multiline value intact.
+        run: |
+          delimiter="FI_${RANDOM}${RANDOM}${RANDOM}"
+          [[ "$SERVERS" != *"$delimiter"* ]]
+          printf 'BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG<<%s\n%s\n%s\n' "$delimiter" "$SERVERS" "$delimiter" >> "$GITHUB_ENV"
       - name: Install build and packaging dependencies
         run: |
           apt-get update

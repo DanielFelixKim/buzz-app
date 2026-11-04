@@ -35,6 +35,7 @@ import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
+import type { Membership } from "../../features/communities/service";
 
 const noSubscription = () => () => {};
 
@@ -47,6 +48,8 @@ const filters = [
 
 type Props = {
   federatedIdentity?: FederatedIdentity;
+  /** Joined communities, so a sign-in switch names the ones it affects. */
+  memberships?: readonly Membership[] | undefined;
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
@@ -250,6 +253,8 @@ function ScopedSidebar({
                     props.federatedIdentity,
                     connection.origin,
                   )}
+                  relay={connection.origin}
+                  memberships={props.memberships}
                 />
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
@@ -342,6 +347,8 @@ function ScopedSidebar({
                       )}
                       error={connection.error}
                       retry={props.relay.retry}
+                      relay={connection.origin}
+                      memberships={props.memberships}
                     />
                     <Button onClick={props.relay.retry}>Try again</Button>
                   </>
@@ -369,9 +376,13 @@ function communityIdentity(
 function LiveSignIn({
   session,
   identity,
+  relay,
+  memberships,
 }: {
   session: RelaySession;
   identity: FederatedIdentity | undefined;
+  relay: string | undefined;
+  memberships: readonly Membership[] | undefined;
 }) {
   const live = useSyncExternalStore(
     session.live.subscribe,
@@ -384,6 +395,8 @@ function LiveSignIn({
       identity={identity}
       error={live.error}
       retry={session.live.retry}
+      relay={relay}
+      memberships={memberships}
     />
   );
 }

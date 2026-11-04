@@ -501,6 +501,8 @@ export function CommunityDialog({
                   federatedIdentity
                 }
                 error={error}
+                relay={destination?.url}
+                memberships={client.memberships}
                 // Sign-in only clears the refusal: Continue then runs the current
                 // step with current input, never one captured before the login.
                 retry={() => setError("")}

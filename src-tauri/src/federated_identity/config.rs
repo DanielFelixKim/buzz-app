@@ -341,6 +341,35 @@ mod tests {
         }
     }
 
+    /// The cases the front end's `coversCommunity` and `isBuiltInBuilderlab`
+    /// also run (community-hosts.test.ts).
+    #[test]
+    fn shared_fixtures_match_the_front_end() {
+        let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/features/federated-identity/community-hosts.fixtures.json"
+        ))
+        .unwrap();
+        for case in fixtures["communities"].as_array().unwrap() {
+            let mut descriptor = descriptor();
+            descriptor["communityHosts"] = case["hosts"].clone();
+            let config = Config::parse(&descriptor.to_string()).unwrap();
+            let relay = case["relay"].as_str().unwrap();
+            assert_eq!(
+                config.matches_relay(relay).unwrap_or(false),
+                case["covered"].as_bool().unwrap(),
+                "{relay}"
+            );
+        }
+        for case in fixtures["builtInBuilderlab"].as_array().unwrap() {
+            let url = case["url"].as_str().unwrap();
+            assert_eq!(
+                is_built_in_builderlab(url),
+                case["builtIn"].as_bool().unwrap(),
+                "{url}"
+            );
+        }
+    }
+
     const BB_BLOCK: &str = r#"{"version":1,"id":"bb-block","identityOrigin":"https://block.builderlab.xyz","communityHosts":["buzz.block.builderlab.xyz"],"adapterBase":"https://block.builderlab.xyz/api/goose","apiBasePath":"/api/goose/","signIn":"at-launch","organization":"Block"}"#;
 
     fn ids(servers: &[Config]) -> Vec<&str> {

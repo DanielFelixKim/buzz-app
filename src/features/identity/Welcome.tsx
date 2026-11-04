@@ -35,6 +35,10 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { BackupError } from "./backup";
 import { hostedByThisBuilderlab } from "./builderlab-hosted";
 import {
+  signInServers,
+  type SessionSnapshot,
+} from "../federated-identity/service";
+import {
   builderlabAccount,
   federatedBuilderlabAccount,
   type FirstRunAccount,
@@ -110,6 +114,7 @@ export function Welcome({
   connect = (signal) => firstRunCredential(signal, federatedIdentity),
   account = (credential, identity) =>
     firstRunAccount(credential, identity, federatedIdentity),
+  servers = signInServers,
 }: {
   identity: Identity;
   /** The live startup service: joining through it is what selects the community. */
@@ -131,6 +136,8 @@ export function Welcome({
   account?:
     | ((credential: Credential, identity: Identity) => FirstRunAccount)
     | undefined;
+  /** The build's sign-in servers, for whether its Builderlab hosts a URL. */
+  servers?: () => Promise<readonly SessionSnapshot[]>;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [login] = useState(() => createOAuthSession(connect));
@@ -971,8 +978,10 @@ export function Welcome({
           url={finding}
           onCancel={backToLanding}
           onFound={(found) => {
-            if (hostedByThisBuilderlab(found)) void signIn();
-            else pause("connect-choice");
+            void hostedByThisBuilderlab(found, servers).then((hosted) => {
+              if (hosted) void signIn();
+              else pause("connect-choice");
+            });
           }}
           titleId="welcome-title"
         />

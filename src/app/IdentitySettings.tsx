@@ -1,10 +1,25 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import type { BackupStatus } from "../features/identity/backup";
 import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { backupOfferedFor } from "../features/identity/builderlab-account";
 import type { Identity } from "../features/identity/service";
-import type { FederatedIdentity } from "../features/federated-identity/service";
+import {
+  signInServers,
+  type FederatedIdentity,
+  type SessionSnapshot,
+} from "../features/federated-identity/service";
+import type { Membership } from "../features/communities/service";
+import {
+  coveredCommunities,
+  serverName,
+} from "../features/federated-identity/community-hosts";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
 import { PrivateKey } from "../features/identity/PrivateKey";
 import { SignOutDialog } from "../features/identity/SignOut";
@@ -73,10 +88,16 @@ export function IdentitySettings({
   viewer,
   identity,
   federatedIdentity,
+  memberships = [],
+  servers = signInServers,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
+  /** Joined communities, for each server's "Used by". */
+  memberships?: readonly Membership[] | undefined;
+  /** The build's sign-in servers; native's compiled list by default. */
+  servers?: () => Promise<readonly SessionSnapshot[]>;
 }) {
   const [signingOut, setSigningOut] = useState(false);
   const [copyStatus, setCopyStatus] = useState<{
@@ -171,7 +192,11 @@ export function IdentitySettings({
             </div>
           )}
           {federatedIdentity && (
-            <OrganizationSignIn identity={federatedIdentity} />
+            <OrganizationSignIns
+              identity={federatedIdentity}
+              memberships={memberships}
+              servers={servers}
+            />
           )}
           {copyStatus && (
             <ToastNotice
@@ -191,6 +216,157 @@ export function IdentitySettings({
         </>
       )}
     </section>
+  );
+}
+
+/** Every server's session, live: one stable array until one changes. */
+function useSessions(sessions: readonly FederatedIdentity[]) {
+  const store = useMemo(() => {
+    let cached: readonly SessionSnapshot[] = [];
+    return {
+      subscribe: (listener: () => void) => {
+        const stops = sessions.map((session) => session.subscribe(listener));
+        return () => {
+          for (const stop of stops) stop();
+        };
+      },
+      snapshot: () => {
+        const next = sessions.map((session) => session.snapshot());
+        if (
+          next.length !== cached.length ||
+          next.some((state, index) => state !== cached[index])
+        )
+          cached = next;
+        return cached;
+      },
+    };
+  }, [sessions]);
+  return useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
+}
+
+/** One row per signed-in server, each signing out of that server only. With
+ * none signed in, the build's Builderlab row, to sign in from. */
+function OrganizationSignIns({
+  identity,
+  memberships,
+  servers,
+}: {
+  identity: FederatedIdentity;
+  memberships: readonly Membership[];
+  servers: () => Promise<readonly SessionSnapshot[]>;
+}) {
+  const [ids, setIds] = useState<readonly string[]>([]);
+  useEffect(() => {
+    let active = true;
+    void servers()
+      .then((list) => {
+        if (active)
+          setIds(list.flatMap((server) => server.authority?.id ?? []));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [servers]);
+  const sessions = useMemo(
+    () => ids.flatMap((id) => identity.forServer?.(id) ?? []),
+    [identity, ids],
+  );
+  const states = useSessions(sessions);
+  const signedIn = sessions.filter(
+    (_, index) =>
+      states[index]?.status === "signed-in" && states[index]?.authority,
+  );
+  if (signedIn.length === 0) return <OrganizationSignIn identity={identity} />;
+  return (
+    <section className="mt-6" aria-labelledby="organization-sign-in-title">
+      <InlineHeader
+        id="organization-sign-in-title"
+        title="Organization sign-in"
+      />
+      <SettingsGroup>
+        {signedIn.map((session) => (
+          <ServerSession
+            key={session.snapshot().authority?.id}
+            session={session}
+            memberships={memberships}
+          />
+        ))}
+      </SettingsGroup>
+    </section>
+  );
+}
+
+function ServerSession({
+  session,
+  memberships,
+}: {
+  session: FederatedIdentity;
+  memberships: readonly Membership[];
+}) {
+  const state = useSyncExternalStore(
+    session.subscribe,
+    session.snapshot,
+    session.snapshot,
+  );
+  const [failure, setFailure] = useState("");
+  const problem = failure || state.failure;
+  if (!state.authority) return null;
+  const host = new URL(state.authority.identityOrigin).host;
+  const name = serverName(state.authority);
+  const usedBy = coveredCommunities(
+    state.authority.communityHosts,
+    memberships,
+  );
+  const expires = state.expiresAt
+    ? new Date(state.expiresAt).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "";
+  return (
+    <>
+      <PreferenceRow
+        title={name === host ? host : `${name} (${host})`}
+        subtitle={
+          <>
+            {`Signed in as ${state.email ?? "your organization account"}`}
+            {expires && ` · Expires at ${expires}`}
+            {usedBy.length > 0 && (
+              <>
+                <br />
+                {`Used by: ${usedBy.join(", ")}`}
+              </>
+            )}
+          </>
+        }
+        trailing={
+          <Button
+            type="button"
+            aria-label={`Sign out of ${host}`}
+            onClick={() => {
+              setFailure("");
+              void session
+                .signOut()
+                .catch((error: unknown) =>
+                  setFailure(
+                    error instanceof Error
+                      ? error.message
+                      : "Sign-in unavailable",
+                  ),
+                );
+            }}
+          >
+            Sign out
+          </Button>
+        }
+      />
+      {problem && (
+        <p role="alert" className="text-body-sm text-danger">
+          {recoveryMessage(problem)}
+        </p>
+      )}
+    </>
   );
 }
 

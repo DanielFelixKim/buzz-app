@@ -43,20 +43,76 @@ it("requires explicit sign-in before retrying protected community admission", as
   expect(retry).toHaveBeenCalledOnce();
 });
 it.each(["binding-mismatch", "authorization-denied"])(
-  "retains a valid login and gives %s recovery without another login",
+  "explains %s without a session to switch",
   (failure) => {
     const h = federatedFixture();
-    h.publish({ status: "signed-in", failure });
+    h.publish({ status: "signed-out", failure });
     render(
       <CommunitySignIn identity={h.service} error={failure} retry={vi.fn()} />,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      failure === "binding-mismatch"
-        ? "Settings → Builderlab hosting"
-        : "administrator",
+      failure === "binding-mismatch" ? "identity link" : "administrator",
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    expect(h.service.signIn).not.toHaveBeenCalled();
-    expect(h.service.signOut).not.toHaveBeenCalled();
+  },
+);
+
+const memberships = [
+  { id: "wss://buzz.block.builderlab.xyz", name: "Block" },
+  { id: "wss://will.communities.buzz.xyz", name: "will" },
+  { id: "wss://kalvin.communities.buzz.xyz", name: "kalvin" },
+];
+function publicServer() {
+  const h = federatedFixture("public", "will@example.com");
+  h.publish({
+    status: "signed-in",
+    email: "will@example.com",
+    authority: {
+      id: "bb-public",
+      identityOrigin: "https://app.builderlab.xyz",
+      apiBasePath: "/api/goose/",
+      signIn: "on-demand",
+      organization: "Builderlab",
+      communityHosts: ["*.communities.buzz.xyz", "communities.buzz.xyz"],
+    },
+  });
+  return h;
+}
+
+it.each(["binding-mismatch", "authorization-denied"])(
+  "switches only the refusing community's server account on %s",
+  async (failure) => {
+    const block = federatedFixture("block");
+    block.publish({ status: "signed-in" });
+    const pub = publicServer();
+    const retry = vi.fn();
+    render(
+      <CommunitySignIn
+        identity={pub.service}
+        error={failure}
+        retry={retry}
+        relay="wss://kalvin.communities.buzz.xyz"
+        memberships={memberships}
+      />,
+    );
+    const alert = screen.getAllByRole("alert")[0];
+    expect(alert).toHaveTextContent("Builderlab account");
+    expect(alert).toHaveTextContent("will@example.com");
+    if (failure === "binding-mismatch")
+      expect(alert).toHaveTextContent("app.builderlab.xyz");
+    expect(alert).not.toHaveTextContent("Builderlab hosting");
+    // The others on that server, never the refusing one or another server's.
+    expect(
+      screen.getByText("Switching accounts also affects: will."),
+    ).toBeVisible();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Switch account" }));
+    expect(pub.service.signOut).toHaveBeenCalledOnce();
+    expect(pub.service.signIn).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledOnce();
+    expect(block.service.signOut).not.toHaveBeenCalled();
+    expect(block.service.signIn).not.toHaveBeenCalled();
+    expect(block.service.snapshot().status).toBe("signed-in");
   },
 );

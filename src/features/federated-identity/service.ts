@@ -21,6 +21,8 @@ export type SessionSnapshot = Readonly<{
     signIn: "on-demand" | "at-launch";
     /** Display name for sign-in copy, such as "Block". */
     organization: string | null;
+    /** The community hosts it covers; match them with `coversCommunity`. */
+    communityHosts: readonly string[];
   }> | null;
   revision: string;
   email: string | null;
@@ -49,6 +51,8 @@ export interface FederatedIdentity {
    * `https://` origin). Native chooses the server from the community's host,
    * never from the relay; it is this session for the build's Builderlab. */
   forCommunity?(relay: string): FederatedIdentity;
+  /** The session of the sign-in server with this id, for Settings. */
+  forServer?(id: string): FederatedIdentity;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -171,8 +175,17 @@ export class FederatedIdentityService
   forCommunity = (relay: string): FederatedIdentity => {
     let session = this.shared.communities.get(relay);
     if (!session) {
-      session = new CommunitySession(relay);
+      session = new CommunitySession({ relay });
       this.shared.communities.set(relay, session);
+    }
+    return session;
+  };
+  forServer = (id: string): FederatedIdentity => {
+    const key = `server:${id}`;
+    let session = this.shared.communities.get(key);
+    if (!session) {
+      session = new CommunitySession({ server: id });
+      this.shared.communities.set(key, session);
     }
     return session;
   };
@@ -253,8 +266,19 @@ export class FederatedIdentityService
 
 const EVENTS = ["federated-identity", "federated-identity-community"];
 
-/** One community's sign-in server session, for its sign-in prompt. Snapshots
- * follow its server, whichever event stream native publishes them on. */
+/** Every sign-in server this build trusts, the build's Builderlab first, as
+ * native compiled them: none outside the desktop app. */
+export async function signInServers(): Promise<readonly SessionSnapshot[]> {
+  if (!nativeIdentityEnabled()) return [];
+  return invoke<SessionSnapshot[]>("federated_identity_servers");
+}
+
+/** Which server a session command is for: a community's, or one by id. */
+type Target = Readonly<{ relay: string } | { server: string }>;
+
+/** One sign-in server's session, for a community's sign-in prompt or its
+ * Settings row. Snapshots follow its server, whichever event stream native
+ * publishes them on. */
 class CommunitySession implements FederatedIdentity {
   readonly apiAvailable = false;
   private state: SessionSnapshot = Object.freeze({
@@ -270,7 +294,7 @@ class CommunitySession implements FederatedIdentity {
   private started = false;
   private epoch = 0;
   private readonly unlistens: Promise<() => void>[] = [];
-  constructor(private readonly relay: string) {}
+  constructor(private readonly target: Target) {}
   /** Releases its native event listeners, including ones still registering. */
   dispose() {
     this.started = true;
@@ -288,7 +312,9 @@ class CommunitySession implements FederatedIdentity {
     for (const event of EVENTS)
       this.unlistens.push(
         listen<SessionSnapshot>(event, ({ payload }) => {
-          const id = this.state.authority?.id;
+          const id =
+            this.state.authority?.id ??
+            ("server" in this.target ? this.target.server : undefined);
           if (id && payload.authority?.id === id) this.accept(payload);
         }).catch(() => () => {}),
       );
@@ -307,9 +333,7 @@ class CommunitySession implements FederatedIdentity {
       throw new Error("Federated identity requires Buzz desktop");
     const epoch = this.epoch;
     try {
-      const snapshot = await invoke<SessionSnapshot>(command, {
-        relay: this.relay,
-      });
+      const snapshot = await invoke<SessionSnapshot>(command, this.target);
       if (this.epoch === epoch) this.accept(snapshot);
       return this.state;
     } catch (error) {
@@ -323,7 +347,7 @@ class CommunitySession implements FederatedIdentity {
     await this.operation("federated_identity_sign_out");
   }
   async cancelSignIn() {
-    await invoke("federated_identity_cancel_sign_in", { relay: this.relay });
+    await invoke("federated_identity_cancel_sign_in", this.target);
     await this.operation("federated_identity_snapshot");
   }
   request(): Promise<HostResponse> {

@@ -40,10 +40,12 @@ below, which sends only the two unauthenticated GETs, so a typo, an unreachable
 relay or a non-Buzz address fails there with the same classified copy; **Cancel**
 (and **Retry**, when offered) behave as below, except that Cancel returns to the
 welcome screen with the address kept in the field. A build has one Builderlab,
-and the only listed deployment is the public one (`builderlab-hosted.ts`): a
-host under `communities.buzz.xyz` on the default port, or a relay publishing
-that deployment's NIP-11 `self` key, is hosted by this build's Builderlab when
-the origin of `BUZZ_BUILDERLAB_URL` is `https://app.builderlab.xyz`. Such a
+its first sign-in server, and a community is hosted by it when that server's
+`communityHosts` cover the community's host (`builderlab-hosted.ts`). The front
+end reads native's compiled server list and matches with native's own rules
+(`community-hosts.ts`, kept equal to `matches_relay` by shared fixtures): an
+exact host, or one label under a wildcard on the default port. A relay's NIP-11
+`self` key never decides. A build without a sign-in server hosts none. Such a
 community requires Builderlab sign-in, so it starts at once there, exactly as
 the welcome screen's own button does, and the welcome screen shows it pending
 (**Cancel sign-in**, with the field disabled); setup then lands on **Join
@@ -52,8 +54,8 @@ instead. Cancel sign-in, and **Back** from a sign-in or setup failure, return
 to the welcome screen with the address kept and do not look it up again. A
 canceled sign-in that finishes later is ignored: it cannot restart setup or use
 a later sign-in's account. Any other found community, including one run by
-another Builderlab deployment, and every community in a build whose
-`BUZZ_BUILDERLAB_URL` is another origin or empty, pauses on **Connect to
+another Builderlab deployment, and every community in a build without a
+sign-in server, pauses on **Connect to
 {host}**: nothing a relay publishes names its sign-in portal, so the user
 chooses. The page says only that Buzz relies on a key for the user's identity; its choices are
 **Sign in with Builderlab**, which signs in at `BUZZ_BUILDERLAB_URL` and
@@ -924,6 +926,20 @@ once and ends the session only if the adapter refuses it there. Builderlab's
 Settings card has no sign-out of its own in an FI build: it links to Identity →
 Organization sign-in, which ends the shared session. Builderlab
 Apps' agent tools still need the legacy login and are absent in FI builds.
+
+Settings → Identity → Organization sign-in is the same whichever community is
+open. It lists each server you are signed in to, with its name and origin, the
+account and expiry, **Used by:** the joined communities its hosts cover, and a
+**Sign out** that ends that server's session only. Communities no server covers
+are not listed. With no server signed in, it shows the build's Builderlab row to
+sign in from, as before.
+
+When a community refuses a signed-in account (`authorization-denied` or
+`binding-mismatch`), its prompt names the community's server and account, and
+the other joined communities that server covers, and offers **Switch account**:
+it signs out of that server only, signs in to it again, and retries. Other
+servers' sessions are not touched. Binding-mismatch recovery points to that
+server's identity origin.
 
 ### Sign in at launch
 
