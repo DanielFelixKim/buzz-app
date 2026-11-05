@@ -8,6 +8,14 @@ export type BrowserRecipient = Readonly<{
   root?: string | undefined;
 }>;
 
+/** A recipient's grant operations. The grant token stays in `BrowserAccess`. */
+export type BrowserRecipientControl = Readonly<{
+  available(): Promise<boolean>;
+  /** Replaces the recipient's grants on other sessions. */
+  grant(sessionId: string): Promise<Readonly<{ revision: number }>>;
+  revoke(sessionId: string): Promise<void>;
+}>;
+
 /** Tokens stay in this app, never in agent arguments or conversation messages. */
 export class BrowserAccess {
   private readonly pending = new Map<string, Promise<unknown>>();
@@ -36,13 +44,16 @@ export class BrowserAccess {
     private readonly eligible: (recipient: BrowserRecipient) => boolean,
   ) {}
 
-  forRecipient(recipient: BrowserRecipient): BrowserControl {
+  forRecipient(recipient: BrowserRecipient): BrowserRecipientControl {
     return {
       available: () => this.native.available(),
       grant: async (session) => {
         if (!this.eligible(recipient))
           throw new Error("Choose an agent running in this Buzz conversation.");
         const entry = { recipient, token: undefined as string | undefined };
+        // No await between the removal and the add, so two concurrent grants
+        // for one recipient cannot both survive.
+        this.revokeRecipient(recipient, session);
         this.grants.set(session, entry);
         try {
           return await this.ordered(session, async () => {
@@ -57,7 +68,7 @@ export class BrowserAccess {
               throw new Error("Browser access was revoked.");
             }
             entry.token = grant.token;
-            return grant;
+            return { revision: grant.revision };
           });
         } catch (error) {
           if (this.grants.get(session) === entry) this.grants.delete(session);
@@ -71,28 +82,25 @@ export class BrowserAccess {
         this.grants.delete(session);
         return this.ordered(session, () => this.native.revoke(session));
       },
-      // Execution always enters through the authenticated tool caller below.
-      execute: async () => {
-        throw new Error("Use the browser agent tool.");
-      },
     };
   }
 
-  /** Revoke this recipient's current grants in the conversation. */
-  async revokeRecipient(recipient: BrowserRecipient): Promise<void> {
-    await Promise.all(
-      [...this.grants]
-        .filter(
-          ([, entry]) =>
-            entry.recipient.agent === recipient.agent &&
-            entry.recipient.scope === recipient.scope &&
-            entry.recipient.channel === recipient.channel &&
-            entry.recipient.root === recipient.root,
-        )
-        .map(([session, entry]) =>
-          this.forRecipient(entry.recipient).revoke(session),
-        ),
-    );
+  /** Removes the recipient's grants on sessions other than `keep`. */
+  private revokeRecipient(recipient: BrowserRecipient, keep: string): void {
+    for (const [session, entry] of this.grants) {
+      if (
+        session !== keep &&
+        entry.recipient.agent === recipient.agent &&
+        entry.recipient.scope === recipient.scope &&
+        entry.recipient.channel === recipient.channel &&
+        entry.recipient.root === recipient.root
+      )
+        // A failed native revoke leaves a token that execute can no longer
+        // reach, because the entry is already gone.
+        void this.forRecipient(entry.recipient)
+          .revoke(session)
+          .catch(() => undefined);
+    }
   }
 
   async execute(

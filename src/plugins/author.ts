@@ -25,6 +25,8 @@ export type {
   BrowserViewProps,
   BrowserToolbarProps,
 } from "../features/browser/api";
+export type { BrowserControlRequest } from "../features/browser/platform";
+export type { BrowserRecipient } from "../features/browser/control-access";
 export type {
   Page,
   PagePreviewProps,

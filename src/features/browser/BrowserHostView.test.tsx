@@ -1074,6 +1074,27 @@ it("keeps sharing controls off for ordinary browser views on a capable host", as
   expect(platform.control.grant).not.toHaveBeenCalled();
 });
 
+it("revokes agent control once when a view with a live session unmounts", async () => {
+  const platform = fakePlatform();
+  platform.control = {
+    available: vi.fn(async () => true),
+    grant: vi.fn(),
+    revoke: vi.fn(async () => {}),
+    execute: vi.fn(),
+  };
+  const view = render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  view.unmount();
+  expect(platform.control.revoke).toHaveBeenCalledTimes(1);
+  expect(platform.control.revoke).toHaveBeenCalledWith("session-1");
+});
+
 it("mounts a plugin toolbar for the active session", async () => {
   const platform = fakePlatform();
   render(

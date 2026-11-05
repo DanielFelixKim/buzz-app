@@ -47,7 +47,6 @@ it("exposes authorization primitives without host-owned UI or an opening workflo
     "available",
     "eligible",
     "forRecipient",
-    "revokeRecipient",
     "execute",
   ]);
 });

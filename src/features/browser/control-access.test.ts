@@ -252,3 +252,139 @@ describe("execute error codes", () => {
     },
   );
 });
+
+describe("one grant per recipient", () => {
+  function sessions() {
+    const eligible = new Set(["agent", "other"]);
+    const native = {
+      available: vi.fn(async () => true),
+      grant: vi.fn(async (session: string) => ({
+        token: `token-${session}`,
+        revision: 1,
+      })),
+      revoke: vi.fn(async (_session: string) => {}),
+      execute: vi.fn(async (_token: string, _request: unknown) => ({
+        text: "Page",
+      })),
+    };
+    const recipient: BrowserRecipient = {
+      agent: "agent",
+      scope: "community:owner",
+      channel: "chat",
+      root: "thread",
+    };
+    const access = new BrowserAccess(native, (candidate) =>
+      eligible.has(candidate.agent),
+    );
+    return {
+      native,
+      recipient,
+      access,
+      eligible,
+      control: access.forRecipient(recipient),
+      observe: (agent = "agent") =>
+        access.execute(
+          agent,
+          { channel: "chat", root: "thread" },
+          { action: "observe" },
+        ),
+    };
+  }
+
+  it("cancels a pending grant on one page when the recipient is granted another", async () => {
+    const f = sessions();
+    let finishFirst!: (grant: { token: string; revision: number }) => void;
+    f.native.grant.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    const first = f.control.grant("A");
+    const rejected = expect(first).rejects.toThrow("revoked");
+    await vi.waitFor(() => expect(f.native.grant).toHaveBeenCalledWith("A"));
+    await f.control.grant("B");
+    finishFirst({ token: "token-A", revision: 1 });
+    await rejected;
+    await vi.waitFor(() => expect(f.native.revoke).toHaveBeenCalledWith("A"));
+    expect(f.native.revoke.mock.invocationCallOrder[0]).toBeGreaterThan(
+      f.native.grant.mock.invocationCallOrder[0] ?? Infinity,
+    );
+    await expect(f.observe()).resolves.toEqual({ text: "Page" });
+    expect(f.native.execute).toHaveBeenLastCalledWith("token-B", {
+      action: "observe",
+    });
+  });
+
+  it("keeps only the newer of two completed grants and revokes the older once", async () => {
+    const f = sessions();
+    await f.control.grant("A");
+    await f.control.grant("B");
+    await vi.waitFor(() => expect(f.native.revoke).toHaveBeenCalledWith("A"));
+    expect(f.native.revoke).toHaveBeenCalledTimes(1);
+    await expect(f.observe()).resolves.toEqual({ text: "Page" });
+    expect(f.native.execute).toHaveBeenLastCalledWith("token-B", {
+      action: "observe",
+    });
+  });
+
+  it("removes no grant when the new grant is refused as ineligible", async () => {
+    const f = sessions();
+    await f.control.grant("A");
+    f.eligible.delete("agent");
+    await expect(f.control.grant("B")).rejects.toThrow("Choose an agent");
+    f.eligible.add("agent");
+    await expect(f.observe()).resolves.toEqual({ text: "Page" });
+    expect(f.native.execute).toHaveBeenLastCalledWith("token-A", {
+      action: "observe",
+    });
+    expect(f.native.revoke).not.toHaveBeenCalled();
+  });
+
+  it("leaves one agent's grant in place when another agent is granted another page", async () => {
+    const f = sessions();
+    await f.control.grant("A");
+    await f.access.forRecipient({ ...f.recipient, agent: "other" }).grant("B");
+    await expect(f.observe("agent")).resolves.toEqual({ text: "Page" });
+    expect(f.native.execute).toHaveBeenLastCalledWith("token-A", {
+      action: "observe",
+    });
+    await expect(f.observe("other")).resolves.toEqual({ text: "Page" });
+    expect(f.native.execute).toHaveBeenLastCalledWith("token-B", {
+      action: "observe",
+    });
+    expect(f.native.revoke).not.toHaveBeenCalled();
+  });
+
+  it("keeps the new grant usable when the native revoke of the older page fails", async () => {
+    const f = sessions();
+    f.native.revoke.mockRejectedValueOnce(new Error("Native connection lost"));
+    await f.control.grant("A");
+    await f.control.grant("B");
+    await vi.waitFor(() => expect(f.native.revoke).toHaveBeenCalledWith("A"));
+    await expect(f.observe()).resolves.toEqual({ text: "Page" });
+    expect(f.native.execute).toHaveBeenLastCalledWith("token-B", {
+      action: "observe",
+    });
+  });
+
+  it("leaves no grant when the native grant fails after the older grant was removed", async () => {
+    const f = sessions();
+    await f.control.grant("A");
+    f.native.grant.mockRejectedValueOnce(
+      new Error("Show the browser before allowing control"),
+    );
+    await expect(f.control.grant("B")).rejects.toThrow("Show the browser");
+    await expect(f.observe()).rejects.toThrow(/^unavailable: /);
+    expect(f.native.execute).not.toHaveBeenCalled();
+  });
+
+  it("resolves a grant to its revision and keeps the token for native execute", async () => {
+    const f = sessions();
+    await expect(f.control.grant("A")).resolves.toEqual({ revision: 1 });
+    await f.observe();
+    expect(f.native.execute).toHaveBeenCalledWith("token-A", {
+      action: "observe",
+    });
+  });
+});

@@ -61,8 +61,6 @@ export class BrowserService extends Service implements Browser {
             eligible,
             forRecipient: (recipient: BrowserRecipient) =>
               access.forRecipient(recipient),
-            revokeRecipient: (recipient: BrowserRecipient) =>
-              access.revokeRecipient(recipient),
             execute: (agent, context, request) =>
               access.execute(agent, context, request),
           })

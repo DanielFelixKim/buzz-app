@@ -53,7 +53,6 @@ export interface Browser {
         available(): Promise<boolean>;
         eligible(recipient: BrowserRecipient): boolean;
         forRecipient: BrowserAccess["forRecipient"];
-        revokeRecipient: BrowserAccess["revokeRecipient"];
         execute(
           agent: string,
           context: ToolContext,

@@ -2277,11 +2277,15 @@ for independent pages at the same URL. The toolbar receives `sessionId`, `status
 `ui`. `prepare()` waits until native presentation has settled and requires a visible
 website; call it after dismissing a popup and before requesting control. The host
 unmounts the toolbar when its native session changes. The plugin owns toolbar
-state and must revoke its grant on unmount.
+state and must revoke its grant on unmount. The host also revokes when the view
+unmounts or its URL, storage, or session key changes, but not when only
+`toolbar` changes.
 
 The optional `browser.control` capability exposes availability, host-checked
-recipient eligibility, `forRecipient()` grant/revoke operations,
-`revokeRecipient()`, and `execute()` using authenticated tool caller context.
+recipient eligibility, `forRecipient()` grant/revoke operations, and `execute()`
+using authenticated tool caller context. `forRecipient().grant()` resolves the
+grant revision only, never the token, and replaces that recipient's grants on
+other pages.
 It supplies no sharing component or agent-opening workflow. The
 [Browser plugin](https://github.com/squareup/buzz-plugin-browser) packages
 those behaviors as one independently updateable module.
