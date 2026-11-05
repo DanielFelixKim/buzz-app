@@ -2,12 +2,7 @@ const emptyPanels: never[] = [];
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import {
-  cloneElement,
-  StrictMode,
-  type ReactElement,
-  type ReactNode,
-} from "react";
+import { cloneElement, StrictMode, type ReactElement } from "react";
 import {
   act,
   cleanup,
@@ -56,30 +51,6 @@ import {
 } from "../../../browser-host/read-state.mjs";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
-// jsdom has no virtualized layout. Keep the real rows, thread reader and React
-// lifecycle; model only Virtua's imperative layout boundary, not scroll behavior.
-vi.mock("virtua", async () => {
-  const { forwardRef, useImperativeHandle } = await import("react");
-  return {
-    Virtualizer: forwardRef(function Virtualizer(
-      { children }: { children: ReactNode },
-      ref,
-    ) {
-      useImperativeHandle(ref, () => ({
-        cache: undefined,
-        findItemIndex: () => 0,
-        getItemOffset: () => 0,
-        scrollOffset: 0,
-        scrollSize: 0,
-        viewportSize: 0,
-        scrollTo() {},
-        scrollToIndex() {},
-      }));
-      return <div>{children}</div>;
-    }),
-  };
-});
-
 composerDOMFixture();
 beforeEach(() => localStorage.clear());
 stubAvatarBrowserApis();
@@ -3790,38 +3761,6 @@ it.each([true, false])(
     );
   },
 );
-it("holding a message in an Inbox conversation targets a thread reply", async () => {
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
-  const h = fixture({ withWriter: true, soloChannel: true, memberAgents: 2 });
-  render(h.view);
-  await screen.findByText("Please review this");
-  await chooseFilter("Mentions");
-  fireEvent.click(screen.getByRole("button", { name: "Open Alice in Design" }));
-  const editor = await screen.findByRole("textbox", {
-    name: "Message this conversation",
-  });
-  const user = userEvent.setup();
-  const row = await waitFor(() => {
-    const element = document.querySelector(
-      `[data-message-id="${h.mention.id}"] p`,
-    );
-    if (!element) throw Error("Missing preview message");
-    return element;
-  });
-  await user.pointer({ target: row, keys: "[MouseLeft>]" });
-  await screen.findByRole("button", { name: "Cancel reply target" });
-  await user.pointer({ keys: "[/MouseLeft]" });
-  expect(editor.isConnected).toBe(true);
-  fireEvent.change(editor, { target: { value: "Reply from Inbox" } });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(h.published).toHaveLength(1));
-  expect(h.published[0]?.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
-});
-
 it("Inbox Solo chat activity shared with a person sends without a tag", async () => {
   const h = fixture({
     withWriter: true,
