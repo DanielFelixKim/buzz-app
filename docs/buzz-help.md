@@ -166,8 +166,14 @@ that agent in Buzz; they do not notify the external app through this connection.
   until you add one or turn worktree mode off.
 - **Inbox** collects DMs, ordinary responses in Solo chats, mentions of you, and replies in threads you started,
   replied in, or follow. Solo chats appear under All, not DMs; their nested threads stay separate. Agent-only
-  coordination stays out. If loading fails, use **Retry inbox** on the page or
-  preview to retry; recovered activity clears the loading error.
+  coordination stays out. Reactions to your own messages appear as one row per
+  message, naming who reacted and with what; the **Reactions** filter shows only
+  those. A reaction row is unread until you open it, and again after a newer
+  reaction; its read state is kept on this device only. Reactions can't be archived and
+  are not in the sidebar preview. Only reactions sent by an app or agent that
+  addresses them to the message's author appear. If loading fails, use
+  **Retry inbox** on the page or preview to retry; recovered activity clears the
+  loading error.
 - **New messages** marks the first known unread incoming channel message when
   you enter. Once established, the divider stays in place for that visit as you
   read, reveal another message, or receive new messages. It is absent for a visit

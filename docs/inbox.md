@@ -31,6 +31,32 @@ The list is the Inbox page's first tab, in the host tab workspace behind `conver
 
 Solo chats include ordinary incoming top-level messages, excluding agent-only coordination and system events. Their flat rows appear under All, not DMs, matching the sidebar's separate Solo and Direct messages sections; nested threads stay separate. Reading in Channels or Inbox clears the same evidence.
 
+### Reactions
+
+Reactions to the viewer's own chat messages appear as Inbox rows, one per
+reacted-to message, from `session.reactionFeed`. A row names the newest reactor
+("Alice reacted 👍", or "Alice and 2 others reacted 👍 🎉" with each distinct
+reaction in the order first used), the channel or `DM · names`, and a preview of
+the viewer's message as fetched; later edits do not update it. Custom emoji show
+as their `:shortcode:`. The Type menu's **Reactions** lists only these rows;
+**All** interleaves them with conversations by their newest reaction. Other Type
+choices and the Archived view exclude them, and Archive/Restore does not apply.
+Sender filters by the newest reactor. Opening a row shows the message beside the
+list as a conversation row would: a thread at that message, or a whole DM or
+Solo timeline.
+
+A reaction row is unread when its newest reaction is newer than the row's seen
+watermark. Opening the row saves the watermark; a newer reaction makes it unread
+again, and the context menu's Mark unread forgets it. Watermarks are device-local
+view intent under `inbox:reaction-seen`, partitioned like archives, keeping the
+1,000 latest writes; they do not sync across devices or change channel read
+state. Unread only applies to reaction rows. A failed save shows the Inbox
+error alert. The sidebar preview does not show reactions.
+
+Only reactions carrying a NIP-25 `p` tag for the message's author are found.
+Buzz's app and agent `react` tool add it; older reactions and other publishers'
+reactions without it do not appear.
+
 ### Open Inbox with a filter
 
 Four shortcuts open the Inbox page with its filters applied, including from the composer, like Slack's: ⌘⇧A (Ctrl+Shift+A elsewhere) opens All activity with Unread only, and ⌘⇧T, ⌘⇧M and ⌘⇧K open Threads, Mentions and DMs. Each also shows Inbox rather than Archived and leaves Drafts. Threads, Mentions and DMs keep the saved Unread only choice; Sender is never changed. They are rebindable in Settings → Shortcuts. The shortcut opens `buzz.inbox/inbox` with a versioned route (`{ attention?, activity?, show?, sender? }`, or `{ drafts: true }` alone) that the page validates, and a plain open from the sidebar or topbar carries none and leaves saved filters alone. Omitted fields keep their saved choice, except that a filter route shows Inbox unless it names `show: "archived"`; a Drafts route opens Drafts and changes no saved filter. Plugins and `buzz://plugin?id=buzz.inbox&page=inbox&route.<key>=<value>` links use the same route; a link spells Drafts `route.drafts=true`. The page applies a route once per presentation of the visit, but not when Back/Forward returns to it, which keeps the filters as they were left, using the same saved choices as the filter menu, so pressing a shortcut again after changing the filters by hand applies it again, even though the host treats an identical address as the same history entry.
