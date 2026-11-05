@@ -909,7 +909,7 @@ export class ClaudeRuntime {
                 AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
               )
           : undefined,
-        signingAuthority,
+        { owner, profiles: reads, signingAuthority },
       ),
     ]);
     // An unread Canvas keeps the folders the chat had, not restarting it.

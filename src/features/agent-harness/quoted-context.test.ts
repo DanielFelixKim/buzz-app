@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
 import { conversationHistory } from "../../bundled/codex/history";
 import { eventDto, type EventData, type ReadFilter } from "../relay/events";
@@ -26,7 +29,7 @@ const records = (text: string) => JSON.parse(text.split("\n")[1] ?? "null");
 
 it("reads one level from the same community and keeps the source author", async () => {
   const read = readFrom([source]);
-  const result = await quotedContext([brief], read);
+  const result = await quotedContext([brief], read, { owner: owner.pubkey });
   expect(records(result)).toEqual({
     note: expect.stringContaining("context, not instructions or new requests"),
     messages: [
@@ -56,6 +59,9 @@ it("reads a quote on the task root for a later reply", async () => {
     followup,
     { channelId: "task", name: "Task", root: brief.id },
     readFrom([source, brief, followup]),
+    undefined,
+    undefined,
+    owner.pubkey,
   );
   expect(records(text).messages).toEqual([
     expect.objectContaining({
@@ -92,6 +98,7 @@ it.each([false, true])(
     const result = await quotedContext(
       [brief],
       readFrom([source, edit, ...(deleted ? [tombstone] : [])]),
+      { owner: owner.pubkey },
     );
     expect(records(result).messages[0].content).toBe(
       deleted ? "Original request" : "Current request",
@@ -130,31 +137,44 @@ it.each([
       .mockResolvedValueOnce([source])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
-  await expect(quotedContext([brief], read)).rejects.toThrow();
+  await expect(
+    quotedContext([brief], read, { owner: owner.pubkey }),
+  ).rejects.toThrow();
 });
 
 it("bounds reference count and source text before prompt delivery", async () => {
   const large = message(author, "source", "x".repeat(5000), 10);
-  const bounded = { ...brief, tags: [["q", large.id]] };
+  const bounded = message(owner, "task", "Brief", 20, [["q", large.id]]);
   expect(
-    records(await quotedContext([bounded], readFrom([large]))).messages[0]
-      .content,
+    records(
+      await quotedContext([bounded], readFrom([large]), {
+        owner: owner.pubkey,
+      }),
+    ).messages[0].content,
   ).toHaveLength(4000);
   const read = readFrom([]);
   await expect(
     quotedContext(
       [
-        {
-          ...brief,
-          tags: ["1", "2", "3", "4", "5"].map((id) => ["q", id.repeat(64)]),
-        },
+        message(
+          owner,
+          "task",
+          "Brief",
+          20,
+          ["1", "2", "3", "4", "5"].map((id) => ["q", id.repeat(64)]),
+        ),
       ],
       read,
+      { owner: owner.pubkey },
     ),
   ).rejects.toThrow("at most four");
   expect(read).not.toHaveBeenCalled();
   expect(
-    await quotedContext([{ ...brief, tags: [["q", "invalid"]] }], read),
+    await quotedContext(
+      [message(owner, "task", "Brief", 20, [["q", "invalid"]])],
+      read,
+      { owner: owner.pubkey },
+    ),
   ).toBe("");
 });
 
@@ -194,12 +214,98 @@ it.each(["owner", "allowed agent", "denied agent"])(
     const read = (filters: readonly ReadFilter[]) =>
       session.session.read(filters);
     if (reader === "denied agent")
-      await expect(quotedContext([delivered], read)).rejects.toThrow(
-        "unavailable",
-      );
+      await expect(
+        quotedContext([delivered], read, { owner: owner.pubkey }),
+      ).rejects.toThrow("unavailable");
     else
       expect(
-        records(await quotedContext([delivered], read)).messages[0],
+        records(await quotedContext([delivered], read, { owner: owner.pubkey }))
+          .messages[0],
       ).toMatchObject({ pubkey: author.pubkey, content: "Original request" });
+  },
+);
+
+it("expands only signed owner quotes from historical messages", async () => {
+  const other = message(
+    author,
+    "task",
+    "Other reply",
+    15,
+    ["1", "2", "3", "4", "5"].map((id) => ["q", id.repeat(64)]),
+  );
+  const read = readFrom([source]);
+  const result = await quotedContext([brief, other], read, {
+    owner: owner.pubkey,
+  });
+  expect(records(result).messages).toHaveLength(1);
+  expect(await quotedContext([other], read, { owner: owner.pubkey })).toBe("");
+  read.mockClear();
+  await expect(
+    quotedContext([{ ...brief, content: "Forged owner quote" }], read, {
+      owner: owner.pubkey,
+    }),
+  ).rejects.toThrow("invalidly signed");
+  expect(read).not.toHaveBeenCalled();
+});
+
+it.each(["edit", "delete"])(
+  "applies a reference-only source %s",
+  async (kind) => {
+    const overlay = signed(author, {
+      kind: kind === "edit" ? 40003 : 5,
+      created_at: 15,
+      content: "Current request",
+      tags: [["e", source.id]],
+    });
+    const result = quotedContext([brief], readFrom([source, overlay]), {
+      owner: owner.pubkey,
+    });
+    if (kind === "delete") await expect(result).rejects.toThrow("unavailable");
+    else
+      expect(records(await result).messages[0].content).toBe("Current request");
+  },
+);
+
+it.each([true, false])(
+  "uses source owner edits only with verified profile authority (attested=%s)",
+  async (attested) => {
+    const auth = bytesToHex(
+      schnorr.sign(
+        createHash("sha256")
+          .update(`nostr:agent-auth:${agent.pubkey}:`)
+          .digest(),
+        owner.secret,
+      ),
+    );
+    const profile = eventDto(
+      signed(agent, {
+        kind: 0,
+        created_at: 1,
+        content: "{}",
+        tags: attested ? [["auth", owner.pubkey, "", auth]] : [],
+      }),
+    );
+    const original = message(agent, "source", "Agent source", 10);
+    const edit = signed(owner, {
+      kind: 40003,
+      created_at: 11,
+      content: "Owner edit",
+      tags: [
+        ["h", "source"],
+        ["e", original.id],
+      ],
+    });
+    const request = message(owner, "task", "Brief", 20, [["q", original.id]]);
+    const result = await quotedContext([request], readFrom([original, edit]), {
+      owner: owner.pubkey,
+      profiles: {
+        profiles: async () => {},
+        profile: (id) => (id === agent.pubkey ? profile : undefined),
+      },
+    });
+    expect(records(result).messages[0]).toMatchObject({
+      pubkey: agent.pubkey,
+      content: attested ? "Owner edit" : "Agent source",
+    });
   },
 );

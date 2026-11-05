@@ -1330,7 +1330,7 @@ export class PiRuntime {
                 AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
               )
           : undefined,
-        signingAuthority,
+        { owner, profiles: reads, signingAuthority },
       ),
     ]);
     return {

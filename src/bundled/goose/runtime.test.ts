@@ -1,3 +1,7 @@
+import {
+  keypair,
+  message as signedMessage,
+} from "../../features/relay/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { BuzzClient, Memories } from "../../buzz-mcp/client";
 import { callTool, memoryVersion } from "../../buzz-mcp/tools";
@@ -2127,4 +2131,39 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     ],
     expect.anything(),
   );
+});
+
+it("retires a queued handover when its source quote becomes unavailable", async () => {
+  const thread: EventData[] = [];
+  const f = setup({ hold: true, scope: "channel", thread });
+  const owner = keypair();
+  f.agent.owner = owner.pubkey;
+  const agent = {
+    ...f.agent,
+    config: { ...DEFAULT_CONFIG, scope: "channel" },
+  } as unknown as Agent;
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.deliver(signedMessage(owner, channel, "Work", 10));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    await f.run({ ...pluginWake(), topLevel: true }, { workingUntil });
+    thread.push(
+      signedMessage(owner, channel, "Quoted brief", 20, [
+        ["q", "f".repeat(64)],
+      ]),
+    );
+    f.goose()?.turns[0]?.finish();
+    await workingUntil.mock.calls[0]?.[0];
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: channel })).toBe(
+        "idle",
+      ),
+    );
+    expect(f.goose()?.turns).toHaveLength(1);
+    expect(JSON.stringify(f.published)).toContain(
+      "A quoted message is unavailable",
+    );
+  } finally {
+    f.runtime.dispose();
+  }
 });

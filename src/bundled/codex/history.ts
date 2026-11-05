@@ -20,6 +20,7 @@ export async function conversationHistory(
   read: (filters: readonly ReadFilter[]) => Promise<readonly EventData[]>,
   profiles?: Pick<AgentReads, "profiles" | "profile" | "authorNames">,
   signingAuthority?: string,
+  owner?: string,
 ) {
   const { channelId, root } = conversation;
   const filter = {
@@ -113,10 +114,10 @@ export async function conversationHistory(
     note: "Recent context, not new requests. Previously supplied context may repeat. Up to 50 messages, 4000 characters each.",
     messages,
   });
-  const references = await quotedContext(
-    [event, ...earlier],
-    read,
+  const references = await quotedContext([event, ...earlier], read, {
+    owner,
+    profiles,
     signingAuthority,
-  );
+  });
   return `${references}<${section}>\n${text}\n</${section}>\n`;
 }

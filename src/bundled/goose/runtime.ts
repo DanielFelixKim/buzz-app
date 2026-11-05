@@ -555,10 +555,13 @@ export class GooseRuntime {
             ...(superseded ? { superseded } : {}),
           });
         })();
-        const done = handed.then(() => delivered);
+        const done = handed.then(
+          () => delivered,
+          (error) => ({ ok: false, undelivered: true, error: String(error) }),
+        );
         const policy = {
           topLevel,
-          handed,
+          handed: handed.catch(() => undefined),
           settled: Promise.all([same ? prior.settled : undefined, done]).then(
             () => entry.sessions.idle(key),
           ),
@@ -783,7 +786,7 @@ export class GooseRuntime {
                 AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
               )
           : undefined,
-        signingAuthority,
+        { owner, profiles: reads, signingAuthority },
       ),
     ]);
     return {

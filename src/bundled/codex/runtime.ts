@@ -1905,6 +1905,7 @@ export class CodexRuntime {
         starting ? Promise.resolve([]) : reads.read(filters, signal),
       reads,
       reads.workflowAuthority(),
+      request.agent.owner,
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
