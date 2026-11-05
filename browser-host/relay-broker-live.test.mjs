@@ -806,7 +806,8 @@ test("channel recovery under broker backpressure invalidates owner activity typi
             JSON.stringify({
               kind: "turn_liveness",
               channelId: "a",
-              turnId: "typing-turn",
+              // A later heartbeat of the same turn replaces the earlier record.
+              turnId: `typing-turn-${seq}`,
               seq,
               timestamp: new Date().toISOString(),
             }),
