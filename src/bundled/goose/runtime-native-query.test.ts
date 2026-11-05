@@ -265,8 +265,10 @@ async function setup() {
   };
 }
 
-it("delivers verified original/root/reply records through the bundled added tool", async () => {
+it("re-verifies original/root/reply despite caller-cached false proofs", async () => {
   const f = await setup();
+  const cached = wire().map((event) => ({ ...event, [verifiedSymbol]: false }));
+  f.source.query = async () => cached;
   expect(await f.call()).toMatchObject({
     result: { content: [{ text: "accepted" }] },
   });
@@ -275,6 +277,7 @@ it("delivers verified original/root/reply records through the bundled added tool
     expect(effect).toHaveBeenCalledOnce();
   expect(f.observed.events.map((e) => e.id)).toEqual([root.id, reply.id]);
   conform(f.observed.events);
+  for (const event of cached) expect(event[verifiedSymbol]).toBe(false);
   expect(invoke).toHaveBeenCalledWith("app_agent_query", {
     pubkey: bot,
     relay: "wss://relay.example.test",
@@ -291,8 +294,8 @@ const invalid = [
   ["nonarray", { events: [root] }],
   ["mixed valid/invalid", [root, { ...reply, content: "changed" }]],
   [
-    "cached dependency proof",
-    [{ ...root, content: "changed", [verifiedSymbol]: true }],
+    "forged signature despite caller-cached true proof",
+    [{ ...root, sig: "0".repeat(128), [verifiedSymbol]: true }],
   ],
 ] as const;
 it.each(invalid)(
@@ -362,8 +365,18 @@ it.each(["query", "media"] as const)(
       await started.promise;
       try {
         if (change === "session") f.relay.connect(true);
-        if (change === "generation") f.relay.reconnecting();
-        if (change === "viewer") f.relay.signIn("b".repeat(64));
+        if (change === "generation" || change === "viewer") {
+          const current = f.relay.relay.snapshot();
+          if (current.status !== "ready")
+            throw new Error("Expected ready relay");
+          // Change only this binding: no status/session guard may mask it.
+          vi.spyOn(f.relay.relay, "snapshot").mockReturnValue({
+            ...current,
+            ...(change === "generation"
+              ? { generation: current.generation + 1 }
+              : { viewer: "b".repeat(64) }),
+          });
+        }
         if (change === "owner") f.changeOwner();
         if (change === "revision") f.revise();
         if (change === "dispose") await f.tool.dispose();
