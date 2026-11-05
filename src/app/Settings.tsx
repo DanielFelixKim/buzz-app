@@ -1350,6 +1350,7 @@ export function Settings({
             viewer={client.viewer}
             identity={identity}
             federatedIdentity={federatedIdentity}
+            memberships={client.memberships}
             builderlabIdentity={builderlabIdentity}
             lastActive={lastActive}
           />
