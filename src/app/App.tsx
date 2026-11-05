@@ -28,6 +28,7 @@ import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthoriz
 import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
+import { DeleteReview } from "../bundled/agents/DeleteReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
   useEffect,
@@ -678,6 +679,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           <MediaMenuDownloadNotice />
           <CreationReview agents={services.agents} />
           <UpdateReview agents={services.agents} />
+          <DeleteReview agents={services.agents} />
           {!settings && startup === "recovery" ? (
             <RecoveryScreen plugins={plugins} />
           ) : !settings &&

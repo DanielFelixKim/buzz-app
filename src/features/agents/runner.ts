@@ -10,6 +10,7 @@ import type {
   AgentAttention,
   AgentHandle,
   AgentCreationInput,
+  AgentDeleteInput,
   AgentUpdateInput,
   AgentHandoff,
   RegisteredAgentType,
@@ -479,6 +480,10 @@ export type RunnerHost = {
   updateAgent(
     agent: Agent,
     input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  deleteAgent(
+    agent: Agent,
+    input: AgentDeleteInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins as the agent's handle offers them. */
   plugins?(agent: Agent): AgentHandle["plugins"];
@@ -2759,6 +2764,10 @@ export class AgentRunners {
         updateAgent: async (input: AgentUpdateInput) => {
           lifetime.throwIfAborted();
           return this.host.updateAgent(agent, input);
+        },
+        deleteAgent: async (input: AgentDeleteInput) => {
+          lifetime.throwIfAborted();
+          return this.host.deleteAgent(agent, input);
         },
         // Only a run hands off or manages plugins: through `Agents.handle` a
         // plugin's call would read as the agent's own.

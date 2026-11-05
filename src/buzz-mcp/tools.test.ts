@@ -4039,6 +4039,30 @@ it("uploads a proposed picture as the agent once its draft is valid", async () =
   });
 });
 
+it("validates deletion requests and passes only the target", async () => {
+  const { client } = fake([]);
+  await expect(
+    callTool(client, {}, "agent_delete", { agent: "Child" }),
+  ).rejects.toThrow("unavailable");
+  client.deleteAgent = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  for (const args of [{}, { agent: " " }, { agent: 1 }])
+    await expect(callTool(client, {}, "agent_delete", args)).rejects.toThrow(
+      "required",
+    );
+  expect(client.deleteAgent).not.toHaveBeenCalled();
+  expect(
+    JSON.parse(
+      (await callTool(client, {}, "agent_delete", {
+        agent: " Child ",
+      })) as string,
+    ),
+  ).toEqual({ requestId: "draft", saved: false });
+  expect(client.deleteAgent).toHaveBeenCalledWith({ agent: "Child" });
+});
+
 it("nests a reply under a message inside a thread, naming the root and the parent", async () => {
   const { client, published } = fake([
     ...community,

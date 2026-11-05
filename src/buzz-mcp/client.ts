@@ -110,6 +110,9 @@ export interface BuzzClient {
   /** This device's plugins, where the host has them: read directly, changed
    * by owner-confirmed request. */
   plugins?: AgentPlugins;
+  deleteAgent?(
+    input: Readonly<{ agent: string }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Wakes the agent in another of its conversations here, `from` this one. */
   handoff?(
     handoff: Readonly<{

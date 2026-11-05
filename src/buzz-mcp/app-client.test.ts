@@ -374,3 +374,23 @@ it("offers the handle's settings, checking the turn before each call", () => {
   expect(settings.list).not.toHaveBeenCalled();
   expect(settings.get).not.toHaveBeenCalled();
 });
+
+it("refuses a deletion request after the calling turn ends and surfaces host failures", async () => {
+  const deleteAgent = vi.fn(async () => {
+    throw new Error("Several agents have that name; use its pubkey");
+  });
+  const controller = new AbortController();
+  const client = appClient({ deleteAgent } as unknown as AgentHandle, {
+    read: vi.fn(),
+    signal: controller.signal,
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  await expect(client.deleteAgent?.({ agent: "Child" })).rejects.toThrow(
+    "use its pubkey",
+  );
+  controller.abort(new Error("Turn ended"));
+  await expect(client.deleteAgent?.({ agent: "Child" })).rejects.toThrow(
+    "Turn ended",
+  );
+  expect(deleteAgent).toHaveBeenCalledOnce();
+});

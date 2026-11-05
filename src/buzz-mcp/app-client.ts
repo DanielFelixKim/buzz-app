@@ -199,6 +199,12 @@ export function appClient(
         throw new Error("Agent changes are unavailable on this host");
       return agent.updateAgent(input);
     },
+    deleteAgent: async (input) => {
+      check();
+      if (!agent.deleteAgent)
+        throw new Error("Agent deletion is unavailable on this host");
+      return agent.deleteAgent(input);
+    },
     ...(plugins && {
       plugins: {
         list: () => {

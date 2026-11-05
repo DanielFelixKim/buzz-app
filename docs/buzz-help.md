@@ -399,6 +399,11 @@ available rather than silently discarding it.
   the model clears the thinking choice. Instructions are optional. **Create agent**
   stays disabled until its name and required choices are complete; Builderlab
   also waits for sign-in and its model catalog.
+- An agent can ask its owner to delete one of the owner's agents. Buzz shows
+  the owner a confirmation that names the agent, and nothing is deleted unless
+  the owner chooses **Delete**. Deleting stops the agent, removes it from its
+  channels and archives it, then erases its key from this device. It can't be
+  undone. An agent that has no confirmation to show has not been deleted.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
