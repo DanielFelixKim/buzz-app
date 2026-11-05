@@ -52,6 +52,7 @@ import {
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
+import { ModelProxyRecovery } from "./ModelProxyRecovery";
 import { PluginImport } from "./PluginImport";
 import { AgentPluginRequests } from "./AgentPluginRequests";
 import { ManagedPluginUpdate, ManagedPlugins } from "./ManagedPlugins";
@@ -498,6 +499,12 @@ function PluginDetails({
           </span>
         )}
       </div>
+      {!!plugin.manifest.host?.modelProxies?.length && (
+        <ModelProxyRecovery
+          key={plugin.manifest.id}
+          plugin={plugin.manifest.id}
+        />
+      )}
       {plugin.source === "external" && plugins.imports && managed && (
         <ManagedPluginUpdate
           plugins={plugins}

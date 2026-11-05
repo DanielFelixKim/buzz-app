@@ -1593,3 +1593,34 @@ it("preserves requestOnce owner-first errors and matches upload owner wording", 
   ).rejects.toThrow(ownerError);
   expect(invoke).not.toHaveBeenCalled();
 });
+
+it("passes safe plugin failure attribution to the native proxy reply", async () => {
+  const { ModelProxyFailure } = await import("../agents/model-proxy");
+  const { plugin, root } = pluginContext();
+  let channel: { onmessage(event: unknown): void } | undefined;
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "plugin_model_proxy_serve") {
+      channel = (args as { onEvent: typeof channel }).onEvent;
+      return { handle: 42, url: "http://127.0.0.1/private" };
+    }
+  });
+  await plugin.host.serveModelProxy?.("anthropic", async () => {
+    throw new ModelProxyFailure("callback_failed", "trimmer");
+  });
+  channel?.onmessage({
+    type: "request",
+    request: 1,
+    path: "/messages",
+    body: "secret",
+  });
+  await vi.waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("plugin_model_proxy_reply", {
+      id: "example.plugin",
+      handle: 42,
+      request: 1,
+      body: null,
+      failure: { code: "callback_failed", plugin: "trimmer" },
+    }),
+  );
+  await root.fiber.dispose();
+});

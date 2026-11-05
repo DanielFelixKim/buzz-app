@@ -1,3 +1,4 @@
+import { ModelProxyFailure } from "../agents/model-proxy";
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type {} from "../../plugins/api";
@@ -490,16 +491,22 @@ export class HostService extends Service implements Host {
       if (event.type !== "request") return;
       void (async () => {
         let body: string | null = null;
+        let failure: { code: string; plugin: string | null } | null = null;
         try {
           body = await handler({ path: event.path, body: event.body });
-        } catch {
-          console.warn("Model proxy callback failed", owner.id);
+        } catch (error) {
+          failure =
+            error instanceof ModelProxyFailure
+              ? { code: error.code, plugin: error.pluginId }
+              : { code: "callback_failed", plugin: null };
+          console.warn("Buzz model proxy callback failed", failure);
         }
         await invoke("plugin_model_proxy_reply", {
           id: owner.id,
           handle,
           request: event.request,
           body,
+          failure,
         }).catch(() => {});
       })();
     });

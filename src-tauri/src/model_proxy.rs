@@ -11,7 +11,7 @@ use hyper::{
     Request, Response, StatusCode,
 };
 use hyper_util::rt::{TokioIo, TokioTimer};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     convert::Infallible,
@@ -26,6 +26,42 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const LIMIT: usize = 64 * 1024 * 1024;
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CallbackCode {
+    CallbackFailed,
+    CallbackTimeout,
+    InvalidBody,
+}
+#[derive(Deserialize)]
+pub(crate) struct CallbackFailure {
+    code: CallbackCode,
+    plugin: Option<String>,
+}
+#[derive(Debug)]
+struct Failure {
+    status: StatusCode,
+    code: &'static str,
+    plugin: Option<String>,
+}
+impl From<StatusCode> for Failure {
+    fn from(status: StatusCode) -> Self {
+        Self {
+            status,
+            code: "request_rejected",
+            plugin: None,
+        }
+    }
+}
+impl Failure {
+    fn gateway(code: &'static str) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            code,
+            plugin: None,
+        }
+    }
+}
 type Body = UnsyncBoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -46,7 +82,7 @@ pub(crate) struct Info {
 #[derive(Default)]
 struct Pending {
     next: u64,
-    replies: HashMap<u64, oneshot::Sender<Result<String, String>>>,
+    replies: HashMap<u64, oneshot::Sender<Result<String, Failure>>>,
 }
 struct Shared {
     authority: String,
@@ -183,13 +219,43 @@ async fn accept(listener: std::net::TcpListener, shared: Arc<Shared>) {
         });
     }
 }
-fn failure(status: StatusCode) -> Response<Body> {
+fn failure(error: Failure) -> Response<Body> {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let plugin = error.plugin.as_deref().unwrap_or("unknown");
+    let message = if error.code.starts_with("plugin_") {
+        format!(
+            "Buzz plugin model proxy failed: {} (plugin: {plugin}; diagnostic: {request_id})",
+            error.code
+        )
+    } else {
+        format!(
+            "Buzz model gateway failed: {} (diagnostic: {request_id})",
+            error.code
+        )
+    };
+    let body = serde_json::json!({
+        "type": "error",
+        "error": { "type": "api_error", "code": error.code, "message": message },
+        "request_id": request_id,
+    })
+    .to_string();
+    eprintln!(
+        "buzz_model_proxy_failure code={} diagnostic={} plugin={:?} status={}",
+        error.code,
+        request_id,
+        error.plugin,
+        error.status.as_u16()
+    );
     let mut response = Response::new(
-        Full::new(Bytes::new())
+        Full::new(Bytes::from(body))
             .map_err(|never| match never {})
             .boxed_unsync(),
     );
-    *response.status_mut() = status;
+    *response.status_mut() = error.status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/json"),
+    );
     response
 }
 fn hop(name: &header::HeaderName, headers: &header::HeaderMap) -> bool {
@@ -215,10 +281,10 @@ fn hop(name: &header::HeaderName, headers: &header::HeaderMap) -> bool {
 async fn answer(shared: &Shared, request: Request<Incoming>) -> Result<Response<Body>, Infallible> {
     Ok(match forward(shared, request).await {
         Ok(response) => response,
-        Err(status) => failure(status),
+        Err(error) => failure(error),
     })
 }
-async fn transform(shared: &Shared, path: String, body: String) -> Result<String, StatusCode> {
+async fn transform(shared: &Shared, path: String, body: String) -> Result<String, Failure> {
     struct Waiting<'a>(&'a Shared, u64);
     impl Drop for Waiting<'_> {
         fn drop(&mut self) {
@@ -241,16 +307,20 @@ async fn transform(shared: &Shared, path: String, body: String) -> Result<String
             path,
             body,
         })
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        .map_err(|_| Failure {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "plugin_callback_closed",
+            plugin: None,
+        })?;
     match tokio::time::timeout(Duration::from_secs(30), rx).await {
         Ok(Ok(Ok(body))) if body.len() <= LIMIT => Ok(body),
-        _ => Err(StatusCode::BAD_GATEWAY),
+        Ok(Ok(Ok(_))) => Err(Failure::gateway("plugin_output_too_large")),
+        Ok(Ok(Err(error))) => Err(error),
+        Ok(Err(_)) => Err(Failure::gateway("plugin_callback_closed")),
+        Err(_) => Err(Failure::gateway("plugin_callback_timeout")),
     }
 }
-async fn forward(
-    shared: &Shared,
-    request: Request<Incoming>,
-) -> Result<Response<Body>, StatusCode> {
+async fn forward(shared: &Shared, request: Request<Incoming>) -> Result<Response<Body>, Failure> {
     if request
         .headers()
         .get(header::HOST)
@@ -258,7 +328,7 @@ async fn forward(
         != Some(&shared.authority)
         || request.headers().contains_key(header::ORIGIN)
     {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(StatusCode::NOT_FOUND.into());
     }
     let path = request
         .uri()
@@ -274,7 +344,7 @@ async fn forward(
         *request.method(),
         hyper::Method::POST | hyper::Method::GET | hyper::Method::HEAD
     ) {
-        return Err(StatusCode::METHOD_NOT_ALLOWED);
+        return Err(StatusCode::METHOD_NOT_ALLOWED.into());
     }
     let (parts, incoming) = request.into_parts();
     let body = tokio::time::timeout(
@@ -316,8 +386,14 @@ async fn forward(
             outbound = outbound.header(name, value);
         }
     }
-    let upstream = outbound.send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let upstream = outbound
+        .send()
+        .await
+        .map_err(|_| Failure::gateway("upstream_transport_failed"))?;
     let status = upstream.status();
+    if status.is_client_error() || status.is_server_error() {
+        eprintln!("buzz_model_proxy_upstream status={}", status.as_u16());
+    }
     let headers = upstream.headers().clone();
     let stream = upstream
         .bytes_stream()
@@ -370,17 +446,33 @@ pub(crate) fn plugin_model_proxy_reply(
     handle: u64,
     request: u64,
     body: Option<String>,
+    failure: Option<CallbackFailure>,
 ) -> Result<(), String> {
-    if body.as_ref().is_some_and(|v| v.len() > LIMIT) {
-        return Err("Model request is too large".into());
-    }
     let shared = servers.owned(&id, handle)?;
     let tx = shared
         .pending()
         .replies
         .remove(&request)
         .ok_or("Request is no longer waiting")?;
-    tx.send(body.ok_or_else(|| "Model proxy callback failed".into()))
+    let result = if body.as_ref().is_some_and(|v| v.len() > LIMIT) {
+        Err(Failure::gateway("plugin_output_too_large"))
+    } else {
+        body.ok_or_else(|| {
+            let mut error = Failure::gateway(match failure.as_ref().map(|v| &v.code) {
+                Some(CallbackCode::CallbackTimeout) => "plugin_callback_timeout",
+                Some(CallbackCode::InvalidBody) => "plugin_invalid_body",
+                _ => "plugin_callback_failed",
+            });
+            error.plugin = failure.and_then(|v| v.plugin).filter(|id| {
+                id.len() <= 256
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._-/".contains(&b))
+            });
+            error
+        })
+    };
+    tx.send(result)
         .map_err(|_| "Request is no longer waiting".into())
 }
 #[tauri::command]
@@ -544,12 +636,23 @@ mod tests {
             .replies
             .remove(&event["request"].as_u64().unwrap())
             .unwrap()
-            .send(Err("failed".into()))
+            .send(Err(Failure::gateway("plugin_callback_failed")))
             .unwrap();
+        let response = call.await.unwrap().unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("plugin_callback_failed"), "{body}");
         assert_eq!(
-            call.await.unwrap().unwrap().status(),
-            StatusCode::BAD_GATEWAY
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["error"]["code"],
+            "plugin_callback_failed"
         );
+        let response = client.get(&url).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert!(response
+            .text()
+            .await
+            .unwrap()
+            .contains("upstream_transport_failed"));
         assert!(servers.owned("other", info.handle).is_err());
         servers.stop_all();
         assert!(servers

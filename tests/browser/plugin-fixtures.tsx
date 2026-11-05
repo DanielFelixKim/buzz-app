@@ -138,6 +138,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
       id: "fixture.provider",
       name: "Provider fixture",
       apiVersion: 1,
+      host: { modelProxies: ["buzz.claude-code/claude-code"] },
     },
     enabledByDefault: false,
     module: {
