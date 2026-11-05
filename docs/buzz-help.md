@@ -818,7 +818,9 @@ available rather than silently discarding it.
   help triage notifications, including those from private channels and DMs. It
   does not join those conversations, grant their history, or allow replies there.
   It starts on when you make a local agent Bestie on this device; an existing
-  Bestie's choice stays as it is. Private-channel rows let you remove Bestie,
+  Bestie's choice stays as it is. Reads are allowed
+  only in an explicitly private DM or Solo chat containing just you and Bestie.
+  Private-channel rows let you remove Bestie,
   add it to one channel, or add it to all your currently eligible private
   channels—not future ones. Added here, it joins as a guest and cannot post;
   existing participants keep their roles. A channel owner or admin can change
@@ -827,8 +829,9 @@ available rather than silently discarding it.
   and removing channel membership does not turn off Inbox access.
   If Inbox cannot finish checking notification updates, the tool asks you to
   retry instead of returning an empty or partial Inbox. Inbox access does not
-  add message approval before Bestie posts. Its instructions say to keep Inbox
-  content private to you; this is not a technical guarantee against disclosure.
+  add message approval before Bestie posts. Private read access is enforced;
+  its instructions also say to keep Inbox content private to you. That is not a
+  technical guarantee against later disclosure or retention in session history.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

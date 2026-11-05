@@ -141,7 +141,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "inbox",
-    "Read your owner's current Inbox when they allowed their Bestie to do so. Read-only; it does not grant access to the conversations behind items.",
+    "Read your owner's Inbox when enabled, only in a verified private DM or Solo chat containing just you and your owner. Read-only; grants no access to the conversations behind items.",
     {},
     [],
     { readOnlyHint: true },
@@ -483,12 +483,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async buzz_help() {
     return buzzHelp.trim();
   },
-  async inbox({ client }) {
+  async inbox({ client, context }) {
     if (!client.inbox)
       throw new Error(
         "Your owner has not allowed Inbox access for this Bestie.",
       );
-    const { items } = await client.inbox();
+    const { items } = await client.inbox(context);
     return JSON.stringify(
       items.map((item) => ({
         id: item.id,

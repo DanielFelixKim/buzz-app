@@ -93,9 +93,9 @@ list uses InlineHeader. This sits separately from the Behavior controls,
 Remembers you and Checks in. Changing one access path does not
 change the other.
 
-**Inbox** is on by default for a Bestie made on this
-device. It adds an instruction section and makes the read-only `inbox` tool
-available only while that exact agent remains the owner’s account-saved Bestie.
+**Inbox** is on by default for a Bestie made on this device. It adds an
+instruction section and makes the read-only `inbox` tool available
+only to runs while that exact agent remains the owner’s account-saved Bestie.
 The tool reads the owner’s bounded Inbox projection, which can include private
 DM and private-channel notifications; it does not add Bestie to any of those
 conversations, let it read their history, or let it reply. Turning the switch
@@ -110,13 +110,19 @@ read errors through the existing channel and unread owners. Pending results are 
 or its type is replaced, and permission and account Bestie choice are checked
 again before release. Previously returned content cannot be retracted.
 
-The instructions say to read Inbox only in a private conversation with the owner
-and never copy its content to memory or disclose it elsewhere. Those are prompt
-rules, not an enforced conversation or output boundary. Inbox adds no posting
+Inbox receives trusted runtime conversation context, not a model-supplied channel.
+Before loading notifications and before release, fresh strong relay reads must
+confirm explicitly private DM or Solo metadata and a roster containing exactly the
+owner and Bestie. Missing, group/public, ambiguous or unavailable evidence denies
+access; newer observed membership/privacy changes also deny. Outside-run plugin
+handles and command connections do not expose Inbox. These bounded checks are not
+an atomic relay transaction.
+
+The instructions also prohibit copying Inbox content to memory or disclosing it
+elsewhere. Those remain prompt rules, not output confinement. Inbox adds no posting
 approval workflow. Ordinary session Interrupt is not uniformly a cancellation
 boundary for pending tool responses across harnesses; runner retirement/retype
-is. Enforced owner-only conversation access, a separate Inbox opt-in, and
-preview-and-approve for outward messages remain team discussion items.
+is. Preview-and-approve for outward messages remains a team discussion item.
 
 **Private channels** lists the private channels you share with
 Bestie, each with **Remove**, which asks first, as the Members dialog does.

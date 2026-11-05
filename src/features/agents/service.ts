@@ -1,3 +1,8 @@
+import type { Context as ToolContext } from "../../buzz-mcp/client";
+import {
+  checkInboxConversation,
+  privateInboxConversation,
+} from "./inbox-conversation";
 import { hasFeature } from "./bestie-features";
 import { followUpQueue } from "../messages/follow-up-queue";
 import type {} from "../navigation/service";
@@ -523,7 +528,9 @@ export type AgentHandle = Readonly<{
     after: number,
   ): Promise<RelayEvent>;
   /** The owner's bounded Inbox only when it is delegated to this Bestie. */
-  inbox?(): Promise<Readonly<{ items: readonly InboxItem[] }>>;
+  inbox?(
+    context: ToolContext,
+  ): Promise<Readonly<{ items: readonly InboxItem[] }>>;
   /** The owner's channel templates on this device, each with the agents it
    * adds that are the owner's agents in this agent's community. */
   templates(): readonly Readonly<{
@@ -2145,7 +2152,8 @@ export class AgentsService extends Service implements Agents {
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
-      inbox: async (agent) => {
+      inbox: async (agent, context) => {
+        const channel = context?.channel;
         const relay = this.relay(agent.key);
         const snapshot = relay?.snapshot();
         const session = snapshot?.session;
@@ -2169,6 +2177,18 @@ export class AgentsService extends Service implements Agents {
           !enabled(current())
         )
           throw new Error("Inbox access is unavailable");
+        const channels = session.channels.list();
+        if (channels.status !== "ready" || channels.coverage === "partial") {
+          if (channels.coverage === "partial") session.channels.refreshList?.();
+          else session.channels.ensureList();
+          throw new Error("Inbox is not ready. Please retry.");
+        }
+        await checkInboxConversation(
+          session,
+          channel,
+          agent.owner,
+          agent.pubkey,
+        );
         // Account state is authoritative: an agent that ceased to be Bestie
         // loses access immediately, even if its old instructions remain.
         if (
@@ -2178,9 +2198,23 @@ export class AgentsService extends Service implements Agents {
           throw new Error(
             "Your owner has not allowed Inbox access for this Bestie.",
           );
-        const channels = session.channels.list();
-        if (channels.status !== "ready" || channels.coverage === "partial") {
-          if (channels.coverage === "partial") session.channels.refreshList?.();
+        const active = relay.snapshot();
+        if (
+          active.status !== "ready" ||
+          active.viewer !== agent.owner ||
+          active.session !== session ||
+          !enabled(current()) ||
+          !channel ||
+          !privateInboxConversation(session, channel, agent.owner, agent.pubkey)
+        )
+          throw new Error("Inbox access is unavailable");
+        const discovered = session.channels.list();
+        if (
+          discovered.status !== "ready" ||
+          discovered.coverage === "partial"
+        ) {
+          if (discovered.coverage === "partial")
+            session.channels.refreshList?.();
           else session.channels.ensureList();
           throw new Error("Inbox is not ready. Please retry.");
         }
@@ -2199,6 +2233,12 @@ export class AgentsService extends Service implements Agents {
             ? session.inboxFeed.refresh()
             : session.inboxFeed.ensure(),
         ]);
+        await checkInboxConversation(
+          session,
+          channel,
+          agent.owner,
+          agent.pubkey,
+        );
         if (
           (await session.mainAgent.read()) !== agent.pubkey ||
           !enabled(current())
@@ -2216,6 +2256,14 @@ export class AgentsService extends Service implements Agents {
         // Local-only hosts have no remote markers to refresh after a live gap.
         // Their storage errors still block release, as do all remote sync gaps.
         if (
+          !enabled(current()) ||
+          !channel ||
+          !privateInboxConversation(
+            session,
+            channel,
+            agent.owner,
+            agent.pubkey,
+          ) ||
           live.status !== "ready" ||
           live.viewer !== agent.owner ||
           live.session !== session ||

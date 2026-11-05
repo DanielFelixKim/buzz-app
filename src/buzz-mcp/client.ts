@@ -315,7 +315,7 @@ export interface BuzzClient {
    * a `null` body deletes it. */
   remember(slug: string, body: string | null, after: number): Promise<void>;
   /** The owner's Inbox, only when the current Bestie has delegated access. */
-  inbox?(): Promise<Inbox>;
+  inbox?(context: Context): Promise<Inbox>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
   /** The agent's attention, where its host keeps one. Without it the

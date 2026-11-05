@@ -216,7 +216,11 @@ it("lists only the owner-delegated Inbox projection", async () => {
       },
     ],
   }));
-  const listed = await callTool(client, {}, "inbox", {});
+  const context = { channel: "owner-dm", wholeChannel: true };
+  const listed = await callTool(client, context, "inbox", {
+    channel: "forged-public-channel",
+  });
+  expect(client.inbox).toHaveBeenCalledExactlyOnceWith(context);
   expect(JSON.parse(listed as string)).toEqual([
     expect.objectContaining({
       author: alice,

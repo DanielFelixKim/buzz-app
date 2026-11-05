@@ -110,32 +110,42 @@ results as it does other Buzz tools. See
 
 ## Bestie Inbox access
 
-The optional `AgentHandle.inbox` delegates the owner's bounded notification
-projection to the account's current local Bestie. The service verifies the owner
-session, strongly reads the account choice, and checks the saved Inbox feature
-before and after loading. Settings and authorization share the marked-section
-policy in `bestie-features.ts`: incomplete or damaged markers deny access; edits
-inside complete sections remain enabled. This is not separate per-use consent.
+The optional run-only `AgentHandle.inbox(context)` delegates the owner's bounded
+notification projection to the account's current local Bestie. Settings and
+authorization share the marked-section policy in
+`bestie-features.ts`: incomplete or damaged markers deny access; edits inside
+complete sections remain enabled. This is not separate per-use consent.
 
-The service first requires a ready, complete channel discovery snapshot and checks
-it again before release. While discovery is pending, failed or partial, a call starts
-or retries the existing discovery read and returns a retryable error without reading
-notifications. The service releases items only from observed, ready unread evidence
-and a ready Inbox feed with no unresolved edit/deletion targets. Any stale, error, loading or
-retired snapshot returns a retryable error, never a successful partial/empty list.
-Read-marker synchronization must also be healthy: loading, failed or stale remote
-sync withholds results even when notification evidence is observed. The next call retries
-failed/stale marker reads through the existing unread owner. Valid local-only and
-pending publication states remain usable; remote reconciliation is not required on
-every host. The next call also retries notification read errors. The captured runner lifetime is checked
-again after the read, so retirement or retype cannot release a late result. The
-shared MCP client also checks a supplied cancellation signal before and after the
-read; ordinary Interrupt does not supply a per-turn fence in every harness.
+The tool passes the runtime's conversation context separately from model
+arguments. Before reading notifications and again before release, the service
+freshly reads exact relay-authored metadata and membership with strong consistency.
+Only an explicitly private DM or private Solo chat containing exactly the owner
+and Bestie qualifies. Missing context, ordinary channels, public/group contexts,
+and unavailable or ambiguous evidence deny access. A newer observed membership or
+privacy change beats an older allowed response. Each phase also strongly reads
+the account choice, then rechecks the saved feature and current owner session.
+Outside-run plugin handles and standalone command connections have no Inbox
+capability. These checks are bounded evidence, not an atomic relay transaction.
 
-Inbox grants no channel membership, history access or posting rights. Owner-private
-use and non-disclosure remain prompt rules, not tool-enforced context or output
-confinement. Already returned tool data can remain in harness history. No posting
-preview/approval workflow or default-state change is part of these safeguards.
+The service requires a ready, complete channel discovery snapshot before loading
+notifications and checks it again before release. While discovery is pending,
+failed or partial, a call starts or retries the existing discovery read and returns
+a retryable error without reading notifications. Items require observed, ready
+unread evidence and a ready Inbox feed with no unresolved edit/deletion targets.
+Stale, failed, loading or retired evidence returns a retryable error, never a
+successful partial/empty list. Loading, failed or stale remote read-marker sync
+also withholds results. The next call retries failed/stale remote marker reads and
+notification read errors through the existing owners. Valid local-only and pending
+publication states remain usable; remote reconciliation is not required on every
+host. The captured runner lifetime is checked after the read, so retirement or
+retype cannot release a late result. The MCP client also checks a supplied
+cancellation signal before and after the read; ordinary Interrupt does not supply
+a per-turn fence in every harness.
+
+Inbox grants no channel membership, history access or posting rights. Read-context
+eligibility is enforced; non-disclosure elsewhere and not copying Inbox content to
+memory remain prompt rules, not output confinement. Already returned tool data can
+remain in harness history. No posting preview/approval workflow is added.
 
 ## External app authorization
 

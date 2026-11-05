@@ -201,7 +201,9 @@ it("withholds an Inbox result when the owning turn ends during the read", async 
     memories: async () => ({ entries: [], partial: false }),
     signal: controller.signal,
   });
-  const result = client.inbox?.();
+  const context = { channel: "owner-dm" };
+  const result = client.inbox?.(context);
+  expect(inbox).toHaveBeenCalledWith(context);
   expect(inbox).toHaveBeenCalledOnce();
   controller.abort(new Error("Owning turn ended"));
   pending.resolve({ items: [] });
