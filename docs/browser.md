@@ -123,7 +123,10 @@ The [Browser plugin](https://github.com/squareup/buzz-plugin-browser) owns the a
 |---|---|
 | `observe` | `scope`, optional: `page` (default) or `viewport` |
 | `click` | `ref` |
-| `fill` | `ref`, `text` |
+| `fill` | `ref`, `text`, `submit`, optional (default false) |
+| `select` | `ref`, `value` (1 to 1,024 UTF-8 bytes) |
+| `press` | `key`: `Enter`, `Tab`, `Escape`, `Backspace`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `PageUp`, `PageDown`, `Home` or `End` |
+| `scroll` | exactly one of `direction` (`up` or `down`) and `ref` |
 | `navigate` | `url` |
 | `back`, `forward`, `reload` | none |
 | `wait` | `for`: `"load"` or `{ref}`, and `timeout_ms`, optional: an integer from 0 to 10,000 (default 5,000) |
@@ -144,6 +147,29 @@ A ref is `r<revision>e<n>`. It names one element until the guest commits a new d
 Page script builds `text` and `elements`, so native code parses that part into fixed types and checks every limit again. A reply that breaks a limit fails with `unavailable`. Every reply, `stale_ref` messages included, is at most 128 KiB.
 
 `click` and `fill` check, in order: visibility, disabled state (`:disabled` or an `aria-disabled="true"` ancestor), element kind, and read-only state. A hidden element fails with `not_interactable` before its kind is checked. `fill` takes text, search, email, URL, telephone and number inputs and textareas. It fails with `unsupported_input` on passwords, file inputs, contenteditable elements, other input types, and fields that change the text, such as letters in a number input. `click` fails with `unsupported_input` on a file input and with `not_interactable` on an option.
+
+### Forms, keys and scrolling
+
+`click`, `fill` and `select` focus their element first.
+
+`select` works on a native `<select>` only, and fails with `unsupported_input` on anything else. It takes the first option whose value equals `value`, then the first whose trimmed label does. No match fails with `invalid_request`. A disabled match, including an option in a disabled `<optgroup>`, fails with `not_interactable` and leaves the selection unchanged. Native code does not look past it for another option. Otherwise the option is selected, the only one in a multiple select, and the select gets bubbling `input` and `change` events.
+
+`press` sends `keydown`, then `keypress` for Enter only, then `keyup` to the focused element. WebKit runs no default action for script events, so two keys get emulated ones, unless the page cancels `keydown` or `keypress`:
+
+- Tab moves focus to the next element in tab order.
+- Enter on a button or a link calls `click()`.
+- Enter on a text, search, email, URL, telephone or number input runs implicit submission for its form owner, in these steps from the HTML standard:
+  1. Find the default button: the first submit button in tree order whose form owner is the form. A submit button is a `<button>` of type `submit`, or an input of type `submit` or `image`.
+  2. When the default button is disabled, stop. A later enabled button is not used.
+  3. When the default button is enabled, call `click()` on it. Its `click` handlers, `formaction`, `formmethod` and `formnovalidate` apply, and it is the `submit` event's `submitter`.
+  4. When the form has no submit button, count its inputs of type text, search, tel, url, email, password, date, month, week, time, datetime-local and number. With more than one, stop.
+  5. With one, call `form.requestSubmit()`.
+
+Enter anywhere else, and every other key, sends events only. So Enter on a `<select>` or a `<textarea>` does not submit a form unless the page's own handler does, and `PageDown` does not scroll.
+
+`fill` with `submit: true` fills the field, then sends Enter in a second script evaluation. Page microtasks from the `input` event, such as one that enables the submit button, run in between. Native code checks the grant again before the second evaluation. The Enter step runs only when the document still holds the filled ref. After a new document committed in between, it sends nothing, and the Snapshot shows the new document. When the Enter step fails, the new value stays in the field. When the `input` event started a navigation that has not committed yet, WebKit can drop the form submission; the Snapshot then shows the page that load reaches.
+
+`scroll` with `direction` scrolls the nearest scrollable ancestor of the element at the viewport center, or the document when there is none, by that container's height. `scroll` with `ref` scrolls the element to the middle of the viewport and fails only when the element is not visible. Both scroll at once, even on pages that ask for smooth scrolling. A container at its end does not move.
 
 ### Settle, history and wait
 

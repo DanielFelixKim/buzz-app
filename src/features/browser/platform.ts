@@ -91,7 +91,26 @@ export type BrowserControlRequest =
   | { action: "observe"; scope?: "page" | "viewport" }
   | { action: "navigate"; url: string }
   | { action: "click"; ref: string }
-  | { action: "fill"; ref: string; text: string }
+  | { action: "fill"; ref: string; text: string; submit?: boolean }
+  | { action: "select"; ref: string; value: string }
+  | {
+      action: "press";
+      key:
+        | "Enter"
+        | "Tab"
+        | "Escape"
+        | "Backspace"
+        | "ArrowUp"
+        | "ArrowDown"
+        | "ArrowLeft"
+        | "ArrowRight"
+        | "PageUp"
+        | "PageDown"
+        | "Home"
+        | "End";
+    }
+  | { action: "scroll"; direction: "up" | "down" }
+  | { action: "scroll"; ref: string }
   | { action: "back" }
   | { action: "forward" }
   | { action: "reload" }

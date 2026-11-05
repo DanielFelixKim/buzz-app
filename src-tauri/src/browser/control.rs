@@ -20,6 +20,7 @@ const WAIT_DEFAULT_MS: u64 = 5000;
 const WAIT_MAX_MS: u64 = 10_000;
 const TOKEN_LENGTH: usize = 36;
 const TEXT_BYTES: usize = 8192;
+const VALUE_BYTES: std::ops::RangeInclusive<usize> = 1..=1024;
 const REF_REVISION_DIGITS: usize = 10;
 const REF_INDEX_DIGITS: usize = 6;
 /// Every reply, including a `stale_ref` message, fits in 128 KiB.
@@ -103,6 +104,22 @@ pub enum Request {
         #[serde(rename = "ref")]
         reference: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submit: Option<bool>,
+    },
+    Select {
+        #[serde(rename = "ref")]
+        reference: String,
+        value: String,
+    },
+    Press {
+        key: Key,
+    },
+    Scroll {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction: Option<Direction>,
+        #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
     },
     Navigate {
         url: String,
@@ -139,6 +156,30 @@ pub struct RefCondition {
     reference: String,
 }
 
+/// The keys an agent may press.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub enum Key {
+    Enter,
+    Tab,
+    Escape,
+    Backspace,
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    Up,
+    Down,
+}
+
 fn default_wait_ms() -> u64 {
     WAIT_DEFAULT_MS
 }
@@ -149,6 +190,9 @@ impl Request {
             Self::Observe { .. } => "observe",
             Self::Click { .. } => "click",
             Self::Fill { .. } => "fill",
+            Self::Select { .. } => "select",
+            Self::Press { .. } => "press",
+            Self::Scroll { .. } => "scroll",
             Self::Navigate { .. } => "navigate",
             Self::Back {} => "back",
             Self::Forward {} => "forward",
@@ -161,12 +205,19 @@ impl Request {
         match self {
             Self::Click { reference }
             | Self::Fill { reference, .. }
+            | Self::Select { reference, .. }
+            | Self::Scroll {
+                reference: Some(reference),
+                ..
+            }
             | Self::Wait {
                 condition: Condition::Ref(RefCondition { reference }),
                 ..
             } => Some(reference),
             Self::Observe { .. }
             | Self::Navigate { .. }
+            | Self::Press { .. }
+            | Self::Scroll { .. }
             | Self::Back {}
             | Self::Forward {}
             | Self::Reload {}
@@ -198,6 +249,26 @@ impl Request {
                 return Err(failure(
                     Code::InvalidRequest,
                     format!("text must be at most {TEXT_BYTES} bytes."),
+                ));
+            }
+        }
+        if let Self::Select { value, .. } = self {
+            if !VALUE_BYTES.contains(&value.len()) {
+                return Err(failure(
+                    Code::InvalidRequest,
+                    "value must be 1 to 1024 bytes.",
+                ));
+            }
+        }
+        if let Self::Scroll {
+            direction,
+            reference,
+        } = self
+        {
+            if direction.is_some() == reference.is_some() {
+                return Err(failure(
+                    Code::InvalidRequest,
+                    "scroll takes direction or ref, not both.",
                 ));
             }
         }
@@ -459,6 +530,11 @@ async fn change_page(app: &AppHandle, token: &str, request: &Request) -> Result<
             })
             .await?);
         }
+        Request::Fill {
+            reference,
+            text,
+            submit: Some(true),
+        } => return fill_and_submit(app, token, reference, text).await,
         Request::Back {} => BrowserAction::Back,
         Request::Forward {} => BrowserAction::Forward,
         Request::Reload {} => BrowserAction::Reload,
@@ -486,6 +562,36 @@ async fn act(app: &AppHandle, token: &str, request: &Request) -> Result<u64, Fai
     if !page_reply::<Done>(&reply)?.ok {
         return Err(malformed_reply());
     }
+    Ok(revision)
+}
+
+/// Fills the field, then sends Enter in a second evaluation, so page
+/// microtasks queued by the `input` event, such as one that enables the
+/// submit button, run in between. The Enter step runs only in the document
+/// the fill ran in.
+async fn fill_and_submit(
+    app: &AppHandle,
+    token: &str,
+    reference: &str,
+    text: &str,
+) -> Result<u64, Failure> {
+    let fill = Request::Fill {
+        reference: reference.to_owned(),
+        text: text.to_owned(),
+        submit: None,
+    };
+    let revision = act(app, token, &fill).await?;
+    let reply = evaluate(
+        app.clone(),
+        token.to_owned(),
+        json!({
+            "revision": revision,
+            "request": Request::Press { key: Key::Enter },
+            "fillRef": reference,
+        }),
+    )
+    .await?;
+    enter_step_skipped(&reply)?;
     Ok(revision)
 }
 
@@ -887,6 +993,20 @@ fn settle(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnterStep {
+    skipped: bool,
+}
+
+/// Whether the Enter step of `fill` with `submit` skipped a document that
+/// does not hold the filled ref. Any other reply is malformed.
+fn enter_step_skipped(reply: &str) -> Result<bool, String> {
+    serde_json::from_str::<EnterStep>(reply)
+        .map(|step| step.skipped)
+        .map_err(|_| failure(Code::Unavailable, "The page sent a malformed reply."))
+}
+
 pub fn handle(request: tauri::ipc::Invoke<tauri::Wry>) -> bool {
     let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
         browser_control_grant,
@@ -1248,5 +1368,98 @@ mod tests {
         let sent = serde_json::to_value(&request).expect("the request serializes");
 
         assert_eq!(sent["timeout_ms"], 5000);
+    }
+
+    #[test]
+    fn native_validation_rejects_form_requests_outside_their_limits() {
+        let value_at_limit = "é".repeat(512);
+        let value_over_limit = format!("{value_at_limit}x");
+        let mismatches = validation_mismatches(vec![
+            (
+                "1-byte select value",
+                r#"{"action":"select","ref":"r1e1","value":"a"}"#.into(),
+                Ok(()),
+            ),
+            (
+                "1024-byte select value",
+                json!({"action": "select", "ref": "r1e1", "value": value_at_limit}).to_string(),
+                Ok(()),
+            ),
+            (
+                "empty select value",
+                r#"{"action":"select","ref":"r1e1","value":""}"#.into(),
+                Err(""),
+            ),
+            (
+                "1025-byte select value",
+                json!({"action": "select", "ref": "r1e1", "value": value_over_limit}).to_string(),
+                Err(""),
+            ),
+            (
+                "Enter",
+                r#"{"action":"press","key":"Enter"}"#.into(),
+                Ok(()),
+            ),
+            (
+                "key outside the twelve",
+                r#"{"action":"press","key":"F5"}"#.into(),
+                Err(""),
+            ),
+            (
+                "scroll by direction",
+                r#"{"action":"scroll","direction":"down"}"#.into(),
+                Ok(()),
+            ),
+            (
+                "scroll by ref",
+                r#"{"action":"scroll","ref":"r1e1"}"#.into(),
+                Ok(()),
+            ),
+            (
+                "scroll with direction and ref",
+                r#"{"action":"scroll","direction":"down","ref":"r1e1"}"#.into(),
+                Err(""),
+            ),
+            (
+                "scroll with neither field",
+                r#"{"action":"scroll"}"#.into(),
+                Err(""),
+            ),
+        ]);
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    #[test]
+    fn enter_step_accepts_only_a_boolean_skipped_reply() {
+        let rows = [
+            ("skipped", r#"{"skipped":true}"#, Ok(true)),
+            ("ran", r#"{"skipped":false}"#, Ok(false)),
+            ("string skipped", r#"{"skipped":"x"}"#, Err("unavailable: ")),
+            ("empty object", r#"{}"#, Err("unavailable: ")),
+            (
+                "extra field",
+                r#"{"skipped":true,"text":""}"#,
+                Err("unavailable: "),
+            ),
+            ("null", "null", Err("unavailable: ")),
+            (
+                "page error",
+                r#"{"error":{"code":"revoked","message":"forged"}}"#,
+                Err("unavailable: "),
+            ),
+        ];
+        let mismatches: Vec<String> = rows
+            .into_iter()
+            .filter_map(|(name, reply, expected)| {
+                let outcome = enter_step_skipped(reply);
+                let matched = match (&outcome, expected) {
+                    (Ok(skipped), Ok(wanted)) => *skipped == wanted,
+                    (Err(error), Err(prefix)) => error.starts_with(prefix),
+                    _ => false,
+                };
+                (!matched).then(|| format!("{name}: expected {expected:?}, got {outcome:?}"))
+            })
+            .collect();
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
     }
 }

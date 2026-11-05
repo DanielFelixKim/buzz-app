@@ -13,6 +13,22 @@
   const SKIPPED_TEXT =
     "input, textarea, select, script, style, [contenteditable]";
   const FILL_TYPES = ["text", "search", "email", "url", "tel", "number"];
+  // The HTML standard's fields that block implicit submission when a form
+  // has more than one and no submit button.
+  const BLOCKING_TYPES = [
+    "text",
+    "search",
+    "tel",
+    "url",
+    "email",
+    "password",
+    "date",
+    "month",
+    "week",
+    "time",
+    "datetime-local",
+    "number",
+  ];
   // The page can read this map. Refs guard honest pages from timing, not
   // from a hostile page, which can act on its own document anyway.
   const REFS = Symbol.for("buzz.browserControl.refs");
@@ -344,6 +360,7 @@
       );
     if (element instanceof HTMLInputElement && element.type === "file")
       return fail("unsupported_input", "File uploads are not supported.");
+    element.focus({ preventScroll: true });
     if (element instanceof HTMLElement) element.click();
     else
       element.dispatchEvent(
@@ -370,6 +387,7 @@
       );
     if (element.readOnly)
       return fail("not_interactable", "The field is read-only.");
+    element.focus({ preventScroll: true });
     const prototype =
       element instanceof HTMLTextAreaElement
         ? HTMLTextAreaElement.prototype
@@ -382,6 +400,135 @@
     return { ok: true };
   };
 
+  const select = ({ ref, value }) => {
+    const { element, failure } = target(ref);
+    if (failure) return failure;
+    if (!(element instanceof HTMLSelectElement))
+      return fail(
+        "unsupported_input",
+        "select works only on a select element.",
+      );
+    const options = [...element.options];
+    const match =
+      options.find((option) => option.value === value) ??
+      options.find((option) => option.label.trim() === value);
+    if (!match)
+      return fail("invalid_request", "No option has that value or label.");
+    // A value names one option whatever the page disabled, so a disabled
+    // match fails rather than falling through to a later enabled option.
+    if (match.matches(":disabled"))
+      return fail("not_interactable", "That option is disabled.");
+    element.focus({ preventScroll: true });
+    for (const option of options) option.selected = option === match;
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true };
+  };
+
+  const submitButton = (element) =>
+    (element instanceof HTMLButtonElement && element.type === "submit") ||
+    (element instanceof HTMLInputElement &&
+      (element.type === "submit" || element.type === "image"));
+
+  // HTML "implicit submission". form.elements leaves out image buttons, so
+  // the default button is found by form owner over the whole document.
+  const submitImplicitly = (form) => {
+    const defaultButton = [...document.querySelectorAll("button, input")].find(
+      (element) => element.form === form && submitButton(element),
+    );
+    if (defaultButton) {
+      if (!defaultButton.matches(":disabled")) defaultButton.click();
+      return;
+    }
+    const blocking = [...form.elements].filter(
+      (element) =>
+        element instanceof HTMLInputElement &&
+        BLOCKING_TYPES.includes(element.type),
+    );
+    if (blocking.length === 1) form.requestSubmit();
+  };
+
+  const tabbable = (element) =>
+    element.tabIndex >= 0 &&
+    !(element.matches(":disabled") || element.closest("[inert]")) &&
+    visible(element);
+
+  const focusNext = (current) => {
+    const order = [...document.querySelectorAll("*")]
+      .filter(tabbable)
+      .map((element, position) => ({ element, position }))
+      .sort(
+        (a, b) =>
+          (a.element.tabIndex || Infinity) - (b.element.tabIndex || Infinity) ||
+          a.position - b.position,
+      )
+      .map(({ element }) => element);
+    const next = order[order.indexOf(current) + 1] ?? order[0];
+    next?.focus();
+  };
+
+  // WebKit runs no default action for script events, so Enter and Tab get
+  // emulated ones. Every other key, and Enter elsewhere, sends events only.
+  const emulate = (element, key) => {
+    if (key === "Tab") return focusNext(element);
+    if (key !== "Enter") return;
+    if (
+      element instanceof HTMLButtonElement ||
+      (element instanceof HTMLInputElement &&
+        ["submit", "reset", "button", "image"].includes(element.type)) ||
+      (element instanceof HTMLAnchorElement && element.hasAttribute("href"))
+    )
+      return element.click();
+    if (
+      element instanceof HTMLInputElement &&
+      FILL_TYPES.includes(element.type) &&
+      element.form
+    )
+      submitImplicitly(element.form);
+  };
+
+  const press = ({ key }) => {
+    const element = document.activeElement ?? document.body;
+    const init = { key, bubbles: true, cancelable: true, composed: true };
+    // Browsers send keypress only for keys that produce a character.
+    const proceed =
+      element.dispatchEvent(new KeyboardEvent("keydown", init)) &&
+      (key !== "Enter" ||
+        element.dispatchEvent(new KeyboardEvent("keypress", init)));
+    if (proceed) emulate(element, key);
+    element.dispatchEvent(new KeyboardEvent("keyup", init));
+    return { ok: true };
+  };
+
+  const scrollable = (element) =>
+    /^(auto|scroll|overlay)$/.test(getComputedStyle(element).overflowY) &&
+    element.scrollHeight > element.clientHeight;
+
+  const scroll = ({ direction, ref }) => {
+    if (ref !== undefined) {
+      const element = resolve(ref);
+      if (!element)
+        return fail("stale_ref", "The page changed after that ref was issued.");
+      if (!shown(element))
+        return fail("not_interactable", "The element is not visible.");
+      element.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "instant",
+      });
+      return { ok: true };
+    }
+    let container = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    while (container && !scrollable(container))
+      container = container.parentElement;
+    container ??= document.scrollingElement ?? document.documentElement;
+    container.scrollBy({
+      top: (direction === "down" ? 1 : -1) * container.clientHeight,
+      behavior: "instant",
+    });
+    return { ok: true };
+  };
+
   // Waiting is for an element to become usable, so it never fails as not_interactable.
   const waitFor = ({ for: condition }) => {
     const element = resolve(condition.ref);
@@ -390,9 +537,19 @@
     return { met: shown(element) && !disabled(element) };
   };
 
+  // The Enter step of fill with submit runs only in the document that holds
+  // the filled ref, and it never creates or resets a ref map.
+  if (input.fillRef !== undefined) {
+    if (!resolve(input.fillRef)) return { skipped: true };
+    press(request);
+    return { skipped: false };
+  }
   if (request.action === "observe") return observe(request.scope);
   if (request.action === "click") return click(request);
   if (request.action === "fill") return fill(request);
   if (request.action === "wait") return waitFor(request);
+  if (request.action === "select") return select(request);
+  if (request.action === "press") return press(request);
+  if (request.action === "scroll") return scroll(request);
   return fail("invalid_request", `Unknown action ${request.action}.`);
 };

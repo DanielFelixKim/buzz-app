@@ -1146,7 +1146,8 @@ addEventListener('scroll', show);
                 &format!("live gap run {run}"),
                 call(json!({"action": "fill", "ref": reference(&live, "First field")?, "text": "x", "submit": true})).await,
             )?;
-            if url(&done).ends_with("/first-submitted") {
+            // A GET form with no named fields submits an empty query, so the URL ends in "?".
+            if url(&done).ends_with("/first-submitted?") {
                 ended_in_first += 1;
             } else {
                 skipped_in_second += 1;
@@ -1165,8 +1166,16 @@ addEventListener('scroll', show);
             "fill slow P1 and submit",
             call(json!({"action": "fill", "ref": reference(&slow, "First field")?, "text": "x", "submit": true})).await,
         )?;
-        verify!(f.requests_to("/first-submitted") == submitted_before + 1);
-        verify!(url(&done).ends_with("/first-submitted"), "{}", url(&done));
+        // WebKit may drop a form submission made while a script-started load is still
+        // provisional, so either outcome is valid; the Snapshot must report the one that happened.
+        let submitted = f.requests_to("/first-submitted") - submitted_before;
+        println!("observation: submit during a provisional load sent {submitted} request(s), ended at {}", url(&done));
+        verify!(
+            (submitted == 1 && url(&done).ends_with("/first-submitted?"))
+                || (submitted == 0 && url(&done).ends_with("/slow")),
+            "{submitted} request(s), {}",
+            url(&done)
+        );
 
         ok(
             "navigate to the select page",
