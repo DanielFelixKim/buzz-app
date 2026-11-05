@@ -1270,7 +1270,9 @@ function Timeline({
     loadingOlder.current = window.loadingOlder;
     if (window.loadingOlder) edges.current.paging = true;
   }, [window.loadingOlder]);
+  const loadingNewer = useRef(false);
   useLayoutEffect(() => {
+    loadingNewer.current = !!window.loadingNewer;
     if (window.loadingNewer) edges.current.newer = true;
   }, [window.loadingNewer]);
   useLayoutEffect(() => {
@@ -1301,19 +1303,21 @@ function Timeline({
     const { floor, order } = edges.current;
     const paged = edges.current.paging && !loadingOlder.current;
     const tail = rows.findIndex((row) => row.id === order.at(-1));
-    const arrivals = edges.current.newer ? 0 : rows.filter(
-      (row, index) =>
-        !previousIds.has(row.id) &&
-        (!paged || index > tail) &&
-        (row.createdAt > floor || (row.createdAt === floor && !paged)),
-    ).length;
+    const arrivals = edges.current.newer
+      ? 0
+      : rows.filter(
+          (row, index) =>
+            !previousIds.has(row.id) &&
+            (!paged || index > tail) &&
+            (row.createdAt > floor || (row.createdAt === floor && !paged)),
+        ).length;
     edges.current = {
       order: rows.map((row) => row.id),
       containedOwners,
       ids: new Set(rows.map((row) => row.id)),
       floor: rows[0]?.createdAt ?? 0,
       paging: loadingOlder.current,
-      newer: !!window.loadingNewer,
+      newer: loadingNewer.current,
     };
     if (
       arrivals > 0 &&
