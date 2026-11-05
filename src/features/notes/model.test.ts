@@ -691,7 +691,7 @@ it("does not call the owner’s writer when an unauthorized agent asks to share"
       {},
       { ...note, pubkey: f.sam.pubkey, access: "edit" },
     ),
-  ).rejects.toThrow(/cannot administer/);
+  ).rejects.toThrow(/needs Admin.*Share page.*grant this agent Admin/);
   expect(spy).not.toHaveBeenCalled();
   expect(f.channels.get(note.channel)?.roles[f.sam.pubkey]).toBeUndefined();
 });
@@ -712,6 +712,108 @@ it("confirms explicit agent invitations using the relay's participating role", a
     ),
   ).resolves.toBe("Page access updated.");
   expect(f.channels.get(note.channel)?.roles[f.ned.pubkey]).toBe("bot");
+});
+
+it.each(["person", "agent"])(
+  "changes existing %s access without borrowing the owner's writer",
+  async (target) => {
+    const f = await fixture();
+    const note = f.seed("Plan", "Work");
+    await f.workspace.setMember(note, f.carl.pubkey, "admin");
+    const client = f.client();
+    const share = noteTools(() => f.workspace).find(
+      (t) => t.name === "page_share",
+    );
+    if (!share) throw new Error("Missing page_share");
+    const pubkey = target === "agent" ? f.ned.pubkey : f.sam.pubkey;
+    const start = f.accepted.length;
+    for (const access of ["read", "edit", "read", "remove"]) {
+      await share.call(client, {}, { ...note, pubkey, access });
+      expect(f.channels.get(note.channel)?.roles[pubkey]).toBe(
+        access === "read"
+          ? "guest"
+          : access === "remove"
+            ? undefined
+            : target === "agent"
+              ? "bot"
+              : "member",
+      );
+    }
+    expect(f.accepted.slice(start).map((e) => [e.kind, e.pubkey])).toEqual(
+      [9000, 9000, 9000, 9001].map((kind) => [kind, client.pubkey]),
+    );
+  },
+);
+
+it("gives agents an actionable deleted-page restore path", async () => {
+  const f = await fixture();
+  const note = f.seed("Plan", "Retained text");
+  const deleted = await f.workspace.save(
+    note,
+    { title: note.title, markdown: "" },
+    "delete",
+  );
+  const tools = noteTools(() => f.workspace);
+  const set = tools.find((t) => t.name === "page_set");
+  const restore = tools.find((t) => t.name === "page_delete");
+  if (!set || !restore) throw new Error("Missing page tools");
+  await expect(
+    set.call(
+      f.client(),
+      {},
+      { ...deleted, title: "Plan", text: "Proposed text" },
+    ),
+  ).rejects.toThrow(/page_history.*page_delete.*restore:true/);
+  const saved = JSON.parse(
+    (await restore.call(
+      f.client(),
+      {},
+      { ...deleted, restore: true, title: "Plan", text: "Retained text" },
+    )) as string,
+  );
+  expect(saved).toMatchObject({ deleted: false, markdown: "Retained text" });
+});
+
+it("reports current content and merge instructions for an agent conflict", async () => {
+  const f = await fixture();
+  const note = f.seed("Plan", "Original");
+  const current = await f.edit(f.carl, note, {
+    title: "Plan",
+    markdown: "Concurrent content",
+  });
+  const set = noteTools(() => f.workspace).find((t) => t.name === "page_set");
+  if (!set) throw new Error("Missing page_set");
+  const failure = await set
+    .call(f.client(), {}, { ...note, title: "Plan", text: "Proposed text" })
+    .catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toContain("call page_get, merge");
+  expect((failure as Error).message).toContain(current.id);
+  expect((failure as Error).message).toContain("Concurrent content");
+  expect((failure as Error).message).not.toContain("Your draft is kept");
+  expect(f.heads.get(note.id)?.content).toBe("Concurrent content");
+});
+
+it("rejects a revision without its edit channel before reading a file or allocating storage", async () => {
+  const f = await fixture();
+  const client = f.client();
+  const read = vi.spyOn(client, "read");
+  const set = noteTools(() => f.workspace).find((t) => t.name === "page_set");
+  if (!set) throw new Error("Missing page_set");
+  await expect(
+    set.call(
+      client,
+      {},
+      {
+        id: crypto.randomUUID(),
+        revision: "a".repeat(64),
+        title: "Plan",
+        path: "draft.md",
+      },
+    ),
+  ).rejects.toThrow(/channel and id from page_get/);
+  expect(read).not.toHaveBeenCalled();
+  expect(f.channels.size).toBe(0);
 });
 
 it("uses stable, community-bound page links across Markdown, chat and OS ingress", async () => {

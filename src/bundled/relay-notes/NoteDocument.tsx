@@ -568,7 +568,7 @@ export function NoteDocument({
     );
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${(editing ? title : note.title).replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 80) || "note"}.md`;
+    link.download = `${(editing ? title : note.title).replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(0, 80) || "page"}.md`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };

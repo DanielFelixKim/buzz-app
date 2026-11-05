@@ -34,7 +34,8 @@ parameters as URL query values. The `channel` is the backing channel UUID and
    when editing: omitting it requests creation, not an update.
 5. If the revision changed, read again and reconcile the requested edit with the
    latest content. Do not overwrite a newer revision blindly. Verify the saved
-   result with `page_get` before reporting the update.
+   result with `page_get` before reporting the update. A conflict error does not
+   store your proposed text as an app draft; keep it in your working context.
 
 ## Other operations
 
@@ -47,7 +48,9 @@ parameters as URL query values. The `channel` is the backing channel UUID and
   page does not replace a direct lookup when the person supplied a full link.
 - **Create:** `page_set` with a new UUID `id`, a `title` and `text` or `path`;
   omit `channel` and `revision`. Reuse the same UUID on retries. Initially only
-  the owner and verified creating agent have access.
+  the owner and verified creating agent have access. The creating agent has
+  editing access, not Admin. The owner can share the page, or grant the agent
+  **Admin** using the **Share page** dialog before asking it to share.
 - **History:** `page_history` with `id` and `channel`; use the returned paging
   information. To restore an older live version, save its title and Markdown
   with `page_set` against the current revision.
@@ -59,6 +62,7 @@ parameters as URL query values. The `channel` is the backing channel UUID and
 - **Share:** `page_share` with `id`, `channel`, `pubkey` and
   `access: "read" | "edit" | "remove"`. This requires the calling agent's
   administration permission. Editing access alone does not allow sharing.
+  If needed, ask the owner to grant this agent **Admin** in **Share page**.
   Recipients can read retained history too.
 
 ## Missing tools or access

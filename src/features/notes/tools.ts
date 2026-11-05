@@ -86,7 +86,17 @@ export function noteTools(
         required,
         additionalProperties: false,
       },
-      call,
+      async call(client, context, args) {
+        try {
+          return await call(client, context, args);
+        } catch (error) {
+          if (error instanceof NoteConflict)
+            throw new Error(
+              `This request did not confirm your content as the current revision. Keep your proposed text, call page_get, merge with the latest content and retry against its revision. Current page: ${format(error.current, community(client))}`,
+            );
+          throw error;
+        }
+      },
     };
   }
   return [
@@ -170,11 +180,15 @@ export function noteTools(
     ),
     tool(
       "page_set",
-      "Create or edit a connected Markdown working page. For creation omit channel/revision, supply a new UUID id, and reuse it on retries; only the owner and creating agent receive access. Invite others explicitly with page_share or the Share dialog. For editing, supply channel and the revision from page_get; stale saves fail and preserve your text. Pass text or a local UTF-8 path.",
+      "Create or edit a Markdown page. To create, omit channel/revision and reuse a new UUID id on retries; only the owner and creating agent receive access. The owner shares or grants Admin in Share page; page_share requires Admin. To edit, use channel/revision from page_get; on conflict read, merge and retry. Restore deleted pages with page_delete restore:true. Pass text or a UTF-8 path.",
       { ...addressFields, revision: str, title: str, text: str, path: str },
       ["id", "title"],
       async (client, _context, args) => {
         requireWrites(client);
+        if (args.revision !== undefined && args.channel === undefined)
+          throw new Error(
+            "Editing requires channel and id from page_get together with revision. Omit revision only when creating a new page.",
+          );
         if ((args.text === undefined) === (args.path === undefined))
           throw new Error("Provide exactly one of text or path.");
         const markdown =
@@ -198,6 +212,10 @@ export function noteTools(
         const base = await readNote(read, address);
         if (base.revision !== string(args, "revision"))
           throw new NoteConflict(base);
+        if (base.deleted)
+          throw new Error(
+            "This page is deleted. Read page_history for retained title/content, then use page_delete with restore:true, the current revision, title and text to restore it.",
+          );
         return format(
           await saveNote(
             read,
@@ -309,12 +327,17 @@ export function noteTools(
           };
         };
         const before = await state();
+        if (!before.authority.canManage)
+          throw new Error(
+            "This agent needs Admin access to administer page sharing. Ask the owner to open Share page and grant this agent Admin. Creating or editing a page does not grant administration.",
+          );
         if (
-          !before.authority.canManage ||
           pubkey === client.pubkey ||
           before.authority.roles[pubkey] === "owner"
         )
-          throw new Error("This agent cannot administer the page’s sharing.");
+          throw new Error(
+            "page_share cannot change this agent’s own or the owner’s access.",
+          );
         const heads = await client.query([
           {
             kinds: [NOTE_KIND],
