@@ -462,12 +462,18 @@ export function policyRelay({
           expect(filters.length).toBeLessThanOrEqual(128);
           const community = communityOf(url);
           for (const filter of filters) {
-            // One page per channel, smaller on a large roster.
+            // One page per channel, smaller on a large roster. The authored
+            // page is 100 and each walk page 500; only a lone page whose
+            // response came back oversized is read again with its limit
+            // halved, and a walk page after a halved one keeps its limit.
             if (filter.authors && filter.until !== undefined) {
               expect(filters).toHaveLength(1);
               expect(filter.before_id).toEqual(expect.any(String));
-              expect(filter.limit).toBe(500);
-            } else if (filter.authors) expect(filter.limit).toBe(100);
+              expect(halvings(500)).toContain(filter.limit);
+            } else if (filter.authors)
+              expect(filters.length === 1 ? halvings(100) : [100]).toContain(
+                filter.limit,
+              );
             else {
               // A window is sized to at least 20; only a lone window whose
               // page came back oversized is read again with its limit halved.
@@ -901,4 +907,11 @@ export function policyRelay({
           socket.close();
     },
   };
+}
+
+/** A limit and each halving of it, rounded down, to 1: the limits the unread
+ * reader sends a lone filter of that limit while its response comes back
+ * oversized (`split` in unread.ts). */
+function halvings(limit) {
+  return limit > 1 ? [limit, ...halvings(Math.floor(limit / 2))] : [limit];
 }
