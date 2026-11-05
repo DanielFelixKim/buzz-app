@@ -75,6 +75,13 @@ const starts = new Set([
   "session_resolved",
 ]);
 const ends = new Set(["turn_completed", "turn_error", "agent_panic"]);
+/** The turn a bare (unbatched) heartbeat envelope is for. */
+const heartbeatTurn = (raw: unknown) => {
+  const envelope = object(raw);
+  return envelope?.kind === "turn_liveness" && text(envelope.turnId)
+    ? envelope.turnId
+    : undefined;
+};
 
 /** Session-owned live evidence. Plugin activation owns demand, not sockets or keys. */
 export function createAgentActivity(
@@ -372,6 +379,24 @@ export function createAgentActivity(
         ),
       ]),
     });
+    // A heartbeat says only that its turn is still running, and hosted agents
+    // send one every few seconds. Keep the newest per turn so a long turn
+    // cannot evict the content records (its start and tool rows) it belongs to.
+    const turn = heartbeatTurn(raw);
+    const previous =
+      turn === undefined
+        ? []
+        : records.filter(
+            (row) =>
+              row.agent === frame.agent &&
+              row.kind === "turn_liveness" &&
+              heartbeatTurn(JSON.parse(row.plaintext)) === turn,
+          );
+    if (previous.length) {
+      records = records.filter((row) => !previous.includes(row));
+      for (const row of previous)
+        bytes -= new TextEncoder().encode(row.plaintext).length;
+    }
     records = [...records, record].sort((a, b) => a.receivedAt - b.receivedAt);
     bytes += new TextEncoder().encode(frame.plaintext).length;
     while (

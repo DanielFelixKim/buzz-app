@@ -100,7 +100,12 @@ it("late attachment learns from liveness; silence and disconnect mean unknown, n
     }),
   );
   expect(f.snapshot().turns).toHaveLength(1);
-  expect(f.snapshot().records).toHaveLength(4);
+  // The second heartbeat replaced the first; the unknown and future frames stay.
+  expect(f.snapshot().records.map((record) => record.kind)).toEqual([
+    "turn_liveness",
+    "mystery",
+    "turn_started",
+  ]);
   f.activity.dispose();
 });
 it("clears on disable/access/cache/dispose and fences late frames by generation; batches cannot leak denied children", () => {
@@ -474,5 +479,30 @@ it("associates lifecycle with retained signed triggers and preserves it through 
     }),
   );
   expect(f.snapshot().turns[1]?.requests).toEqual([]);
+  f.release();
+});
+it("keeps one liveness record per turn so heartbeats cannot evict a turn's content", () => {
+  const f = fixture();
+  f.send(f.item("turn_started"));
+  f.send(f.item("acp_read"));
+  // A hosted agent sends a heartbeat every few seconds for as long as a turn runs.
+  for (let i = 0; i < ACTIVITY_RECORD_LIMIT + 10; i++) {
+    vi.setSystemTime(Date.now() + 5000);
+    f.send(f.item("turn_liveness"));
+    f.send(f.item("turn_liveness", "two"));
+  }
+  const kinds = f.snapshot().records.map((record) => record.kind);
+  expect(kinds).toEqual([
+    "turn_started",
+    "acp_read",
+    "turn_liveness",
+    "turn_liveness",
+  ]);
+  expect(f.snapshot().trimmed).toBe(0);
+  // The heartbeats still keep both turns working.
+  expect(f.snapshot().turns.map((turn) => turn.state)).toEqual([
+    "working",
+    "working",
+  ]);
   f.release();
 });

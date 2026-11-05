@@ -1135,8 +1135,10 @@ authority on the normal delivery path. These records never enter ordinary messag
 history, unread reconciliation or channel caches.
 
 Live RAM is limited to 200 envelopes / 2 MiB plaintext and 512 turn states, with
-visible trimming. Disable, cache/access reset and session replacement clear live
-evidence. A batch with a recognized denied channel is hidden as a whole.
+visible trimming. Only the newest unbatched `turn_liveness` envelope per agent
+turn is kept, so a long turn's heartbeats cannot evict its other records.
+Disable, cache/access reset and session replacement clear live evidence. A batch
+with a recognized denied channel is hidden as a whole.
 
 Activity frames (24200) and turn metrics (44200) are no longer saved locally or
 restored after reload; plugin harnesses show history from their own session files.
