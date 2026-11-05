@@ -17,6 +17,7 @@ import {
   type PluginInstallRequest,
 } from "../plugins/installer";
 import { PluginImport } from "./PluginImport";
+import { createPluginUpdateChecks } from "../plugins/update-checks";
 import userEvent from "@testing-library/user-event";
 import { cloneElement, StrictMode } from "react";
 
@@ -3143,4 +3144,37 @@ it("leaves an unconstrained link editable and unpinned", async () => {
   expect(screen.getByLabelText("Git or GitHub repository")).not.toHaveAttribute(
     "readonly",
   );
+});
+
+it("keeps a known Update usable while background discovery is pending", async () => {
+  let finish!: (revision: string) => void;
+  const imports = {
+    checkFolder: vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+    previewFolder: vi.fn(async () => rememberedPreview),
+    discard: vi.fn(async () => {}),
+  };
+  const props = savedFolderProps(imports);
+  const checks = createPluginUpdateChecks(props.plugins.imports);
+  const plugin = props.catalog.plugins[0];
+  if (!plugin) throw new Error("fixture plugin missing");
+  checks.observe(plugin)("new");
+  render(<PluginImport {...props} updateChecks={checks} />);
+  fireEvent.focus(window);
+  await waitFor(() => expect(imports.checkFolder).toHaveBeenCalledOnce());
+  try {
+    const update = screen.getByRole("button", { name: "Update" });
+    expect(update).toBeEnabled();
+    fireEvent.click(update);
+    await screen.findByRole("dialog", { name: "Update Remembered" });
+    expect(imports.previewFolder).toHaveBeenCalledExactlyOnceWith(
+      rememberedManifest.id,
+    );
+  } finally {
+    await act(async () => finish("new"));
+  }
 });

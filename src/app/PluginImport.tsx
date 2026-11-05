@@ -870,7 +870,7 @@ export function PluginImport({
           ref={trigger}
           variant="prominent"
           size="sm"
-          disabled={blocked || checking}
+          disabled={blocked}
           onClick={() => {
             prepareReview();
           }}
