@@ -154,3 +154,16 @@ describe("locate", () => {
     expect(calls.at(-1)?.full).toBe(true);
   });
 });
+
+it("starts composite fallback at the dense second after an empty gap", async () => {
+  const burst = T0 + 2 * DAY;
+  const { read } = relay([T0, ...Array.from({ length: 450 }, () => burst)]);
+  const located = await locate(
+    read,
+    T0 + DAY,
+    T0 + 3 * DAY,
+    true,
+    "f".repeat(64),
+  );
+  expect(rowsOf(located)).toContain(burst);
+});

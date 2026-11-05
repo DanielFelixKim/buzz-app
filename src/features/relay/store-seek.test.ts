@@ -602,3 +602,62 @@ it.each(["older", "newer"])(
     expect(row.reactions).toHaveLength(0);
   },
 );
+
+it("preserves a slid segment beyond reconnect catch-up coverage", async () => {
+  const h = setup({ count: 1800, maxHistoryRows: 400 });
+  await h.open();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+      channelId: "c",
+      state: "verified",
+    }),
+  );
+  for (let step = 0; h.window().hasMore && step < 100; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false), {
+      interval: 1,
+    });
+  }
+  expect(h.window().hasMore).toBe(false);
+  const retained = h.window().rows.map((row) => row.id);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.state({ status: "retrying", routes: [] });
+  expect(h.window().freshness).toBe("cached");
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+      channelId: "c",
+      state: "verified",
+    }),
+  );
+  expect(h.window().rows.map((row) => row.id)).toEqual(retained);
+  h.channels.attach?.("c");
+  await vi.waitFor(() => expect(h.window().hasNewer).toBeFalsy());
+  expect(h.window().rows.at(-1)?.id).toBe(h.history.at(-1)?.id);
+});
+
+it("traverses omitted dense-second pages when a newer page fits the allowance", async () => {
+  const h = setup({ count: 1000, spacing: 0, maxHistoryRows: 600 });
+  await h.open();
+  for (let step = 0; h.window().hasMore && step < 100; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false), {
+      interval: 1,
+    });
+  }
+  expect(h.window().hasMore).toBe(false);
+  const seen = new Set(h.window().rows.map((row) => row.id));
+  for (let step = 0; h.window().hasNewer && step < 100; step++) {
+    h.channels.loadNewer?.("c");
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy(), {
+      interval: 1,
+    });
+    expect(h.window().error).toBeUndefined();
+    for (const row of h.window().rows) seen.add(row.id);
+  }
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(seen.size).toBe(1000);
+});

@@ -26,9 +26,15 @@ export type SeekRead = (
 
 export type Located =
   | Readonly<{ kind: "newest" }>
-  /** `page` holds every row in [from, ceiling) and older context below it.
+  /** `page` covers the next portion at or after `from`, plus older context.
+   * `ceilingId` includes that boundary row within a partially covered second.
    * A null ceiling means `page` is the head page. */
-  | Readonly<{ kind: "segment"; page: WindowPage; ceiling: number | null }>;
+  | Readonly<{
+      kind: "segment";
+      page: WindowPage;
+      ceiling: number | null;
+      ceilingId?: string;
+    }>;
 
 /** A page read below a ceiling, against the rows at or after `from`:
  * none (empty), all of them (fits), or too many for one page (overflow). */
@@ -81,7 +87,7 @@ export async function locate(
       if (!fromId) throw new SeekLimitError();
       // A composite sliding boundary can be inside a dense second. Walk its
       // keyset pages, keeping the crossing page and its immediately newer one.
-      let cursor = ceilingCursor(from + 1);
+      let cursor = ceilingCursor(top);
       let previous: WindowPage | undefined;
       for (;;) {
         if (++reads > SEEK_READS) throw new SeekLimitError();
@@ -92,15 +98,18 @@ export async function locate(
             (event.created_at < from ||
               (event.created_at === from && event.id >= fromId)),
         );
-        if (reached || !page.cursor)
+        if (reached || !page.cursor) {
+          const events = [...(previous?.events ?? []), ...page.events];
+          const upper = events.find((event) =>
+            WINDOW_KINDS.includes(event.kind),
+          );
           return {
             kind: "segment",
-            ceiling: from + 1,
-            page: {
-              ...page,
-              events: [...(previous?.events ?? []), ...page.events],
-            },
+            ceiling: previous ? (upper?.created_at ?? top) : top,
+            ...(previous && upper ? { ceilingId: upper.id } : {}),
+            page: { ...page, events },
           };
+        }
         previous = page;
         cursor = page.cursor;
       }

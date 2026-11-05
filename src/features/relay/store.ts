@@ -1152,8 +1152,8 @@ export function createChannelStore(
       }
     }
     const pending = [...ids];
-    for (let index = 0; index < pending.length; index++) {
-      for (const event of dependents.get(pending[index]!) ?? []) {
+    for (const id of pending) {
+      for (const event of dependents.get(id) ?? []) {
         if (ids.has(event.id)) continue;
         ids.add(event.id);
         pending.push(event.id);
@@ -3625,7 +3625,9 @@ export function createChannelStore(
             (head || located.kind !== "segment"
               ? undefined
               : (located.ceiling ?? undefined));
-          state.ceilingId = boundary?.id;
+          state.ceilingId =
+            boundary?.id ??
+            (located.kind === "segment" ? located.ceilingId : undefined);
           setWindow(state, {
             loadingNewer: undefined,
             freshness: "verified",
@@ -4117,6 +4119,9 @@ export function createChannelStore(
        * by exclusion so rows the stream delivered meanwhile stay, and the
        * window continues from the last page. */
       const settle = (last: Page) => {
+        // A sliding reader is a separate bounded segment; head continuity
+        // cannot invalidate it when the catch-up budget stops above it.
+        if (retained.ceilingId !== undefined) return;
         // An older read in flight continues from the cursor this replaces;
         // its rows would merge below the hole and move the floor past it.
         if (retained.snapshot.loadingOlder) retained.controller?.abort();
