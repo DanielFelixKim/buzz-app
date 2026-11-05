@@ -112,7 +112,10 @@ or the replacement receipt. Failed reads or storage, active delivery, and an ech
 contradicting negative readback keep recovery. This uses the existing Outbox/member/share actions, with no
 background retry or new control. If signed roles confirm that the earlier invite
 admitted a Guest, remove that person in People and invite them again. Recovery
-never silently promotes an existing Guest. A definitively failed invitation can
+never silently promotes an existing Guest. Because the sidebar treats a Solo Guest as a viewer
+who chose to Join, such a legacy invitee lists the chat under Solo with ordinary
+unread attention until they leave it; the app accepts this rare case rather
+than inferring join intent from membership history. A definitively failed invitation can
 also be replaced after explicitly dismissing it in Outbox.
 
 ### General access
