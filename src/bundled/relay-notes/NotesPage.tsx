@@ -6,7 +6,7 @@ import {
   Filter2Icon,
   InfoIcon,
   NoteIcon,
-  FileTextIcon,
+  FileIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -105,9 +105,7 @@ export function NotesPage({
         aria-label={note.title}
         render={<a href={noteUrl(note, community)} />}
         label={<span className="text-label">{note.title}</span>}
-        icon={
-          <FileTextIcon size={16} className="text-subtle" aria-hidden="true" />
-        }
+        icon={<FileIcon size={16} className="text-subtle" aria-hidden="true" />}
         trailing={
           <span className="text-caption text-subtle">
             <NoteTime note={note.event} />
@@ -247,9 +245,7 @@ export function NotesPage({
                     <NavigationItem
                       variant="text"
                       icon={<PlusIcon size={16} aria-hidden="true" />}
-                      label={
-                        <span className="text-label font-normal">New note</span>
-                      }
+                      label="New note"
                       onClick={create}
                     />
                   </li>
