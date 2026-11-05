@@ -462,6 +462,10 @@ the template and validation.
   Everyone else, owners and admins included, sees a disabled "Pinned by
   <name>": the app has no kind 9005 admin removal path. A pin shows before the
   relay confirms it and reverts when the relay refuses it.
+- **Recovery.** A failed or unconfirmed pin or unpin appears in the
+  conversation's delivery-status notice beside failed edits and deletions, with
+  Retry (the same event) and Discard or Dismiss. The menu item stays disabled
+  until that operation settles, so a second pin is never queued behind it.
 
 ## Channel lifecycle
 
