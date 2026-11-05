@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -51,12 +52,39 @@ function setup(events: RelayEvent[], failures = 0) {
           )),
     );
   });
-  const remove = vi.fn(() => "deletion");
+  // The outbox queues a deletion synchronously; its delivery settles later.
+  let operations: {
+    event: { kind: number; tags: string[][] };
+    delivery: string;
+  }[] = [];
+  const listeners = new Set<() => void>();
+  const remove = vi.fn((ids: readonly string[]) => {
+    operations = [
+      ...operations,
+      ...ids.map((id) => ({
+        event: { kind: 5, tags: [["e", id]] },
+        delivery: "sending",
+      })),
+    ];
+    return "deletion";
+  });
+  const settle = (delivery: "accepted" | "failed") =>
+    act(() => {
+      operations = operations.map((item) => ({ ...item, delivery }));
+      for (const listener of listeners) listener();
+    });
   const session = {
     ...owner.session,
     viewer: viewer.pubkey,
     read,
-    outbox: { ...owner.session.outbox, supports: () => true },
+    outbox: {
+      supports: () => true,
+      snapshot: () => operations,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
     messages: { ...owner.session.messages, remove },
   } as unknown as typeof owner.session;
   const openLink = vi.fn(() => true);
@@ -69,7 +97,7 @@ function setup(events: RelayEvent[], failures = 0) {
       openLink={openLink}
     />,
   );
-  return { owner, read, remove, openLink };
+  return { owner, read, remove, openLink, settle };
 }
 
 it("lists pinned messages newest first, opens one and unpins only the viewer's", async () => {
@@ -179,4 +207,26 @@ it("offers View pinned in the channel menu to members of a non-DM channel", asyn
     fiber.dispose();
     owner.dispose();
   }
+});
+
+it("restores a pin and reports the failure when the relay refuses its removal", async () => {
+  const pinned = message(other, channelId, "Older decision", 1);
+  const mine = pinOf(pinned, 10);
+  const h = setup([pinned, mine]);
+  const list = await screen.findByRole("list", { name: "Pinned messages" });
+  fireEvent.click(within(list).getByRole("button", { name: "Unpin message" }));
+  expect(h.remove).toHaveBeenCalledWith([mine.id]);
+  await waitFor(() =>
+    expect(screen.queryByRole("list", { name: "Pinned messages" })).toBeNull(),
+  );
+  h.settle("failed");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not unpin the message. Try again.",
+  );
+  expect(
+    within(screen.getByRole("list", { name: "Pinned messages" })).getAllByRole(
+      "listitem",
+    ),
+  ).toHaveLength(1);
+  h.owner.dispose();
 });

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -124,6 +125,7 @@ export function PinnedMessages({
         .join(","),
   );
   const [attempt, setAttempt] = useState(0);
+  const pending = useRef<readonly PinRecord[]>([]);
   useEffect(() => {
     void livePins;
     void attempt;
@@ -133,7 +135,9 @@ export function PinnedMessages({
     readChannelPins(session, channelId, controller.signal).then(
       (result) => {
         if (controller.signal.aborted) return;
-        setPins(result);
+        // A read can finish before the relay applies a pending unpin.
+        const hidden = new Set(pending.current.map((pin) => pin.id));
+        setPins(result.filter((pin) => !hidden.has(pin.id)));
         setLoading(false);
       },
       () => {
@@ -161,11 +165,40 @@ export function PinnedMessages({
       pubkey,
       directory.profiles.get(pubkey)?.name ?? `${pubkey.slice(0, 10)}…`,
     );
+  // Unpins hidden before the relay confirms them. A pin below the loaded
+  // history changes no window row, so a refusal is observed here, not re-read.
+  const [unpinning, setUnpinning] = useState<readonly PinRecord[]>([]);
+  pending.current = unpinning;
+  useEffect(() => {
+    const outbox = session.outbox;
+    if (!outbox || !unpinning.length) return;
+    const settle = () => {
+      const deliveries = outbox
+        .snapshot()
+        .filter(
+          (item) =>
+            item.event.kind === 5 &&
+            item.event.tags.some(
+              ([name, id]) =>
+                name === "e" && unpinning.some((pin) => pin.id === id),
+            ),
+        );
+      if (deliveries.some((item) => item.delivery === "failed")) {
+        setPins((current) => current && [...current, ...unpinning]);
+        setUnpinning([]);
+        setNotice("Could not unpin the message. Try again.");
+      } else if (!deliveries.some((item) => item.delivery === "sending"))
+        setUnpinning([]);
+    };
+    settle();
+    return outbox.subscribe(settle);
+  }, [session, unpinning]);
   const unpin = (own: readonly PinRecord[]) => {
     setNotice("");
     try {
       session.messages.remove(own.map((pin) => pin.id));
       setPins((current) => current?.filter((pin) => !own.includes(pin)));
+      setUnpinning((current) => [...current, ...own]);
     } catch (cause) {
       setNotice(
         cause instanceof Error ? cause.message : "Could not unpin the message.",
