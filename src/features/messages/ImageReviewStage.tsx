@@ -94,12 +94,22 @@ export function ImageReviewStage({
   }>({ source });
   if (loaded.source !== source) setLoaded({ source });
   // Returning before the departing image is gone reuses its element, which
-  // fires no second load event, so a picture it already loaded counts at once.
-  // A broken one is complete too, but has no natural width.
+  // fires no second load or error event, so what it already settled counts at
+  // once: a picture as loaded, and a broken one, complete without a natural
+  // width, as this view's own failure. Only a reused element is judged broken;
+  // a new one still reports its own load or error.
+  const shownImages = useRef(new WeakSet<HTMLImageElement>());
   useLayoutEffect(() => {
     const current = image.current;
-    if (source && current?.complete && current.naturalWidth)
-      setLoaded({ source, ready: true });
+    if (!source || !current) return;
+    const reused = shownImages.current.has(current);
+    shownImages.current.add(current);
+    if (!current.complete) return;
+    if (current.naturalWidth) setLoaded({ source, ready: true });
+    else if (reused) {
+      setLoaded({ source });
+      imageFailed(source);
+    }
   }, [source]);
   const shared = useImageLoad(source);
   const load = loaded.source === source && loaded.ready ? undefined : shared;

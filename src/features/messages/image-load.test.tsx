@@ -200,6 +200,74 @@ it.each([
   },
 );
 
+it("a viewer back on an image that failed while sliding away shows its error and Retry", () => {
+  vi.spyOn(imageCopy, "supportsImageCopy").mockReturnValue(true);
+  const second = "https://fixture.test/second.png";
+  // Holds every slide open, so the departing image stays mounted.
+  Object.defineProperty(HTMLElement.prototype, "animate", {
+    value: () => ({ cancel() {}, onfinish: null }),
+    configurable: true,
+  });
+  function Gallery() {
+    const [selectedUrl, select] = useState(url);
+    return (
+      <section aria-label="Viewer">
+        <ImageReviewStage
+          attachments={[
+            { url, kind: "image" },
+            { url: second, kind: "image" },
+          ]}
+          selectedUrl={selectedUrl}
+          media={(item) => (item === url ? source : item)}
+          select={select}
+          onOpenLink={() => false}
+        />
+      </section>
+    );
+  }
+  try {
+    render(<Gallery />);
+    const pixels = viewerImage();
+    fireEvent.click(viewer().getByRole("button", { name: "Next image" }));
+    expect(pixels).toHaveAttribute("data-gallery-departing");
+    // What a browser reports once the departing request fails; the departing
+    // copy has no error handler of its own.
+    Object.defineProperties(pixels, {
+      complete: { value: true, configurable: true },
+      naturalWidth: { value: 0, configurable: true },
+    });
+    fireEvent.error(pixels);
+
+    // Returning before the next image loads reuses the broken element, which
+    // fires no new error event.
+    fireEvent.click(viewer().getByRole("button", { name: "Previous image" }));
+    expect(viewer().getByRole("status")).toHaveTextContent(
+      "Couldn't load image",
+    );
+    expect(pixels).not.toBeInTheDocument();
+    expect(viewer().getByRole("button", { name: "Zoom in" })).toBeDisabled();
+    expect(viewer().getByRole("button", { name: "Copy image" })).toBeDisabled();
+
+    // Retry requests it again, and its own later error still shows.
+    fireEvent.click(
+      viewer().getByRole("button", { name: "Retry image 1 of 2" }),
+    );
+    expect(viewer().getByRole("status")).toHaveTextContent("Loading image…");
+    const retried = viewerImage();
+    expect(retried).not.toBe(pixels);
+    expect(retried).toHaveAttribute("src", source);
+    fireEvent.load(retried);
+    expect(viewer().queryByRole("status")).not.toBeInTheDocument();
+    expect(viewer().getByRole("button", { name: "Zoom in" })).toBeEnabled();
+    fireEvent.error(retried);
+    expect(viewer().getByRole("status")).toHaveTextContent(
+      "Couldn't load image",
+    );
+  } finally {
+    Reflect.deleteProperty(HTMLElement.prototype, "animate");
+  }
+});
+
 it("forgets a failure once no view shows it, so a remounted row requests it again", () => {
   const first = render(<Views viewer={false} />);
   fireEvent.error(rowImage());
