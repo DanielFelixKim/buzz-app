@@ -47,7 +47,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     {
       sequence: number;
       revisions: Record<string, string>;
-      consumers: Map<string, () => boolean>;
+      consumers: Set<() => boolean>;
       promise: Promise<string | ImportPreview | null>;
     }
   >();
@@ -86,8 +86,9 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
         return check(plugin, authorize, true, eligible);
       return;
     }
+    const active = () => current() && eligible();
     if (!request) {
-      const consumers = new Map([[id, () => current() && eligible()]]);
+      const consumers = new Set([active]);
       const promise = (async () => {
         if ("root" in source) return imports.checkFolder(id);
         const signed = await authorize?.(source.repository);
@@ -101,7 +102,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
       request = { sequence: ++sequence, revisions: {}, consumers, promise };
       pending.set(key, request);
     }
-    request.consumers.set(id, () => current() && eligible());
+    request.consumers.add(active);
     request.revisions[id] = plugin.revision;
     const previous = pluginUpdateCheck(snapshot, plugin);
     const next = {
@@ -137,7 +138,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     }
     if (current() && snapshot[id]?.sequence === request.sequence)
       publish(id, {
-        ...next,
+        ...snapshot[id],
         checking: false,
         ...(eligible() && { revision, error }),
       });

@@ -303,3 +303,48 @@ it("keeps an authorized shared read alive for an eligible sibling", async () => 
   ).toBe(true);
   expect(pluginUpdateCheck(checks.snapshot(), plugin())?.checking).toBe(false);
 });
+
+it("retains explicit results when an automatic waiter for the same plugin opts out", async () => {
+  let finish!: (value: ReturnType<typeof preview>) => void;
+  let eligible = true;
+  const checkGit = vi.fn(
+    () =>
+      new Promise<ReturnType<typeof preview>>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  checks.observe(plugin())("installed");
+  const explicit = checks.check(plugin());
+  await Promise.resolve();
+  const automatic = checks.check(plugin(), undefined, true, () => eligible);
+  eligible = false;
+  finish(preview("new"));
+  await Promise.all([explicit, automatic]);
+  expect(pluginUpdateAvailable(checks.snapshot(), plugin())).toBe(true);
+  expect(pluginUpdateCheck(checks.snapshot(), plugin())?.checking).toBe(false);
+});
+
+it("an automatic joiner cannot revoke an explicit check awaiting authorization", async () => {
+  let finish!: (value: null) => void;
+  let eligible = true;
+  const authorize = vi.fn(
+    () =>
+      new Promise<null>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const checkGit = vi.fn(async () => preview("new"));
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  const explicit = checks.check(plugin(), authorize);
+  const automatic = checks.check(plugin(), authorize, true, () => eligible);
+  eligible = false;
+  finish(null);
+  await Promise.all([explicit, automatic]);
+  expect(checkGit).toHaveBeenCalledOnce();
+  expect(pluginUpdateAvailable(checks.snapshot(), plugin())).toBe(true);
+});
