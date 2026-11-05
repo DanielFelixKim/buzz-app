@@ -1,5 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
 import { ReplyContext } from "./ReplyContext";
+import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
@@ -565,7 +566,8 @@ function ThreadMessages({
       if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
         return channel.channelType === "stream" ||
-          channel.channelType === "forum"
+          channel.channelType === "forum" ||
+          (channel.channelType === "solo" && channel.joinRole === "guest")
           ? "joinable"
           : "preview";
       }
@@ -1053,6 +1055,18 @@ function ThreadMessages({
     [snapshot.root, snapshot.replies, activitySnapshot, agentPubkeys, rootId],
   );
   const rootActivity = rootId ? rootPresentation.byRow.get(rootId) : undefined;
+  // A stopped note may follow only a reply that is always shown: collapsed
+  // branches do not mount their rows.
+  const rootReplies = useMemo(
+    () =>
+      activityPresentation(
+        tree.children.get(undefined) ?? [],
+        activitySnapshot,
+        agentPubkeys,
+        rootId,
+      ),
+    [tree, activitySnapshot, agentPubkeys, rootId],
+  );
   const liveAgents = useLiveConversationAgents(session, channelId, rootId);
   const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
   const joinsLive =
@@ -1523,6 +1537,11 @@ function ThreadMessages({
               row.id,
               presentation.representedAgents.get(row.id),
             )}
+            stoppedRequest={
+              rootId && rootReplies.replyRequests.get(row.id) === rootId
+                ? snapshot.root
+                : undefined
+            }
             recordedActivity={stableActivity.activity(
               row.id,
               recordedActivity,
@@ -1854,6 +1873,10 @@ function ThreadMessages({
                 snapshot.root.id,
                 rootPresentation.representedAgents.get(snapshot.root.id),
               )}
+              repliedAgents={stableActivity.agents(
+                `replied:${snapshot.root.id}`,
+                rootReplies.repliedAgents.get(snapshot.root.id),
+              )}
               recordedActivity={stableActivity.activity(
                 snapshot.root.id,
                 rootActivity,
@@ -1905,6 +1928,14 @@ function ThreadMessages({
             )}
             {renderReplies(undefined)}
           </ol>
+          {!preview && !positioning && composerRoot && (
+            <AgentConnectionSetup
+              key={`${channelId}:${rootId}`}
+              session={session}
+              channel={session.channels?.get?.(channelId)}
+              rows={rows}
+            />
+          )}
           {!positioning && rootId && (
             <TypingIndicator
               audience="agents"

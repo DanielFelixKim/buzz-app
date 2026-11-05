@@ -3,7 +3,10 @@ import type { LocalAgentSource } from "../agents/local-activity";
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
-import { addChannelMember } from "../channel-members/members";
+import {
+  addChannelMember,
+  addChannelMembersAtOnce,
+} from "../channel-members/members";
 import type { LocalAgents } from "../agents/local";
 import type { GitRead } from "../repos/git";
 import { repoDestinations } from "../repos/destinations";
@@ -73,6 +76,7 @@ import { agentAudience } from "./audience";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
+import { sidebarSortNeedsActivity } from "./sidebar-sort";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -167,6 +171,27 @@ function isProfileFilter(filter: ReadFilter) {
 /** Every filter reads profiles only: see isProfileFilter. */
 function isProfileRead(filters: readonly ReadFilter[]) {
   return filters.length > 0 && filters.every(isProfileFilter);
+}
+
+/** Own encrypted read-state is independent of channel membership. */
+function isOwnReadStateFilter(filter: ReadFilter, viewer: string | undefined) {
+  return (
+    !!viewer &&
+    filter.kinds?.length === 1 &&
+    filter.kinds[0] === 30078 &&
+    filter.authors?.length === 1 &&
+    filter.authors[0] === viewer &&
+    (filter["#t"] === undefined ||
+      (filter["#t"].length === 1 && filter["#t"][0] === "read-state")) &&
+    (filter["#d"] === undefined ||
+      (filter["#d"].length > 0 &&
+        filter["#d"].every((coordinate) =>
+          /^read-state:[0-9a-f]{32}$/.test(coordinate),
+        ))) &&
+    Object.keys(filter).every((key) =>
+      ["kinds", "authors", "limit", "#t", "#d"].includes(key),
+    )
+  );
 }
 
 /** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
@@ -417,7 +442,7 @@ export function createRelaySession(
       details.cancel();
       memberAdministration.clear();
       typing.clear();
-      // Saved owner inventory and profiles do not depend on channel access.
+      // Saved owner inventory, read-state and profiles do not depend on channel access.
       // Preserve only those narrow reads; broad, mixed, ID and channel reads
       // must still retire.
       const retired = (filters: readonly ReadFilter[]) =>
@@ -425,6 +450,7 @@ export function createRelaySession(
         filters.some(
           (filter) =>
             !isOwnerInventoryFilter(filter, transport?.viewer) &&
+            !isOwnReadStateFilter(filter, transport?.viewer) &&
             !isProfileFilter(filter),
         );
       requests.invalidate(retired);
@@ -749,7 +775,9 @@ export function createRelaySession(
         }
       : {}),
   };
-  const searchProfiles = createProfileSearch(verified);
+  const searchProfiles = createProfileSearch(verified, Date.now, () =>
+    profiles.queries.verifiedAuthority?.(),
+  );
   /** Directory reads bypass shared profile admission. Retry one access
    * invalidation here, where caller/cache/connection lifetimes are known. */
   function directoryRead<T>(
@@ -2072,17 +2100,15 @@ export function createRelaySession(
       }
     },
   });
+  // A Solo chat admits people under its share rule; agents join by mention.
+  const solo = (channelId: string) =>
+    (
+      session.channels.list().channels.find((item) => item.id === channelId) ??
+      session.channels.get?.(channelId)
+    )?.channelType === "solo";
   const memberAdditions = createMemberAdditions(
     lifetime.signal,
     async (channelId, pubkey, intent): Promise<void> => {
-      // A Solo chat admits people under its share rule; agents join by mention.
-      const solo =
-        (
-          session.channels
-            .list()
-            .channels.find((item) => item.id === channelId) ??
-          session.channels.get?.(channelId)
-        )?.channelType === "solo";
       await addChannelMember(
         session,
         channelId,
@@ -2090,10 +2116,20 @@ export function createRelaySession(
         lifetime.signal,
         intent,
         writes?.local,
-        solo,
+        solo(channelId),
       );
     },
     writes?.local,
+    (channelId, pubkeys, intents) =>
+      addChannelMembersAtOnce(
+        session,
+        channelId,
+        pubkeys,
+        intents,
+        lifetime.signal,
+        solo(channelId),
+        writes?.local,
+      ),
   );
   const recoverable = (
     subscribe: (listener: () => void) => () => void,
@@ -2154,6 +2190,7 @@ export function createRelaySession(
     liveWasConnected = connected;
   });
   const session = Object.freeze({
+    artifactIncremental: transport?.artifactIncremental,
     memberAdditions,
     presence,
     viewer: transport?.viewer,
@@ -3569,7 +3606,7 @@ export function createRelaySession(
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
     if (
-      !Object.values(preferences?.sort ?? {}).includes("recent") &&
+      !Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) &&
       !Object.values(preferences?.filters ?? {}).includes("active")
     ) {
       channelActivity.cancel();
