@@ -2827,9 +2827,11 @@ it("updates the open Git pane after a focus check finds a new revision", async (
   expect(await within(pane).findByText("Up to date")).toBeVisible();
   revision = "new";
   fireEvent.focus(window);
-  expect(
-    await within(pane).findByRole("button", { name: /^Update$/ }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      within(pane).getByRole("button", { name: /^Update$/ }),
+    ).toBeVisible(),
+  );
   expect(within(pane).queryByText("Up to date")).toBeNull();
 });
 
@@ -2859,9 +2861,11 @@ it("keeps a newer manual result when an older automatic check fails", async () =
     fireEvent.click(
       within(pane).getByRole("button", { name: "Check for updates" }),
     );
-    expect(
-      await within(pane).findByRole("button", { name: /^Update$/ }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(pane).getByRole("button", { name: /^Update$/ }),
+      ).toBeVisible(),
+    );
   } finally {
     await act(async () => fail(new Error("old check failed")));
   }
