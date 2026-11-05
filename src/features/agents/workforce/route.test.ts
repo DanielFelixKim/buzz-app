@@ -337,23 +337,28 @@ describe("WorkforceRoutes", () => {
     });
   });
 
-  it("waits for readiness under a turn's signal and retries a failed probe once", async () => {
+  it("gives a turn its current route without waiting, retrying a failed probe in the background", async () => {
     const { routes, answer, pending } = setup();
     routes.setMembership(member("b1", {}));
+    expect(routes.routeForTurn(key("b1"))).toMatchObject({
+      kind: "blocked",
+      reason: "readiness_pending",
+    });
     await answer("", 500);
-    const ready = routes.routeReady(key("b1"), new AbortController().signal);
+    expect(routes.routeForTurn(key("b1"))).toMatchObject({
+      kind: "blocked",
+      reason: "gateway_error",
+    });
     expect(pending).toHaveLength(1);
+    expect(routes.routeFor(key("b1"))).toMatchObject({
+      reason: "readiness_pending",
+    });
     await answer('{"open_models_only":false}');
-    await expect(ready).resolves.toMatchObject({
+    expect(routes.routeForTurn(key("b1"))).toMatchObject({
       kind: "eligible",
       revision: 4,
     });
-
-    routes.invalidate(key("b1"));
-    const controller = new AbortController();
-    const waiting = routes.routeReady(key("b1"), controller.signal);
-    controller.abort(new Error("stopped"));
-    await expect(waiting).rejects.toThrow("stopped");
+    expect(pending).toHaveLength(0);
   });
 
   it("blocks a membership it was never told about while a descriptor is configured", () => {
@@ -372,19 +377,6 @@ describe("WorkforceRoutes", () => {
     routes.invalidate(key("b1"), ready.revision - 1);
     expect(routes.routeFor(key("b1"))).toEqual(ready);
     expect(request).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps waiting when the membership changes while a turn waits for readiness", async () => {
-    const { routes, answer } = setup();
-    routes.setMembership(member("b1", {}));
-    const ready = routes.routeReady(key("b1"), new AbortController().signal);
-    routes.setMembership(member("b1", {}, { owner: "c".repeat(64) }));
-    await answer('{"open_models_only":false}');
-    await answer('{"open_models_only":false}');
-    await expect(ready).resolves.toMatchObject({
-      kind: "eligible",
-      identity: { human_pubkey: "c".repeat(64) },
-    });
   });
 
   it("stays pending without a request path, and probes once one is bound", async () => {

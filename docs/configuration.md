@@ -105,8 +105,9 @@ gateway only when the relay's NIP-11 `read_state_snapshot.community_id` is
 exactly the listed ID, the gateway's model-access probe succeeds, and the
 probe's `harnesses` list (the gateway's rollout flag) names the agent type's
 declared harness. A type with no declared harness, or one the gateway doesn't
-list, keeps its existing behavior. When the route is blocked (auth, network,
-gateway error or still checking), a type that declares a harness runs with the
+list, keeps its existing behavior. A turn never waits on the gateway. When the
+route is blocked (auth, network, gateway error or still checking), a type that
+declares a harness runs with the
 user's own harness configuration and none of the Buzz request context, and the
 turn is noted "Ran without the Workforce gateway" with the reason: under the
 request for a mention, and in the harness's own turn activity for other turns,

@@ -2461,24 +2461,23 @@ export class AgentRunners {
   }
   /** The membership's Workforce route and this turn's context, frozen before
    * the type is asked to run, as `workforce`; nothing when it doesn't route
-   * there. A type
-   * that names no harness, or whose harness the gateway doesn't enable for
-   * this membership, keeps its existing behavior without waiting on the
-   * gateway. A blocked membership runs it with its own configuration and
+   * there. It never waits on the gateway. A type that names no harness, or
+   * whose harness the gateway doesn't enable for this membership, keeps its
+   * existing behavior. A blocked membership, including one whose readiness
+   * is still pending, runs it with its own configuration and
    * none of the Buzz context, as `workforceFallback`, and notes that on a
    * mention's request: the choice is made
    * here, before dispatch, so nothing is ever replayed. A turn whose access
    * is revoked after dispatch is the harness's to fail visibly. */
-  private async workforce(
+  private workforce(
     agent: Agent,
     type: RegisteredAgentType,
     job: Job,
     anchor: ConversationWake | undefined,
-    signal: AbortSignal,
   ) {
     const harness = type.workforce?.harness;
     if (!workforceRoutes.configured || !harness) return {};
-    const route = await workforceRoutes.routeReady(agent.key, signal);
+    const route = workforceRoutes.routeForTurn(agent.key);
     if (route.kind === "external") return {};
     if (route.kind === "blocked") {
       const notice = fallbackNotice(route);
@@ -2555,7 +2554,7 @@ export class AgentRunners {
         handle.protection.assertAvailable();
       }
       // Before any type code (its models included) runs for this turn.
-      const routing = await this.workforce(agent, type, job, anchor, signal);
+      const routing = this.workforce(agent, type, job, anchor);
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);

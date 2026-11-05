@@ -210,34 +210,24 @@ export class WorkforceRoutes {
         );
   }
 
-  /** The membership's route once readiness has settled: a turn waits on
-   * this under its own signal. A failed probe is tried once more here, so
-   * a turn after a network blip can succeed. */
-  async routeReady(key: AgentKey, signal: AbortSignal) {
-    signal.throwIfAborted();
+  /** The membership's route for a turn starting now, without waiting on
+   * readiness: a turn never stalls on the gateway, and one that finds it
+   * pending or failed falls back. A failed probe is retried in the
+   * background, so a later turn can route after a network blip. */
+  routeForTurn(key: AgentKey): WorkforceRoute {
+    const route = this.routeFor(key);
     const decided = this.decide(key);
-    if (decided.kind !== "pending") return decided.route;
-    if (this.readiness.get(decided.cache)?.status === "failed") {
-      // Nothing is admitted at a failed revision, so retrying for this turn
-      // revokes nothing.
+    if (
+      decided.kind === "pending" &&
+      this.readiness.get(decided.cache)?.status === "failed"
+    ) {
+      // Nothing is admitted at a failed revision, so retrying revokes nothing.
       this.readiness.delete(decided.cache);
       this.bump(key);
+      this.probe(key);
       this.notify(key);
     }
-    // A probe discarded because the membership changed meanwhile leaves a
-    // newer one in flight: wait for that too.
-    for (let probing = this.probe(key); probing; probing = this.probe(key)) {
-      const settled = probing;
-      await new Promise<void>((resolve, reject) => {
-        const abort = () => reject(signal.reason);
-        signal.addEventListener("abort", abort, { once: true });
-        void settled.finally(() => {
-          signal.removeEventListener("abort", abort);
-          resolve();
-        });
-      });
-    }
-    return this.routeFor(key);
+    return route;
   }
 
   subscribeRoute(key: AgentKey, listener: () => void) {
@@ -445,8 +435,6 @@ const blocked = (
 /** This app's routes, from this build's descriptor. */
 export const workforceRoutes = new WorkforceRoutes(workforceDescriptor);
 export const routeFor = (key: AgentKey) => workforceRoutes.routeFor(key);
-export const routeReady = (key: AgentKey, signal: AbortSignal) =>
-  workforceRoutes.routeReady(key, signal);
 export const subscribeRoute = (key: AgentKey, listener: () => void) =>
   workforceRoutes.subscribeRoute(key, listener);
 export const invalidateRoute = (key: AgentKey, revision?: number) =>
