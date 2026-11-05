@@ -235,7 +235,6 @@ it.each([false, true])(
 
 it("queries all 278 membership IDs in 128-filter requests and publishes each landed request", async () => {
   const h = setup(278);
-  const batches: string[][] = [];
   const first = message(h.peer, "other", "first", 11);
   const second = message(h.peer, "room-128", "second", 12);
   const last = message(h.peer, "room-277", "last", 13);
@@ -243,32 +242,51 @@ it("queries all 278 membership IDs in 128-filter requests and publishes each lan
   h.session.unread.subscribe({ kind: "channel", channelId: "other" }, () => {
     observed.push(h.snapshot().observedCount);
   });
+  // Each window request as it arrives, with the busy channel's count then.
+  // Nothing is asserted in the mock: a failure thrown there is a read the
+  // repair retries once and drops, leaving the pass partial, not failed.
+  const requests: {
+    filters: readonly ReadFilter[];
+    observedCount: number | null;
+  }[] = [];
   h.query.mockImplementation(async (filters) => {
     if (!filters[0]?.kinds?.includes(9)) return [];
-    if (!filters.some((filter) => filter["#h"])) return [];
-    expect(filters.length).toBeLessThanOrEqual(128);
-    // The viewer's authored page rides the first request. Windows are sized
-    // so a roster this large stays within the budget: the least, 20 each.
-    const ids = filters.flatMap((filter) => {
-      if (filter.authors) return [];
-      expect(filter["#h"]).toHaveLength(1);
-      expect(filter).toMatchObject({
-        include_aux: true,
-        limit: 20,
-        since: expect.any(Number),
-      });
-      return [filter["#h"]?.[0] ?? ""];
-    });
-    batches.push(ids);
-    // Two requests run at once; the first has landed before a third starts.
-    if (batches.length > 2) expect(h.snapshot().observedCount).toBe(1);
+    // The roster sample, with no start, holds nothing here.
+    if (filters.every((filter) => filter.since === undefined)) return [];
+    requests.push({ filters, observedCount: h.snapshot().observedCount });
+    const ids = filters.flatMap((filter) => filter["#h"] ?? []);
     return [first, second, last].filter((event) =>
       ids.includes(event.tags[0]?.[1] ?? ""),
     );
   });
   await h.session.unread.ensure();
-  expect(batches).toHaveLength(3);
-  expect(batches.flat().sort()).toEqual([...h.ids].sort());
+  expect(h.session.unread.inbox()).toMatchObject({
+    status: "ready",
+    freshness: "observed",
+  });
+  expect(h.session.unread.inbox().partial).toBeUndefined();
+  // The viewer's authored page rides the first request with 127 windows.
+  // Windows are sized so a roster this large stays within the budget: the
+  // least, 20 each.
+  expect(requests.map(({ filters }) => filters.length)).toEqual([128, 128, 23]);
+  expect(requests[0]?.filters.filter((filter) => filter.authors)).toHaveLength(
+    1,
+  );
+  const windows = requests.flatMap(({ filters }) =>
+    filters.filter((filter) => !filter.authors),
+  );
+  for (const window of windows)
+    expect(window).toMatchObject({
+      "#h": [expect.any(String)],
+      include_aux: true,
+      limit: 20,
+      since: expect.any(Number),
+    });
+  expect(windows.map((window) => window["#h"]?.[0]).sort()).toEqual(
+    [...h.ids].sort(),
+  );
+  // Two requests run at once; the first has landed before a third starts.
+  expect(requests[2]?.observedCount).toBe(1);
   expect(observed).toContain(1);
   expect(
     h.session.unread.snapshot({ kind: "channel", channelId: "room-277" })

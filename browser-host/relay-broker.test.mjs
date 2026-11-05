@@ -224,17 +224,12 @@ test("unread repair batches may exceed four filters: windows, the authored page,
     { kinds, ids: [root], include_aux: true, limit: 1 },
   ];
   assert.equal(validFilters(batch), true);
+  // The shapes are unread-window-batch.test.ts's; the broker hands a batch
+  // over four filters to that rule, not to its length alone: a second
+  // authored page within 128 filters is refused as 129 filters are.
   for (const invalid of [
     [...batch, { ...batch[1], "#h": ["room-300"] }],
-    batch.map((f) => ({ ...f, kinds: [9] })),
-    batch.map((f) => ({ ...f, include_aux: undefined })),
-    batch.map((f) => ("since" in f ? { ...f, since: undefined } : f)),
-    batch.map((f) => ("since" in f ? { ...f, "#h": ["room-1"] } : f)),
-    batch.map((f) => ("since" in f ? { ...f, until: 2000 } : f)),
-    batch.map((f) => ("since" in f ? { ...f, limit: 501 } : f)),
-    [...batch.slice(1), batch[0], batch[0]],
-    batch.map((f) => ("ids" in f ? { ...f, limit: 2 } : f)),
-    [...batch.slice(0, 5), null],
+    [...batch.slice(0, 127), batch[0]],
   ])
     assert.equal(validFilters(invalid), false);
 });
