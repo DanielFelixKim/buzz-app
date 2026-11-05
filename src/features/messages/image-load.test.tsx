@@ -8,6 +8,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AttachmentImage } from "./AttachmentImage";
 import * as imageCopy from "./image-copy";
@@ -132,6 +133,72 @@ it("a viewer that already shows the pixels keeps them when a row fails", () => {
     viewer().getByRole("link", { name: "Download image" }),
   ).toHaveAttribute("href", source);
 });
+
+it.each([
+  ["after the next image arrives", true],
+  ["while the next image loads", false],
+])(
+  "a viewer back on an image it is still sliding away keeps it when a row fails: %s",
+  (_, arrived) => {
+    const second = "https://fixture.test/second.png";
+    // Holds every slide open, so the departing image stays mounted.
+    Object.defineProperty(HTMLElement.prototype, "animate", {
+      value: () => ({ cancel() {}, onfinish: null }),
+      configurable: true,
+    });
+    function Gallery() {
+      const [selectedUrl, select] = useState(url);
+      return (
+        <>
+          <section aria-label="Row">
+            <AttachmentImage
+              attachment={{ url, kind: "image", dimensions }}
+              source={source}
+            />
+          </section>
+          <section aria-label="Viewer">
+            <ImageReviewStage
+              attachments={[
+                { url, kind: "image" },
+                { url: second, kind: "image" },
+              ]}
+              selectedUrl={selectedUrl}
+              media={(item) => (item === url ? source : item)}
+              select={select}
+              onOpenLink={() => false}
+            />
+          </section>
+        </>
+      );
+    }
+    try {
+      render(<Gallery />);
+      const pixels = viewer().getByRole("img");
+      fireEvent.load(pixels);
+      // What a browser reports for the decoded picture from then on.
+      Object.defineProperties(pixels, {
+        complete: { value: true },
+        naturalWidth: { value: dimensions.width },
+      });
+      fireEvent.click(viewer().getByRole("button", { name: "Next image" }));
+      expect(pixels).toHaveAttribute("data-gallery-departing");
+      if (arrived) fireEvent.load(viewer().getByRole("img"));
+
+      // Returning reuses the departing element, which fires no new load event.
+      fireEvent.click(viewer().getByRole("button", { name: "Previous image" }));
+      expect(viewer().getByRole("img")).toBe(pixels);
+      fireEvent.error(rowImage());
+      expect(row().getByRole("status")).toHaveTextContent(
+        "Couldn't load image",
+      );
+      expect(viewer().getByRole("img")).toBe(pixels);
+      expect(viewer().queryByRole("status")).not.toBeInTheDocument();
+      expect(viewer().getByRole("button", { name: "Zoom in" })).toBeEnabled();
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, "animate");
+    }
+  },
+);
 
 it("forgets a failure once no view shows it, so a remounted row requests it again", () => {
   const first = render(<Views viewer={false} />);

@@ -87,13 +87,20 @@ export function ImageReviewStage({
   const selected = attachments[selectedIndex] ?? attachments[0];
   const source = selected ? media(selected.url) : undefined;
   // Pixels this view already shows outlast another view's failed request, as
-  // in the row; this view's own failure still shows. Navigation, back to the
-  // same source too, starts over.
+  // in the row; this view's own failure still shows. Navigation starts over.
   const [loaded, setLoaded] = useState<{
     source: string | undefined;
     ready?: true;
   }>({ source });
   if (loaded.source !== source) setLoaded({ source });
+  // Returning before the departing image is gone reuses its element, which
+  // fires no second load event, so a picture it already loaded counts at once.
+  // A broken one is complete too, but has no natural width.
+  useLayoutEffect(() => {
+    const current = image.current;
+    if (source && current?.complete && current.naturalWidth)
+      setLoaded({ source, ready: true });
+  }, [source]);
   const shared = useImageLoad(source);
   const load = loaded.source === source && loaded.ready ? undefined : shared;
   // Only a loaded original can be zoomed, copied, downloaded or opened. Its
