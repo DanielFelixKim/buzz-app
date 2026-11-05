@@ -2170,7 +2170,8 @@ ordinary prose never create notification intent or establish an identity.
 `registerCodeBlock({ id, title, matches, component, action? })` contributes optional
 presentation for a fenced code block. `matches(language)` receives the fence's
 info-string language as written; `component` and `action` receive `{ code, language }`. The
-host retains the code frame and its copy action, which copies the source; it
+host retains the code frame and its copy action, which copies the source (including
+the language fence for `buzz-chart` so pasted charts render again); it
 places the optional `action` control, such as an expand button, before copy. A
 text selection spanning the block also copies its fenced source, not the
 presentation.

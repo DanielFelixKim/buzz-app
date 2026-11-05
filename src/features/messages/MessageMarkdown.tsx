@@ -1,3 +1,4 @@
+import { toMarkdown } from "mdast-util-to-markdown";
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
   createContext,
@@ -762,13 +763,13 @@ function PreparedMessageMarkdown({
     },
     pre: ({ node, children, ...props }) => {
       const code = labelText(children).replace(/\n$/, "");
+      const language = codeLanguage(node);
       const plain = (
         <pre {...props}>
           {children}
-          {interactive && <CodeActions code={code} />}
+          {interactive && <CodeActions code={code} language={language} />}
         </pre>
       );
-      const language = codeLanguage(node);
       // Previews are not interactive, so they keep the plain code.
       return interactive && language && extensions?.codeBlocks ? (
         <CodeBlock
@@ -952,7 +953,7 @@ function CodeBlock({
         data-copy-language={language}
       >
         <Renderer code={code} language={language} />
-        <CodeActions code={code}>
+        <CodeActions code={code} language={language}>
           {Action && <Action code={code} language={language} />}
         </CodeActions>
       </div>
@@ -962,9 +963,11 @@ function CodeBlock({
 
 function CodeActions({
   code,
+  language,
   children,
 }: {
   code: string;
+  language?: string;
   children?: ReactNode;
 }) {
   const notify = useToastNotification();
@@ -982,7 +985,16 @@ function CodeActions({
         onClick={() => {
           setCopying(true);
           void Promise.resolve()
-            .then(() => writeClipboardText(code))
+            .then(() =>
+              writeClipboardText(
+                language?.toLowerCase() === "buzz-chart"
+                  ? toMarkdown(
+                      { type: "code", lang: "buzz-chart", value: code },
+                      { fences: true },
+                    )
+                  : code,
+              ),
+            )
             .then(
               () => notify("Copied code to clipboard", "success"),
               () => notify("Failed to copy code", "error"),

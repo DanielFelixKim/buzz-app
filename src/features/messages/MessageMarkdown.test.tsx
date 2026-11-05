@@ -1214,6 +1214,41 @@ describe("code block renderers", () => {
     expect(view.container.querySelectorAll("pre")).toHaveLength(2);
   });
 
+  it.each([false, true])(
+    "copies charts as renderable Markdown (plugin enabled: %s)",
+    async (enabled) => {
+      const user = userEvent.setup();
+      const write = vi
+        .spyOn(navigator.clipboard, "writeText")
+        .mockResolvedValue();
+      const code = JSON.stringify({ version: 1, note: "A ``` sample" });
+      const chart: Contribution<CodeBlockRenderer> = {
+        ...drawn,
+        matches: (language) => language.toLowerCase() === "buzz-chart",
+      };
+      const codeBlocks = store(enabled ? [chart] : []);
+      const options = { extensions: { ...extensions, codeBlocks } };
+      const view = renderDom(
+        <MessageMarkdown
+          {...props(`~~~~buzz-chart\n${code}\n~~~~`, options)}
+        />,
+        { wrapper: ToastProvider },
+      );
+      await user.click(screen.getByRole("button", { name: "Copy code block" }));
+      await screen.findByText("Copied code to clipboard");
+      const copied = write.mock.calls[0]?.[0] as string;
+      expect(copied).toBe(`\`\`\`\`buzz-chart\n${code}\n\`\`\`\`\n`);
+      // A pasted copy still resolves to the chart renderer with its exact JSON.
+      codeBlocks.swap([chart]);
+      view.rerender(<MessageMarkdown {...props(copied, options)} />);
+      expect(view.container.querySelector("figure")).toHaveAttribute(
+        "data-language",
+        "buzz-chart",
+      );
+      expect(view.container.querySelector("figure")?.textContent).toBe(code);
+    },
+  );
+
   it("restores the plain block when the renderer fails, and retries on re-enable", () => {
     const codeBlocks = store([
       diagram(() => {
