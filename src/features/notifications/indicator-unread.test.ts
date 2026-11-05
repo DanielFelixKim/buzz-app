@@ -142,7 +142,7 @@ it("restores existing unread at binding startup, including thread-only activity 
   ]);
   h.emit([root, reply]);
   h.bind();
-  expect(h.project).toHaveBeenLastCalledWith(counted(1));
+  expect(h.project).toHaveBeenLastCalledWith(DOT);
   await h.session.unread.markThrough(
     { kind: "thread", channelId: "room", rootId: root.id },
     reply.id,
@@ -282,7 +282,7 @@ it("removes muted channel activity from the Dock indicator without marking it re
   expect(h.project).toHaveBeenLastCalledWith(DOT);
 });
 
-it("counts DMs, mentions and each thread with relevant replies, with a dot for other unread", async () => {
+it("counts only DMs and mentions, with a dot for thread replies, broadcasts and other unread", async () => {
   const h = setup();
   h.bind();
   h.grant();
@@ -300,13 +300,14 @@ it("counts DMs, mentions and each thread with relevant replies, with a dot for o
   const root = message(h.viewer, "room", "my thread", 14);
   h.emit([
     root,
-    message(h.peer, "room", "first reply", 15, [["e", root.id, "", "reply"]]),
+    message(h.peer, "room", "reply", 15, [["e", root.id, "", "reply"]]),
+    message(h.peer, "room", "everyone", 16, [
+      ["e", root.id, "", "reply"],
+      ["broadcast", "1"],
+    ]),
   ]);
-  expect(h.project).toHaveBeenLastCalledWith(counted(2));
-  h.emit([
-    message(h.peer, "room", "second reply", 16, [["e", root.id, "", "reply"]]),
-  ]);
-  expect(h.project).toHaveBeenLastCalledWith(counted(2));
+  expect(h.session.unread.snapshot(target).attentionCount).toBe(2);
+  expect(h.project).toHaveBeenLastCalledWith(counted(1));
   expect(h.query).not.toHaveBeenCalled();
 });
 

@@ -23,7 +23,7 @@ export function UnreadIndicatorSettings({
         <p className="text-body-sm text-subtle">
           {state.permission === "unavailable"
             ? "Dock badges require a bundled macOS app and aren’t available from the development server."
-            : "Counts unread direct messages, mentions and threads with new replies in the selected community, or shows a dot for other unread messages. Muted channels count only mentions."}
+            : "Counts unread direct messages and mentions of you in the selected community, or shows a dot for other unread messages. Muted channels count only mentions."}
         </p>
         {state.permission !== "unavailable" && (
           <p role="status" className="text-body-sm text-muted">

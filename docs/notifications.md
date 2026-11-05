@@ -196,19 +196,18 @@ revoked-access rejection. A macOS pass is not Windows/Linux acceptance.
 ## macOS Dock unread badge
 
 The host projects one badge from the selected community's existing unread
-selectors. A number sums the channels' observed `attentionItems`: unread DMs,
-mentions, broadcasts and relevant thread replies, where each thread with unread
-attention counts once however many replies it has. Without attention,
-a dot marks other observed unread messages or explicit channel-unread intent.
+selectors. A number sums the channels' observed `directCount` and `mentionCount`:
+unread direct messages and messages that mention the viewer, one per message.
+Otherwise a dot marks other observed unread messages, including broadcasts and
+relevant thread replies, or explicit channel-unread intent.
 The number is observed evidence, not an exact relay total or evidence of complete
 history: bounded evidence can undercount after a long absence, and missing markers
 can overcount. Unknown and observed-zero both omit the badge. Existing bounded
 evidence/read-state owns startup and updates; this projection adds no relay reads,
-network subscriptions, or storage. A confirmed-muted channel contributes only its
-unread mentions (`mentionItems`, which never includes DMs and also counts each
-thread once), so muted DMs and
-ordinary muted activity stay off the badge while retaining their unread evidence;
-unmuting can restore them. The badge stays clear while mute preferences are
+network subscriptions, or storage. A confirmed-muted conversation contributes only
+its unread mentions (`mentionCount` never includes DMs), so muted DMs and ordinary
+muted activity stay off the badge while retaining their unread evidence; unmuting
+can restore them. The badge stays clear while mute preferences are
 unresolved. Personal space,
 account/session changes, access loss and host disposal clear or recompute the
 indicator. Disabling Channels does not stop host ownership. Desktop alert

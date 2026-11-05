@@ -44,9 +44,7 @@ it("requests permission only through the explicit Settings button and updates st
   await act(() => h.dock.refresh());
   expect(h.permission.mock.calls).toEqual([[false]]);
   expect(
-    screen.getByText(
-      /Counts unread direct messages, mentions and threads with new replies/,
-    ),
+    screen.getByText(/Counts unread direct messages and mentions of you/),
   ).toBeInTheDocument();
   let resolve!: (permission: IndicatorPermission) => void;
   h.permission.mockImplementationOnce(

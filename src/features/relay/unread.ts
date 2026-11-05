@@ -37,10 +37,10 @@ export type UnreadSnapshot = Readonly<{
   /** null means unobserved/denied, never a fabricated zero or an exact relay total. */
   observedCount: number | null;
   attentionCount: number | null;
-  /** attentionCount with each thread's replies counted once; omitted when none. */
-  attentionItems?: number;
-  /** Unread mentions (never DMs), each thread counted once; omitted when none. */
-  mentionItems?: number;
+  /** Unread direct messages within attentionCount; omitted when none. */
+  directCount?: number;
+  /** Unread mentions of the viewer (never DMs) within attentionCount; omitted when none. */
+  mentionCount?: number;
   coverage: "unknown" | "observed";
   freshness: "unknown" | "observed" | "stale";
   manual: "none" | "local-only" | "remote";
@@ -860,10 +860,8 @@ export function createUnread({
     const state = reads.state();
     let count = 0,
       attention = 0,
-      attentionItems = 0,
-      mentionItems = 0;
-    const attentionThreads = new Set<string>(),
-      mentionThreads = new Set<string>();
+      direct = 0,
+      mentions = 0;
     const dm = isDm(target.channelId);
     indexEvidence();
     let latest: RelayEvent | undefined;
@@ -880,18 +878,11 @@ export function createUnread({
       want(entry, dm);
       if (!isUnread(entry, state, dm)) continue;
       count++;
-      if (priority(entry, dm)) {
-        attention++;
-        if (entry.rootId) attentionThreads.add(entry.rootId);
-        else attentionItems++;
-      }
-      if (category(entry, dm) === "mention") {
-        if (entry.rootId) mentionThreads.add(entry.rootId);
-        else mentionItems++;
-      }
+      if (priority(entry, dm)) attention++;
+      const kind = category(entry, dm);
+      if (kind === "direct") direct++;
+      else if (kind === "mention") mentions++;
     }
-    attentionItems += attentionThreads.size;
-    mentionItems += mentionThreads.size;
     const manual = reads.localUnread(key)
       ? "local-only"
       : target.kind === "message" &&
@@ -913,8 +904,8 @@ export function createUnread({
         : {}),
       observedCount: evidence ? count : null,
       attentionCount: evidence ? attention : null,
-      ...(evidence && attentionItems ? { attentionItems } : {}),
-      ...(evidence && mentionItems ? { mentionItems } : {}),
+      ...(evidence && direct ? { directCount: direct } : {}),
+      ...(evidence && mentions ? { mentionCount: mentions } : {}),
       coverage: evidence ? "observed" : "unknown",
       freshness,
       manual,
@@ -925,8 +916,8 @@ export function createUnread({
     a.latestMessage?.id === b.latestMessage?.id &&
     a.observedCount === b.observedCount &&
     a.attentionCount === b.attentionCount &&
-    a.attentionItems === b.attentionItems &&
-    a.mentionItems === b.mentionItems &&
+    a.directCount === b.directCount &&
+    a.mentionCount === b.mentionCount &&
     a.coverage === b.coverage &&
     a.freshness === b.freshness &&
     a.manual === b.manual &&

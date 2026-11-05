@@ -235,11 +235,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   you. Unmute restores ordinary unread emphasis and dots. Manual **Mark as unread**
   can still make the name bold. Muted rows show no unread dots, including thread
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
-  their avatar previews. On macOS, the Dock badge counts unread direct messages,
-  mentions and threads with new replies in the selected community (each thread
-  counts once), or shows a dot for other unread messages; muted channels add only
-  mentions. The count reflects what Buzz
-  has loaded, not an exact server total.
+  their avatar previews. On macOS, the Dock badge counts unread direct messages
+  and mentions of you in the selected community, or shows a dot for other unread
+  messages such as thread replies; muted channels add only mentions. The count
+  reflects what Buzz has loaded, not an exact server total.
   Muting does not mark messages or threads as read.
 - **Hidden DMs**: **Remove from Team** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
