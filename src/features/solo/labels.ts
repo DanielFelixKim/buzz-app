@@ -70,9 +70,10 @@ export function soloChatLinkName(channel: { id: string; name: string }) {
 }
 
 /** A Solo chat the viewer chose: their own, or one they joined as a viewer.
- * Solo chats add people only as members, so a viewer role means the viewer
- * joined. Someone else adding the viewer is not their choice, and an unknown
- * role is neither. */
+ * Solo chats add people only as members, so a viewer role is treated as
+ * joined. It is not proof: a legacy invitation could admit a Guest, and that
+ * invitee is accepted as chosen too (docs/solo/sharing.md). Someone else adding
+ * the viewer as a member is not their choice, and an unknown role is neither. */
 export function chosenSolo(
   channel:
     | Readonly<{

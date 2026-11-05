@@ -205,7 +205,9 @@ never add a row. See [Relevant replies](../unread.md#relevant-replies).
 
 Pressing **Join** in a View only chat is the viewer's own choice, so that chat
 lists under Solo with ordinary unread tracking. Solo chats add people only as
-members, so a viewer role always means the viewer joined.
+members, so a viewer role is treated as having joined. The exception is a
+legacy invitation that admitted a Guest (see above): that invitee is treated
+the same way, so code must not take Guest role as proof of Join.
 
 ## Explicit conversion, separate from Share
 
