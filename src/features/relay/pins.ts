@@ -7,6 +7,7 @@ import type {
 } from "./contracts";
 import type { EventData, ReadFilter } from "./events";
 import { deletionApplies } from "./fold";
+import { deletionTemplate } from "./messages";
 import type { Outbox } from "./outbox";
 
 /** A channel member's pin of one channel message (relay `KIND_STREAM_MESSAGE_PINNED`). */
@@ -220,6 +221,9 @@ export function createPins({
     snapshots.set(channelId, { window, pins });
     return pins;
   };
+  /** The pins each channel's last `read` returned: a pin from history may not
+   * be among the events the session holds, but it is still the viewer's to remove. */
+  const listed = new Map<string, ReadonlyMap<string, EventData>>();
   const ownPin = (message: ChannelMessage) =>
     viewer
       ? message.pinnedBy?.find((pin) => pin.pinnedBy === viewer)
@@ -230,10 +234,10 @@ export function createPins({
         item.tags.some(([name, id]) => name === "e" && id === event.id) &&
         deletionApplies(item, event, undefined),
     );
-  const writer = (channelId: string) => {
+  const writer = (kind: number, channelId: string) => {
     if (!canWrite(channelId))
       throw new Error("You don’t have write access to this conversation.");
-    if (!outbox?.supports(PIN_KIND))
+    if (!outbox?.supports(kind))
       throw new Error("This connection cannot publish that operation");
     return outbox;
   };
@@ -248,12 +252,31 @@ export function createPins({
         listener();
       });
     },
-    read: (channelId: string, signal?: AbortSignal) =>
-      readChannelPins(
-        { read },
+    async read(channelId: string, signal?: AbortSignal) {
+      const events = new Map<string, EventData>();
+      const pins = await readChannelPins(
+        {
+          async read(filters, options) {
+            const found = await read(filters, options);
+            for (const event of found)
+              if (event.kind === PIN_KIND) events.set(event.id, event);
+            return found;
+          },
+        },
         channelId,
         signal ?? new AbortController().signal,
-      ),
+      );
+      listed.set(
+        channelId,
+        new Map(
+          pins.flatMap((pin) => {
+            const event = events.get(pin.id);
+            return event ? [[pin.id, event] as const] : [];
+          }),
+        ),
+      );
+      return pins;
+    },
     canPin(message: ChannelMessage) {
       const channel = channels
         .list()
@@ -281,12 +304,23 @@ export function createPins({
         throw new Error("Load the message before pinning it");
       if (!original.tags.some(([name, id]) => name === "h" && id === channelId))
         throw new Error("Message is not in this channel");
-      return writer(channelId).send(pinTemplate(channelId, messageId));
+      return writer(PIN_KIND, channelId).send(
+        pinTemplate(channelId, messageId),
+      );
     },
     unpin(pinId: string) {
-      if (find(pinId)?.kind !== PIN_KIND)
+      const held = find(pinId);
+      const event =
+        held ??
+        [...listed.values()].flatMap((pins) => pins.get(pinId) ?? [])[0];
+      if (event?.kind !== PIN_KIND)
         throw new Error("Load the pin before unpinning it");
-      return remove([pinId]);
+      if (held) return remove([pinId]);
+      const channelId = event.tags.find(([name]) => name === "h")?.[1];
+      if (!channelId) throw new Error("Pin has no channel");
+      if (event.pubkey !== viewer)
+        throw new Error("Only your own messages and reactions can be removed");
+      return writer(5, channelId).send(deletionTemplate(channelId, event));
     },
   });
 }

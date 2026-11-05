@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
-import { PIN_KIND } from "./pins";
+import type { Outbox } from "./outbox";
+import { createPins, PIN_KIND } from "./pins";
 import { matchesEvent } from "./projection";
 import { createRelaySession } from "./session";
 import { bounds, flush, keypair, message, signed } from "./testing";
@@ -279,4 +280,47 @@ it("reads a channel's pins through the session, newest first", async () => {
     second.id,
     first.id,
   ]);
+});
+
+it("unpins a pin that only a relay read returned, and refuses another member's", async () => {
+  const mine = pinOf(viewer, root, 5),
+    theirs = pinOf(other, root, 6);
+  const events = [root, mine, theirs];
+  const sent: unknown[] = [];
+  const pins = createPins({
+    viewer: viewer.pubkey,
+    outbox: {
+      supports: () => true,
+      send: (input: unknown) => {
+        sent.push(input);
+        return "deletion";
+      },
+    } as unknown as Outbox,
+    channels: {} as Parameters<typeof createPins>[0]["channels"],
+    canWrite: () => true,
+    find: () => undefined,
+    observed: () => [],
+    read: async (filters) =>
+      filters.flatMap((filter) =>
+        events.filter((event) => matchesEvent(event, filter)),
+      ),
+    remove: () => {
+      throw new Error("The session does not hold the pin");
+    },
+  });
+  expect(() => pins.unpin(mine.id)).toThrow("Load the pin before unpinning it");
+  await pins.read(channelId);
+  expect(pins.unpin(mine.id)).toBe("deletion");
+  expect(sent).toEqual([
+    {
+      kind: 5,
+      content: "",
+      tags: [
+        ["h", channelId],
+        ["e", mine.id],
+        ["k", "40004"],
+      ],
+    },
+  ]);
+  expect(() => pins.unpin(theirs.id)).toThrow(/Only your own/);
 });

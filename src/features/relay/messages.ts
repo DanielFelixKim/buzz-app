@@ -37,6 +37,19 @@ export type RunPick = Readonly<{ model?: string; effort?: string }>;
 export type MentionPicks = Readonly<Record<string, RunPick>>;
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
+/** The NIP-09 deletion of one of the viewer's events; the relay accepts one target per deletion. */
+export function deletionTemplate(channelId: string, event: EventData) {
+  return {
+    kind: 5,
+    content: "",
+    tags: [
+      ["h", channelId],
+      ["e", event.id],
+      ["k", String(event.kind)],
+    ],
+  };
+}
+
 export function createMessages(
   outbox: Outbox | undefined,
   viewer: string | undefined,
@@ -259,17 +272,7 @@ export function createMessages(
     const failures: unknown[] = [];
     const operations = targets.flatMap((event) => {
       try {
-        return [
-          queue.send({
-            kind: 5,
-            content: "",
-            tags: [
-              ["h", channelId],
-              ["e", event.id],
-              ["k", String(event.kind)],
-            ],
-          }),
-        ];
+        return [queue.send(deletionTemplate(channelId, event))];
       } catch (cause) {
         failures.push(cause);
         return [];
