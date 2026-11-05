@@ -447,7 +447,7 @@ export function localActivity(
   return agents;
 }
 export function localWorkLabel(
-  row: Pick<LocalWork, "state" | "error" | "step">,
+  row: Pick<LocalWork, "state" | "error" | "step" | "notice">,
 ) {
   if (row.state === "superseded") return "Continued on a later message";
   if (row.state === "stopped") return "Stopped";
@@ -458,7 +458,10 @@ export function localWorkLabel(
         ? stepText(row.step)
         : "Starting"
       : row.state === "error"
-        ? row.error || "Could not finish this request"
+        ? // A failure keeps how its turn ran, such as without its gateway.
+          [row.error || "Could not finish this request", row.notice]
+            .filter(Boolean)
+            .join(" · ")
         : "Finished";
 }
 
