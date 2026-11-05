@@ -486,10 +486,12 @@ available rather than silently discarding it.
   conversation in that target's workspace. Stop ends its active turn.
   Remote Claude usage totals and transcripts are unavailable.
 - When creating a Builderlab agent, sign in, choose a model from its family menu,
-  then choose a supported **Thinking** level. Both choices are required; changing
-  the model clears the thinking choice. Instructions are optional. **Create agent**
-  stays disabled until its name and required choices are complete; Builderlab
-  also waits for sign-in and its model catalog.
+  then choose a supported **Thinking** level. If Builderlab recommends a model
+  and thinking level, both start selected; change either to choose your own. Both
+  choices are required; changing the model clears the thinking choice.
+  Instructions are optional. **Create agent** stays disabled until its name and
+  required choices are complete; Builderlab also waits for sign-in and its model
+  catalog.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab
@@ -499,8 +501,22 @@ available rather than silently discarding it.
   to edit the retained draft.
   When signed out of Builderlab, use **Sign in** beside Harness first.
   Model, Thinking and Create agent stay disabled until sign-in completes.
-  Sign in shows a loading spinner, then browser guidance and **Cancel sign-in**
-  after three seconds. Account verification keeps the spinner until it finishes.
+  During browser sign-in, click the loading spinner to cancel. Account verification
+  cannot be cancelled.
+  Opening an existing Builderlab agent’s **Identity** automatically attempts
+  sign-in if needed. The compact action beside Harness shows a clickable loading
+  spinner that cancels browser sign-in. Cancelled, timed-out or failed attempts
+  wait for you to retry there. A signed-out hint explains that messaging still works
+  and sign-in enables editing. Model and Thinking stay disabled, and
+  Instructions appear after sign-in. Sheets appear for settings or account-access
+  errors. If the agent cannot be found, **Retry** reloads it without signing you out.
+  Native account-access errors open **Identity → Organization sign-in** without
+  ending the shared session. In live development, **Use another account** ends
+  the broker sign-in and opens its browser logout page. After signing in with
+  another account in the browser, return to Buzz and click **Retry** beside
+  Harness. A spinner appears for three seconds before Retry becomes available;
+  click it to end the wait early.
+  Chat, Memory and Activity use your Buzz community connection and do not require this Builderlab sign-in.
   Builderlab agents work from your phone even when your desktop is off, and
   cannot open files on your computer. Their Settings hint appears only while
   signed in, beside a cloud. Local agents have no execution hint.
