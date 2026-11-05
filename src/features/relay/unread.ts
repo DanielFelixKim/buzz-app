@@ -37,6 +37,8 @@ export type UnreadSnapshot = Readonly<{
   /** null means unobserved/denied, never a fabricated zero or an exact relay total. */
   observedCount: number | null;
   attentionCount: number | null;
+  /** Unread mentions within attentionCount (never DMs); omitted when none. */
+  mentionCount?: number;
   coverage: "unknown" | "observed";
   freshness: "unknown" | "observed" | "stale";
   manual: "none" | "local-only" | "remote";
@@ -855,7 +857,8 @@ export function createUnread({
     const evidence = known.has(target.channelId);
     const state = reads.state();
     let count = 0,
-      attention = 0;
+      attention = 0,
+      mentions = 0;
     const dm = isDm(target.channelId);
     indexEvidence();
     let latest: RelayEvent | undefined;
@@ -873,6 +876,7 @@ export function createUnread({
       if (!isUnread(entry, state, dm)) continue;
       count++;
       if (priority(entry, dm)) attention++;
+      if (category(entry, dm) === "mention") mentions++;
     }
     const manual = reads.localUnread(key)
       ? "local-only"
@@ -895,6 +899,7 @@ export function createUnread({
         : {}),
       observedCount: evidence ? count : null,
       attentionCount: evidence ? attention : null,
+      ...(evidence && mentions ? { mentionCount: mentions } : {}),
       coverage: evidence ? "observed" : "unknown",
       freshness,
       manual,
@@ -905,6 +910,7 @@ export function createUnread({
     a.latestMessage?.id === b.latestMessage?.id &&
     a.observedCount === b.observedCount &&
     a.attentionCount === b.attentionCount &&
+    a.mentionCount === b.mentionCount &&
     a.coverage === b.coverage &&
     a.freshness === b.freshness &&
     a.manual === b.manual &&

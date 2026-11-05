@@ -438,6 +438,7 @@ it("promotes mentions, broadcasts and participating-thread replies without promo
   const ordinary = message(h.alice, "room", "ordinary", 11);
   h.emit([root, ordinary]);
   expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
+  expect(h.snapshot()).not.toHaveProperty("mentionCount");
 
   const mentioned = message(h.alice, "room", "mentioned", 12, [
     ["p", h.viewer.pubkey],
@@ -460,7 +461,11 @@ it("promotes mentions, broadcasts and participating-thread replies without promo
     ],
   );
   h.emit([mentioned, broadcast, participatingReply, missingRootBroadcast]);
-  expect(h.snapshot()).toMatchObject({ observedCount: 5, attentionCount: 4 });
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 5,
+    attentionCount: 4,
+    mentionCount: 1,
+  });
   expect(h.session.unread.activity("room").items).toHaveLength(1);
   expect(
     h.session.unread.attention("room", missingRootBroadcast.id),
