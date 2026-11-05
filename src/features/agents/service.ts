@@ -2178,6 +2178,12 @@ export class AgentsService extends Service implements Agents {
           throw new Error(
             "Your owner has not allowed Inbox access for this Bestie.",
           );
+        const channels = session.channels.list();
+        if (channels.status !== "ready" || channels.coverage === "partial") {
+          if (channels.coverage === "partial") session.channels.refreshList?.();
+          else session.channels.ensureList();
+          throw new Error("Inbox is not ready. Please retry.");
+        }
         const unread = session.unread.inbox();
         const feed = session.inboxFeed.snapshot();
         await Promise.all([
@@ -2198,12 +2204,15 @@ export class AgentsService extends Service implements Agents {
         // A successful await can still leave failed or retired evidence. Never
         // turn that into notification content, partial results, or an empty Inbox.
         const live = relay.snapshot();
+        const roster = session.channels.list();
         const result = session.unread.inbox();
         const settled = session.inboxFeed.snapshot();
         if (
           live.status !== "ready" ||
           live.viewer !== agent.owner ||
           live.session !== session ||
+          roster.status !== "ready" ||
+          roster.coverage === "partial" ||
           result.status !== "ready" ||
           result.freshness !== "observed" ||
           settled.status !== "ready" ||

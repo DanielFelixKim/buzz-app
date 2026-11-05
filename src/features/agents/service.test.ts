@@ -3273,35 +3273,51 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
 });
 
 describe("delegated Inbox reads", () => {
-  async function inboxSetup() {
+  async function inboxSetup(discover = true, maxDiscoveryBytes?: number) {
     const f = await setup();
     const relay = keypair();
     const author = keypair();
     const original = message(author, channel, "OLD BODY", 100, [["p", viewer]]);
+    const membership = roster(relay, channel, [viewer, bot, author.pubkey], 10);
+    const description = metadata(relay, channel, "Inbox source", 10);
     let selected: string | null = bot;
     let live!: LiveCallbacks;
-    const query = vi.fn(async (filters: readonly ReadFilter[]) =>
-      filters[0]?.["#e"] ? [] : [original],
-    );
+    const healthyQuery = async ([filter]: readonly ReadFilter[]) =>
+      filter?.kinds?.includes(39002)
+        ? [membership]
+        : filter?.kinds?.includes(39000)
+          ? [description]
+          : filter?.kinds?.includes(9) && !filter["#e"]
+            ? [original]
+            : [];
+    const query = vi.fn(healthyQuery);
     const account = vi.fn(async () => selected);
-    const owner = createRelaySession({
-      viewer,
-      relayAuthor: relay.pubkey,
-      query,
-      media: () => undefined,
-      readMainAgent: account,
-      writeMainAgent: async () => {},
-      subscribe(callbacks) {
-        live = callbacks;
-        return { update() {}, retry() {}, dispose() {} };
+    const owner = createRelaySession(
+      {
+        viewer,
+        relayAuthor: relay.pubkey,
+        query,
+        media: () => undefined,
+        readMainAgent: account,
+        writeMainAgent: async () => {},
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
       },
-    });
+      { maxDiscoveryBytes },
+    );
     live.state({ status: "connected", routes: [] });
-    live.receive([
-      roster(relay, channel, [viewer, bot, author.pubkey], 10),
-      metadata(relay, channel, "Inbox source", 10),
-    ]);
+    if (discover) {
+      owner.session.channels.ensureList();
+      await vi.waitFor(() => {
+        expect(owner.session.channels.list().status).toBe("ready");
+        expect(owner.session.channels.list().coverage).toBeUndefined();
+      });
+    }
+    query.mockClear();
     Object.assign(f.session, {
+      channels: owner.session.channels,
       unread: owner.session.unread,
       inboxFeed: owner.session.inboxFeed,
       mainAgent: owner.session.mainAgent,
@@ -3319,6 +3335,8 @@ describe("delegated Inbox reads", () => {
       ...f,
       owner,
       query,
+      healthyQuery,
+      relay,
       original,
       instructions,
       handle,
@@ -3370,6 +3388,101 @@ describe("delegated Inbox reads", () => {
       await f.close();
     }
   });
+
+  it.each(["held", "failed"])(
+    "rejects %s initial channel discovery, then returns the discovered notification",
+    async (stage) => {
+      const f = await inboxSetup(false);
+      const gate = runnerGate<readonly RelayEvent[]>();
+      const started = runnerGate();
+      f.query.mockImplementation(async (filters) => {
+        if (filters[0]?.kinds?.includes(39002)) {
+          started.resolve();
+          if (stage === "failed") throw new Error("Roster unavailable");
+          return gate.promise;
+        }
+        return f.healthyQuery(filters);
+      });
+      f.owner.session.channels.ensureList();
+      try {
+        try {
+          await started.promise;
+          if (stage === "failed")
+            await vi.waitFor(() =>
+              expect(f.owner.session.channels.list().status).toBe("error"),
+            );
+          await expect(f.readInbox()).rejects.toThrow(/Inbox.*retry/i);
+          expect(
+            f.query.mock.calls.some(([filters]) =>
+              filters.some((filter) => filter.kinds?.includes(9)),
+            ),
+          ).toBe(false);
+        } finally {
+          f.query.mockImplementation(f.healthyQuery);
+          gate.resolve(await f.healthyQuery([{ kinds: [39002] }]));
+        }
+        f.owner.session.channels.ensureList();
+        await vi.waitFor(() => {
+          expect(f.owner.session.channels.list().status).toBe("ready");
+          expect(f.owner.session.channels.list().coverage).toBeUndefined();
+        });
+        expect(JSON.parse((await f.readInbox()) as string)[0]?.preview).toBe(
+          "OLD BODY",
+        );
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "withholds an overflowing channel roster (during notification read: %s)",
+    async (duringRead) => {
+      const f = await inboxSetup(true, 4096);
+      const gate = runnerGate<RelayEvent[]>();
+      const started = runnerGate();
+      const overflow = () =>
+        f.live.receive([
+          roster(f.relay, "overflow", [viewer, "e".repeat(5000)], 11),
+        ]);
+      try {
+        f.query.mockImplementation(async (filters) => {
+          if (
+            duringRead
+              ? !!filters[0]?.["#e"]
+              : !!filters[0]?.kinds?.includes(39002)
+          ) {
+            started.resolve();
+            return gate.promise;
+          }
+          return f.healthyQuery(filters);
+        });
+        if (!duringRead) overflow();
+        const pending = f.readInbox();
+        const rejected = expect(pending).rejects.toThrow(/Inbox.*retry/i);
+        if (duringRead) {
+          await started.promise;
+          overflow();
+          gate.resolve([]);
+        }
+        await rejected;
+        await started.promise;
+        expect(f.owner.session.channels.list()).toMatchObject({
+          status: "ready",
+          coverage: "partial",
+        });
+        if (!duringRead)
+          expect(
+            f.query.mock.calls.some(([filters]) =>
+              filters.some((filter) => filter.kinds?.includes(9)),
+            ),
+          ).toBe(false);
+      } finally {
+        gate.resolve([]);
+        await f.close();
+      }
+    },
+  );
 
   it("allows customized instructions and returns only reconciled edits and deletions", async () => {
     const f = await inboxSetup();

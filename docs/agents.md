@@ -117,8 +117,11 @@ before and after loading. Settings and authorization share the marked-section
 policy in `bestie-features.ts`: incomplete or damaged markers deny access; edits
 inside complete sections remain enabled. This is not separate per-use consent.
 
-The service releases items only from observed, ready unread evidence and a ready
-Inbox feed with no unresolved edit/deletion targets. Any stale, error, loading or
+The service first requires a ready, complete channel discovery snapshot and checks
+it again before release. While discovery is pending, failed or partial, a call starts
+or retries the existing discovery read and returns a retryable error without reading
+notifications. The service releases items only from observed, ready unread evidence
+and a ready Inbox feed with no unresolved edit/deletion targets. Any stale, error, loading or
 retired snapshot returns a retryable error, never a successful partial/empty list.
 The next call retries existing read errors. The captured runner lifetime is checked
 again after the read, so retirement or retype cannot release a late result. The
