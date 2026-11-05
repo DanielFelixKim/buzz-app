@@ -204,7 +204,6 @@ export function PinnedMessages({
     setNotice("");
     const started: { pin: PinRecord; operation: string }[] = [];
     try {
-      // One deletion per pin, so each settles on its own outcome.
       for (const pin of own)
         started.push({ pin, operation: session.messages.remove([pin.id]) });
     } catch (cause) {
