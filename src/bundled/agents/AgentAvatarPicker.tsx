@@ -23,6 +23,7 @@ import {
   AvatarZoom,
 } from "../../features/profiles/AvatarCrop";
 import {
+  type AvatarCrop,
   croppedAvatar,
   emojiAvatar,
   uncropped,
@@ -75,7 +76,7 @@ const backgrounds = [
 export type AvatarSelection =
   | { kind: "gloopie"; picture: string }
   | { kind: "emoji"; emoji: string; color: string }
-  | { kind: "image"; picture: string };
+  | { kind: "image"; picture: string; crop?: AvatarCrop };
 
 const defaultEmojiColor = backgrounds[0];
 
@@ -117,7 +118,10 @@ export function AgentAvatarPicker({
     picture?: string;
     progress?: number;
   } | null>(null);
-  const [crop, setCrop] = useState(uncropped);
+  // The crop lives in the selection so its owner can tell a reframe is a change.
+  const crop = (selection.kind === "image" && selection.crop) || uncropped;
+  const setCrop = (value: AvatarCrop) =>
+    onChange({ kind: "image", picture, crop: value });
   const cropImage = useRef<HTMLImageElement>(null);
   const uploading = local && local.picture === undefined ? local : null;
   const busy = !!uploading;
@@ -249,7 +253,6 @@ export function AgentAvatarPicker({
     const url = URL.createObjectURL(file);
     const animated = file.type === "image/gif";
     setLocal({ url, animated });
-    setCrop(uncropped);
     onBusyChange(true);
     setError("");
     try {

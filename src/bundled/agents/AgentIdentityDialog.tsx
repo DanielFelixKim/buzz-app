@@ -41,7 +41,9 @@ export function AgentIdentityDialog({
   const [avatarBusy, setAvatarBusy] = useState(false);
   const avatarRef = useRef<{ prepare(): Promise<string> }>(null);
   const changed =
-    avatar.kind === "emoji" || avatar.picture !== (agent.picture ?? "");
+    avatar.kind === "emoji" ||
+    (avatar.kind === "image" && !!avatar.crop) ||
+    avatar.picture !== (agent.picture ?? "");
   const form = useId();
   const save = async () => {
     const picker = avatarRef.current;
