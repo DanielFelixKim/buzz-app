@@ -23,6 +23,8 @@ export type PluginManifest = Readonly<{
     agentHooks?: readonly string[];
     /** Read and transform model requests for these agent type keys. */
     modelProxies?: readonly string[];
+    /** Offer execution targets for these native agent type keys. */
+    agentExecution?: readonly string[];
     commands?: readonly Readonly<{
       id: string;
       program: string;
@@ -85,6 +87,7 @@ declare module "@deepseek-ai/cordis" {
       agentHooks?: readonly string[];
       /** Read and transform model requests for these agent type keys. */
       modelProxies?: readonly string[];
+      agentExecution?: readonly string[];
     }>;
   }
 }

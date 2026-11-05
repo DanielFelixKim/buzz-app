@@ -109,6 +109,8 @@ export class PluginRuntime {
       this.update(entry, "starting", null);
       void this.start(entry);
     }
+    // Configuration can settle without changing the desired activations.
+    this.publish();
   }
 
   private update(
@@ -158,6 +160,9 @@ export class PluginRuntime {
           ]),
           agentHooks: Object.freeze([
             ...(entry.plugin.manifest.host?.agentHooks ?? []),
+          ]),
+          agentExecution: Object.freeze([
+            ...(entry.plugin.manifest.host?.agentExecution ?? []),
           ]),
         }),
       });
