@@ -981,6 +981,7 @@ export function createChannelStore(
   async function loadPage(state: WindowState, cursor: WindowCursor | null) {
     if (!transport || !canReadRemote(state.channelId)) return;
     const generation = state.generation;
+    const joining = cursor ? state.events : [];
     const controller = new AbortController();
     state.controller = controller;
     // Shown rows wait on this head read; a seek must not treat it as the end.
@@ -999,7 +1000,10 @@ export function createChannelStore(
       // A settled catch-up aborts an older read that has already resolved.
       if (!live(state, generation) || controller.signal.aborted) return;
       const combined = new Map(
-        (cursor ? state.events : []).map((event) => [event.id, event]),
+        (cursor ? [...joining, ...state.events] : []).map((event) => [
+          event.id,
+          event,
+        ]),
       );
       for (const event of page.events) combined.set(event.id, event);
       const retained = cursor
@@ -1131,6 +1135,32 @@ export function createChannelStore(
     });
     void fetchProfiles(state.snapshot.rows);
   }
+  /** Keep overlays and their deletions together, independent of response order. */
+  function relatedEvents(
+    events: readonly RelayEvent[],
+    roots: ReadonlySet<string>,
+  ) {
+    const ids = new Set(roots);
+    const dependents = new Map<string, RelayEvent[]>();
+    for (const event of events) {
+      if (channelRowKind(event.kind)) continue;
+      for (const [name, id] of event.tags) {
+        if (name !== "e" || !id) continue;
+        const entries = dependents.get(id) ?? [];
+        entries.push(event);
+        dependents.set(id, entries);
+      }
+    }
+    const pending = [...ids];
+    for (let index = 0; index < pending.length; index++) {
+      for (const event of dependents.get(pending[index]!) ?? []) {
+        if (ids.has(event.id)) continue;
+        ids.add(event.id);
+        pending.push(event.id);
+      }
+    }
+    return events.filter((event) => ids.has(event.id));
+  }
   /** Retain the end being read and its overlays; the opposite end can be paged back. */
   function trimWindow(
     state: WindowState,
@@ -1147,13 +1177,7 @@ export function createChannelStore(
       return events;
     if (end === "oldest") rows.reverse();
     let kept = rows.slice(0, maxHistoryRows);
-    const retain = (ids: ReadonlySet<string>) =>
-      events.filter(
-        (event) =>
-          ids.has(event.id) ||
-          (!channelRowKind(event.kind) &&
-            event.tags.some((tag) => tag[0] === "e" && ids.has(tag[1] ?? ""))),
-      );
+    const retain = (ids: ReadonlySet<string>) => relatedEvents(events, ids);
     let retained = retain(new Set(kept.map((event) => event.id)));
     while (kept.length > 1 && listByteSize(retained) > maxHistoryBytes) {
       kept = kept.slice(0, -Math.max(1, Math.ceil(kept.length / 4)));
@@ -3545,6 +3569,7 @@ export function createChannelStore(
             from,
             nowSeconds(),
             true,
+            state.ceilingId ?? "f".repeat(64),
           );
           if (!live(state, generation) || controller.signal.aborted) return;
           // Nothing at or after the ceiling: the segment already ends at the head.
@@ -3566,14 +3591,7 @@ export function createChannelStore(
             const ids = new Set(
               [...state.events, ...advancing].map((event) => event.id),
             );
-            return (page?.events ?? []).filter(
-              (event) =>
-                ids.has(event.id) ||
-                (!channelRowKind(event.kind) &&
-                  event.tags.some(
-                    ([name, id]) => name === "e" && ids.has(id ?? ""),
-                  )),
-            );
+            return relatedEvents(page?.events ?? [], ids);
           };
           let incoming = retain();
           const merged = new Map(
@@ -4076,7 +4094,7 @@ export function createChannelStore(
       if (!retained) return false;
       // A detached segment is not what the head reaches: return to the head,
       // keeping the segment until the head lands.
-      if (retained.ceiling !== undefined) {
+      if (retained.ceiling !== undefined && retained.ceilingId === undefined) {
         await reattach(retained);
         return retained.ceiling === undefined;
       }

@@ -53,6 +53,7 @@ export async function locate(
   from: number,
   now: number,
   gallop: boolean,
+  fromId?: string,
 ): Promise<Located> {
   let reads = 0;
   const get = (ceiling: number | null, full: boolean) => {
@@ -76,7 +77,34 @@ export async function locate(
   while (found === undefined) {
     const top = hi ?? now + 1;
     // More than a page of rows share one second.
-    if (top - lo <= 1) throw new SeekLimitError();
+    if (top - lo <= 1) {
+      if (!fromId) throw new SeekLimitError();
+      // A composite sliding boundary can be inside a dense second. Walk its
+      // keyset pages, keeping the crossing page and its immediately newer one.
+      let cursor = ceilingCursor(from + 1);
+      let previous: WindowPage | undefined;
+      for (;;) {
+        if (++reads > SEEK_READS) throw new SeekLimitError();
+        const page = await read(cursor, true);
+        const reached = page.events.some(
+          (event) =>
+            WINDOW_KINDS.includes(event.kind) &&
+            (event.created_at < from ||
+              (event.created_at === from && event.id >= fromId)),
+        );
+        if (reached || !page.cursor)
+          return {
+            kind: "segment",
+            ceiling: from + 1,
+            page: {
+              ...page,
+              events: [...(previous?.events ?? []), ...page.events],
+            },
+          };
+        previous = page;
+        cursor = page.cursor;
+      }
+    }
     const mid = Math.floor((lo + top) / 2);
     const outcome = classify(await get(mid, false), from);
     if (outcome === "fits") found = mid;

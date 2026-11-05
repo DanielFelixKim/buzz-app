@@ -41,7 +41,11 @@ function harness({
   );
   const ordered = [...history].sort(newestFirst);
   const reads: ReadFilter[] = [];
-  const gate: { hold?: Promise<void> | undefined; failHead?: boolean } = {};
+  const gate: {
+    hold?: Promise<void> | undefined;
+    failHead?: boolean;
+    aux?: RelayEvent[];
+  } = {};
   let live!: LiveCallbacks;
   const base = scriptedTransport(viewer.pubkey, relay.pubkey);
   const owner = createRelaySession(
@@ -72,6 +76,7 @@ function harness({
         const last = rows.at(-1);
         return [
           ...rows,
+          ...(filter.include_aux ? (gate.aux ?? []) : []),
           bounds(
             relay,
             "c",
@@ -501,3 +506,99 @@ it("live rows do not crowd a detached segment out of the history budget", async 
   );
   expect(h.window().rows[0]?.id).toBe(oldest);
 });
+
+it("keeps the joining row when live eviction overlaps an older page", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const joining = h.window().rows[0];
+  assert.exists(joining);
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadOlder("c");
+  h.live.receive([message(h.alice, "c", "fresh", T0 + 100 * HOUR)]);
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.map((row) => row.id)).toContain(joining.id);
+});
+
+it("preserves a slid reader when its route reconnects", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const retained = h.window().rows.map((row) => row.id);
+  const reads = h.reads.length;
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(reads));
+  await vi.waitFor(() => expect(h.window().freshness).toBe("verified"));
+  expect(h.window().rows.map((row) => row.id)).toEqual(retained);
+});
+
+it("loads newer across a sliding boundary with more than a page in one second", async () => {
+  const h = setup({ count: 300, spacing: 0, maxHistoryRows: 40 });
+  await h.open();
+  for (let step = 0; h.window().hasMore && step < 20; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  expect(h.window().hasMore).toBe(false);
+  const seen = new Set(h.window().rows.map((row) => row.id));
+  for (let step = 0; h.window().hasNewer && step < 30; step++) {
+    h.channels.loadNewer?.("c");
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    expect(h.window().error).toBeUndefined();
+    expect(h.window().rows.length).toBeLessThanOrEqual(40);
+    for (const row of h.window().rows) seen.add(row.id);
+  }
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(seen.size).toBe(300);
+});
+
+it.each(["older", "newer"])(
+  "keeps deleted reaction overlays while paging %s",
+  async (direction) => {
+    const h = setup({ count: 100, maxHistoryRows: 40 });
+    await h.open();
+    const target = h.history[direction === "older" ? 60 : 90];
+    assert.exists(target);
+    const reaction = signed(h.alice, {
+      kind: 7,
+      content: "+",
+      created_at: T0 + 101 * HOUR,
+      tags: [
+        ["h", "c"],
+        ["e", target.id],
+        ["p", target.pubkey],
+      ],
+    });
+    const deletion = signed(h.alice, {
+      kind: 5,
+      content: "",
+      created_at: T0 + 102 * HOUR,
+      tags: [
+        ["h", "c"],
+        ["e", reaction.id],
+      ],
+    });
+    h.gate.aux = [deletion, reaction];
+    for (let i = 0; i < 2; i++) {
+      h.channels.loadOlder("c");
+      await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    }
+    if (direction === "newer") {
+      h.channels.loadNewer?.("c");
+      await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    }
+    const row = h.window().rows.find((row) => row.id === target.id);
+    assert.exists(row);
+    expect(row.reactions).toHaveLength(0);
+  },
+);
