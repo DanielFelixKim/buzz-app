@@ -414,7 +414,8 @@ The conversation header’s **Channel actions** ellipsis opens the shared, defau
 Channel Settings tab; selecting it again never closes the pane. Editing is available
 from that pane, not directly from the menu. **View canvas** is Channels’
 [channel menu panel](plugin-architecture.md#optional-channel-menu-panels) and opens a
-Canvas tab in the side pane. **Move channel**, **Mute/Unmute**, and **Mark as read/unread**
+Canvas tab in the side pane. **View pinned** is a second channel menu panel that
+opens a Pinned tab; see [Pinned messages](#pinned-messages). **Move channel**, **Mute/Unmute**, and **Mark as read/unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.
 Permission-gated lifecycle
 actions follow in **Leave → Archive → Delete** order, with Delete in the shared
@@ -446,7 +447,7 @@ The outbox adds its usual `client-id` tag. The packaged signer
 in `browser-host/relay-broker.mjs`) sign only this shape; the relay decides
 membership with its ordinary post rule, so a Guest cannot pin. A pin targets a
 kind 9 or 40002 message in the same channel. `src/features/relay/pins.ts` owns
-the template and validation.
+the template, validation and read.
 
 - **Fold.** `foldMessages` attaches a message's live pins to
   `ChannelMessage.pinnedBy`, earliest first. A pin naming another channel, a
@@ -462,6 +463,14 @@ the template and validation.
   Everyone else, owners and admins included, sees a disabled "Pinned by
   <name>": the app has no kind 9005 admin removal path. A pin shows before the
   relay confirms it and reverts when the relay refuses it.
+- **Pinned tab.** **View pinned** opens a retained side-pane tab for members of
+  a non-DM channel. `readChannelPins` reads up to 200 pins for the channel, then
+  their target messages and deletions, and drops pins whose target is missing,
+  deleted or in another channel, so a pin cannot surface another channel's
+  message. Rows list one message each, ordered by first pin, newest first, link
+  to the message, and offer Unpin for the viewer's own pin. The tab re-reads
+  when a live pin or unpin changes a loaded message, and shows an empty state
+  or a failed read with Retry.
 
 ## Channel lifecycle
 

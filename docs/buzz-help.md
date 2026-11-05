@@ -246,9 +246,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   **Pin message** from a message's More menu; the message then shows
   "Pinned by" and the name of whoever pinned it first. Only the person who
   pinned a message can unpin it; others, channel admins included, see
-  "Pinned by <name>" in the menu instead. Guests cannot pin, and direct
-  messages have no pins. A pin from history shows its marker only once the
-  relay includes pins in history reads.
+  "Pinned by <name>" in the menu instead. **View pinned** in the channel's
+  **Channel actions** menu opens a Pinned tab listing the channel's pinned
+  messages, newest first. Guests cannot pin, and direct messages have no pins.
+  A pin from history shows its marker only once the relay includes pins in
+  history reads; the Pinned tab lists every pin either way.
 - **Keyboard shortcuts** follow Slack where they can. Press ⌘/ (Ctrl+/ on
   Windows and Linux) to open **Settings → Shortcuts**, which lists them, lets
   you change most of them and also shows the fixed message-formatting keys. In
