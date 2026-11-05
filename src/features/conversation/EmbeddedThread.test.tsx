@@ -484,9 +484,11 @@ it("shows the source above the task root and keeps the task destination and seed
     authorId: "f".repeat(64),
     content: "Original request",
   };
+  const viewer = h.props.session.viewer;
+  if (!viewer) throw new Error("Fixture needs a viewer");
   const task = {
     ...root,
-    authorId: h.props.session.viewer,
+    authorId: viewer,
     content: "Owner brief @agent",
   };
   let snapshot: ThreadSnapshot = {

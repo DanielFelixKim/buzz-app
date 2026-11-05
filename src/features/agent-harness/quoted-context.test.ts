@@ -16,7 +16,7 @@ const source = message(author, "source", "Original request", 10, [
 const brief = message(owner, "task", "Owner brief @agent", 20, [
   ["q", source.id],
 ]);
-const readFrom = (events: readonly EventData[]) =>
+const readFrom = <T extends EventData>(events: readonly T[]) =>
   vi.fn(async (filters: readonly ReadFilter[]) =>
     events.filter((event) =>
       filters.some((filter) => matchesEvent(event, filter)),
