@@ -64,6 +64,7 @@ export function PluginImport({
   initialGit,
   requestSignal,
   initialUpdateAvailable = false,
+  sourceCheck,
   plugins,
   catalog,
   busy,
@@ -87,6 +88,7 @@ export function PluginImport({
   initialGit?: GitPluginSource | undefined;
   requestSignal?: AbortSignal | undefined;
   initialUpdateAvailable?: boolean;
+  sourceCheck?: { sourceRevision?: string } | undefined;
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
@@ -383,6 +385,15 @@ export function PluginImport({
       : checkedRevision !== undefined
         ? checkedRevision !== currentPlugin?.revision
         : initialUpdateAvailable);
+  const acceptSourceCheck = useEffectEvent((revision: string | undefined) => {
+    if (!open && revision !== undefined) {
+      setCheckedRevision(revision);
+      setError(null);
+    }
+  });
+  useEffect(() => {
+    acceptSourceCheck(sourceCheck?.sourceRevision);
+  }, [sourceCheck]);
   const notifyUpdateAvailable = useEffectEvent((available: boolean) =>
     onUpdateAvailableChange?.(available),
   );

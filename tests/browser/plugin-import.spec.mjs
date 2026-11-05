@@ -1746,3 +1746,45 @@ test("Manage plugins discovers saved-source updates before opening details", asy
     ),
   ).toBe(1);
 });
+
+// App wiring: refreshed source revisions cross Settings' detail host and the
+// native adapter without waiting for a second manual check in the pane.
+test("a focused Git update refreshes an already open details pane", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page, [
+    {
+      path: "dist",
+      revision: "one",
+      manifest: {
+        id: "example.refresh",
+        name: "Refresh example",
+        apiVersion: 1,
+      },
+    },
+  ]);
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await page.getByLabel("Git or GitHub repository").fill("example/plugins");
+  await button(page, "Find plugins").click();
+  await button(page, "Install plugin").click();
+  await expectOnlySettings(page);
+  await button(page, "View Refresh example details").click();
+  const pane = page.getByRole("complementary", {
+    name: "Refresh example details",
+    exact: true,
+  });
+  await button(page, "Check for updates").click();
+  await expect(pane.getByText("Up to date", { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    window.importCategory = "productivity";
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(
+    pane.getByRole("button", { name: "Update", exact: true }),
+  ).toBeVisible();
+  await expect(pane.getByText("Up to date", { exact: true })).toHaveCount(0);
+  await button(page, "Close plugin details").click();
+  await expect(button(page, "Update Refresh example")).toBeVisible();
+});

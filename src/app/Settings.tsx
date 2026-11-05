@@ -51,7 +51,7 @@ import {
   SidebarRightIcon,
 } from "../shared/design-system/icons/index";
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
-import type { Catalog, PluginInfo } from "../plugins/types";
+import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import { AgentPluginRequests } from "./AgentPluginRequests";
@@ -304,6 +304,7 @@ function PluginDetails({
   reviewRequested,
   onReviewHandled,
   initialUpdateAvailable,
+  sourceCheck,
   holdReview,
 }: {
   plugin: PluginInfo;
@@ -323,6 +324,7 @@ function PluginDetails({
   reviewRequested: boolean;
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
+  sourceCheck: Parameters<typeof PluginImport>[0]["sourceCheck"];
   holdReview: (() => () => void) | undefined;
 }) {
   const accessReason = restrictedPlugin(plugin)
@@ -515,6 +517,7 @@ function PluginDetails({
         <PluginImport
           key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
           initialUpdateAvailable={initialUpdateAvailable}
+          sourceCheck={sourceCheck}
           actionTarget={updateAvailable ? primaryActionTarget : actionTarget}
           onUpdateAvailableChange={onUpdateAvailableChange}
           reviewRequested={reviewRequested}
@@ -851,8 +854,21 @@ export function Settings({
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
-    Record<string, { revision: string; available: boolean }>
+    Record<
+      string,
+      { revision: string; available: boolean; sourceRevision?: string }
+    >
   >({});
+  const updateVersions = useRef<Record<string, number>>({});
+  const pendingSourceChecks = useRef(
+    new Map<
+      string,
+      {
+        promise: Promise<string | ImportPreview | null>;
+        revisions: Record<string, string>;
+      }
+    >(),
+  );
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
@@ -1229,53 +1245,74 @@ export function Settings({
   useEffect(() => {
     if (selected !== "plugins" || !catalog || !imports || busy) return;
     let active = true;
-    let checking = false;
     const refresh = async () => {
-      if (!active || checking || document.visibilityState === "hidden") return;
-      checking = true;
-      try {
-        await Promise.all(
-          catalog.plugins.map(async (plugin) => {
-            const id = plugin.manifest.id;
-            const source = plugin.updateSource;
-            if (
-              plugin.source !== "external" ||
-              !source ||
-              managedBy(managed, id)
-            )
-              return;
-            let available = false;
-            try {
-              let revision: string | undefined;
-              if ("root" in source) revision = await imports.checkFolder(id);
-              else {
+      if (!active || document.visibilityState === "hidden") return;
+      await Promise.all(
+        catalog.plugins.map(async (plugin) => {
+          const id = plugin.manifest.id;
+          const source = plugin.updateSource;
+          if (plugin.source !== "external" || !source || managedBy(managed, id))
+            return;
+          const version = (updateVersions.current[id] ?? 0) + 1;
+          updateVersions.current[id] = version;
+          const key = JSON.stringify(
+            "root" in source
+              ? ["folder", id, source.root, source.path]
+              : ["git", source.repository, source.reference],
+          );
+          let revision: string | undefined;
+          try {
+            let pending = pendingSourceChecks.current.get(key);
+            if (pending && pending.revisions[id] !== plugin.revision) {
+              await pending.promise.catch(() => {});
+              if (!active) return;
+              pending = pendingSourceChecks.current.get(key);
+            }
+            if (!pending) {
+              const promise = (async () => {
+                if ("root" in source) return imports.checkFolder(id);
                 const signed = await authorizeUpdateCheck(source.repository);
-                const result = await imports.checkGit(
+                return imports.checkGit(
                   signed?.repository ?? source.repository,
                   source.reference,
                   signed?.token,
                 );
-                revision = result?.candidates.find(
-                  (candidate) =>
-                    candidate.manifest.id === id &&
-                    candidate.path === source.path,
-                )?.revision;
-              }
-              available =
-                revision !== undefined && revision !== plugin.revision;
-            } catch {
-              // One unavailable source must not prevent checking the others.
+              })().finally(() => pendingSourceChecks.current.delete(key));
+              pending = {
+                promise,
+                revisions: Object.fromEntries(
+                  catalog.plugins.map((item) => [
+                    item.manifest.id,
+                    item.revision,
+                  ]),
+                ),
+              };
+              pendingSourceChecks.current.set(key, pending);
             }
-            if (active)
-              setUpdateChecks((current) => ({
-                ...current,
-                [id]: { revision: plugin.revision, available },
-              }));
-          }),
-        );
-      } finally {
-        checking = false;
-      }
+            const result = await pending.promise;
+            revision =
+              typeof result === "string"
+                ? result
+                : result?.candidates.find(
+                    (candidate) =>
+                      candidate.manifest.id === id &&
+                      candidate.path === source.path,
+                  )?.revision;
+          } catch {
+            // One unavailable source must not prevent checking the others.
+          }
+          if (active && updateVersions.current[id] === version)
+            setUpdateChecks((current) => ({
+              ...current,
+              [id]: {
+                revision: plugin.revision,
+                available:
+                  revision !== undefined && revision !== plugin.revision,
+                ...(revision === undefined ? {} : { sourceRevision: revision }),
+              },
+            }));
+        }),
+      );
     };
     const resume = () => void refresh();
     // Strict Mode's retired mount must not start source reads.
@@ -1641,13 +1678,20 @@ export function Settings({
               selectedPlugin.revision &&
             updateChecks[selectedPlugin.manifest.id]?.available === true
           }
+          sourceCheck={
+            updateChecks[selectedPlugin.manifest.id]?.revision ===
+            selectedPlugin.revision
+              ? updateChecks[selectedPlugin.manifest.id]
+              : undefined
+          }
           authorizeGit={authorizePluginGit}
           reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
           onReviewHandled={() => setReviewPluginId(undefined)}
           holdReview={installRequests?.holdReview}
-          onUpdateAvailableChange={(available) =>
+          onUpdateAvailableChange={(available) => {
+            const id = selectedPlugin.manifest.id;
+            updateVersions.current[id] = (updateVersions.current[id] ?? 0) + 1;
             setUpdateChecks((current) => {
-              const id = selectedPlugin.manifest.id;
               if (
                 current[id]?.revision === selectedPlugin.revision &&
                 current[id]?.available === available
@@ -1657,8 +1701,8 @@ export function Settings({
                 ...current,
                 [id]: { revision: selectedPlugin.revision, available },
               };
-            })
-          }
+            });
+          }}
           failure={selectedFailure}
           retryable={canRetryPlugin(
             selectedPlugin,
