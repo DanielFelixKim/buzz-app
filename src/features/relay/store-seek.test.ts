@@ -604,7 +604,7 @@ it.each(["older", "newer"])(
 );
 
 it("preserves a slid segment beyond reconnect catch-up coverage", async () => {
-  const h = setup({ count: 1800, maxHistoryRows: 400 });
+  const h = setup({ count: 200, maxHistoryRows: 40 });
   await h.open();
   h.live.state({ status: "connected", routes: [] });
   h.live.established("c");
