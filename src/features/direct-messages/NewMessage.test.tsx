@@ -1981,3 +1981,162 @@ it("names a recipient chosen before its verification answers by the verified nam
     expect.any(AbortSignal),
   );
 });
+
+it("keeps a failed send's error when a recipient's verified name arrives", async () => {
+  const t = setup();
+  const aleksandr = { pubkey: "a".repeat(64), name: "jack" };
+  t.directMessages.people.mockResolvedValue({
+    people: [aleksandr],
+    hasMore: false,
+  });
+  const authority = { pubkey: "9".repeat(64), multipleIssuers: false };
+  Object.assign(t.session.profiles, { verifiedAuthority: () => authority });
+  let release = () => {};
+  const answered = new Promise<void>((resolve) => (release = resolve));
+  Object.assign(t.directMessages, {
+    verified: vi.fn(async (pubkeys: readonly string[]) => {
+      await answered;
+      return {
+        authority,
+        profiles: new Map(
+          pubkeys.map((pubkey) => [
+            pubkey,
+            verifiedAs("Aleksandr", "aleksandr"),
+          ]),
+        ),
+      };
+    }),
+  });
+  t.directMessages.open.mockRejectedValueOnce(new Error("Offline"));
+  t.mount();
+  try {
+    await waitFor(() => expect(recipient()).toBeEnabled());
+    await t.user.type(recipient(), "jack");
+    await t.user.click(await screen.findByRole("option", { name: "jack" }));
+    await t.user.type(screen.getByRole("textbox"), "Hello");
+    await t.user.click(send());
+    await screen.findByRole("alert");
+  } finally {
+    release();
+  }
+  expect(
+    await screen.findByRole("button", { name: "Remove Aleksandr" }),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toBeVisible();
+  await waitFor(() => expect(send()).toBeEnabled());
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.directMessages.open).toHaveBeenLastCalledWith(
+    [aleksandr.pubkey],
+    expect.any(AbortSignal),
+  );
+});
+
+/** A community whose authority can change or be withdrawn mid-test. */
+function changingCommunity(
+  t: ReturnType<typeof setup>,
+  answers: () => ReadonlyMap<string, VerifiedProfile>,
+) {
+  let authority: { pubkey: string; multipleIssuers: boolean } | undefined = {
+    pubkey: "9".repeat(64),
+    multipleIssuers: false,
+  };
+  const listeners = new Set<() => void>();
+  Object.assign(t.session.profiles, {
+    verifiedAuthority: () => authority,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
+  const verified = vi.fn(async (pubkeys: readonly string[]) => ({
+    authority,
+    profiles: new Map(
+      pubkeys.flatMap((pubkey) => {
+        const answer = answers().get(pubkey);
+        return answer ? [[pubkey, answer] as const] : [];
+      }),
+    ),
+  }));
+  Object.assign(t.directMessages, { verified });
+  return {
+    verified,
+    change(next: typeof authority) {
+      authority = next;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    },
+  };
+}
+
+it("names a chosen recipient by their profile name again when verification is withdrawn", async () => {
+  const t = setup();
+  const aleksandr = { pubkey: "a".repeat(64), name: "jack" };
+  t.directMessages.people.mockResolvedValue({
+    people: [aleksandr],
+    hasMore: false,
+  });
+  const { change } = changingCommunity(
+    t,
+    () => new Map([[aleksandr.pubkey, verifiedAs("Aleksandr", "aleksandr")]]),
+  );
+  t.mount();
+  await waitFor(() => expect(recipient()).toBeEnabled());
+  await t.user.click(
+    await screen.findByRole("option", { name: "Aleksandr, @aleksandr" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Remove Aleksandr" }),
+  ).toBeVisible();
+  change(undefined);
+  expect(
+    await screen.findByRole("button", { name: "Remove jack" }),
+  ).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Message jack" })).toBeVisible();
+});
+
+it("drops a chosen recipient's verified full name the community no longer holds", async () => {
+  const t = setup();
+  const aleksandr = { pubkey: "a".repeat(64), name: "jack" };
+  // Only a search for the editable name finds them; an unfinished browse
+  // does not.
+  t.directMessages.people.mockImplementation(async (query) => ({
+    people:
+      query.trim() && "jack".startsWith(query.trim().toLowerCase())
+        ? [aleksandr]
+        : [],
+    hasMore: !query.trim(),
+  }));
+  let fullName: string | undefined = "Aleksandr Petrov";
+  const { change, verified } = changingCommunity(
+    t,
+    () =>
+      new Map([
+        [aleksandr.pubkey, verifiedAs("Aleksandr", "aleksandr", fullName)],
+      ]),
+  );
+  t.mount();
+  await waitFor(() => expect(recipient()).toBeEnabled());
+  await t.user.type(recipient(), "jack");
+  await t.user.click(
+    await screen.findByRole("option", {
+      name: "Aleksandr, Aleksandr Petrov · @aleksandr",
+    }),
+  );
+  const reads = verified.mock.calls.length;
+  fullName = undefined;
+  change({ pubkey: "8".repeat(64), multipleIssuers: false });
+  await waitFor(() =>
+    expect(verified.mock.calls.length).toBeGreaterThan(reads),
+  );
+  await t.user.click(
+    await screen.findByRole("button", { name: "Remove Aleksandr" }),
+  );
+  // Found again only by the verified name the picker remembers.
+  await t.user.type(recipient(), "aleksandr");
+  expect(
+    await screen.findByRole("option", { name: "Aleksandr, @aleksandr" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Aleksandr Petrov")).not.toBeInTheDocument();
+});

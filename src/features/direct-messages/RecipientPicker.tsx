@@ -50,6 +50,7 @@ export function RecipientPicker({
   session,
   scope,
   selected,
+  labels,
   disabled,
   excludedPubkeys = noExclusions,
   initiallyOpen = true,
@@ -61,6 +62,8 @@ export function RecipientPicker({
   /** View-state partition whose DM visits and earlier choices rank people. */
   scope: string;
   selected: Recipient[];
+  /** `selected` as shown: named by their current verified names. */
+  labels: readonly VerifiedPerson<Recipient>[];
   disabled: boolean;
   excludedPubkeys?: readonly string[];
   /** Share dialogs keep the people list closed until the To field is used. */
@@ -107,30 +110,13 @@ export function RecipientPicker({
     () => withVerifiedNames(directory.people, verified, profiles),
     [directory.people, verified, profiles],
   );
-  // Chosen people keep being checked, without waiting for a directory, so a
-  // choice made before its read answered, or a restored one, gets its
-  // verified name. The new label goes up to the chips, header and saved view.
-  const selectedVerified = useVerifiedNames(session, selected);
-  const named = useMemo(
-    () => withVerifiedNames(selected, selectedVerified, profiles),
-    [selected, selectedVerified, profiles],
-  );
-  useEffect(() => {
-    if (
-      named.some(
-        (person, index) =>
-          person.name !== selected[index]?.name ||
-          person.username !== selected[index]?.username,
-      )
-    )
-      onChange([...named]);
-  }, [named, selected, onChange]);
   const viewer = session.viewer;
   const {
     controlled,
     eligible,
     namesOf,
     byPubkey,
+    raw,
     candidates,
     identities,
     keys,
@@ -247,17 +233,37 @@ export function RecipientPicker({
         .map((person) => person.pubkey),
     );
     const byPubkey = new Map(eligible.map((person) => [person.pubkey, person]));
+    // Rows as found, before naming: a choice keeps these facts, so its label
+    // follows the current verification instead of the one shown when chosen.
+    const raw = new Map(
+      [...directory.people, ...pool, ...byAgentName].map((person) => [
+        person.pubkey,
+        person,
+      ]),
+    );
     const candidates = ordered.current.pubkeys.flatMap((pubkey) => {
       const person = byPubkey.get(pubkey);
       return person ? [person] : [];
     });
     for (const person of [...candidates, ...selected])
-      known.current.set(person.pubkey, person);
+      known.current.set(person.pubkey, raw.get(person.pubkey) ?? person);
+    const knownNames = new Map<string, VerifiedProfile>();
+    for (const pubkey of known.current.keys()) {
+      const identity = verifiedName(session.profiles, pubkey);
+      if (identity) knownNames.set(pubkey, identity);
+    }
+    // Everyone seen, by the names they show now; chosen people as their chips.
+    const shown = new Map(
+      withVerifiedNames([...known.current.values()], knownNames, profiles).map(
+        (person) => [person.pubkey, person.name],
+      ),
+    );
+    for (const person of labels) shown.set(person.pubkey, person.name);
     const groups = new Map<string, string[]>();
-    for (const person of known.current.values()) {
-      const keys = groups.get(person.name) ?? [];
-      keys.push(person.pubkey);
-      groups.set(person.name, keys);
+    for (const [pubkey, name] of shown) {
+      const keys = groups.get(name) ?? [];
+      keys.push(pubkey);
+      groups.set(name, keys);
     }
     const identities = new Map<string, string>();
     for (const keys of groups.values()) {
@@ -270,6 +276,7 @@ export function RecipientPicker({
       eligible,
       namesOf,
       byPubkey,
+      raw,
       candidates,
       identities,
       keys: candidates.map((person) => person.pubkey),
@@ -278,6 +285,7 @@ export function RecipientPicker({
     agents.identities,
     channels,
     profiles,
+    directory.people,
     people,
     viewer,
     query,
@@ -285,6 +293,7 @@ export function RecipientPicker({
     typed,
     usage,
     selected,
+    labels,
     excludedPubkeys,
     session.profiles,
   ]);
@@ -355,7 +364,10 @@ export function RecipientPicker({
     )
       return;
     recordChoice(scope, typed, personKey(person.pubkey));
-    selection.current = [...selection.current, person];
+    selection.current = [
+      ...selection.current,
+      raw.get(person.pubkey) ?? person,
+    ];
     onChange(selection.current);
     setQuery("");
     onTyped(false);
@@ -445,7 +457,7 @@ export function RecipientPicker({
           }}
         >
           <label htmlFor={id}>To:</label>
-          {selected.map((person) => (
+          {labels.map((person) => (
             <span className={styles.chip} key={person.pubkey}>
               <button
                 type="button"
