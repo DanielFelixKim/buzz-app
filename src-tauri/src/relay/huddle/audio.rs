@@ -451,7 +451,8 @@ pub(super) async fn run(
                 }
             }
         }
-        // Drain what is queued, then close, within the old close bound.
+        // Stop still sends what was accepted (at most five messages and the one
+        // in flight), then closes, all within the old close bound.
         drop(out);
         let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
         Ok(())
@@ -1357,10 +1358,13 @@ mod tests {
         writer.await.unwrap();
     }
 
-    #[tokio::test]
-    async fn a_stalled_write_does_not_stall_playout() {
-        // The relay keeps speaking but never reads, and our send buffer starts
-        // full, so every send blocks. Playout must keep pulling meanwhile.
+    /// A relay that is not reading yet, and a client whose next send blocks:
+    /// both kernel buffers and its WebSocket write buffer are full of large
+    /// filler messages, so the stream stays valid for when the relay reads.
+    async fn stalled() -> (
+        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+        Socket,
+    ) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (client, relay) = tokio::join!(
             tokio::net::TcpStream::connect(listener.local_addr().unwrap()),
@@ -1373,16 +1377,24 @@ mod tests {
                 tokio_tungstenite::MaybeTlsStream::Plain(client.unwrap()),
             )
         );
-        let (mut relay, mut socket) = (relay.unwrap(), socket.unwrap().0);
-        let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = socket.get_mut() else {
-            unreachable!()
-        };
-        while tokio::time::timeout(Duration::from_millis(50), tcp.writable())
-            .await
-            .is_ok()
-        {
-            let _ = tcp.try_write(&[0; 65536]);
+        let (relay, mut socket) = (relay.unwrap(), socket.unwrap().0);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let filler = Message::Binary(vec![0; 65536].into());
+            match tokio::time::timeout(Duration::from_millis(100), socket.feed(filler)).await {
+                Ok(fed) => fed.unwrap(),
+                Err(_) => break,
+            }
+            assert!(Instant::now() < deadline, "the client's send never blocked");
         }
+        (relay, socket)
+    }
+
+    #[tokio::test]
+    async fn a_stalled_write_does_not_stall_playout() {
+        // The relay keeps speaking but never reads, so every send blocks.
+        // Playout must keep pulling meanwhile.
+        let (mut relay, socket) = stalled().await;
         let speaker = tokio::spawn(async move {
             let mut codec = Codec::new(None).unwrap();
             loop {
@@ -1435,6 +1447,80 @@ mod tests {
             pulls >= 50,
             "playout stalled behind a blocked send: {pulls} pulls in 1 s"
         );
+    }
+
+    #[tokio::test]
+    async fn outbound_recovers_after_a_stalled_write() {
+        use buzz_audio_client::wire::FrameHeader;
+        let (mut relay, socket) = stalled().await;
+        let (mic, pcm) = mpsc::channel(1);
+        let (stop, stopped) = watch::channel(false);
+        let running = tokio::spawn(async move {
+            let touched = std::sync::atomic::AtomicU64::new(super::super::lease_time());
+            let connection = Connection {
+                socket: Some(socket),
+                peers: Peers::new(),
+                expires_at: None,
+                cancellation: CancellationToken::new(),
+                seat: None,
+            };
+            run(
+                connection,
+                pcm,
+                stopped,
+                &Channel::new(|_| Ok(())),
+                &touched,
+            )
+            .await
+        });
+        // The first heartbeat Ping is now the send in flight. Mic frames 0-4
+        // fill the queue; 5-9 are encoded, so they spend sequence numbers, and
+        // dropped. The relay's Ping arrives while every slot is taken.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        for _ in 0..10 {
+            mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
+        }
+        relay
+            .send(Message::Ping(b"probe".to_vec().into()))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Release well inside the 2 s stall bound, then speak again.
+        let (mut seqs, mut ponged, mut fillers) = (Vec::new(), false, 0);
+        while seqs.len() < 5 || !ponged {
+            match relay.next().await.unwrap().unwrap() {
+                Message::Binary(frame) if frame.len() == 65536 => fillers += 1,
+                Message::Binary(frame) => {
+                    let (header, _) = FrameHeader::parse(&frame).unwrap();
+                    assert_eq!(header.ts_48k, header.seq as u32 * FRAME_SAMPLES as u32);
+                    seqs.push(header.seq);
+                }
+                Message::Pong(payload) => ponged |= &payload[..] == b"probe",
+                _ => {}
+            }
+        }
+        assert!(fillers > 0);
+        for _ in 0..3 {
+            mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
+        }
+        while seqs.len() < 8 {
+            if let Message::Binary(frame) = relay.next().await.unwrap().unwrap() {
+                seqs.push(FrameHeader::parse(&frame).unwrap().0.seq);
+            }
+        }
+        assert_eq!(
+            seqs,
+            [0, 1, 2, 3, 4, 10, 11, 12],
+            "accepted order, then the drop gap"
+        );
+        stop.send(true).unwrap();
+        let closed =
+            async { while !matches!(relay.next().await, Some(Ok(Message::Close(_))) | None) {} };
+        tokio::time::timeout(Duration::from_secs(3), closed)
+            .await
+            .unwrap();
+        let ended = tokio::time::timeout(Duration::from_secs(3), running).await;
+        assert_eq!(ended.unwrap().unwrap(), Ok(()));
     }
 
     #[test]
