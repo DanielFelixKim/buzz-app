@@ -350,7 +350,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   **Note actions → Revision history** lists retained versions in a submenu. Select
   one to preview it, then **Restore this version** to save it immediately as a new
   latest revision, even with auto-save disabled. Pending edits require confirmation;
-  all saved history is kept. Deleted notes can be restored the same way.
+  all saved history is kept. Deleted notes show their last saved contents; the
+  **Restore note** icon beside Refresh restores them in one click. The empty
+  collection includes its own **New note** button.
   **Note actions → Linked notes** appears when loaded notes link to the current
   document and lists those notes. **Share note** opens the same searchable
   member picker used by channels. Owners and admins can add people or agents and

@@ -30,6 +30,7 @@ import {
 } from "../../features/relay/message-content";
 import {
   ArrowsClockwiseIcon,
+  ArrowCounterClockwiseIcon,
   DotsThreeIcon,
   ShareIcon,
 } from "../../shared/design-system/icons";
@@ -191,6 +192,13 @@ export function NoteDocument({
       needsFocus.current = false;
       const focus = pendingFocus.current;
       pendingFocus.current = undefined;
+      // Opening focus must not move a selection the person has already placed.
+      if (
+        !focus &&
+        (editor.current?.selection() ||
+          document.activeElement === titleInput.current)
+      )
+        return;
       if (focus?.target === "body") editor.current?.focusSelection(focus);
       else if (focus?.target === "title") {
         const field = titleInput.current;
@@ -334,7 +342,38 @@ export function NoteDocument({
       if (known) void refresh();
     });
   }, [workspace, address, refresh]);
+  const [deletedPreview, setDeletedPreview] = useState<Note>();
+  const [previewError, setPreviewError] = useState("");
   const currentRevision = note?.revision;
+  useEffect(() => {
+    setDeletedPreview(undefined);
+    setPreviewError("");
+    if (!currentRevision || !note?.deleted || unavailable) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        let offset = 0;
+        while (true) {
+          const page = await workspace.history(
+            address,
+            offset,
+            controller.signal,
+          );
+          controller.signal.throwIfAborted();
+          const revision = page.revisions.find((entry) => !entry.deleted);
+          if (revision) {
+            setDeletedPreview(revision);
+            return;
+          }
+          if (!page.more) return;
+          offset += page.revisions.length;
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) setPreviewError(errorText(error));
+      }
+    })();
+    return () => controller.abort();
+  }, [workspace, address, currentRevision, note?.deleted, unavailable]);
   const profiles = useSyncExternalStore(
     workspace.session.profiles.subscribe,
     workspace.session.profiles.snapshot,
@@ -541,7 +580,11 @@ export function NoteDocument({
   return (
     <article
       className={styles.documentPane}
-      aria-label={!unavailable && note ? note.title : "Working note"}
+      aria-label={
+        !unavailable && note
+          ? (deletedPreview?.title ?? note.title)
+          : "Working note"
+      }
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: blank-space clicks extend the existing textbox hit area; keyboard users reach that textbox with Tab. */}
       <section
@@ -587,7 +630,9 @@ export function NoteDocument({
           </Field>
         ) : (
           <h2 className="text-heading">
-            {!unavailable && note ? note.title : "Working note"}
+            {!unavailable && note
+              ? (deletedPreview?.title ?? note.title)
+              : "Working note"}
           </h2>
         )}
         {note && !unavailable && (
@@ -644,6 +689,18 @@ export function NoteDocument({
           >
             {note?.deleted ? "Restore note" : saveError ? "Retry save" : "Save"}
           </NoteSaveAction>
+          {note?.deleted && canEdit && !unavailable && (
+            <IconButton
+              aria-label="Restore note"
+              title="Restore note"
+              icon={<ArrowCounterClockwiseIcon size={16} />}
+              disabled={
+                busy || saving || !deletedPreview?.editable || !!conflict
+              }
+              aria-busy={saving}
+              onClick={() => void save(false, deletedPreview)}
+            />
+          )}
           <IconButton
             aria-label="Refresh note"
             title="Refresh note"
@@ -780,47 +837,44 @@ export function NoteDocument({
           </p>
         )}
         {note?.deleted && !unavailable && !editing && (
-          <div className={styles.stack}>
-            <p>
-              This note was deleted. Its retained history and sharing remain
-              available.
-            </p>
-            {canEdit && (
-              <p>
-                Choose a version from Note actions → Revision history to restore
-                it.
-              </p>
-            )}
-          </div>
+          <p className="text-caption text-subtle">This note was deleted.</p>
         )}
-        {note && (editing || (!unavailable && !note.deleted)) && (
-          <div
-            ref={body}
-            className={source && editing ? styles.sourceBody : styles.stack}
-          >
-            <NoteEditor
-              ref={editor}
-              source={source}
-              onSourceChange={setSource}
-              toolbarTarget={toolbarTarget}
-              value={markdown}
-              editing={editing}
-              onChange={setMarkdown}
-              disabled={busy}
-              notes={catalogue}
-              community={community}
-              linkOpen={dialog === "link"}
-              onLinkOpenChange={(open) => setDialog(open ? "link" : undefined)}
-              onSave={() => void save()}
+        {previewError && <p role="alert">{previewError} Refresh to retry.</p>}
+        {note &&
+          (editing || (!unavailable && (!note.deleted || deletedPreview))) && (
+            <div
+              ref={body}
+              className={source && editing ? styles.sourceBody : styles.stack}
             >
-              <NoteMarkdown
-                text={markdown}
+              <NoteEditor
+                ref={editor}
+                source={source}
+                onSourceChange={setSource}
+                toolbarTarget={toolbarTarget}
+                value={markdown}
+                editing={editing}
+                onChange={setMarkdown}
+                disabled={busy}
+                notes={catalogue}
                 community={community}
-                onOpen={onOpen}
-              />
-            </NoteEditor>
-          </div>
-        )}
+                linkOpen={dialog === "link"}
+                onLinkOpenChange={(open) =>
+                  setDialog(open ? "link" : undefined)
+                }
+                onSave={() => void save()}
+              >
+                <NoteMarkdown
+                  text={
+                    note.deleted && !editing
+                      ? (deletedPreview?.markdown ?? "")
+                      : markdown
+                  }
+                  community={community}
+                  onOpen={onOpen}
+                />
+              </NoteEditor>
+            </div>
+          )}
         {note && dialog === "share" && (
           <NoteSharing
             note={note}

@@ -173,10 +173,11 @@ formatting bar hides in source mode. An untouched editor does not normalize the
 original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.
 
-The browser lists linked note titles in newest-revision order as separated rows,
-with heavier titles, no underlines and a subtle trailing document icon. There are no
-card previews, author folders or row metadata. A subtle **+ New note** action follows
-the note titles and remains available in an empty collection. **Show
+The browser lists linked note titles in newest-revision order as rows without dividers,
+with heavier titles, no underlines and a subtle document icon before each title. The last edit time sits at the far right. There are no
+card previews or author folders. A subtle **+ New note** action follows
+the note titles. Empty collections put the creation button inside the empty state;
+search is disabled until there are notes, unless a query needs clearing. **Show
 deleted notes** lives in the search field's trailing filter menu, retaining the
 existing history-backed filter state. Author and revision metadata remain
 in the note viewer. The list, document content and formatting bar share the channel

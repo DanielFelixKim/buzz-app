@@ -510,3 +510,20 @@ it("restores a deleted note directly from a retained version", async () => {
   expect(f.save.mock.calls[0]?.[2]).toBe("restore");
   expect(f.save.mock.calls[0]?.[1].restoreFrom?.revision).toBe(f.note.revision);
 });
+
+it("previews the last content of a deleted note and restores it in one click after a failed write", async () => {
+  const f = await historyFixture(false, true);
+  await screen.findByText("Original body");
+  const restore = await screen.findByRole("button", {
+    name: /^Restore note$/,
+  });
+  await waitFor(() => expect(restore).toBeEnabled());
+  f.save.mockRejectedValueOnce(new Error("Offline"));
+  fireEvent.click(restore);
+  await screen.findByText(/Your draft is kept/);
+  expect(screen.getByText("Original body")).toBeVisible();
+  fireEvent.click(restore);
+  await screen.findByRole("textbox", { name: "Title" });
+  expect((await f.workspace.open(f.note)).markdown).toBe("Original body");
+  expect(f.save.mock.calls.at(-1)?.[2]).toBe("restore");
+});

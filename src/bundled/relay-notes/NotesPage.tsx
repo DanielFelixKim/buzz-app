@@ -32,6 +32,7 @@ import {
   MenuPopup,
   MenuCheckboxItem,
 } from "../../shared/design-system/ui/Menu";
+import { NoteTime } from "./NoteMetadata";
 import styles from "./NotesPage.module.css";
 
 export type NotesPageProps = {
@@ -92,15 +93,24 @@ export function NotesPage({
         b.event.created_at - a.event.created_at ||
         a.event.id.localeCompare(b.event.id),
     );
+  const empty = !loading && !error && !entries.length && !query;
   const active = items.find((item) => item.id === selected);
   const titleLink = (note: Note) => (
     <li key={noteKey(note)}>
       <NavigationItem
         nativeButton={false}
         role="link"
+        aria-label={note.title}
         render={<a href={noteUrl(note, community)} />}
         label={<span className="text-label-sm">{note.title}</span>}
-        trailing={<FileTextIcon size={16} aria-hidden="true" />}
+        icon={
+          <FileTextIcon size={16} className="text-subtle" aria-hidden="true" />
+        }
+        trailing={
+          <span className="text-caption text-subtle">
+            <NoteTime note={note.event} />
+          </span>
+        }
         onClick={(event) => {
           if (
             event.button !== 0 ||
@@ -176,6 +186,7 @@ export function NotesPage({
               <SearchField
                 inputRef={searchRef}
                 label="Search notes"
+                disabled={!entries.length && !query}
                 placeholder="Search loaded notes…"
                 value={query}
                 onValueChange={(value) => search(value)}
@@ -213,24 +224,32 @@ export function NotesPage({
                 </span>
               )}
               {error && <p role="alert">{error}</p>}
-              {!loading && !error && !entries.length && !query && (
+              {empty && (
                 <EmptyState
-                  icon={<NoteIcon size={24} />}
+                  icon={null}
                   title="No notes yet"
                   description="Create a note or ask an agent to save one."
+                  action={
+                    <Button variant="subtle" onClick={create}>
+                      <PlusIcon size={16} aria-hidden="true" />
+                      New note
+                    </Button>
+                  }
                 />
               )}
-              <ul className={styles.titleList} aria-label="Notes">
-                {visible.map(titleLink)}
-                <li key="new-note">
-                  <NavigationItem
-                    variant="text"
-                    icon={<PlusIcon size={16} aria-hidden="true" />}
-                    label="New note"
-                    onClick={create}
-                  />
-                </li>
-              </ul>
+              {!empty && (
+                <ul className={styles.titleList} aria-label="Notes">
+                  {visible.map(titleLink)}
+                  <li key="new-note">
+                    <NavigationItem
+                      variant="text"
+                      icon={<PlusIcon size={16} aria-hidden="true" />}
+                      label="New note"
+                      onClick={create}
+                    />
+                  </li>
+                </ul>
+              )}
               {!loading && !error && query && !visible.length && (
                 <p role="status">No matching notes.</p>
               )}

@@ -57,10 +57,15 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await expect(deleted).toBeChecked();
   await deleted.click();
   const list = page.getByRole("list", { name: "Notes", exact: true });
-  await expect(list.getByRole("link")).toHaveText([
+  await expect(list.getByRole("link")).toHaveCount(2);
+  await expect(list.getByRole("link").nth(0)).toHaveAttribute(
+    "aria-label",
     "Connected notes plan",
+  );
+  await expect(list.getByRole("link").nth(1)).toHaveAttribute(
+    "aria-label",
     "Storage research",
-  ]);
+  );
   await expect(
     list.getByRole("link", { name: "Connected notes plan", exact: true }),
   ).toHaveAttribute("href", /^buzz:\/\/note\?/);
@@ -80,9 +85,16 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   );
   const docIcon = firstTitle.locator("svg");
   const titleBounds = await firstTitle.locator(".text-label-sm").boundingBox();
-  expect((await docIcon.boundingBox()).x).toBeGreaterThan(
-    titleBounds.x + titleBounds.width,
-  );
+  const iconBounds = await docIcon.boundingBox();
+  expect(iconBounds.x + iconBounds.width).toBeLessThan(titleBounds.x);
+  expect(
+    Math.abs(
+      iconBounds.y +
+        iconBounds.height / 2 -
+        titleBounds.y -
+        titleBounds.height / 2,
+    ),
+  ).toBeLessThan(1);
   await expect(docIcon).toHaveAttribute("aria-hidden", "true");
   const createBounds = await list
     .getByRole("button", { name: "New note" })
@@ -378,7 +390,7 @@ test("human and agents edit, link, share and export the same working note", asyn
       .getByRole("list", { name: "Notes", exact: true })
       .getByRole("link")
       .first(),
-  ).toHaveText("Delivery plan");
+  ).toHaveAttribute("aria-label", "Delivery plan");
   await page.getByRole("link", { name: "Delivery plan", exact: true }).click();
   const document = page.getByRole("article", { name: "Delivery plan" });
   await expect(document.locator("[data-avatar-shape]")).toHaveAttribute(
@@ -1029,17 +1041,18 @@ test("creates, deletes and restores a working note through the editor", async ({
     .getByRole("dialog", { name: "Delete this note?" })
     .getByRole("button", { name: "Delete note", exact: true })
     .click();
-  await page
-    .getByRole("article", { name: "Deleted note" })
-    .getByRole("button", { name: "Note actions" })
+  const deletedNote = page.getByRole("article", { name: "Research draft" });
+  await expect(
+    deletedNote.getByText("This note was deleted.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    deletedNote
+      .getByRole("paragraph")
+      .filter({ hasText: /^A durable finding\.$/ }),
+  ).toBeVisible();
+  await deletedNote
+    .getByRole("button", { name: "Restore note", exact: true })
     .click();
-  await page.getByRole("menuitem", { name: "Revision history" }).click();
-  await page
-    .getByRole("menu", { name: "Revision history" })
-    .getByRole("menuitem", { name: /Research draft/ })
-    .click();
-  const history = page.getByRole("dialog", { name: "Revision preview" });
-  await history.getByRole("button", { name: "Restore this version" }).click();
   await expect(
     page
       .getByRole("article", { name: "Research draft" })
@@ -1055,10 +1068,15 @@ test("discovers only channel-backed notes while leaving published records untouc
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
   const list = page.getByRole("list", { name: "Notes", exact: true });
-  await expect(list.getByRole("link")).toHaveText([
+  await expect(list.getByRole("link")).toHaveCount(2);
+  await expect(list.getByRole("link").nth(0)).toHaveAttribute(
+    "aria-label",
     "Connected notes plan",
+  );
+  await expect(list.getByRole("link").nth(1)).toHaveAttribute(
+    "aria-label",
     "Storage research",
-  ]);
+  );
   await expect(
     page.getByRole("button", { name: "Refresh notes", exact: true }),
   ).toHaveAttribute("aria-busy", "false");
@@ -1075,7 +1093,10 @@ test("discovers only channel-backed notes while leaving published records untouc
   await page
     .getByRole("button", { name: "Refresh notes", exact: true })
     .click();
-  await expect(list.getByRole("link").first()).toHaveText("Agent research");
+  await expect(list.getByRole("link").first()).toHaveAttribute(
+    "aria-label",
+    "Agent research",
+  );
   await list.getByRole("link", { name: "Agent research", exact: true }).click();
   const note = page.getByRole("article", {
     name: "Agent research",

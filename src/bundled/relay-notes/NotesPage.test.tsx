@@ -48,13 +48,17 @@ it("shows only title links in revision order and opens the selected channel-back
   expect(
     within(list)
       .getAllByRole("link")
-      .map((link) => link.textContent),
+      .map((link) => link.getAttribute("aria-label")),
   ).toEqual(["Latest note", "First note"]);
   expect(list).not.toHaveTextContent("Searchable body");
   expect(
     within(list)
       .getAllByRole("listitem")
-      .map((row) => row.textContent?.trim()),
+      .map(
+        (row) =>
+          row.querySelector("a")?.getAttribute("aria-label") ??
+          row.textContent?.trim(),
+      ),
   ).toEqual(["Latest note", "First note", "New note"]);
   expect(
     within(list).getByRole("button", { name: "New note" }),
@@ -73,12 +77,16 @@ it("shows only title links in revision order and opens the selected channel-back
   expect(
     within(list)
       .getAllByRole("link")
-      .map((link) => link.textContent),
+      .map((link) => link.getAttribute("aria-label")),
   ).toEqual(["First note", "Latest note"]);
   expect(
     within(list)
       .getAllByRole("listitem")
-      .map((row) => row.textContent?.trim()),
+      .map(
+        (row) =>
+          row.querySelector("a")?.getAttribute("aria-label") ??
+          row.textContent?.trim(),
+      ),
   ).toEqual(["First note", "Latest note", "New note"]);
 });
 
@@ -150,9 +158,9 @@ it("searches loaded documents and delegates filters, creation and pagination to 
   const { props } = await fixture();
   const user = userEvent.setup();
   const view = render(<NotesPage {...props} query="searchable" more />);
-  expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
-    "Latest note",
-  ]);
+  expect(
+    screen.getAllByRole("link").map((link) => link.getAttribute("aria-label")),
+  ).toEqual(["Latest note"]);
   const filter = screen.getByRole("button", { name: "Filter notes" });
   expect(
     screen.queryByRole("checkbox", { name: "Show deleted notes" }),
