@@ -1692,3 +1692,57 @@ test("a linked preview can close during acquisition and a later link still opens
     ),
   ).toEqual(["first", "next"]);
 });
+
+// App wiring: list discovery must use the native storage adapter without acquiring
+// an installation preview, then hand the update to the existing consent dialog.
+test("Manage plugins discovers saved-source updates before opening details", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page, [
+    {
+      path: "dist",
+      revision: "one",
+      manifest: {
+        id: "example.refresh",
+        name: "Refresh example",
+        apiVersion: 1,
+      },
+    },
+  ]);
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await button(page, "Install plugin").click();
+  await expectOnlySettings(page);
+  await closeSettings(page);
+  await page.evaluate(() => {
+    window.importCategory = "productivity";
+  });
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  await expect(button(page, "Update Refresh example")).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Refresh example details" }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        window.importCalls.filter(
+          ({ command }) => command === "plugin_import_install",
+        ).length,
+    ),
+  ).toBe(1);
+  await button(page, "Update Refresh example").click();
+  await expect(
+    page.getByRole("dialog", { name: "Update Refresh example", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        window.importCalls.filter(
+          ({ command }) => command === "plugin_import_install",
+        ).length,
+    ),
+  ).toBe(1);
+});

@@ -2185,12 +2185,12 @@ it("retains both local drafts across section navigation but retires them with th
 });
 
 it("allows Add to install while an independent folder check is pending, including pane remount", async () => {
-  let finish!: (revision: string) => void;
+  const finishes: ((revision: string) => void)[] = [];
   const fixture = reviewPluginFixture();
   const checkFolder = vi.fn(
     () =>
       new Promise<string>((resolve) => {
-        finish = resolve;
+        finishes.push(resolve);
       }),
   );
   const preview = {
@@ -2224,7 +2224,7 @@ it("allows Add to install while an independent folder check is pending, includin
   fireEvent.click(
     screen.getByRole("button", { name: "View Zebra external details" }),
   );
-  await waitFor(() => expect(checkFolder).toHaveBeenCalledOnce());
+  await waitFor(() => expect(checkFolder).toHaveBeenCalledTimes(2));
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   const dialog = await screen.findByRole("dialog", { name: "Add a plugin" });
   fireEvent.click(
@@ -2233,7 +2233,9 @@ it("allows Add to install while an independent folder check is pending, includin
   await within(dialog).findByRole("button", { name: "Install plugin" });
   fixture.external.revision = "cli-reloaded";
   act(fixture.publish);
-  await act(async () => finish("current"));
+  await act(async () => {
+    for (const finish of finishes) finish("current");
+  });
   expect(discard).not.toHaveBeenCalled();
   fireEvent.click(
     within(dialog).getByRole("switch", { name: "Enable plugin" }),
@@ -2552,4 +2554,129 @@ it("leaves a confirmed install's request to the install when Settings closes", a
   requests.settle(id, "installed");
   unconfirm();
   await expect(outcome).resolves.toBe("installed");
+});
+
+it("discovers installed source updates from the list and refreshes on focus", async () => {
+  const fixture = reviewPluginFixture();
+  const plugin = fixture.external;
+  Object.assign(plugin, { updateSource: { root: "/plugins", path: "." } });
+  let revision = "updated";
+  const checkFolder = vi.fn(async () => revision);
+  const imports = {
+    checkFolder,
+    git: vi.fn(),
+    install: vi.fn(),
+    discard: vi.fn(),
+  };
+  Object.assign(fixture.manager, { imports });
+  act(fixture.publish);
+  await waitFor(() =>
+    expect(checkFolder).toHaveBeenCalledWith(plugin.manifest.id),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Update Zebra external" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("complementary", { name: "Zebra external details" }),
+  ).toBeNull();
+  expect(imports.install).not.toHaveBeenCalled();
+  revision = "current";
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Update Zebra external" }),
+    ).toBeNull(),
+  );
+  expect(checkFolder).toHaveBeenCalledTimes(2);
+});
+
+it("checks disabled Git plugins at their saved path while isolating source failures", async () => {
+  const fixture = reviewPluginFixture();
+  const plugin = fixture.external;
+  Object.assign(plugin, {
+    enabled: false,
+    updateSource: {
+      repository: "https://example.com/plugins",
+      reference: "main",
+      path: "dist",
+    },
+  });
+  fixture.snapshot.configuration.catalog.plugins.push({
+    ...plugin,
+    manifest: {
+      ...plugin.manifest,
+      id: "example.broken",
+      name: "Broken source",
+    },
+    ...{ updateSource: { root: "/missing", path: "." } },
+  });
+  const checkFolder = vi.fn(async () => {
+    throw new Error("missing folder");
+  });
+  const checkGit = vi.fn(async () => ({
+    token: "",
+    source: "https://example.com/plugins",
+    commit: null,
+    warnings: [],
+    candidates: [
+      { path: "other", revision: "current", manifest: plugin.manifest },
+      { path: "dist", revision: "new", manifest: plugin.manifest },
+    ],
+  }));
+  Object.assign(fixture.manager, { imports: { checkFolder, checkGit } });
+  act(fixture.publish);
+  expect(
+    await screen.findByRole("button", { name: "Update Zebra external" }),
+  ).toBeVisible();
+  expect(checkGit).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/plugins",
+    "main",
+    undefined,
+  );
+  expect(checkFolder).toHaveBeenCalledExactlyOnceWith("example.broken");
+  expect(
+    screen.queryByRole("button", { name: "Update Broken source" }),
+  ).toBeNull();
+});
+
+it("ignores an old source result after the installed revision changes", async () => {
+  const fixture = reviewPluginFixture();
+  Object.assign(fixture.external, {
+    updateSource: { root: "/plugins", path: "." },
+  });
+  let finish!: (revision: string) => void;
+  const checkFolder = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue("installed-again");
+  Object.assign(fixture.manager, { imports: { checkFolder } });
+  act(fixture.publish);
+  await waitFor(() => expect(checkFolder).toHaveBeenCalledOnce());
+  act(() => {
+    const catalog = fixture.snapshot.configuration.catalog;
+    fixture.snapshot.configuration.catalog = {
+      ...catalog,
+      plugins: catalog.plugins.map((plugin) =>
+        plugin.manifest.id === fixture.external.manifest.id
+          ? { ...plugin, revision: "installed-again" }
+          : plugin,
+      ),
+    };
+    fixture.publish();
+  });
+  await waitFor(() => expect(checkFolder).toHaveBeenCalledTimes(2));
+  await act(async () => finish("new-from-old-check"));
+  expect(
+    screen.queryByRole("button", { name: "Update Zebra external" }),
+  ).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Profile" }));
+  await act(async () => {
+    fireEvent.focus(window);
+  });
+  expect(checkFolder).toHaveBeenCalledTimes(2);
 });

@@ -35,6 +35,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -1223,6 +1224,70 @@ export function Settings({
       ? ((await connection.session.authorizeGit?.(repository)) ?? null)
       : null;
   };
+  const authorizeUpdateCheck = useEffectEvent(authorizePluginGit);
+  const imports = plugins.imports;
+  useEffect(() => {
+    if (selected !== "plugins" || !catalog || !imports || busy) return;
+    let active = true;
+    let checking = false;
+    const refresh = async () => {
+      if (!active || checking || document.visibilityState === "hidden") return;
+      checking = true;
+      try {
+        await Promise.all(
+          catalog.plugins.map(async (plugin) => {
+            const id = plugin.manifest.id;
+            const source = plugin.updateSource;
+            if (
+              plugin.source !== "external" ||
+              !source ||
+              managedBy(managed, id)
+            )
+              return;
+            let available = false;
+            try {
+              let revision: string | undefined;
+              if ("root" in source) revision = await imports.checkFolder(id);
+              else {
+                const signed = await authorizeUpdateCheck(source.repository);
+                const result = await imports.checkGit(
+                  signed?.repository ?? source.repository,
+                  source.reference,
+                  signed?.token,
+                );
+                revision = result?.candidates.find(
+                  (candidate) =>
+                    candidate.manifest.id === id &&
+                    candidate.path === source.path,
+                )?.revision;
+              }
+              available =
+                revision !== undefined && revision !== plugin.revision;
+            } catch {
+              // One unavailable source must not prevent checking the others.
+            }
+            if (active)
+              setUpdateChecks((current) => ({
+                ...current,
+                [id]: { revision: plugin.revision, available },
+              }));
+          }),
+        );
+      } finally {
+        checking = false;
+      }
+    };
+    const resume = () => void refresh();
+    // Strict Mode's retired mount must not start source reads.
+    queueMicrotask(resume);
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [selected, catalog, imports, managed, busy]);
   // Keep announcements outside filtered rows and the covered narrow catalog.
   const announcement = (
     <div
