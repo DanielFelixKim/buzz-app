@@ -355,10 +355,11 @@ pub(super) async fn run(
     touched: &std::sync::atomic::AtomicU64,
 ) -> Result<()> {
     ensure_authorized(connection.expires_at, &connection.cancellation)?;
-    let mut socket = connection
+    let (mut sink, mut socket) = connection
         .socket
         .take()
-        .ok_or("Huddle audio connection closed")?;
+        .ok_or("Huddle audio connection closed")?
+        .split();
     let mut peers = connection.peers;
     let expires_at = connection.expires_at;
     let authorization_cancellation = connection.cancellation;
@@ -370,6 +371,17 @@ pub(super) async fn run(
     playout.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
     let mut last_received = tokio::time::Instant::now();
     authorization_guard(expires_at, &authorization_cancellation, async {
+        // Writes queue to their own future, so a stalled send never blocks
+        // receive or playout. A full queue drops the newest, as `huddle_pcm` does.
+        let (out, mut outbound) = mpsc::channel(5);
+        let writer = async move {
+            while let Some(message) = outbound.recv().await {
+                tokio::time::timeout(Duration::from_secs(2), sink.send(message)).await.map_err(|_| "Huddle connection stalled")?.map_err(|_| "Huddle disconnected")?;
+            }
+            let _ = sink.close().await;
+            Result::Ok(())
+        };
+        tokio::pin!(writer);
         loop {
             if *stop.borrow() {
                 break;
@@ -377,6 +389,8 @@ pub(super) async fn run(
             tokio::select! {
                 biased;
                 _ = stop.changed() => break,
+                // Ends only on a failed send while `out` is alive.
+                result = &mut writer => return result,
                 // Cleanup must not be starved by a continuously ready audio stream.
                 // Admit the finite real-time packet backlog before catch-up pulls.
                 // Stop/heartbeat still preempt; socket input already precedes mic input.
@@ -384,7 +398,7 @@ pub(super) async fn run(
                     super::check_cancelled(&stop, touched)?;
                     if let Some(seat) = &seat { seat.admission.dispatch()?; }
                     if last_received.elapsed() > Duration::from_secs(30) { return Err("Huddle connection timed out. You can join again.".into()); }
-                    tokio::time::timeout(Duration::from_secs(2), socket.send(Message::Ping(now().to_be_bytes().to_vec().into()))).await.map_err(|_| "Huddle connection stalled")?.map_err(|_| "Huddle disconnected")?;
+                    let _ = out.try_send(Message::Ping(now().to_be_bytes().to_vec().into()));
                 }
                 packet = socket.next() => {
                     last_received = tokio::time::Instant::now();
@@ -415,7 +429,7 @@ pub(super) async fn run(
                             updates.send(Update::Participants {participants:peers.values().cloned().collect()}).map_err(|_| "Huddle view closed")?;
                         }
                         Some(Ok(Message::Ping(bytes))) => {
-                            tokio::time::timeout(Duration::from_secs(2), socket.send(Message::Pong(bytes))).await.map_err(|_| "Huddle connection stalled")?.map_err(|_| "Huddle disconnected")?;
+                            let _ = out.try_send(Message::Pong(bytes));
                         }
                         Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return Err("Huddle disconnected. You can join again.".into()),
                         _ => {},
@@ -433,11 +447,13 @@ pub(super) async fn run(
                 samples = pcm.recv() => {
                     let Some(samples) = samples else { break; };
                     let frame = codec.encoder.encode(&samples)?;
-                    tokio::time::timeout(Duration::from_secs(2), socket.send(Message::Binary(frame.into()))).await.map_err(|_| "Huddle connection stalled")?.map_err(|_| "Huddle disconnected")?;
+                    let _ = out.try_send(Message::Binary(frame.into()));
                 }
             }
         }
-        let _ = tokio::time::timeout(Duration::from_secs(2), socket.close(None)).await;
+        // Drain what is queued, then close, within the old close bound.
+        drop(out);
+        let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
         Ok(())
     })
     .await
@@ -1339,6 +1355,86 @@ mod tests {
             );
         }
         writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stalled_write_does_not_stall_playout() {
+        // The relay keeps speaking but never reads, and our send buffer starts
+        // full, so every send blocks. Playout must keep pulling meanwhile.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (client, relay) = tokio::join!(
+            tokio::net::TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let (relay, socket) = tokio::join!(
+            tokio_tungstenite::accept_async(relay.unwrap().0),
+            tokio_tungstenite::client_async(
+                "ws://relay/",
+                tokio_tungstenite::MaybeTlsStream::Plain(client.unwrap()),
+            )
+        );
+        let (mut relay, mut socket) = (relay.unwrap(), socket.unwrap().0);
+        let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = socket.get_mut() else {
+            unreachable!()
+        };
+        while tokio::time::timeout(Duration::from_millis(50), tcp.writable())
+            .await
+            .is_ok()
+        {
+            let _ = tcp.try_write(&[0; 65536]);
+        }
+        let speaker = tokio::spawn(async move {
+            let mut codec = Codec::new(None).unwrap();
+            loop {
+                let frame = spoken(&mut codec, 1);
+                if relay.send(Message::Binary(frame.into())).await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        let (mic, pcm) = mpsc::channel(1);
+        let talker = tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(1));
+            while mic.send(vec![0.3; FRAME_SAMPLES]).await.is_ok() {
+                tick.tick().await;
+            }
+        });
+        let heard = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let updates = Channel::new({
+            let heard = heard.clone();
+            move |body| {
+                let tauri::ipc::InvokeResponseBody::Json(json) = body else {
+                    panic!("updates are JSON")
+                };
+                if json.contains(r#""type":"audio""#) {
+                    heard.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                Ok(())
+            }
+        });
+        let (stop, stopped) = watch::channel(false);
+        let touched = std::sync::atomic::AtomicU64::new(super::super::lease_time());
+        let connection = Connection {
+            socket: Some(socket),
+            peers: BTreeMap::from([(1, "a".repeat(64))]),
+            expires_at: None,
+            cancellation: CancellationToken::new(),
+            seat: None,
+        };
+        let running = run(connection, pcm, stopped, &updates, &touched);
+        tokio::pin!(running);
+        let _ = tokio::time::timeout(Duration::from_secs(1), &mut running).await;
+        let pulls = heard.load(std::sync::atomic::Ordering::SeqCst);
+        stop.send(true).unwrap();
+        let _ = running.await;
+        talker.abort();
+        speaker.abort();
+        // 100 pulls are due in 1 s; a blocked send loop delivers a handful.
+        assert!(
+            pulls >= 50,
+            "playout stalled behind a blocked send: {pulls} pulls in 1 s"
+        );
     }
 
     #[test]
