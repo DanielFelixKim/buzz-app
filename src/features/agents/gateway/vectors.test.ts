@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { admit, INITIAL_ADMISSION } from "./admission";
 import {
   bindingAdmits,
-  composeWorkforceHeaders,
+  composeGatewayHeaders,
   inferenceBundle,
 } from "./contract";
 import {
@@ -12,32 +12,35 @@ import {
   COMPOSE_VECTORS,
   INFERENCE_VECTORS,
   VECTOR_BINDING,
+  VECTOR_PROFILE,
 } from "./vectors";
 
-describe("shared Workforce vectors", () => {
+describe("shared gateway vectors", () => {
   it.each(INFERENCE_VECTORS)("inference bundle: $name", ({ turn, headers }) => {
-    const bundle = inferenceBundle(VECTOR_BINDING, turn);
+    const bundle = inferenceBundle(VECTOR_PROFILE, VECTOR_BINDING, turn);
     expect(bundle.ok && Object.entries(bundle.value)).toEqual(
       Object.entries(headers),
     );
   });
 
   it.each(COMPOSE_VECTORS)("compose: $name", (vector) => {
-    expect(composeWorkforceHeaders(vector.assembled, vector.bundle)).toEqual(
-      vector.composed,
-    );
+    expect(
+      composeGatewayHeaders(VECTOR_PROFILE, vector.assembled, vector.bundle),
+    ).toEqual(vector.composed);
   });
 
   it.each(INFERENCE_VECTORS)(
     "compose accepts every inference bundle: $name",
     ({ headers }) => {
-      expect(composeWorkforceHeaders({}, headers)).toEqual(headers);
+      expect(composeGatewayHeaders(VECTOR_PROFILE, {}, headers)).toEqual(
+        headers,
+      );
     },
   );
 
   it.each(COMPOSE_REFUSED)("compose refuses bundle %o", (bundle) => {
-    expect(() => composeWorkforceHeaders({}, bundle)).toThrow(
-      "only set the contract's context headers",
+    expect(() => composeGatewayHeaders(VECTOR_PROFILE, {}, bundle)).toThrow(
+      "only set the profile's context headers",
     );
   });
 

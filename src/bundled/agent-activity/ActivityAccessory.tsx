@@ -64,6 +64,11 @@ const noSubscribe = () => () => {};
 export type ActivityAgents = WorkStopAgents;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 const noWork: RequestWork[] = [];
+/** A noted request's outcome, then how its turn ran, each kept. */
+const noteText = ({ state, notice }: RequestWork) =>
+  [state === "stopped" ? "Stopped" : undefined, notice]
+    .filter(Boolean)
+    .join(" · ");
 /** Activity belongs to the exact triggering message, not the composer. Once an
  * agent has publicly replied, its stopped note follows that reply instead. */
 export function ActivityAccessory(props: ActivityProps) {
@@ -217,6 +222,7 @@ function MessageActivity(
         ...(entry.step ? { step: entry.step } : {}),
         ...(entry.stoppable ? { stoppable: true } : {}),
         ...(entry.retryable ? { retryable: true } : {}),
+        ...(entry.notice ? { notice: entry.notice } : {}),
         lifecycle: entry.lifecycle,
         records: entry.selected.records,
         turns: entry.turns,
@@ -294,11 +300,11 @@ function MessageActivity(
           }))}
         />
         <span>
-          {[...new Set(noted.map((entry) => entry.notice ?? "Stopped"))]
+          {[...new Set(noted.map(noteText))]
             .map(
               (text) =>
                 `${noted
-                  .filter((entry) => (entry.notice ?? "Stopped") === text)
+                  .filter((entry) => noteText(entry) === text)
                   .map(({ agent }) => named(agent))
                   .join(", ")} · ${text}`,
             )
@@ -360,6 +366,7 @@ type Entry = {
   step?: WorkStep;
   stoppable?: boolean;
   retryable?: boolean;
+  notice?: string;
   lifecycle: boolean;
   records: ReturnType<typeof activityRecords>;
   turns: readonly ActivityTurn[];
@@ -479,6 +486,7 @@ function ActivityBubble({
                 : entry.state,
           ...(entry.reason ? { error: entry.reason } : {}),
           ...(entry.step ? { step: entry.step } : {}),
+          ...(entry.notice ? { notice: entry.notice } : {}),
         })
       : entry.working
         ? "working"

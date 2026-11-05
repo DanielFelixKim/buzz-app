@@ -1,26 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 import type { HostRequest, HostResponse } from "../../host/service";
 import type { AgentKey } from "../membership";
-import {
-  MODEL_ACCESS_PATH,
-  WorkforceRoutes,
-  type WorkforceMembership,
-} from "./route";
-import type { WorkforceDescriptor } from "./descriptor";
+import { GatewayRoutes, type GatewayMembership } from "./route";
+import type { GatewayDescriptor } from "./descriptor";
+import { VECTOR_PROFILE } from "./vectors";
 
 const GATEWAY = "https://gateway.example";
 const LISTED = {
   id: "22222222-2222-4222-8222-222222222222",
-  origin: "https://block.example",
+  origin: "https://relay.example",
 };
 const OTHER = {
   id: "44444444-4444-4444-8444-444444444444",
   origin: "https://other.example",
 };
-const DESCRIPTOR: WorkforceDescriptor = {
-  version: 1,
+const ACCESS_PATH = "/v9/access";
+const DESCRIPTOR: GatewayDescriptor = {
+  version: 2,
   gateway: GATEWAY,
   communities: [LISTED, OTHER],
+  access_path: ACCESS_PATH,
+  ...VECTOR_PROFILE,
+  upstreams: { pi: { base: "/upstream/pi" } },
 };
 const OWNER = "a".repeat(64);
 const key = (name: string) => name as AgentKey;
@@ -55,8 +56,8 @@ function gateway() {
 function member(
   name: string,
   session: object | undefined,
-  overrides: Partial<WorkforceMembership> = {},
-): WorkforceMembership {
+  overrides: Partial<GatewayMembership> = {},
+): GatewayMembership {
   return {
     key: key(name),
     origin: LISTED.origin,
@@ -67,14 +68,14 @@ function member(
   };
 }
 
-function setup(descriptor: WorkforceDescriptor | null = DESCRIPTOR) {
-  const routes = new WorkforceRoutes(() => descriptor);
+function setup(descriptor: GatewayDescriptor | null = DESCRIPTOR) {
+  const routes = new GatewayRoutes(() => descriptor);
   const net = gateway();
   routes.bindRequest(net.request);
   return { routes, ...net };
 }
 
-describe("WorkforceRoutes", () => {
+describe("GatewayRoutes", () => {
   it("is external for every membership without a descriptor", () => {
     const { routes, request } = setup(null);
     routes.setMembership(member("b1", {}));
@@ -84,7 +85,7 @@ describe("WorkforceRoutes", () => {
   });
 
   it("blocks everything when the descriptor is invalid", () => {
-    const routes = new WorkforceRoutes(() => {
+    const routes = new GatewayRoutes(() => {
       throw new Error("bad");
     });
     routes.setMembership(member("b1", {}));
@@ -92,6 +93,13 @@ describe("WorkforceRoutes", () => {
       kind: "blocked",
       reason: "descriptor_invalid",
     });
+  });
+
+  it("gives only the upstream bases the descriptor configures", () => {
+    expect(setup().routes.upstream("pi")).toEqual({ base: "/upstream/pi" });
+    for (const harness of ["goose", "codex", "toString", "__proto__"])
+      expect(setup().routes.upstream(harness)).toBeUndefined();
+    expect(setup(null).routes.upstream("pi")).toBeUndefined();
   });
 
   it("goes pending, probes with discovery headers, then is eligible at a fresh revision", async () => {
@@ -104,19 +112,19 @@ describe("WorkforceRoutes", () => {
       reason: "readiness_pending",
       revision: 1,
     });
-    const request = await answer('{"open_models_only":null}');
-    expect(request.url).toBe(`${GATEWAY}${MODEL_ACCESS_PATH}`);
+    const request = await answer("{}");
+    expect(request.url).toBe(`${GATEWAY}${ACCESS_PATH}`);
     expect(request.method).toBe("GET");
     expect(request.headers).toMatchObject({
-      "x-workforce-buzz-community-id": LISTED.id,
-      "x-workforce-buzz-human-pubkey": OWNER,
+      "x-gw-ctx-community-id": LISTED.id,
+      "x-gw-ctx-human-pubkey": OWNER,
     });
     expect(Object.keys(request.headers ?? {}).sort()).toEqual([
       "accept",
-      "x-workforce-buzz-agent-pubkey",
-      "x-workforce-buzz-community-id",
-      "x-workforce-buzz-human-pubkey",
-      "x-workforce-launcher-client",
+      "x-gw-ctx-agent-pubkey",
+      "x-gw-ctx-community-id",
+      "x-gw-ctx-human-pubkey",
+      "x-gw-launcher-client",
     ]);
     expect(routes.routeFor(key("b1"))).toEqual({
       kind: "eligible",
@@ -127,61 +135,36 @@ describe("WorkforceRoutes", () => {
         human_pubkey: OWNER,
         agent_pubkey: member("b1", session).pubkey,
       },
-      access: "unresolved",
+      profile: VECTOR_PROFILE,
       harnesses: [],
     });
   });
 
   it.each([
+    ['{"harnesses":[]}', 200, { kind: "eligible", harnesses: [] }],
     [
-      '{"open_models_only":true}',
+      '{"harnesses":["pi","codex","pi","future"]}',
       200,
-      { kind: "eligible", access: "open_models_only" },
+      { kind: "eligible", harnesses: ["pi", "codex", "future"] },
     ],
+    // Only the harness list is read: other keys, such as a response
+    // policy, are the gateway's and are ignored.
     [
-      '{"open_models_only":false}',
+      '{"policy":{"x":1},"harnesses":["pi"],"x":1}',
       200,
-      { kind: "eligible", access: "unrestricted", harnesses: [] },
+      { kind: "eligible", harnesses: ["pi"] },
     ],
-    [
-      '{"open_models_only":false,"harnesses":["pi","codex","pi","future"]}',
-      200,
-      {
-        kind: "eligible",
-        access: "unrestricted",
-        harnesses: ["pi", "codex", "future"],
-      },
-    ],
-    [
-      '{"open_models_only":true,"harnesses":[]}',
-      200,
-      { kind: "eligible", harnesses: [] },
-    ],
-    [
-      '{"open_models_only":true,"harnesses":"pi"}',
-      200,
-      { kind: "blocked", reason: "gateway_error" },
-    ],
-    [
-      '{"open_models_only":true,"harnesses":["Pi"]}',
-      200,
-      { kind: "blocked", reason: "gateway_error" },
-    ],
-    ['{"harnesses":["pi"]}', 200, { kind: "blocked", reason: "gateway_error" }],
+    ['{"policy":"yes"}', 200, { kind: "eligible", harnesses: [] }],
+    ['{"harnesses":"pi"}', 200, { kind: "blocked", reason: "gateway_error" }],
+    ['{"harnesses":["Pi"]}', 200, { kind: "blocked", reason: "gateway_error" }],
+    ['{"harnesses":[1]}', 200, { kind: "blocked", reason: "gateway_error" }],
+    ["[]", 200, { kind: "blocked", reason: "gateway_error" }],
+    ["null", 200, { kind: "blocked", reason: "gateway_error" }],
+    ['"pi"', 200, { kind: "blocked", reason: "gateway_error" }],
     ["", 401, { kind: "blocked", reason: "auth" }],
     ["", 403, { kind: "blocked", reason: "auth" }],
     ["", 500, { kind: "blocked", reason: "gateway_error" }],
     ["not json", 200, { kind: "blocked", reason: "gateway_error" }],
-    [
-      '{"open_models_only":"yes"}',
-      200,
-      { kind: "blocked", reason: "gateway_error" },
-    ],
-    [
-      '{"open_models_only":true,"x":1}',
-      200,
-      { kind: "blocked", reason: "gateway_error" },
-    ],
   ])("maps %s (%i) to its route", async (body, status, route) => {
     const { routes, answer } = setup();
     routes.setMembership(member("b1", {}));
@@ -222,7 +205,7 @@ describe("WorkforceRoutes", () => {
       ),
     );
     expect(request).toHaveBeenCalledTimes(2);
-    await answer('{"open_models_only":false}');
+    await answer('{"harnesses":[]}');
     await answer("", 401);
     expect(routes.routeFor(key("ext")).kind).toBe("external");
     expect(routes.routeFor(key("mismatch"))).toMatchObject({
@@ -242,7 +225,7 @@ describe("WorkforceRoutes", () => {
     const { routes, answer, request } = setup();
     const session = {};
     routes.setMembership(member("b1", session));
-    await answer('{"open_models_only":false}');
+    await answer('{"harnesses":[]}');
     const ready = routes.routeFor(key("b1"));
     const listener = vi.fn();
     routes.subscribeRoute(key("b1"), listener);
@@ -262,7 +245,7 @@ describe("WorkforceRoutes", () => {
       revision: 4,
     });
     expect(listener).toHaveBeenCalledTimes(2);
-    await answer('{"open_models_only":false}');
+    await answer('{"harnesses":[]}');
     expect(routes.routeFor(key("b1"))).toMatchObject({
       kind: "eligible",
       revision: 5,
@@ -278,15 +261,13 @@ describe("WorkforceRoutes", () => {
       reason: "readiness_pending",
       revision: 2,
     });
-    await answer('{"open_models_only":false}');
+    await answer('{"harnesses":[]}');
     expect(routes.routeFor(key("b1"))).toMatchObject({
       reason: "readiness_pending",
       revision: 2,
     });
-    const second = await answer('{"open_models_only":false}');
-    expect(second.headers?.["x-workforce-buzz-human-pubkey"]).toBe(
-      "c".repeat(64),
-    );
+    const second = await answer('{"harnesses":[]}');
+    expect(second.headers?.["x-gw-ctx-human-pubkey"]).toBe("c".repeat(64));
     expect(routes.routeFor(key("b1"))).toMatchObject({
       kind: "eligible",
       revision: 3,
@@ -296,7 +277,7 @@ describe("WorkforceRoutes", () => {
   it("invalidates on a 401/403 from inference: pending at a new revision until a new probe settles", async () => {
     const { routes, answer } = setup();
     routes.setMembership(member("b1", {}));
-    await answer('{"open_models_only":false}');
+    await answer('{"harnesses":[]}');
     routes.invalidate(key("b1"));
     expect(routes.routeFor(key("b1"))).toMatchObject({
       reason: "readiness_pending",
@@ -312,7 +293,7 @@ describe("WorkforceRoutes", () => {
   it("blocks a removed membership, never external, and never reuses its revision", async () => {
     const { routes, answer } = setup();
     routes.setMembership(member("b1", {}));
-    await answer('{"open_models_only":false}');
+    await answer('{"harnesses":[]}');
     routes.removeMembership(key("b1"));
     expect(routes.routeFor(key("b1"))).toMatchObject({
       kind: "blocked",
@@ -327,23 +308,47 @@ describe("WorkforceRoutes", () => {
     const { routes, answer } = setup();
     routes.setMembership(member("b1", {}));
     routes.setMembership(member("b2", {}));
-    await answer('{"open_models_only":false}');
-    await answer('{"open_models_only":true}');
+    await answer('{"harnesses":[]}');
+    await answer('{"harnesses":["pi"]}');
     routes.invalidate(key("b1"));
     expect(routes.routeFor(key("b2"))).toMatchObject({
       kind: "eligible",
       revision: 2,
-      access: "open_models_only",
+      harnesses: ["pi"],
     });
   });
 
-  it("waits for readiness under a turn's signal and retries a failed probe once", async () => {
+  it("gives a turn its current route without waiting, retrying a failed probe in the background", async () => {
+    const { routes, answer, pending } = setup();
+    routes.setMembership(member("b1", {}));
+    expect(routes.routeForTurn(key("b1"))).toMatchObject({
+      kind: "blocked",
+      reason: "readiness_pending",
+    });
+    await answer("", 500);
+    expect(routes.routeForTurn(key("b1"))).toMatchObject({
+      kind: "blocked",
+      reason: "gateway_error",
+    });
+    expect(pending).toHaveLength(1);
+    expect(routes.routeFor(key("b1"))).toMatchObject({
+      reason: "readiness_pending",
+    });
+    await answer('{"harnesses":[]}');
+    expect(routes.routeForTurn(key("b1"))).toMatchObject({
+      kind: "eligible",
+      revision: 4,
+    });
+    expect(pending).toHaveLength(0);
+  });
+
+  it("waits for readiness under an explicit operation's signal and retries a failed probe once", async () => {
     const { routes, answer, pending } = setup();
     routes.setMembership(member("b1", {}));
     await answer("", 500);
     const ready = routes.routeReady(key("b1"), new AbortController().signal);
     expect(pending).toHaveLength(1);
-    await answer('{"open_models_only":false}');
+    await answer('{"harnesses":[]}');
     await expect(ready).resolves.toMatchObject({
       kind: "eligible",
       revision: 4,
@@ -354,6 +359,19 @@ describe("WorkforceRoutes", () => {
     const waiting = routes.routeReady(key("b1"), controller.signal);
     controller.abort(new Error("stopped"));
     await expect(waiting).rejects.toThrow("stopped");
+  });
+
+  it("keeps waiting when the membership changes while an operation waits for readiness", async () => {
+    const { routes, answer } = setup();
+    routes.setMembership(member("b1", {}));
+    const ready = routes.routeReady(key("b1"), new AbortController().signal);
+    routes.setMembership(member("b1", {}, { owner: "c".repeat(64) }));
+    await answer('{"harnesses":[]}');
+    await answer('{"harnesses":[]}');
+    await expect(ready).resolves.toMatchObject({
+      kind: "eligible",
+      identity: { human_pubkey: "c".repeat(64) },
+    });
   });
 
   it("blocks a membership it was never told about while a descriptor is configured", () => {
@@ -367,28 +385,15 @@ describe("WorkforceRoutes", () => {
   it("ignores a late 401/403 from an older revision", async () => {
     const { routes, answer, request } = setup();
     routes.setMembership(member("b1", {}));
-    await answer('{"open_models_only":false}');
+    await answer('{"harnesses":[]}');
     const ready = routes.routeFor(key("b1"));
     routes.invalidate(key("b1"), ready.revision - 1);
     expect(routes.routeFor(key("b1"))).toEqual(ready);
     expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps waiting when the membership changes while a turn waits for readiness", async () => {
-    const { routes, answer } = setup();
-    routes.setMembership(member("b1", {}));
-    const ready = routes.routeReady(key("b1"), new AbortController().signal);
-    routes.setMembership(member("b1", {}, { owner: "c".repeat(64) }));
-    await answer('{"open_models_only":false}');
-    await answer('{"open_models_only":false}');
-    await expect(ready).resolves.toMatchObject({
-      kind: "eligible",
-      identity: { human_pubkey: "c".repeat(64) },
-    });
-  });
-
   it("stays pending without a request path, and probes once one is bound", async () => {
-    const routes = new WorkforceRoutes(() => DESCRIPTOR);
+    const routes = new GatewayRoutes(() => DESCRIPTOR);
     routes.setMembership(member("b1", {}));
     expect(routes.routeFor(key("b1"))).toMatchObject({
       reason: "readiness_pending",
@@ -396,7 +401,7 @@ describe("WorkforceRoutes", () => {
     const net = gateway();
     const unbind = routes.bindRequest(net.request);
     expect(net.request).toHaveBeenCalledTimes(1);
-    await net.answer('{"open_models_only":false}');
+    await net.answer('{"harnesses":[]}');
     expect(routes.routeFor(key("b1")).kind).toBe("eligible");
     unbind();
     routes.invalidate(key("b1"));

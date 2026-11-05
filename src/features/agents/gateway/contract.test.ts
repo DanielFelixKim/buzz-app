@@ -7,7 +7,12 @@ import {
   turnErrors,
   type TurnContext,
 } from "./contract";
-import { INFERENCE_VECTORS, VECTOR_BINDING, VECTOR_IDENTITY } from "./vectors";
+import {
+  INFERENCE_VECTORS,
+  VECTOR_BINDING,
+  VECTOR_IDENTITY,
+  VECTOR_PROFILE,
+} from "./vectors";
 
 const route = { identity: VECTOR_IDENTITY };
 const [{ turn: MESSAGE }, { turn: TIMER }] = INFERENCE_VECTORS as [
@@ -125,8 +130,10 @@ describe("validators", () => {
   ])("rejects %s", (_name, change) => {
     expect(turnErrors({ ...MESSAGE, ...change })).toBeDefined();
     expect(
-      inferenceBundle(VECTOR_BINDING, { ...MESSAGE, ...change } as TurnContext)
-        .ok,
+      inferenceBundle(VECTOR_PROFILE, VECTOR_BINDING, {
+        ...MESSAGE,
+        ...change,
+      } as TurnContext).ok,
     ).toBe(false);
   });
 
@@ -140,25 +147,26 @@ describe("validators", () => {
 
 describe("bundles", () => {
   it("fit their byte budget with every field at its largest", () => {
-    const bundle = inferenceBundle(VECTOR_BINDING, MESSAGE);
+    const bundle = inferenceBundle(VECTOR_PROFILE, VECTOR_BINDING, MESSAGE);
     expect(bundle.ok).toBe(true);
     expect(Object.keys(bundle.ok ? bundle.value : {})).toHaveLength(8);
   });
 
   it("send discovery with identity only, plus the session when it matches", () => {
-    const bare = discoveryBundle(route);
+    const bare = discoveryBundle(VECTOR_PROFILE, route);
     expect(bare.ok && bare.value).toEqual({
-      "x-workforce-launcher-client": "buzz",
-      "x-workforce-buzz-human-pubkey": "a".repeat(64),
-      "x-workforce-buzz-agent-pubkey": "b".repeat(64),
-      "x-workforce-buzz-community-id": VECTOR_IDENTITY.community_id,
+      "x-gw-launcher-client": "client-a",
+      "x-gw-ctx-human-pubkey": "a".repeat(64),
+      "x-gw-ctx-agent-pubkey": "b".repeat(64),
+      "x-gw-ctx-community-id": VECTOR_IDENTITY.community_id,
     });
-    const bound = discoveryBundle(route, VECTOR_BINDING);
-    expect(bound.ok && bound.value["x-workforce-launcher-session"]).toBe(
+    const bound = discoveryBundle(VECTOR_PROFILE, route, VECTOR_BINDING);
+    expect(bound.ok && bound.value["x-gw-launcher-session"]).toBe(
       VECTOR_BINDING.client_session_id,
     );
     expect(
       discoveryBundle(
+        VECTOR_PROFILE,
         { identity: { ...VECTOR_IDENTITY, agent_pubkey: "f".repeat(64) } },
         VECTOR_BINDING,
       ).ok,
@@ -167,8 +175,11 @@ describe("bundles", () => {
 
   it("refuse a malformed binding", () => {
     expect(
-      inferenceBundle({ ...VECTOR_BINDING, client_session_id: "x" }, MESSAGE)
-        .ok,
+      inferenceBundle(
+        VECTOR_PROFILE,
+        { ...VECTOR_BINDING, client_session_id: "x" },
+        MESSAGE,
+      ).ok,
     ).toBe(false);
   });
 });

@@ -565,3 +565,19 @@ it("keeps a turn's notice through its steps and outcome, and drops it on a new a
   activity.begin(request());
   expect(activity.reader.work()[0]?.notice).toBeUndefined();
 });
+
+it("labels a failed turn with its error and then its notice", () => {
+  expect(
+    localWorkLabel({
+      state: "error",
+      error: "Broke",
+      notice: "Ran without it.",
+    }),
+  ).toBe("Broke · Ran without it.");
+  expect(localWorkLabel({ state: "error", notice: "Ran without it." })).toBe(
+    "Could not finish this request · Ran without it.",
+  );
+  expect(localWorkLabel({ state: "done", notice: "Ran without it." })).toBe(
+    "Finished",
+  );
+});

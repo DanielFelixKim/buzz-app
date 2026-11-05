@@ -6,31 +6,48 @@
 
 import type { AdmissionInput, AdmissionOutput } from "./admission";
 import type {
+  GatewayBinding,
+  GatewayIdentity,
+  GatewayProfile,
   TurnContext,
-  WorkforceBinding,
-  WorkforceIdentity,
 } from "./contract";
 
 const SESSION = "11111111-1111-4111-8111-111111111111";
-export const VECTOR_IDENTITY: WorkforceIdentity = Object.freeze({
+/** A neutral header profile: deployed names come only from the build's
+ * descriptor. Matches the full profile in descriptor-vectors.json. */
+export const VECTOR_PROFILE: GatewayProfile = Object.freeze({
+  launcher_client: "client-a",
+  headers: Object.freeze({
+    launcher_client: "x-gw-launcher-client",
+    launcher_session: "x-gw-launcher-session",
+    human_pubkey: "x-gw-ctx-human-pubkey",
+    agent_pubkey: "x-gw-ctx-agent-pubkey",
+    community_id: "x-gw-ctx-community-id",
+    channel_id: "x-gw-ctx-channel-id",
+    message_id: "x-gw-ctx-message-id",
+    thread_id: "x-gw-ctx-thread-id",
+  }),
+  reserved_prefixes: Object.freeze(["x-gw-ctx-"]),
+});
+export const VECTOR_IDENTITY: GatewayIdentity = Object.freeze({
   community_id: "22222222-2222-4222-8222-222222222222",
   human_pubkey: "a".repeat(64),
   agent_pubkey: "b".repeat(64),
 });
-export const VECTOR_BINDING: WorkforceBinding = Object.freeze({
+export const VECTOR_BINDING: GatewayBinding = Object.freeze({
   v: 1,
   client_session_id: SESSION,
   identity: VECTOR_IDENTITY,
 });
 const IDENTITY_HEADERS = {
-  "x-workforce-launcher-client": "buzz",
-  "x-workforce-launcher-session": SESSION,
-  "x-workforce-buzz-human-pubkey": "a".repeat(64),
-  "x-workforce-buzz-agent-pubkey": "b".repeat(64),
-  "x-workforce-buzz-community-id": "22222222-2222-4222-8222-222222222222",
+  "x-gw-launcher-client": "client-a",
+  "x-gw-launcher-session": SESSION,
+  "x-gw-ctx-human-pubkey": "a".repeat(64),
+  "x-gw-ctx-agent-pubkey": "b".repeat(64),
+  "x-gw-ctx-community-id": "22222222-2222-4222-8222-222222222222",
 };
 
-/** `inferenceBundle(VECTOR_BINDING, turn)` gives `headers`, in this order. */
+/** `inferenceBundle(VECTOR_PROFILE, VECTOR_BINDING, turn)` gives `headers`, in this order. */
 export const INFERENCE_VECTORS: readonly Readonly<{
   name: string;
   turn: TurnContext;
@@ -45,9 +62,9 @@ export const INFERENCE_VECTORS: readonly Readonly<{
     },
     headers: {
       ...IDENTITY_HEADERS,
-      "x-workforce-buzz-channel-id": "33333333-3333-4333-8333-333333333333",
-      "x-workforce-buzz-message-id": "c".repeat(64),
-      "x-workforce-buzz-thread-id": "d".repeat(64),
+      "x-gw-ctx-channel-id": "33333333-3333-4333-8333-333333333333",
+      "x-gw-ctx-message-id": "c".repeat(64),
+      "x-gw-ctx-thread-id": "d".repeat(64),
     },
   },
   {
@@ -59,8 +76,8 @@ export const INFERENCE_VECTORS: readonly Readonly<{
     },
     headers: {
       ...IDENTITY_HEADERS,
-      "x-workforce-buzz-channel-id": "33333333-3333-4333-8333-333333333333",
-      "x-workforce-buzz-thread-id": "d".repeat(64),
+      "x-gw-ctx-channel-id": "33333333-3333-4333-8333-333333333333",
+      "x-gw-ctx-thread-id": "d".repeat(64),
     },
   },
   {
@@ -76,7 +93,8 @@ export const INFERENCE_VECTORS: readonly Readonly<{
   },
 ];
 
-/** `composeWorkforceHeaders(assembled, bundle)` gives `composed`. */
+/** `composeGatewayHeaders(VECTOR_PROFILE, assembled, bundle)` gives
+ * `composed`. */
 export const COMPOSE_VECTORS: readonly Readonly<{
   name: string;
   assembled: Readonly<Record<string, string>>;
@@ -89,73 +107,76 @@ export const COMPOSE_VECTORS: readonly Readonly<{
       Authorization: "Bearer x",
       "content-type": "application/json",
     },
-    bundle: { "x-workforce-launcher-client": "buzz" },
+    bundle: { "x-gw-launcher-client": "client-a" },
     composed: {
       Authorization: "Bearer x",
       "content-type": "application/json",
-      "x-workforce-launcher-client": "buzz",
+      "x-gw-launcher-client": "client-a",
     },
   },
   {
-    name: "reserved headers are dropped in any case, even ones the bundle omits",
+    name: "reserved headers are dropped in any case or spelling, even ones the bundle omits",
     assembled: {
-      "X-Workforce-Launcher-Session": "stale",
-      "x-workforce-buzz-message-id": "stale",
-      "X-WORKFORCE-BUZZ-THREAD-ID": "stale",
-      "x-workforce-launcher-client": "other",
+      "X-Gw-Launcher-Session": "stale",
+      "x-gw-ctx-message-id": "stale",
+      "X-GW-CTX-THREAD-ID": "stale",
+      X_GW_CTX_CHANNEL_ID: "stale",
+      "x_gw-launcher_client": "stale",
+      "x-gw-launcher-client": "other",
     },
-    bundle: { "x-workforce-launcher-client": "buzz" },
-    composed: { "x-workforce-launcher-client": "buzz" },
+    bundle: { "x-gw-launcher-client": "client-a" },
+    composed: { "x-gw-launcher-client": "client-a" },
   },
   {
     name: "a discovery subset composes, with null headers left out",
-    assembled: { "x-workforce-buzz-purpose": "stale" },
+    assembled: { "x-gw-ctx-purpose": "stale" },
     bundle: {
-      "x-workforce-launcher-client": "buzz",
-      "x-workforce-buzz-human-pubkey": "a".repeat(64),
-      "x-workforce-buzz-agent-pubkey": "b".repeat(64),
-      "x-workforce-buzz-community-id": "22222222-2222-4222-8222-222222222222",
+      "x-gw-launcher-client": "client-a",
+      "x-gw-ctx-human-pubkey": "a".repeat(64),
+      "x-gw-ctx-agent-pubkey": "b".repeat(64),
+      "x-gw-ctx-community-id": "22222222-2222-4222-8222-222222222222",
     },
     composed: {
-      "x-workforce-launcher-client": "buzz",
-      "x-workforce-buzz-human-pubkey": "a".repeat(64),
-      "x-workforce-buzz-agent-pubkey": "b".repeat(64),
-      "x-workforce-buzz-community-id": "22222222-2222-4222-8222-222222222222",
+      "x-gw-launcher-client": "client-a",
+      "x-gw-ctx-human-pubkey": "a".repeat(64),
+      "x-gw-ctx-agent-pubkey": "b".repeat(64),
+      "x-gw-ctx-community-id": "22222222-2222-4222-8222-222222222222",
     },
   },
   {
-    name: "unreserved x-workforce headers are not Buzz's to remove",
+    name: "unreserved x-gw headers are not Buzz's to remove",
     assembled: {
-      "x-workforce-request-id": "keep",
-      "x-workforce-launcher": "keep",
-      "x-workforce-buzz": "keep",
+      "x-gw-request-id": "keep",
+      "x-gw-launcher": "keep",
+      "x-gw-buzz": "keep",
     },
     bundle: {},
     composed: {
-      "x-workforce-request-id": "keep",
-      "x-workforce-launcher": "keep",
-      "x-workforce-buzz": "keep",
+      "x-gw-request-id": "keep",
+      "x-gw-launcher": "keep",
+      "x-gw-buzz": "keep",
     },
   },
 ];
-/** Bundles `composeWorkforceHeaders` must refuse. */
+/** Bundles `composeGatewayHeaders` must refuse. */
 export const COMPOSE_REFUSED: readonly Readonly<Record<string, string>>[] = [
   { authorization: "Bearer x" },
-  { "X-Workforce-Launcher-Client": "buzz" },
+  { "X-Gw-Launcher-Client": "client-a" },
+  { x_gw_ctx_channel_id: "x" },
   // Retired context headers, and any other name under the reserved prefix.
-  { "x-workforce-buzz-purpose": "inference" },
-  { "x-workforce-buzz-trigger-kind": "message" },
-  { "x-workforce-buzz-trigger-id": "c".repeat(64) },
-  { "x-workforce-buzz-trigger-author-pubkey": "e".repeat(64) },
-  { "x-workforce-buzz-message-created-at": "1793821398" },
-  { "x-workforce-buzz-unknown": "x" },
+  { "x-gw-ctx-purpose": "inference" },
+  { "x-gw-ctx-trigger-kind": "message" },
+  { "x-gw-ctx-trigger-id": "c".repeat(64) },
+  { "x-gw-ctx-trigger-author-pubkey": "e".repeat(64) },
+  { "x-gw-ctx-message-created-at": "1793821398" },
+  { "x-gw-ctx-unknown": "x" },
 ];
 
 type AdmitsRoute =
   | Readonly<{ kind: "external"; revision: number }>
   | Readonly<{
       kind: "eligible";
-      identity: WorkforceIdentity;
+      identity: GatewayIdentity;
       revision: number;
     }>
   | Readonly<{
@@ -212,7 +233,7 @@ export const ADMITS_VECTORS: readonly Readonly<{
     result: { ok: false, reason: "auth", revision: 7 },
   },
   {
-    name: "external never admits a Workforce binding",
+    name: "external never admits a gateway binding",
     route: { kind: "external", revision: 8 },
     result: { ok: false, reason: "binding_changed", revision: 8 },
   },

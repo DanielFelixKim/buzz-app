@@ -13,7 +13,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
-| `BUZZ_WORKFORCE_GATEWAY` | Shared frontend/native build, process environment only: public Workforce deployment descriptor (approved gateway origin and exact corporate community IDs/origins). Unset, the release default, leaves Workforce routing off. See [Workforce gateway](#workforce-gateway). |
+| `BUZZ_AGENT_GATEWAY` | Shared frontend/native build, process environment only: non-secret agent gateway deployment descriptor (version 2: gateway origin, exact community IDs/origins, access check path, context header profile and per-harness upstream bases). Unset, the release default, leaves gateway routing off. See [Agent gateway](#agent-gateway). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native and frontend build: sign-in servers added to the built-in one, each with its adapter prefix and community hosts; empty opts out. See below. |
@@ -83,36 +83,75 @@ configured and ignores a host saved in goose's config. Only the host is set:
 the model, thinking level and sign-in stay goose's own. Leave it unset for OSS
 builds.
 
-## Workforce gateway
+## Agent gateway
 
-`BUZZ_WORKFORCE_GATEWAY` names the Workforce gateway and the corporate
-communities whose local agent memberships route inference through it:
+`BUZZ_AGENT_GATEWAY` describes one agent gateway and the communities whose
+local agent memberships route inference through it. It is a version 2 JSON
+object with exactly these keys:
 
 ```json
-{"version":1,"gateway":"https://gateway.example","communities":[{"id":"<NIP-11 community UUID>","origin":"wss://relay.example"}]}
+{
+  "version": 2,
+  "gateway": "https://gateway.example",
+  "communities": [{ "id": "<NIP-11 community UUID>", "origin": "wss://relay.example" }],
+  "access_path": "/v9/access",
+  "launcher_client": "client-a",
+  "headers": {
+    "launcher_client": "x-gw-launcher-client",
+    "launcher_session": "x-gw-launcher-session",
+    "human_pubkey": "x-gw-ctx-human-pubkey",
+    "agent_pubkey": "x-gw-ctx-agent-pubkey",
+    "community_id": "x-gw-ctx-community-id",
+    "channel_id": "x-gw-ctx-channel-id",
+    "message_id": "x-gw-ctx-message-id",
+    "thread_id": "x-gw-ctx-thread-id"
+  },
+  "reserved_prefixes": ["x-gw-ctx-"],
+  "upstreams": { "pi": { "base": "/upstream/pi" } }
+}
 ```
 
-It is public routing data with no credential. Both the frontend build and the
+- `gateway`: an `https://` origin with no path or credentials.
+- `communities`: 1 to 16 unique entries, each a canonical NIP-11 community
+  UUID and a secure relay origin.
+- `access_path`: the gateway's readiness check, a plain absolute path.
+- `launcher_client` and `headers`: the value and the header name for each of
+  the eight context roles. Names are lowercase, unique and may not collide
+  with protected headers (hop-by-hop, routing, credential, body protocol and
+  vendor SDK headers).
+- `reserved_prefixes`: up to 4 header prefixes only Buzz may set. Before the
+  context headers are added, every request header matching a profile name or
+  prefix is removed, compared case-insensitively with `_` read as `-`.
+- `upstreams`: an upstream base path per harness, for `claude-code`, `goose`,
+  `codex` or `pi`. A harness with no entry keeps the user's own
+  configuration, without a notice.
+
+The descriptor is public routing data with no credential, and this code
+carries no default for any of its values. Both the frontend build and the
 plugin-manager native build read it from the process environment only, never
-from `.env` files, and an invalid value fails either build without echoing it.
-The frontend compiles the canonical descriptor. Native compiles only the
-gateway origin, as the bundled Agents plugin's single extra network grant for
-the model-access readiness probe. Leave it unset (the release default) to keep
-every membership on its existing behavior.
+from `.env` files, and validate all of it, in the same order, before using any
+of it. An invalid value, including a version 1 descriptor, fails either build
+with a fixed message that never echoes it; the shared cases in
+`src/features/agents/gateway/descriptor-vectors.json` pin both validators.
+Leave it unset or blank (the release default) to keep every membership on its
+existing behavior.
 
 With it set, a local agent membership in a listed community routes through the
 gateway only when the relay's NIP-11 `read_state_snapshot.community_id` is
-exactly the listed ID, the gateway's model-access probe succeeds, and the
-probe's `harnesses` list (the gateway's rollout flag) names the agent type's
-declared harness. A type with no declared harness, or one the gateway doesn't
-list, keeps its existing behavior. When the route is blocked (auth, network,
-gateway error or still checking), a type that declares a harness runs with the
-user's own harness configuration and none of the Buzz request context, and the
-turn is noted "Ran without the Workforce gateway" with the reason. That choice
-is made before dispatch; a turn whose gateway access is revoked after dispatch
-fails visibly and is never replayed. Memberships in other communities and
-hosted agents are unchanged. See
-`src/features/agents/workforce/` for the shared route, session and request
+exactly the listed ID, the descriptor gives the agent type's declared harness
+an upstream, the gateway's access check succeeds, and the check's `harnesses`
+list names that harness. Any other field in the check's answer is the
+gateway's to enforce and is ignored. A type with no declared harness, no
+upstream, or a harness the gateway doesn't list keeps its existing behavior.
+A turn never waits on the gateway. When the route is blocked (auth, network,
+gateway error or still checking), the harness runs with the user's own
+configuration and none of the Buzz request context, and the turn is noted
+"Ran without the agent gateway" with the reason: under the request for a
+mention, and in the harness's own turn activity for other turns, which receive
+it as `delivery.gatewayFallback`. That choice is made before dispatch; a turn
+whose gateway access is revoked after dispatch fails visibly and is never
+replayed. Memberships in other communities and hosted agents are unchanged.
+See `src/features/agents/gateway/` for the shared route, session and request
 context contract that harnesses consume.
 
 ## Builderlab URL build input

@@ -94,8 +94,8 @@ import {
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
 import type { DeviceSettings } from "../../shared/device-settings";
-import { fallbackNotice, workforceRoutes } from "./workforce/route";
-import { turnContextFor } from "./workforce/turn";
+import { fallbackNotice, gatewayRoutes } from "./gateway/route";
+import { turnContextFor } from "./gateway/turn";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -2459,37 +2459,43 @@ export class AgentRunners {
     );
     return timer && { lane: lane(timer), job: timer };
   }
-  /** The membership's Workforce route and this turn's context, frozen before
-   * the type is asked to run; undefined when it doesn't route there. A type
-   * that names no harness, or whose harness the gateway doesn't enable for
-   * this membership, keeps its existing behavior without waiting on the
-   * gateway. A blocked membership runs it with its own configuration and
-   * none of the Buzz context, noting that on the turn: the choice is made
-   * here, before dispatch, so nothing is ever replayed. A turn whose access
-   * is revoked after dispatch is the harness's to fail visibly. */
-  private async workforce(
+  /** The membership's gateway route, this turn's context and its harness's
+   * upstream base, frozen before the type is asked to run, as `gateway`. It
+   * never waits on the gateway. A type that names no harness, whose harness
+   * this build gives no upstream, or whose harness the gateway doesn't
+   * enable for this membership keeps its existing behavior, without a
+   * notice. A blocked membership, including one whose readiness is still
+   * pending, runs it with its own configuration and none of the Buzz
+   * context, as `gatewayFallback`, and notes that on a mention's request.
+   * The choice is made here, before dispatch, so nothing is ever replayed. A
+   * turn whose access is revoked after dispatch is the harness's to fail
+   * visibly. */
+  private gatewayRouting(
     agent: Agent,
     type: RegisteredAgentType,
     job: Job,
     anchor: ConversationWake | undefined,
-    signal: AbortSignal,
   ) {
-    const harness = type.workforce?.harness;
-    if (!workforceRoutes.configured || !harness) return undefined;
-    const route = await workforceRoutes.routeReady(agent.key, signal);
-    if (route.kind === "external") return undefined;
+    const harness = type.gateway?.harness;
+    const upstream = harness && gatewayRoutes.upstream(harness);
+    if (!upstream) return {};
+    const route = gatewayRoutes.routeForTurn(agent.key);
+    if (route.kind === "external") return {};
     if (route.kind === "blocked") {
-      job.work?.notice(fallbackNotice(route));
-      return undefined;
+      const notice = fallbackNotice(route);
+      job.work?.notice(notice);
+      return {
+        gatewayFallback: Object.freeze({ reason: route.reason, notice }),
+      };
     }
-    if (!route.harnesses.includes(harness)) return undefined;
+    if (!route.harnesses.includes(harness)) return {};
     const { trigger } = job;
     const turn = turnContextFor(trigger, {
       channelId: job.channelId,
       wake: anchor,
       flat: (channelId) => this.host.flat(agent, channelId),
     });
-    return Object.freeze({ route, turn });
+    return { gateway: Object.freeze({ route, turn, upstream }) };
   }
 
   /** Runs `job` in `lane`, holding the lane until it may take another. */
@@ -2550,7 +2556,7 @@ export class AgentRunners {
         handle.protection.assertAvailable();
       }
       // Before any type code (its models included) runs for this turn.
-      const workforce = await this.workforce(agent, type, job, anchor, signal);
+      const routing = this.gatewayRouting(agent, type, job, anchor);
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
@@ -2559,7 +2565,7 @@ export class AgentRunners {
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
-        ...(workforce ? { workforce } : {}),
+        ...routing,
         agent: handle,
         config: start.config,
         revisions: start.revisions,

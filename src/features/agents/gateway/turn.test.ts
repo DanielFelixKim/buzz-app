@@ -164,7 +164,7 @@ describe("turnContextFor", () => {
         { type: "mention", event: { ...event(), id: "not-hex" } },
         { flat: NOT_FLAT },
       ),
-    ).toThrow("Workforce context unavailable");
+    ).toThrow("Gateway context unavailable");
   });
 });
 
@@ -172,6 +172,14 @@ describe("turnContext", () => {
   it("reads the context the runner froze, or nothing when external", () => {
     expect(turnContext({})).toBeUndefined();
     const turn = { message_id: null } as never;
-    expect(turnContext({ workforce: { route: {} as never, turn } })).toBe(turn);
+    expect(
+      turnContext({
+        gateway: {
+          route: {} as never,
+          turn,
+          upstream: { base: "/upstream/pi" },
+        },
+      }),
+    ).toBe(turn);
   });
 });

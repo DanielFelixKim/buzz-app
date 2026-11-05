@@ -686,15 +686,59 @@ it("notes a finished local request that ran without its gateway, and nothing for
     act(() => {
       const work = begin();
       work.notice(
-        "Ran without the Workforce gateway: Buzz couldn't reach the gateway.",
+        "Ran without the agent gateway: Buzz couldn't reach the gateway.",
       );
       work.started();
       work.finish({ ok: true });
     });
     expect(
       screen.getByText(
-        "Blossom · Ran without the Workforce gateway: Buzz couldn't reach the gateway.",
+        "Blossom · Ran without the agent gateway: Buzz couldn't reach the gateway.",
       ),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("keeps a fallback turn's outcome beside its notice when it is stopped or fails", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<ActivityAccessory {...f.props} />);
+  const begin = () =>
+    local.begin({
+      scope: "test",
+      channelId: "c",
+      threadRootId: root,
+      messageId: root,
+      agent: A,
+    });
+  const NOTICE =
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
+  try {
+    act(() => {
+      const work = begin();
+      work.notice(NOTICE);
+      work.started();
+      work.finish({ ok: true, stopped: true });
+    });
+    expect(
+      screen.getByText(`Blossom · Stopped · ${NOTICE}`),
+    ).toBeInTheDocument();
+    act(() => {
+      const work = begin();
+      work.notice(NOTICE);
+      work.started();
+      work.finish({ ok: false, error: "Provider refused the model" });
+    });
+    const bubble = screen.getByRole("button", {
+      name: /View agent activity: Blossom/,
+    });
+    expect(bubble).toHaveTextContent("1 failed");
+    fireEvent.click(bubble);
+    expect(
+      screen.getByText(`Provider refused the model · ${NOTICE}`),
     ).toBeInTheDocument();
   } finally {
     view.unmount();

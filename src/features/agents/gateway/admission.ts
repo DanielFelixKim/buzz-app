@@ -1,4 +1,4 @@
-// The reference model of native Workforce admission for one membership route
+// The reference model of native gateway admission for one membership route
 // in one native scope (the owning page/plugin). Native owns the real table,
 // handles and authorization; this pure reducer pins down the state machine
 // both sides test against, through ADMISSION_VECTORS.

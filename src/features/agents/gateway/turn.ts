@@ -25,14 +25,14 @@ export function turnContextFor(
 ): TurnContext {
   const context = describe(trigger, place);
   const invalid = turnErrors(context);
-  if (invalid) throw new Error(`Workforce context unavailable: ${invalid}`);
+  if (invalid) throw new Error(`Gateway context unavailable: ${invalid}`);
   return Object.freeze(context);
 }
 
 /** The turn context the runner froze for this delivery; absent when the
- * agent's membership doesn't route through Workforce. */
-export const turnContext = (delivery: Pick<Delivery, "workforce">) =>
-  delivery.workforce?.turn;
+ * agent's membership doesn't route through the gateway. */
+export const turnContext = (delivery: Pick<Delivery, "gateway">) =>
+  delivery.gateway?.turn;
 
 function describe(
   trigger: Trigger,
