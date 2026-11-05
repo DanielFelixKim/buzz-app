@@ -253,6 +253,7 @@ export class ConversationService extends Service implements Conversation {
     if (
       typeof value.matches !== "function" ||
       (value.icon !== undefined && typeof value.icon !== "function") ||
+      (value.menu !== undefined && typeof value.menu !== "function") ||
       (value.marker !== undefined && typeof value.marker !== "function")
     )
       throw new Error("A message action needs a matcher");

@@ -30,6 +30,7 @@ vi.mock("../../bundled", () => ({ bundledPlugins: [] }));
 // jsdom has no media queries or layout observers; responsive geometry is
 // covered in browser tests.
 beforeEach(() => {
+  sessionStorage.setItem("buzz.dev.bestie-take", "current");
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -48,6 +49,7 @@ beforeEach(() => {
 let services: AppServices | undefined;
 afterEach(async () => {
   cleanup();
+  sessionStorage.clear();
   await services?.dispose();
   services = undefined;
   vi.unstubAllGlobals();

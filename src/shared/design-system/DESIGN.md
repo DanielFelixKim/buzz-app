@@ -1125,6 +1125,9 @@ PopoverPopup uses 16px content padding, or `padding="list"` when its rows own th
 spacing. Use `size="compact"` with list padding for short account/action surfaces: 14rem
 width and 16px corners. `MenuPopup size="compact"` uses the same corner, inset, row and
 hover treatment for short action lists. Content and wide popovers retain 24px corners.
+Use `size="expanded"` (38rem, still viewport-capped) for a working conversation
+preview with its own bounded timeline and composer. The feature owns that
+inner layout; the shared popup retains placement, focus and dismissal.
 Name it with PopoverTitle or aria-label; PopoverDescription connects
 supporting copy. Hover opening is optional and remains configured by its feature.
 Use `padding="none"` for an embedded picker that owns its internal spacing, such as

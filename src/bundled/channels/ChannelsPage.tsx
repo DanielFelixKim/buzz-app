@@ -1,5 +1,6 @@
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
+import { useCatchUp } from "../bestie/catch-up-context";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import {
   readLinkedChat,
@@ -752,7 +753,37 @@ function ChannelWorkspace({
   // also files into a project; the conversation scope owns composer policy.
   const solo = current?.channelType === "solo";
   // Solo has no main tab workspace; its threads open beside the chat.
-  const threadPane = solo ? ("side" as const) : undefined;
+  const catchUp = useCatchUp();
+  const catchUpVisible = !!catchUp?.visible;
+  const threadPane = solo
+    ? ("side" as const)
+    : catchUpVisible
+      ? ("main" as const)
+      : undefined;
+  // Bestie occupies the right: addressed threads (including retained side tabs)
+  // use the main pane, without replacing their readers or saved reply drafts.
+  const addressedMessage =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.messageId
+      : undefined;
+  useLayoutEffect(() => {
+    if (!catchUpVisible || solo || !addressedMessage) return;
+    const tab = tabState.tabs.find(
+      (item) =>
+        item.kind === "thread" &&
+        item.channelId === currentId &&
+        item.messageId === addressedMessage &&
+        tabPane(item) === "side",
+    );
+    if (tab) tabState.moveTab(tab.id, "main", 0);
+  }, [
+    catchUpVisible,
+    solo,
+    addressedMessage,
+    currentId,
+    tabState.tabs,
+    tabState.moveTab,
+  ]);
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view opens its nearest sidebar neighbor, or else a new draft,
   // rather than an empty page.
@@ -1296,6 +1327,27 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
+  const previousDetails = useRef({ selectedTab, settings, companion });
+  useEffect(() => {
+    const before = previousDetails.current;
+    previousDetails.current = { selectedTab, settings, companion };
+    // An explicitly opened inspector takes the right slot; Bestie stays retained.
+    if (
+      catchUpVisible &&
+      ((settings && settings !== before.settings) ||
+        (selectedTab !== before.selectedTab &&
+          secondary.items.some((item) => item.id === selectedTab)) ||
+        (companion && companion !== before.companion))
+    )
+      catchUp?.hide(false);
+  }, [
+    selectedTab,
+    settings,
+    companion,
+    secondary.items,
+    catchUpVisible,
+    catchUp?.hide,
+  ]);
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
@@ -1679,7 +1731,8 @@ function ChannelWorkspace({
     !draft &&
     (settings || secondary.items.length > 0 || drawer.side);
   const hasPanel = companion || hasChannelPanel;
-  const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
+  const showingChannelPanel =
+    tabState.paneOpen && hasChannelPanel && !catchUpVisible;
   const showingPanel = companion || showingChannelPanel;
   // A plain channel visit reads its visible selected thread along with the
   // conversation that holds focus. A link to a message or thread, passive

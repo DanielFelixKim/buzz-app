@@ -14,11 +14,16 @@ export const COMPANION_SPLIT = {
 export function PanelFrame({
   scope,
   companion,
+  companionOpen = !!companion,
+  retainCompanion = false,
   children,
 }: {
   /** Community/viewer workspace whose saved companion width applies. */
   scope: string | undefined;
   companion?: ReactNode;
+  /** A hidden conversation may retain its mounted reader and draft. */
+  companionOpen?: boolean;
+  retainCompanion?: boolean;
   children: ReactNode;
 }) {
   const split = usePanelSplit(
@@ -35,7 +40,8 @@ export function PanelFrame({
     >
       <div className={styles.page}>{children}</div>
       <PanelDock
-        open={!!companion}
+        open={companionOpen}
+        keepMounted={retainCompanion}
         className={styles.dock}
         resizeHandle={split.handle}
       >

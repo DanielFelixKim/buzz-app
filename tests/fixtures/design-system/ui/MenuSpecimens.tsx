@@ -867,6 +867,26 @@ export function PopoverSpecimen() {
         </PopoverRoot>
       </Example>
       <Example
+        title="Expanded working preview"
+        description="A larger anchored surface for a bounded working area. It stays within the viewport; the content owns its internal scrollports."
+        code={'<PopoverPopup size="expanded">…</PopoverPopup>'}
+      >
+        <PopoverRoot>
+          <PopoverTrigger render={<Button>Open expanded preview</Button>} />
+          <PopoverPopup size="expanded">
+            <PopoverTitle>Working preview</PopoverTitle>
+            <PopoverDescription>
+              A conversation can keep its timeline and composer here without
+              opening another pane.
+            </PopoverDescription>
+            <Field label="Follow-up question">
+              <Input placeholder="What happens next?" />
+            </Field>
+            <PopoverClose render={<Button>Done</Button>} />
+          </PopoverPopup>
+        </PopoverRoot>
+      </Example>
+      <Example
         title="Placement"
         description="Placement follows the trigger and adjusts at viewport edges. Try these near the edge of a narrow window."
         code={`<div className="flex flex-wrap justify-center gap-2">

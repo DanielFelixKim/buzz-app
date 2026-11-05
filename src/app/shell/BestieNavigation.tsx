@@ -1,6 +1,7 @@
 import { useContext, useSyncExternalStore, type ReactNode } from "react";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { bestieChat } from "../../bundled/bestie/chat";
+import { useBestieTake } from "../../bundled/bestie/BestieExperiment";
 import {
   UnreadBadge,
   useUnreadState,
@@ -32,6 +33,7 @@ export function BestieNavigationProvider({
   relay: RelayData;
   children: ReactNode;
 }) {
+  const take = useBestieTake();
   const connection = useRelayConnection(relay);
   const { viewer, scope, session } = connection;
   const enabled =
@@ -77,7 +79,11 @@ export function BestieNavigationProvider({
   return (
     <BestieNavigationContext value={mark}>
       <BestieConversationContext
-        value={channel ? { session, channelId: channel.id } : undefined}
+        value={
+          take === "current" && channel
+            ? { session, channelId: channel.id }
+            : undefined
+        }
       >
         {children}
       </BestieConversationContext>

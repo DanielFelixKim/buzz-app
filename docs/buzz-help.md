@@ -277,6 +277,16 @@ available rather than silently discarding it.
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie
   does not prove an agent is ready or running.
+- Development builds may show a **Bestie prototype** switch. **Top nav** and
+  **Floating avatar** move the Bestie entry to an avatar and keep its DM in
+  ordinary Direct messages. **Ask Bestie…** in a message menu lets you edit a
+  question or suggestion and select **Send**, without leaving the source. Open
+  the Bestie avatar for your DM or recent contextual asks; selecting an ask
+  previews its conversation with **Back**, **View source** and **Open conversation**.
+  Recent asks are kept only for this app session; created chats remain in Solo.
+  “Queued” is not proof of delivery or an answer. These prototypes do not watch
+  conversations or create monitoring subscriptions. **Current panel** keeps the
+  earlier catch-up presentation.
 - With the **Bestie** plugin on and no saved choice, **Choose your bestie agent**
   offers a searchable agent picker and **Create agent**. Choosing a known remote
   agent, including one created through Builderlab, asks for confirmation:

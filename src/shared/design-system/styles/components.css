@@ -2183,6 +2183,10 @@
   .buzz-popover-popup[data-size="wide"] {
     width: 24rem;
   }
+  /* A working preview keeps its own timeline and composer inside one bounded surface. */
+  .buzz-popover-popup[data-size="expanded"] {
+    width: 38rem;
+  }
   .buzz-popover-popup[data-padding="list"] .navigation-item {
     border-radius: var(--floating-inner-radius);
   }

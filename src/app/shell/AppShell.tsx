@@ -30,14 +30,26 @@ import { PageSearch, type SearchServices } from "./PageSearch";
 import { headerPageSelection, pagePlacement, orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
 import { BestieNavigationProvider } from "./BestieNavigation";
+import {
+  BestieExperiment,
+  BestieTakePicker,
+  useBestieTake,
+} from "../../bundled/bestie/BestieExperiment";
+import { BestieAsksProvider } from "../../bundled/bestie/BestieAsks";
+import { BestieHome } from "../../bundled/bestie/BestieHome";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
   PopoverRoot,
   PopoverTrigger,
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
-import { PanelFrame } from "../../features/panels/PanelFrame";
+import { splitPartition } from "../../features/relay/partition";
 import { useRelayConnection } from "../../features/relay/react";
+import {
+  CatchUpProvider,
+  CatchUpFrame,
+  CatchUpLauncher,
+} from "../../bundled/bestie/CatchUpWorkspace";
 import { macTitleBarDragHandlers } from "./title-bar";
 import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
 
@@ -46,11 +58,25 @@ const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 
 export function AppShell(props: ComponentProps<typeof AppShellContent>) {
   return (
+    <BestieExperiment>
+      <BestieShell {...props} />
+    </BestieExperiment>
+  );
+}
+function BestieShell(props: ComponentProps<typeof AppShellContent>) {
+  return (
     <BestieNavigationProvider
       pages={props.pages}
       relay={props.communities.relay}
     >
-      <AppShellContent {...props} />
+      <BestieAsksProvider
+        relay={props.communities.relay}
+        enabled={props.pages.some((page) => page.key === "buzz.bestie/bestie")}
+      >
+        <CatchUpProvider pages={props.pages} relay={props.communities.relay}>
+          <AppShellContent {...props} />
+        </CatchUpProvider>
+      </BestieAsksProvider>
     </BestieNavigationProvider>
   );
 }
@@ -118,6 +144,15 @@ function AppShellContent({
   creationInSidebar?: boolean;
   children: ReactNode;
 }) {
+  const take = useBestieTake();
+  const bestieEnabled = pages.some((page) => page.key === "buzz.bestie/bestie");
+  const openBestieChat = (channelId: string) => {
+    const scope = connection.scope
+      ? splitPartition(connection.scope)
+      : undefined;
+    if (scope)
+      onOpenTarget?.({ version: 1, kind: "conversation", scope, channelId });
+  };
   const fillsWorkspace = workspace || selected === "settings";
   const [creationContainer, setCreationContainer] =
     useState<HTMLDivElement | null>(null);
@@ -183,7 +218,11 @@ function AppShellContent({
   // sidebar subtree instead of re-rendering every row on each click.
   const navigation = useMemo(() => {
     const sidebarPages = orderPages(
-      pages.filter((page) => pagePlacement(page) === "sidebar"),
+      pages.filter(
+        (page) =>
+          pagePlacement(page) === "sidebar" &&
+          (take === "current" || page.key !== "buzz.bestie/bestie"),
+      ),
     );
     const pageNavigation = sidebarPages.length ? (
       <nav aria-label="Pages" className="shell-pages">
@@ -226,6 +265,7 @@ function AppShellContent({
     sidebarScope,
     creationAction,
     creationInSidebar,
+    take,
   ]);
   const headerPages = useMemo(
     () =>
@@ -455,7 +495,18 @@ function AppShellContent({
               </nav>
             )}
           </div>
-          <div ref={searchRef} className="shell-search-action shell-capsule">
+          <div
+            ref={searchRef}
+            className="shell-search-action shell-capsule flex items-center gap-2"
+          >
+            {bestieEnabled && (
+              <BestieHome
+                place="top-nav"
+                relay={communities.relay}
+                onSetup={() => onSelect("buzz.bestie/bestie")}
+                onOpenConversation={openBestieChat}
+              />
+            )}
             <PageSearch
               pages={pages}
               onSelect={onSelect}
@@ -486,6 +537,8 @@ function AppShellContent({
           )}
           <div ref={actionsRef} className="shell-actions-fixed">
             {launchers}
+            <CatchUpLauncher />
+            {bestieEnabled && <BestieTakePicker />}
             <div className="shell-community-switcher">
               <CommunityPicker
                 communities={communities}
@@ -555,7 +608,7 @@ function AppShellContent({
                 className="min-h-0 min-w-0 flex-1"
               >
                 <Panel as="div" joined>
-                  <PanelFrame scope={connection.scope} companion={companion}>
+                  <CatchUpFrame scope={connection.scope} companion={companion}>
                     <div
                       id={`shell-page-${panelKey}`}
                       {...(!compactPages && selectedTopbarPage
@@ -582,13 +635,21 @@ function AppShellContent({
                         {children}
                       </div>
                     </div>
-                  </PanelFrame>
+                  </CatchUpFrame>
                 </Panel>
               </main>
             </div>
           </div>
         </div>
       </div>
+      {bestieEnabled && (
+        <BestieHome
+          place="floating"
+          relay={communities.relay}
+          onSetup={() => onSelect("buzz.bestie/bestie")}
+          onOpenConversation={openBestieChat}
+        />
+      )}
       {creationAction?.(creationOpen, setCreationOpen, creationContainer)}
       {searchServices && (
         <>

@@ -421,21 +421,35 @@ function MessageRowContent({
       </MenuItem>
     </>
   );
-  const actionItems = actions.map((action) =>
-    action.placement === "menu" && session && extensions?.actions ? (
-      <ContributionBoundary key={contributionKey(action)} fallback={null}>
-        <WithTargetOpener
-          component={action.component}
-          props={{
-            message: row,
-            session,
-            close: () => setOpenAction(undefined),
-          }}
-          registry={extensions.actions}
-          entry={action}
-        />
-      </ContributionBoundary>
-    ) : (
+  const actionItems = actions.map((action) => {
+    const Menu = action.menu;
+    if (Menu && session)
+      return (
+        <ContributionBoundary key={contributionKey(action)} fallback={null}>
+          <Menu
+            message={row}
+            session={session}
+            open={() => setOpenAction(action)}
+          />
+        </ContributionBoundary>
+      );
+    if (action.placement === "menu" && session && extensions?.actions)
+      return (
+        <ContributionBoundary key={contributionKey(action)} fallback={null}>
+          <WithTargetOpener
+            component={action.component}
+            props={{
+              message: row,
+              session,
+              anchor: rowRef.current,
+              close: () => setOpenAction(undefined),
+            }}
+            registry={extensions.actions}
+            entry={action}
+          />
+        </ContributionBoundary>
+      );
+    return (
       <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
         {action.icon && (
           <MenuIcon>
@@ -446,8 +460,8 @@ function MessageRowContent({
         )}
         {action.title}
       </MenuItem>
-    ),
-  );
+    );
+  });
   // A message renderer may draw some attachments itself. Its claims count only
   // while its card is mounted, and they return to the host list while its
   // fallback shows. A remounted card starts healthy and claims again.
@@ -723,6 +737,7 @@ function MessageRowContent({
             props={{
               message: row,
               session,
+              anchor: rowRef.current,
               close: () => setOpenAction(undefined),
             }}
             registry={extensions.actions}

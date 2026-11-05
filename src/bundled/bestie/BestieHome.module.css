@@ -1,0 +1,134 @@
+.floating {
+  position: fixed;
+  inset-inline-end: var(--space-8);
+  /* Match the ordinary composer's bottom margin above the shell panel gutter. */
+  bottom: calc(var(--space-panel-gap) + var(--space-4));
+  z-index: var(--layer-dialog-backdrop);
+}
+
+/* Artwork owns its geometry; SurfaceButton retains shared focus/activation. */
+.floatingTrigger {
+  position: relative;
+  display: block;
+  width: calc(var(--space-16) + var(--space-4));
+  height: calc(var(--space-16) + var(--space-4));
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.home,
+.conversation {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.home {
+  max-height: min(38rem, var(--available-height));
+}
+
+.conversation {
+  height: min(42rem, var(--available-height));
+}
+
+.heading,
+.askHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  min-width: 0;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.askHeading {
+  padding: 0 0 var(--space-4);
+}
+
+.homeBody {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin-inline: calc(-1 * var(--space-2));
+}
+
+.rowCopy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-1);
+  text-align: start;
+}
+
+.excerpt,
+.question {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.excerpt {
+  color: var(--text-standard);
+}
+
+.snapshot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-inset);
+  border-radius: var(--radius-control);
+  margin-bottom: var(--space-4);
+}
+
+.askForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.askFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.source {
+  flex: none;
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+@media (max-width: 40.625rem) {
+  .floating {
+    /* The ordinary composer uses a smaller bottom margin at this breakpoint. */
+    bottom: calc(var(--space-panel-gap) + var(--space-3));
+  }
+}
+
+.unread {
+  position: absolute;
+  inset-inline-end: calc(-1 * var(--space-1));
+  top: calc(-1 * var(--space-1));
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--text-navigation-unread);
+}

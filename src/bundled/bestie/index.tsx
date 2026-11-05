@@ -22,6 +22,7 @@ import { bestieRoute } from "./routes";
 import { onBestieMade } from "../agents/BestieChoice";
 import { bestieTab, formerBestieTab } from "./BestieTab";
 import { rememberNewBestie, stopFormerCheckIns } from "./former";
+import { AskBestie, AskBestieMenu } from "./AskBestie";
 
 export const inject = [
   "pages",
@@ -45,6 +46,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
     }),
   );
+  ctx.conversation.registerMessageAction({
+    id: "ask-bestie",
+    title: "Catch me up",
+    menu: AskBestieMenu,
+    matches: (message, session) => {
+      const channel = session.channels.get?.(message.channelId);
+      return !!channel && !channel.archived && channel.channelType !== "solo";
+    },
+    component: (props) => (
+      <AskBestie {...props} host={ctx} extensions={ctx.conversation} />
+    ),
+  });
   ctx.pages.register({
     id: "bestie",
     title: "Bestie",

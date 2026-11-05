@@ -218,6 +218,12 @@ export type MessageAction = Readonly<{
   id: string;
   title: string;
   icon?: ComponentType;
+  /** Optional rich menu contribution. `component` still mounts after its action opens. */
+  menu?: ComponentType<{
+    message: ChannelMessage;
+    session: RelaySession;
+    open(): void;
+  }>;
   matches(message: ChannelMessage, session: RelaySession): boolean;
   /** A menu contribution (such as a submenu) mounts inside the host menu. */
   placement?: "menu";
@@ -226,6 +232,8 @@ export type MessageAction = Readonly<{
     TargetOpener & {
       message: ChannelMessage;
       session: RelaySession;
+      /** Stable source-row anchor while the opened action is retained. */
+      anchor: HTMLElement | null;
       close(): void;
     }
   >;
