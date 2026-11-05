@@ -433,6 +433,36 @@ The sidebar’s own dialogs and session-owned writes/recovery keep their existin
 lifetime; retiring a header does not undo a command already sent. The redundant Canvas card and saved-content
 preview are omitted from Channel Settings; opening details does not read Canvas.
 
+## Pinned messages
+
+A pin is a kind 40004 event a channel member signs:
+
+```json
+{ "kind": 40004, "content": "", "tags": [["h", "<channel-id>"], ["e", "<message-id>"]] }
+```
+
+The outbox adds its usual `client-id` tag. The packaged signer
+(`valid_pin` in `src-tauri/src/relay.rs`) and the development broker (`validPin`
+in `browser-host/relay-broker.mjs`) sign only this shape; the relay decides
+membership with its ordinary post rule, so a Guest cannot pin. A pin targets a
+kind 9 or 40002 message in the same channel. `src/features/relay/pins.ts` owns
+the template and validation.
+
+- **Fold.** `foldMessages` attaches a message's live pins to
+  `ChannelMessage.pinnedBy`, earliest first. A pin naming another channel, a
+  malformed pin, and a pin its author deleted are ignored. Several members may
+  pin one message; the row shows "Pinned by" and the earliest pinner's name.
+  Live subscriptions, live window admission, thread overlays and auxiliary
+  visibility include 40004. History windows carry pins only once the relay adds
+  40004 to its window aux closure (`WINDOW_AUX_KINDS` in block/buzz); until
+  then, markers appear for pins seen live.
+- **Pin and unpin.** The message menu offers **Pin message** in a writable,
+  unarchived, non-DM channel. The member who pinned a message sees **Unpin
+  message**, which publishes kind 5 with `["k", "40004"]` for each of their pins.
+  Everyone else, owners and admins included, sees a disabled "Pinned by
+  <name>": the app has no kind 9005 admin removal path. A pin shows before the
+  relay confirms it and reverts when the relay refuses it.
+
 ## Channel lifecycle
 
 Lifecycle actions extend the persistent sidebar’s existing context popup after

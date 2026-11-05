@@ -242,6 +242,13 @@ that agent in Buzz; they do not notify the external app through this connection.
   instead. **History** shows how each saved version differs from the current
   Canvas, with + marking lines only that version has and − marking current
   lines it lacks. Turn on **Show full content** to read a version as written.
+- **Pinned messages** keep a channel's important messages in reach. Choose
+  **Pin message** from a message's More menu; the message then shows
+  "Pinned by" and the name of whoever pinned it first. Only the person who
+  pinned a message can unpin it; others, channel admins included, see
+  "Pinned by <name>" in the menu instead. Guests cannot pin, and direct
+  messages have no pins. A pin from history shows its marker only once the
+  relay includes pins in history reads.
 - **Keyboard shortcuts** follow Slack where they can. Press ⌘/ (Ctrl+/ on
   Windows and Linux) to open **Settings → Shortcuts**, which lists them, lets
   you change most of them and also shows the fixed message-formatting keys. In
