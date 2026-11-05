@@ -6,7 +6,7 @@ import { PublishRejected } from "./outbox";
 import { isTransientFailure, readErrorKind } from "./errors";
 import { retryRead } from "./read-retry";
 import { yieldToHost } from "./yield";
-import { hasTag, newer, type RelayEvent } from "./events";
+import { hasTag, newer, type ReadFilter, type RelayEvent } from "./events";
 import { openMetadata } from "./discovery";
 import {
   channelTypeTag,
@@ -23,7 +23,12 @@ import {
 
 /** The channel state the action relied on may be out of date; refreshing
  * channels is the recovery. */
-export class ChannelLifecycleStale extends Error {}
+export class ChannelLifecycleStale extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChannelLifecycleStale";
+  }
+}
 
 /** No automatic or same-dialog retry after a request may have reached the relay. */
 export class ChannelLifecycleUnconfirmed extends ChannelLifecycleStale {
@@ -48,6 +53,8 @@ export interface ChannelLifecycleCapability {
     /** The channel's relay records the caller already read, so its answer and
      * these rights share one snapshot; omitted, load reads them. */
     records?: readonly RelayEvent[],
+    /** "strong" reads the writer, for a reread after a refresh. */
+    options?: Pick<ReadFilter, "consistency">,
   ): Promise<ChannelLifecycleSettings>;
   run(
     action: ChannelLifecycleCommand,
@@ -183,9 +190,11 @@ export function createChannelLifecycle({
     // the channel's state allows and false skips the optional profile reads.
     need: OwnedAgentAction | "any" | false = "any",
     records?: readonly RelayEvent[],
+    strong = false,
   ) {
     assertAccess(id);
-    const events = records ?? (await read([39000, 39001, 39002], id, signal));
+    const events =
+      records ?? (await read([39000, 39001, 39002], id, signal, false, strong));
     assertAccess(id);
     const settings = lifecycleSettings(events, id, viewer, relayAuthor);
     const metadata = lifecycleRecord(events, 39000, id, relayAuthor);
@@ -226,6 +235,7 @@ export function createChannelLifecycle({
             reader.read(
               batch.map((pubkey) => ({
                 kinds: [0],
+                ...(strong ? { consistency: "strong" as const } : {}),
                 authors: [pubkey],
                 limit: 1,
               })),
@@ -369,11 +379,14 @@ export function createChannelLifecycle({
       value: string,
       caller?: AbortSignal,
       records?: readonly RelayEvent[],
+      options?: Pick<ReadFilter, "consistency">,
     ) {
       const id = lifecycleChannelId(value);
+      const strong = options?.consistency === "strong";
       return owned({ id, caller }, (signal) =>
         retryRead(
-          () => reread(signal, () => load(id, signal, "any", records)),
+          () =>
+            reread(signal, () => load(id, signal, "any", records, strong)),
           signal,
         ),
       );
