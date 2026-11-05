@@ -4177,14 +4177,17 @@ export function createChannelStore(
         retained.kept = keptAfter();
         // Live replay covers minutes; notices from a longer drop come by read.
         void fillNotices(retained, true);
+        // A discarded head gap is settled; a preserved sliding segment still waits.
+        const complete = contiguous || retained.ceilingId === undefined;
         // A drop mid-fill has marked the window cached; the stream is retrying.
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: page.hasMore } : {}),
           status: "ready",
-          freshness: streamDrops === dropsAtStart ? "verified" : "cached",
+          freshness:
+            streamDrops === dropsAtStart && complete ? "verified" : "cached",
           error: undefined,
         });
-        return true;
+        return complete;
       } catch (error) {
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");

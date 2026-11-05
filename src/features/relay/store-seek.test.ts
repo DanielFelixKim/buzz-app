@@ -641,9 +641,10 @@ it("preserves a slid segment beyond reconnect catch-up coverage", async () => {
   await vi.waitFor(() =>
     expect(h.owner.session.live?.snapshot().heads).toContainEqual({
       channelId: "c",
-      state: "verified",
+      state: "deferred",
     }),
   );
+  expect(h.window().freshness).toBe("cached");
   expect(h.window().rows.map((row) => row.id)).toEqual(retained);
   h.channels.attach?.("c");
   await vi.waitFor(() => expect(h.window().hasNewer).toBeFalsy());
