@@ -197,7 +197,12 @@ export function createBrowserPlatform(): BrowserPlatform {
         invoke<BrowserControlGrant>("browser_control_grant", { sessionId }),
       revoke: (sessionId) => invoke("browser_control_revoke", { sessionId }),
       execute: (token, request) =>
-        invoke("browser_control_execute", { token, request }),
+        invoke("browser_control_execute", { token, request }).catch(
+          (error: unknown) => {
+            // Tauri rejects with the native string; callers read the code from `Error.message`.
+            throw typeof error === "string" ? new Error(error) : error;
+          },
+        ),
     },
   };
 }
