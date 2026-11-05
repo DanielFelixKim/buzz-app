@@ -61,6 +61,7 @@ export function bindUnreadScopes(
         .channels.filter(
           (channel) =>
             !channel.huddle &&
+            !channel.archived &&
             !channel.metadataPending &&
             channel.members?.includes(viewer) &&
             (!gates ||

@@ -140,6 +140,16 @@ it("projects unread activity into separate Solo and Team scopes", () => {
   expect(project).toHaveBeenLastCalledWith({ solo: false, team: true });
   h.emit([message(h.peer, "solo", "Solo activity", 13)]);
   expect(project).toHaveBeenLastCalledWith({ solo: true, team: true });
+  h.emit([metadata(h.relay, "team", "Team", 14, [["archived", "true"]])]);
+  expect(project).toHaveBeenLastCalledWith({ solo: true, team: false });
+  h.emit([
+    metadata(h.relay, "solo", "Solo", 15, [
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+      ["archived", "true"],
+    ]),
+  ]);
+  expect(project).toHaveBeenLastCalledWith({ solo: false, team: false });
 });
 it("starts clear for unknown evidence; projects arrivals and explicit read clearing without new reads", async () => {
   const h = setup();
