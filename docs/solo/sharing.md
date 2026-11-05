@@ -188,8 +188,8 @@ synchronized into the chat.
 
 ## What shared people see
 
-Sharing gives access, not attention. Someone else's chat never lists in the
-viewer's sidebar, bolds, sets the Dock indicator, adds an Inbox row or alerts
+Sharing gives access, not attention. Someone else's chat the viewer didn't
+join never lists in the viewer's sidebar, bolds, sets the Dock indicator, adds an Inbox row or alerts
 just because the viewer can open it; they reach it from the card, a link or
 search. Only a tag pulls them in: it alerts like any mention and adds one Inbox
 row per chat, however many tags it holds. While that chat has an unread tag, it
@@ -199,6 +199,10 @@ the viewer reads it and moves on, and returns with the next tag. Opening a share
 chat from its card adds no row: it opens beside the current conversation, which
 stays selected. Replies, ordinary messages and marking a message unread there
 never add a row. See [Relevant replies](../unread.md#relevant-replies).
+
+Pressing **Join** in a View only chat is the viewer's own choice, so that chat
+lists under Solo with ordinary unread tracking. Solo chats add people only as
+members, so a viewer role always means the viewer joined.
 
 ## Explicit conversion, separate from Share
 

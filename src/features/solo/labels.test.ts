@@ -3,6 +3,7 @@ import type { ChannelSummary } from "../relay/contracts";
 import {
   eligibleSolo,
   ownSolo,
+  quietSolo,
   SOLO_NAMED_LABEL,
   SOLO_LABEL,
   soloChatLinkName,
@@ -20,7 +21,7 @@ it.each([
   {
     name: "View only chat the viewer joined",
     changes: { readOnly: true, viewerRole: "guest" },
-    expected: false,
+    expected: true,
   },
   {
     name: "chat shared with the viewer",
@@ -43,7 +44,7 @@ it.each([
   changes: Partial<ChannelSummary>;
   expected: boolean;
 }[])(
-  "lists a $name in Solo only when it is the viewer's own",
+  "lists a $name in Solo only when the viewer chose it",
   ({ changes, expected }) => {
     const channel: ChannelSummary = {
       id,
@@ -57,6 +58,18 @@ it.each([
     expect(eligibleSolo(channel)).toBe(expected);
   },
 );
+
+it("keeps quiet only someone else's chat the viewer didn't join", () => {
+  const solo = "solo" as const;
+  expect(quietSolo({ channelType: solo, viewerRole: "member" })).toBe(true);
+  expect(quietSolo({ channelType: solo, viewerRole: undefined })).toBe(true);
+  expect(quietSolo({ channelType: solo, viewerRole: "guest" })).toBe(false);
+  expect(quietSolo({ channelType: solo, viewerRole: "owner" })).toBe(false);
+  expect(quietSolo({ channelType: "stream", viewerRole: "member" })).toBe(
+    false,
+  );
+  expect(quietSolo(undefined)).toBe(false);
+});
 
 it("names shared chats by their current name, falling back to the short ID", () => {
   expect(soloChatLinkName({ id, name: "Investigate the flaky test" })).toBe(

@@ -10,7 +10,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import { conversationTarget } from "../../features/channel-navigation/routes";
-import { ownSolo, soloChatLinkName } from "../../features/solo/labels";
+import { quietSolo, soloChatLinkName } from "../../features/solo/labels";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { subscribeView, viewRevision } from "../../shared/view-state";
@@ -88,9 +88,7 @@ function Rows({
       .filter((item) => item.unreadCount > 0 && !archived.has(item.channelId))
       .map((item) => item.channelId),
   );
-  const chats = list.channels.filter(
-    (channel) => channel.channelType === "solo" && !ownSolo(channel),
-  );
+  const chats = list.channels.filter((channel) => quietSolo(channel));
   // Reading the open chat clears its tag; keep its row until the viewer
   // moves on, so it doesn't vanish underfoot.
   const holding =

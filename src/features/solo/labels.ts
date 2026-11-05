@@ -69,9 +69,32 @@ export function soloChatLinkName(channel: { id: string; name: string }) {
   return channel.name.trim() || channel.id.slice(0, 8);
 }
 
-/** The sidebar's Solo inventory: the viewer's own unarchived chats. A chat
- * shared with the viewer is reachable from where it was shared, never listed;
- * unknown metadata never implies Solo or ownership. */
+/** A Solo chat the viewer chose: their own, or one they joined as a viewer.
+ * Solo chats add people only as members, so a viewer role means the viewer
+ * joined. Someone else adding the viewer is not their choice, and an unknown
+ * role is neither. */
+export function chosenSolo(
+  channel:
+    | Readonly<{
+        channelType?: string | undefined;
+        viewerRole?: ChannelSummary["viewerRole"];
+      }>
+    | undefined,
+): boolean {
+  return (
+    ownSolo(channel) ||
+    (channel?.channelType === "solo" && channel.viewerRole === "guest")
+  );
+}
+
+/** Someone else's Solo chat the viewer didn't choose: reachable from where it
+ * was shared, never listed, and only a mention earns attention. */
+export function quietSolo(channel: Parameters<typeof chosenSolo>[0]): boolean {
+  return channel?.channelType === "solo" && !chosenSolo(channel);
+}
+
+/** The sidebar's Solo inventory: the unarchived chats the viewer chose;
+ * unknown metadata never implies Solo or a choice. */
 export function eligibleSolo(channel: ChannelSummary) {
-  return !channel.archived && ownSolo(channel);
+  return !channel.archived && chosenSolo(channel);
 }

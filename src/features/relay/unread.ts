@@ -23,7 +23,7 @@ import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
-import { ownSolo } from "../solo/labels";
+import { quietSolo } from "../solo/labels";
 import {
   memoryThreadFollows,
   THREAD_FOLLOW_LIMIT,
@@ -312,15 +312,13 @@ export function createUnread({
   }
 
   let bytes = 0;
-  /** Someone else's Solo chats: reachable, but only mentions earn attention.
-   * An unknown creator is not the viewer, so a chat stays quiet while its
-   * metadata loads. */
+  /** Someone else's Solo chats the viewer didn't join: reachable, but only
+   * mentions earn attention. An unknown role is not a choice, so a chat stays
+   * quiet while its roster loads. */
   const guestSolos = (list: ReturnType<ChannelQueries["list"]>) =>
     new Set(
       list.channels
-        .filter(
-          (channel) => channel.channelType === "solo" && !ownSolo(channel),
-        )
+        .filter((channel) => quietSolo(channel))
         .map((channel) => channel.id),
     );
   let guests = new Set<string>();
@@ -1373,7 +1371,7 @@ export function createUnread({
         )
         .map((channel) => [
           channel.id,
-          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}:${ownSolo(channel)}`,
+          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}:${quietSolo(channel)}`,
         ]),
     );
   const cachedIds = (list: ReturnType<ChannelQueries["list"]>) =>

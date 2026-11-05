@@ -261,8 +261,8 @@ quiet, apart from mentions and broadcasts. Explicit per-message unread intent st
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
-**Someone else's Solo chat.** In a Solo chat the viewer does not own (or whose
-roster has not yet said so), only messages that mention the viewer count;
+**Someone else's Solo chat.** In a Solo chat the viewer neither owns nor joined
+as a viewer (or whose roster has not yet said so), only messages that mention the viewer count;
 top-level messages, replies, conversations and broadcasts stay quiet. Inbox
 groups all of that chat's mentions into one row keyed by the chat, previewing and
 targeting the newest. Explicit per-message unread intent still applies.

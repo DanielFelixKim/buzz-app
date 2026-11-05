@@ -1,5 +1,5 @@
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
-import { ownSolo } from "../../features/solo/labels";
+import { quietSolo } from "../../features/solo/labels";
 import {
   type ReactNode,
   useCallback,
@@ -187,13 +187,13 @@ const rowRead = (
       : { kind: "steps", targets: item.readThrough.map((step) => step.target) };
 
 /** DMs and a Solo chat's own messages open whole; others open at their
- * message. Someone else's chat opens at the tag its row previews: in its
- * thread, or the whole chat at a top-level tag. */
+ * message. Someone else's chat the viewer didn't join opens at the tag its
+ * row previews: in its thread, or the whole chat at a top-level tag. */
 const tabTarget = (
   item: InboxItem,
-  channel: Parameters<typeof ownSolo>[0],
+  channel: Parameters<typeof quietSolo>[0],
 ): PageTabTarget => {
-  const shared = channel?.channelType === "solo" && !ownSolo(channel);
+  const shared = quietSolo(channel);
   if (
     item.target.kind === "channel" ||
     (shared ? !item.rootId : channel?.channelType === "solo" && !item.thread)
@@ -867,13 +867,7 @@ function InboxList({
       const shared = session.channels
         .list()
         .channels.find((entry) => entry.id === item.channelId);
-      if (
-        !value ||
-        !canRead ||
-        !hasUnread(conversation) ||
-        shared?.channelType !== "solo" ||
-        ownSolo(shared)
-      )
+      if (!value || !canRead || !hasUnread(conversation) || !quietSolo(shared))
         return;
       try {
         for (const step of conversation.readThrough)

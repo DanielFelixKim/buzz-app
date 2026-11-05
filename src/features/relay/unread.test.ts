@@ -4115,6 +4115,27 @@ it("catch-up applies to agent-audience rows, and unread intent cannot make them 
   expect(unread.inbox().items).toHaveLength(0);
 });
 
+it("someone else's Solo chat the viewer joined tracks unread normally", () => {
+  const h = setup();
+  h.grant("chat", 10, "guest");
+  h.emit([
+    metadata(h.relay, "chat", "Alice's chat", 11, [
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+      ["P", h.alice.pubkey],
+    ]),
+  ]);
+  const update = message(h.alice, "chat", "Progress update", 21);
+  h.emit([update]);
+  const unread = h.session.unread;
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
+  ).toBe(1);
+  expect(unread.inbox().items).toEqual([
+    expect.objectContaining({ channelId: "chat", messageIds: [update.id] }),
+  ]);
+});
+
 it("someone else's Solo chat earns attention only from mentions", async () => {
   const h = setup();
   h.grant("chat");
