@@ -1,7 +1,12 @@
 import { afterEach, expect, it } from "vitest";
 import { foldMessages } from "./fold";
 import { CHANNEL_KINDS, type LiveCallbacks } from "./live";
-import { PIN_KIND, pinTemplate, validatePinTemplate } from "./pins";
+import {
+  PIN_KIND,
+  pinTemplate,
+  readChannelPins,
+  validatePinTemplate,
+} from "./pins";
 import { createMessages } from "./messages";
 import { PublishRejected, type Outbox } from "./outbox";
 import { createRelaySession } from "./session";
@@ -13,7 +18,7 @@ import {
   scriptedTransport,
   signed,
 } from "./testing";
-import type { RelayEvent } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 
 const viewer = keypair(),
   other = keypair(),
@@ -195,4 +200,77 @@ it("a pin shows before the relay confirms it and reverts when refused", async ()
   await flush();
   expect(owner.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
   expect(owner.session.channels.window("c").rows[0]?.pinnedBy).toBeUndefined();
+});
+
+it("reads a channel's live pins newest first and drops pins it cannot verify", async () => {
+  const later = message(other, "c", "Second decision", 4);
+  const elsewhere = message(other, "elsewhere", "Other channel", 4);
+  const gone = message(other, "c", "Deleted", 4);
+  const pinOf = (target: RelayEvent, time: number, author = viewer) =>
+    signed(author, {
+      kind: PIN_KIND,
+      content: "",
+      created_at: time,
+      tags: [
+        ["h", "c"],
+        ["e", target.id],
+      ],
+    });
+  const first = pinOf(root, 5),
+    second = pinOf(later, 6),
+    removed = pinOf(later, 7, other),
+    foreign = pinOf(elsewhere, 8),
+    orphan = pinOf(gone, 9);
+  const events = [
+    root,
+    later,
+    elsewhere,
+    first,
+    second,
+    removed,
+    foreign,
+    orphan,
+    unpin(removed, other),
+    signed(other, {
+      kind: 5,
+      content: "",
+      tags: [
+        ["h", "c"],
+        ["e", gone.id],
+        ["k", "9"],
+      ],
+    }),
+  ];
+  const filters: unknown[] = [];
+  const read = async (requested: readonly ReadFilter[]) => {
+    filters.push(...requested);
+    const [filter] = requested;
+    return events.filter(
+      (event) =>
+        (!filter?.ids || filter.ids.includes(event.id)) &&
+        (!filter?.kinds || filter.kinds.includes(event.kind)) &&
+        (!filter?.["#h"] ||
+          event.tags.some(
+            ([name, id]) => name === "h" && filter["#h"]?.includes(id ?? ""),
+          )) &&
+        (!filter?.["#e"] ||
+          event.tags.some(
+            ([name, id]) => name === "e" && filter["#e"]?.includes(id ?? ""),
+          )),
+    );
+  };
+  const pins = await readChannelPins(
+    { read },
+    "c",
+    new AbortController().signal,
+  );
+  expect(pins.map((pin) => pin.id)).toEqual([second.id, first.id]);
+  expect(filters[0]).toEqual({ kinds: [40004], "#h": ["c"], limit: 200 });
+  expect(
+    await readChannelPins(
+      { read: async () => [] },
+      "c",
+      new AbortController().signal,
+    ),
+  ).toEqual([]);
 });

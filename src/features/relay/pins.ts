@@ -1,11 +1,15 @@
 import type { EventTemplate } from "nostr-tools";
 import type { PinRecord } from "./contracts";
-import type { EventData } from "./events";
+import type { EventData, ReadFilter } from "./events";
+import { deletionApplies } from "./fold";
 
 /** A channel member's pin of one channel message (relay `KIND_STREAM_MESSAGE_PINNED`). */
 export const PIN_KIND = 40004;
 /** Message kinds a pin may target; the relay validator accepts the same set. */
 export const PINNABLE_KINDS: readonly number[] = [9, 40002];
+/** One page of a channel's pins. New pins have no cap, so a channel past it
+ * lists only the newest; the relay returns newest first. */
+export const PIN_READ_LIMIT = 200;
 const HEX64 = /^[0-9a-f]{64}$/;
 
 const named = (event: Pick<EventData, "tags">, name: string) =>
@@ -82,4 +86,58 @@ export function messagePins(
         pinnedAt: event.created_at,
       }),
     );
+}
+
+/** A channel's live pins, one per pin event, newest pin first. A pin drops
+ * when its author deleted it, or its target is missing, deleted, not a
+ * pinnable message or in another channel, so a pin cannot surface another
+ * channel's message. */
+export async function readChannelPins(
+  session: {
+    read(
+      filters: readonly ReadFilter[],
+      options: { signal: AbortSignal },
+    ): Promise<readonly EventData[]>;
+  },
+  channelId: string,
+  signal: AbortSignal,
+): Promise<readonly PinRecord[]> {
+  const pins = (
+    await session.read(
+      [{ kinds: [PIN_KIND], "#h": [channelId], limit: PIN_READ_LIMIT }],
+      { signal },
+    )
+  ).filter((event) => pinTarget(event)?.channelId === channelId);
+  if (!pins.length) return [];
+  const messageIds = [
+    ...new Set(pins.map((event) => pinTarget(event)?.messageId ?? "")),
+  ];
+  const [targets, deletions] = await Promise.all([
+    session.read([{ ids: messageIds, limit: messageIds.length }], { signal }),
+    session.read(
+      [
+        {
+          kinds: [5, 9005],
+          "#e": [...pins.map((event) => event.id), ...messageIds],
+          limit: 500,
+        },
+      ],
+      { signal },
+    ),
+  ]);
+  const deleted = (event: EventData) =>
+    deletions.some(
+      (deletion) =>
+        deletion.tags.some(([name, id]) => name === "e" && id === event.id) &&
+        deletionApplies(deletion, event, undefined),
+    );
+  return targets
+    .filter(
+      (target) =>
+        messageIds.includes(target.id) &&
+        target.tags.some(([name, id]) => name === "h" && id === channelId) &&
+        !deleted(target),
+    )
+    .flatMap((target) => messagePins(target, channelId, pins, deleted))
+    .sort((a, b) => b.pinnedAt - a.pinnedAt || a.id.localeCompare(b.id));
 }

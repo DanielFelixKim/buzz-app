@@ -6,6 +6,7 @@ import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
+import { registerPinned } from "./pinned-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
@@ -28,6 +29,7 @@ export const inject = [
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerCanvas(ctx);
+  registerPinned(ctx);
   ctx.conversation.registerCompletion({
     id: "channel-typeahead",
     title: "Channel",
