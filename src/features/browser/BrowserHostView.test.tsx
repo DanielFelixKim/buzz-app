@@ -69,7 +69,18 @@ beforeEach(() => {
   });
 });
 
+/** Sets what `document.visibilityState` reads, as macOS does when the Buzz
+ * window goes behind another app's window. */
+function setDocumentVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => state,
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 afterEach(() => {
+  Reflect.deleteProperty(document, "visibilityState");
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -1302,3 +1313,89 @@ it("reports its grant ended when its evicted guest is shown again, before its to
   expect(onControlEnded).toHaveBeenCalledExactlyOnceWith("session-1");
   expect(order[0]).toBe("toolbar cleanup after 1");
 });
+
+it("keeps the guest shown when the Buzz window goes to the background", async () => {
+  const platform = fakePlatform();
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.setBounds).toHaveBeenCalledWith(
+      "session-1",
+      { x: 10, y: 20, width: 400, height: 300 },
+      true,
+    ),
+  );
+  act(() => {
+    setDocumentVisibility("hidden");
+    for (const callback of TestResizeObserver.callbacks) callback();
+    window.dispatchEvent(new Event("resize"));
+  });
+  await waitFor(() =>
+    expect(vi.mocked(platform.setBounds).mock.calls.length).toBeGreaterThan(1),
+  );
+  expect(platform.setBounds).not.toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    false,
+  );
+});
+
+it("opens its page while the Buzz window is in the background", async () => {
+  setDocumentVisibility("hidden");
+  const platform = fakePlatform();
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      toolbar={({ sessionId }) => <button type="button">{sessionId}</button>}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.setBounds).toHaveBeenCalledWith(
+      "session-1",
+      { x: 10, y: 20, width: 400, height: 300 },
+      true,
+    ),
+  );
+  expect(screen.getByRole("button", { name: "session-1" })).toBeVisible();
+});
+
+it.each([
+  { when: "already hidden", hideDuringWait: false },
+  { when: "hidden during the wait", hideDuringWait: true },
+])(
+  "prepares sharing when the document is $when and animation frames stop",
+  async ({ hideDuringWait }) => {
+    if (!hideDuringWait) setDocumentVisibility("hidden");
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn(() => 1),
+    );
+    const platform = fakePlatform();
+    let prepare: (() => Promise<void>) | undefined;
+    render(
+      <BrowserHostView
+        url="https://example.org"
+        platform={platform}
+        sessions={new BrowserSessions(platform)}
+        toolbar={(props) => {
+          prepare = props.prepare;
+          return null;
+        }}
+      />,
+    );
+    await waitFor(() => expect(prepare).toBeDefined());
+    let prepared = false;
+    void prepare?.().then(() => {
+      prepared = true;
+    });
+    if (hideDuringWait) act(() => setDocumentVisibility("hidden"));
+    await waitFor(() => expect(prepared).toBe(true));
+  },
+);

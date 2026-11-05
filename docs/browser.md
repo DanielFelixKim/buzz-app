@@ -57,7 +57,7 @@ Normal website views retain the storage behavior above.
 
 The controls are ordinary trusted React UI in Buzz's main webview. Website content is a separate raw Wry child view positioned over the panel's website viewport, created without a Tauri IPC handler, custom protocols or host initialization scripts. It uses a nonpersistent data store, or the named persistent store described above. The main window's content-security policy is unchanged.
 
-The mounted view reports its viewport bounds and visibility to native code. Native code validates and clips bounds to the main webview. Resizing, scrolling, hiding the document and opening application overlays update guest placement or visibility. Session identifiers prevent delayed callbacks or cleanup from controlling a replacement view.
+The mounted view reports its viewport bounds and visibility to native code. Native code validates and clips bounds to the main webview. Resizing, scrolling and opening application overlays update guest placement or visibility. The guest stays shown while the Buzz window is in the background or behind another app's window. Session identifiers prevent delayed callbacks or cleanup from controlling a replacement view.
 
 This distinction is required by the locked Tauri implementation: its built-in channel-data fetch command bypasses ordinary command ACL checks. Empty Tauri capabilities alone would not establish a guest with no native IPC. The raw guest has no Tauri bridge to invoke that command.
 
@@ -111,7 +111,7 @@ Check address entry, Back/Forward/Reload, resizing, opening an account menu, clo
 
 ## Plugin browser control
 
-Normal macOS builds provide a native capability that lets an agent read and operate a website guest. The guest keeps its existing IPC isolation. Native grants are revocable, and actions require a visible guest. Hiding, covering, resizing or closing the guest revokes access. The agent's later calls then fail with `not_visible`, which tells it to open the page again, until a page is shared with it again. A Share of that page with another agent makes them fail with `unavailable` instead. Arbitrary agent-supplied JavaScript is not accepted.
+Normal macOS builds provide a native capability that lets an agent read and operate a website guest. The guest keeps its existing IPC isolation. Native grants are revocable, and actions require a visible guest. Hiding the panel, covering it with a Buzz dialog, menu or popup, resizing the window, or closing the guest revokes access. The Buzz window in the background or behind another app's window does not revoke access. The agent's later calls then fail with `not_visible`, which tells it to open the page again, until a page is shared with it again. A Share of that page with another agent makes them fail with `unavailable` instead. Arbitrary agent-supplied JavaScript is not accepted.
 
 The [Browser plugin](https://github.com/squareup/buzz-plugin-browser) owns the agent tool, the sharing toolbar, recipient selection and the page-opening workflow. It contributes a toolbar to `ctx.browser.View`, and ordinary views have no sharing controls. The host provides the active session and status, a native presentation barrier, shared UI primitives, and authenticated grant, execute and revoke operations. It does not open agent pages or choose recipients. Installing the native capability registers no agent tool and gives no access to any page.
 
@@ -196,7 +196,7 @@ Every failure message is `<code>: <one sentence>`:
 | `invalid_request` | The request breaks the schema or a limit, or names no matching option. |
 | `invalid_url` | The URL fails the URL policy. |
 | `unavailable` | No page is shared with the caller here, or the reply was malformed or too large. |
-| `not_visible` | The page was hidden, covered, resized, closed, replaced or evicted, or its access was revoked. |
+| `not_visible` | The page was hidden, covered by a Buzz overlay, resized, closed, replaced or evicted, or its access was revoked. |
 | `revoked` | The person took control. The plugin raises it. |
 | `busy` | Another action runs on the page. |
 | `stale_ref` | The ref is from an older revision, or its element left the document. |

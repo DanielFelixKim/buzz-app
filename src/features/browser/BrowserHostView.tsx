@@ -95,6 +95,22 @@ function hostOverlayOpen(viewport: BrowserBounds): boolean {
   return false;
 }
 
+/** Resolves after the next frame. Frames stop while the document is hidden,
+ * as when the Buzz window is behind another app's window, so it resolves at
+ * once then. No menu closes in a hidden document. */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (document.visibilityState === "hidden") return resolve();
+    const done = () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("visibilitychange", done);
+      resolve();
+    };
+    const frame = requestAnimationFrame(done);
+    document.addEventListener("visibilitychange", done);
+  });
+}
+
 export function BrowserHostView({
   url,
   storage: requestedStorage,
@@ -191,8 +207,9 @@ export function BrowserHostView({
     let positioning: Promise<void> | undefined;
     const park = storage === undefined ? undefined : titleKey;
 
+    // The Buzz window in the background or behind another app keeps the
+    // guest shown, so an agent can keep working while the person is away.
     const visible = (bounds: BrowserBounds) =>
-      document.visibilityState === "visible" &&
       !hostOverlayOpen(bounds) &&
       !covered(element) &&
       bounds.width > 0 &&
@@ -263,9 +280,7 @@ export function BrowserHostView({
     prepareControl.current = async () => {
       // Menu completion precedes its final DOM removal. Wait for that commit,
       // then join the existing native positioning queue before granting access.
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => resolve()),
-      );
+      await nextFrame();
       const sessionId = session.current;
       if (
         disposed ||
@@ -399,7 +414,6 @@ export function BrowserHostView({
     const forceBounds = () => syncBounds(true);
     window.addEventListener("resize", forceBounds);
     window.addEventListener("scroll", updatePresentation, true);
-    document.addEventListener("visibilitychange", updatePresentation);
     window.visualViewport?.addEventListener("resize", forceBounds);
     window.visualViewport?.addEventListener("scroll", updatePresentation);
     // A pane that slid or faded into place has moved without resizing.
@@ -422,7 +436,6 @@ export function BrowserHostView({
       if (placing !== undefined) cancelAnimationFrame(placing);
       window.removeEventListener("resize", forceBounds);
       window.removeEventListener("scroll", updatePresentation, true);
-      document.removeEventListener("visibilitychange", updatePresentation);
       window.visualViewport?.removeEventListener("resize", forceBounds);
       window.visualViewport?.removeEventListener("scroll", updatePresentation);
       document.removeEventListener("animationend", updatePresentation, true);
