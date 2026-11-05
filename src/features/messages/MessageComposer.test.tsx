@@ -5619,6 +5619,16 @@ it("does not claim a supported fallback when a loaded catalog has no models", as
     [first.pubkey]: savedPick,
   });
   const composer = mountChat();
+  const publish = vi.fn<Outbox["send"]>(() => "sent");
+  composer.messages.send.mockImplementation(
+    createMessages(
+      { supports: () => true, send: publish } as unknown as Outbox,
+      first.pubkey,
+      () => undefined,
+      () => [],
+      () => {},
+    ).send,
+  );
   await composer.user.type(composer.input(), "Use the agent default");
   await composer.user.click(
     screen.getByRole("button", { name: "First Honey" }),
@@ -5626,14 +5636,14 @@ it("does not claim a supported fallback when a loaded catalog has no models", as
 
   const trigger = await screen.findByRole("button", { name: /Model.*effort/ });
   expect(trigger).toHaveAccessibleDescription(
-    /Saved model is unavailable\. No supported model is listed in the loaded catalog\./,
+    /Saved model is unavailable\. No supported model is listed in the loaded catalog\. Send omits model and effort overrides and uses the agent's defaults\./,
   );
   await composer.user.click(trigger);
   const availability = within(screen.getByRole("dialog")).getByRole("status", {
     name: "Saved model and effort availability",
   });
   expect(availability).toHaveTextContent(
-    /No supported model is listed in the loaded catalog/,
+    /No supported model is listed in the loaded catalog\. Send omits model and effort overrides and uses the agent's defaults\./,
   );
   expect(screen.getByText("Model unavailable")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
@@ -5643,6 +5653,12 @@ it("does not claim a supported fallback when a loaded catalog has no models", as
 
   await send(composer);
   await waitFor(() => expect(composer.messages.send).toHaveBeenCalledOnce());
+  expect(publish).toHaveBeenCalledOnce();
+  expect(
+    publish.mock.calls[0]?.[0].tags.filter(
+      ([name]) => name === "model" || name === "effort",
+    ),
+  ).toEqual([]);
   expect(readView("scope", "solo:model-picks:channel", null)).toEqual({
     [first.pubkey]: savedPick,
   });

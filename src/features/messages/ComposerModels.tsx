@@ -456,7 +456,7 @@ function unavailableSavedPick(
             ? " with the provider's default effort"
             : ""
       }`
-    : "No supported model is listed in the loaded catalog";
+    : "No supported model is listed in the loaded catalog. Send omits model and effort overrides and uses the agent's defaults";
   const reason = unavailableModel
     ? "Saved model is unavailable."
     : runs.id
