@@ -50,6 +50,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     route: { version: 1, validate: isInboxRoute },
     component: ({ navigation }) => (
       <InboxPage
+        host={ctx}
+        extensions={ctx.conversation}
         relay={relay}
         navigator={navigator}
         tabs={ctx.conversation.ui.Tabs}

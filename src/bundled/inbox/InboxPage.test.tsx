@@ -1334,6 +1334,7 @@ function fixture(
     view: (
       <StrictMode>
         <InboxPage
+          host={host}
           tabs={(props) => <PageTabs {...props} host={host} />}
           relay={relay}
           navigator={{ open } as unknown as Navigation}
@@ -1581,11 +1582,8 @@ it("a route open applies its sender, keeping the other saved filters", async () 
   });
 });
 
-it.each([
-  [{ show: "archived", sender: "agents" }, "From agents"],
-  [{ drafts: "true" }, "From anyone"],
-] as const)(
-  "a link from before Archived and Drafts were removed, %j, still opens the page",
+it.each([[{ show: "archived", sender: "agents" }, "From agents"]] as const)(
+  "a retired Archived link, %j, still opens Activity",
   async (params, from) => {
     const h = fixture();
     render(
@@ -1605,6 +1603,29 @@ it.each([
     expect(screen.getByRole("list", { name: "Activity" })).toBeVisible();
   },
 );
+
+it("a Drafts route opens its editor and Back to Activity preserves filters and focus", async () => {
+  const h = fixture();
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
+    JSON.stringify({
+      activity: "mentions",
+      sender: "humans",
+      attention: "unread",
+    }),
+  );
+  render(viewAt(h, visit({ drafts: true })));
+  const back = await screen.findByRole("button", { name: "Back to Activity" });
+  expect(screen.getByRole("list", { name: "Drafts" })).toBeVisible();
+  expect(
+    screen.queryByRole("tablist", { name: "Activity type" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(back);
+  expect(fromTrigger()).toHaveFocus();
+  expect(fromTrigger()).toHaveAccessibleName("From people");
+  expect(activityType()).toBe("Mentions");
+  expect(unreadToggle()).toBeChecked();
+});
 
 it("a plain open leaves saved filters alone", async () => {
   const h = fixture();

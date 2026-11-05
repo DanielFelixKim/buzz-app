@@ -16,7 +16,7 @@ test.use({
 
 // Browser-only: real shell composition, routed exact-root editor, keyboard
 // activation and dialog focus. Content/count matrices stay in the store tests.
-test("Drafts below Inbox opens its draft filter and shares live counts with Solo, Team and DM icons", async ({
+test("Drafts below Activity opens its editor and shares live counts with Solo, Team and DM icons", async ({
   page,
   app,
 }) => {
@@ -96,38 +96,47 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
   await expect(drafts.locator("[data-draft-count]")).toHaveText("3");
   expect(
     await pages.locator(".navigation-item-label").allTextContents(),
-  ).toEqual(expect.arrayContaining(["Inbox", "Drafts"]));
+  ).toEqual(expect.arrayContaining(["Activity", "Drafts"]));
   await drafts.focus();
   await drafts.press("Enter");
-  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
-  await expect(inbox.getByRole("button", { name: "Inbox filters" })).toHaveText(
-    "Drafts",
-  );
-  const inboxButton = pages.getByRole("button", { name: "Inbox", exact: true });
+  const inbox = page.getByRole("region", { name: "Activity", exact: true });
+  const activityButton = pages.getByRole("button", {
+    name: "Activity",
+    exact: true,
+  });
+  const back = inbox.getByRole("button", {
+    name: "Back to Activity",
+    exact: true,
+  });
+  const activityTabs = inbox.getByRole("tablist", { name: "Activity type" });
+  await expect(back).toBeVisible();
   await expect(drafts).toHaveAttribute("aria-current", "page");
-  await expect(inboxButton).not.toHaveAttribute("aria-current");
-  const filter = inbox.getByRole("button", { name: "Inbox filters" });
-  await filter.click();
-  await page.getByRole("menuitemradio", { name: "All", exact: true }).click();
-  await expect(inboxButton).toHaveAttribute("aria-current", "page");
+  await expect(activityButton).not.toHaveAttribute("aria-current");
+  await back.click();
+  await expect(activityTabs).toBeVisible();
+  await expect(activityButton).toHaveAttribute("aria-current", "page");
   await expect(drafts).not.toHaveAttribute("aria-current");
+  await inbox.getByRole("tab", { name: "Mentions", exact: true }).click();
   await newChat(page);
   await page.goBack();
-  await expect(filter).toHaveText("All");
-  await expect(inboxButton).toHaveAttribute("aria-current", "page");
+  await expect(
+    inbox.getByRole("tab", { name: "Mentions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(activityButton).toHaveAttribute("aria-current", "page");
   await page.goForward();
   await expect(drafts).not.toHaveAttribute("aria-current");
   await page.goBack();
-  await expect(filter).toHaveText("All");
   await drafts.click();
+  await expect(back).toBeVisible();
   await expect(drafts).toHaveAttribute("aria-current", "page");
-  await inboxButton.click();
-  await expect(filter).toHaveText("All");
+  await activityButton.click();
+  await expect(
+    inbox.getByRole("tab", { name: "Mentions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await drafts.click();
-  await expect(filter).toHaveText("Drafts");
   await newChat(page);
   await page.goBack();
-  await expect(filter).toHaveText("Drafts");
+  await expect(back).toBeVisible();
   await expect(drafts).toHaveAttribute("aria-current", "page");
   const list = inbox.getByRole("list", { name: "Drafts", exact: true });
   await list

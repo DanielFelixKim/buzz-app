@@ -10,12 +10,13 @@ export const inboxTarget = {
 } as const;
 
 /** Filters an open asks the Activity page to show; omitted choices stay as saved. */
-export type InboxRoute = {
+type ActivityRoute = {
   attention?: "all" | "unread";
   activity?: ActivityFilter;
   sender?: SenderFilter;
 };
-type Filters = Required<InboxRoute>;
+export type InboxRoute = ActivityRoute | { drafts: true };
+type Filters = Required<ActivityRoute>;
 // Keyed by each union so a value added to one fails to compile until listed here.
 const filters: {
   readonly [K in keyof Filters]: Readonly<Record<Filters[K], true>>;
@@ -24,8 +25,7 @@ const filters: {
   activity: { all: true, threads: true, mentions: true, dms: true },
   sender: { everyone: true, humans: true, agents: true },
 };
-// Links made while the page had Archived and Drafts views still open it:
-// `show` is accepted and ignored, and `drafts` alone opens the saved filters.
+// Older Archived links still open Activity; `show` is accepted and ignored.
 const retiredShow: Readonly<Record<string, true>> = {
   inbox: true,
   archived: true,
@@ -39,7 +39,7 @@ function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
   if (keys.includes("drafts"))
     return keys.length === 1 &&
       (value.drafts === true || value.drafts === "true")
-      ? {}
+      ? { drafts: true }
       : undefined;
   if (
     keys.some((key) => {

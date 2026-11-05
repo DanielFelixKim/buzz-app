@@ -71,12 +71,12 @@ it("reads a route only from a version 1 page target", () => {
   expect(routeOf(undefined)).toBeUndefined();
 });
 
-it("drops a link's retired Archived and Drafts choices", () => {
+it("drops retired Archived choices and preserves Drafts links", () => {
   const at = (params: Record<string, string | boolean>) =>
     routeOf({ ...inboxTarget, route: { version: 1, params } });
   expect(at({ show: "archived", sender: "agents" })).toEqual({
     sender: "agents",
   });
   expect(at({ show: "inbox" })).toEqual({});
-  expect(at({ drafts: "true" })).toEqual({});
+  expect(at({ drafts: "true" })).toEqual({ drafts: true });
 });

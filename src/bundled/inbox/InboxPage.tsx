@@ -9,10 +9,14 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import { usePanelSplit } from "../../features/panels/usePanelSplit";
+import { DraftsView } from "./DraftsView";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import type {
+  ConversationExtensions,
   PageTabsProps,
   PageTabTarget,
 } from "../../features/conversation/contracts";
@@ -48,7 +52,11 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { BellIcon, CheckIcon } from "../../shared/design-system/icons";
+import {
+  BellIcon,
+  CheckIcon,
+  PencilSimpleIcon,
+} from "../../shared/design-system/icons";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   ContextMenuRoot,
@@ -164,11 +172,15 @@ type InboxPageTabs = (props: PageTabsProps) => ReactNode;
 const appliedRoutes = new WeakSet<object>();
 
 export function InboxPage({
+  host,
+  extensions,
   relay,
   navigator,
   tabs,
   navigation,
 }: {
+  host: ConversationHostServices;
+  extensions?: ConversationExtensions | undefined;
   relay: RelayData;
   navigator: Navigation;
   navigation?: PageNavigation | undefined;
@@ -185,6 +197,8 @@ export function InboxPage({
         scope?.endsWith(`:${viewer}`) ? (
           <InboxView
             key={`${scope}:${connection.generation}`}
+            host={host}
+            extensions={extensions}
             session={connection.session}
             scope={{
               viewer,
@@ -223,6 +237,8 @@ export function InboxPage({
 }
 
 type InboxViewProps = {
+  host: ConversationHostServices;
+  extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: NavigationScope;
   navigator: Navigation;
@@ -234,6 +250,7 @@ const never = () => false;
 
 /** The conversation list is Inbox's first tab; conversations open beside it. */
 export function InboxView({ tabs: Tabs, ...props }: InboxViewProps) {
+  const [drafts] = useInboxDrafts(props.session);
   const list = (
     open: (target: PageTabTarget) => boolean,
     close: (target: PageTabTarget) => boolean,
@@ -246,8 +263,10 @@ export function InboxView({ tabs: Tabs, ...props }: InboxViewProps) {
       id="inbox"
       session={props.session}
       scope={props.session.scope}
-      label="Activity"
-      icon={<BellIcon size="1rem" />}
+      label={drafts ? "Drafts" : "Activity"}
+      icon={
+        drafts ? <PencilSimpleIcon size="1rem" /> : <BellIcon size="1rem" />
+      }
       // Opening reveals a conversation; reading is earned as it is seen.
       visits={false}
     >
@@ -261,6 +280,8 @@ function InboxList({
   scope,
   navigator,
   navigation,
+  host,
+  extensions,
   open: openTab,
   close: closeTab,
   isOpen,
@@ -269,6 +290,10 @@ function InboxList({
   close(target: PageTabTarget): boolean;
   isOpen(target: PageTabTarget): boolean;
 }) {
+  const split = usePanelSplit(session.scope, "inbox", undefined, 316, {
+    defaultWidth: 420,
+    maxRatio: 0.5,
+  });
   const previewId = useId();
   const list = useChannelList(session.channels);
   const inbox = useSyncExternalStore(
@@ -323,7 +348,8 @@ function InboxList({
     )
       return;
     appliedRoutes.add(navigation);
-    setFilter(route);
+    setDrafts("drafts" in route);
+    if (!("drafts" in route)) setFilter(route);
   }, [navigation]);
   const subscribeFilters = useCallback(
     (listener: () => void) => subscribeView(viewScope, listener),
@@ -357,6 +383,13 @@ function InboxList({
     });
   }, [session, opened, selectedTarget]);
   const fallbackControl = useRef<HTMLButtonElement | null>(null);
+  const returningFromDrafts = useRef(false);
+  useLayoutEffect(() => {
+    if (!drafts && returningFromDrafts.current) {
+      returningFromDrafts.current = false;
+      fallbackControl.current?.focus({ preventScroll: true });
+    }
+  }, [drafts]);
   const focusToolbar = useCallback(
     () => fallbackControl.current?.focus({ preventScroll: true }),
     [],
@@ -890,6 +923,40 @@ function InboxList({
       />
     </header>
   );
+  if (drafts)
+    return (
+      <div
+        ref={split.ref}
+        style={split.style}
+        data-buzz-ui=""
+        className={styles.page}
+      >
+        <DraftsView
+          toolbar={
+            <header className={styles.toolbar}>
+              <Button
+                size="sm"
+                variant="ghost"
+                ref={fallbackControl}
+                onClick={() => {
+                  returningFromDrafts.current = true;
+                  setDrafts(false);
+                }}
+              >
+                Back to Activity
+              </Button>
+            </header>
+          }
+          resizeHandle={split.handle}
+          onEmptyRetire={focusToolbar}
+          session={session}
+          scope={scope}
+          navigator={navigator}
+          extensions={extensions}
+          host={host}
+        />
+      </div>
+    );
   return (
     <div data-buzz-ui="" className={styles.page}>
       {failure && (

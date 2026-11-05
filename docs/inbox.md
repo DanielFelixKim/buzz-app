@@ -44,6 +44,8 @@ Solo chats include ordinary incoming top-level messages, excluding agent-only co
 
 Four shortcuts ("Open unread in Activity" and so on) open the Activity page with its filters applied, including from the composer, like Slack's: ⌘⇧A (Ctrl+Shift+A elsewhere) opens All activity with Unread on, and ⌘⇧T, ⌘⇧M and ⌘⇧K open Threads, Mentions and DMs. Threads, Mentions and DMs keep the saved Unread choice; Sender is never changed. They are rebindable in Settings → Shortcuts. The shortcut opens `buzz.inbox/inbox` with a versioned route (`{ attention?, activity?, sender? }`) that the page validates, and a plain open from the sidebar or topbar carries none and leaves saved filters alone. Omitted fields keep their saved choice. Plugins and `buzz://plugin?id=buzz.inbox&page=inbox&route.<key>=<value>` links use the same route. The page applies a route once per presentation of the visit, but not when Back/Forward returns to it, which keeps the filters as they were left, using the same saved choices as the toolbar, so pressing a shortcut again after changing the filters by hand applies it again, even though the host treats an identical address as the same history entry.
 
+A `{ drafts: true }` route opens the Drafts editor without changing Activity’s saved filters. Selecting Activity returns to those filters; Back/Forward preserves the view as it was left.
+
 ### Sidebar preview
 
 Resting a pointer on the sidebar's Activity row opens a card of recent conversations
@@ -60,8 +62,8 @@ The shell hides the card while Activity is selected and on devices without hover
 
 ## Drafts (PR5)
 
-The sidebar includes Drafts directly below Inbox while the plugin is enabled.
-It opens the existing Inbox page with its Drafts route and shows the current
+The sidebar includes Drafts directly below Activity while the plugin is enabled.
+It opens the existing draft editor with its Drafts route and shows the current
 viewer/community's number of meaningful message and reply drafts. Solo chat,
 Team channel, and DM rows show a pencil when their main composer or any thread has a
 draft. The shared presence projection reuses composer view keys and retained
@@ -69,11 +71,11 @@ attachment counts; it stores no second draft copy and keeps row counts beyond
 the list's 500-preview limit. File-only composers appear in the list even before
 they have a saved text key. Counts update through view/storage and attachment
 notifications, with no relay reads or polling. Known-key removals update only
-that draft. Drafts highlights while the page shows its Drafts filter, including
-filter-menu changes and history traversal; Inbox highlights for activity views.
-Selecting Inbox leaves Drafts while preserving its saved activity filters.
+that draft. Drafts highlights while its editor is open, including history
+traversal; Activity highlights for activity views. Selecting Activity or Back to
+Activity leaves Drafts while preserving the saved activity filters.
 
-Drafts is also available from Inbox’s filter menu. It lists only meaningful saved composer
+The Drafts view lists meaningful saved composer
 text in this viewer/community scope, up to 500 with explicit truncation; an
 emptied selected editor stays open until send, close or confirmed delete. The
 list preserves the Inbox row hierarchy and supports channel, DM and exact-root
@@ -110,7 +112,7 @@ scoped saved-text cleanup, the existing attachment-draft owner clears only the
 same session/destination files and aborts its pending uploads. A failed text
 cleanup preserves files and text for retry; sibling channel/thread drafts and
 other viewers are untouched. Successful Close, Delete and saved Send restore focus
-to the invoking draft row, another remaining row, or Back to Inbox; callbacks from
+to the invoking draft row, another remaining row, or Back to Activity; callbacks from
 an earlier visit cannot retire a later selection. Failed Delete keeps its retryable
 confirmation focused. This is not a new persisted index or migration.
 

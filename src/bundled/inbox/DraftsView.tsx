@@ -295,7 +295,10 @@ export function DraftsView({
     }
   };
   return (
-    <div className={styles.workspace} data-selected={!!active || undefined}>
+    <div
+      className={styles.draftWorkspace}
+      data-selected={!!active || undefined}
+    >
       {toolbar}
       <div className={styles.draftList}>
         {!entries.length && !saved.unavailable && !active && (
@@ -347,12 +350,12 @@ export function DraftsView({
                       >
                         {label}
                       </strong>
-                      <span className={styles.sourceLine}>
+                      <span>
                         <span
                           className={`text-caption ${styles.source}`}
                           data-inbox-source=""
                         >
-                          <span className={styles.sourceName}>
+                          <span>
                             {entry.coordinates.threadRootId
                               ? "Reply"
                               : "Message"}{" "}
@@ -489,7 +492,6 @@ export function DraftsView({
                           ? `DM with ${destination(activeChannel)}`
                           : activeChannel.name
                       }
-                      draft
                       autoFocus={autoFocus}
                       onDraftSaved={retire}
                     />

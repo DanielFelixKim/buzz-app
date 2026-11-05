@@ -22,6 +22,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { PageTabs } from "../channels/PageTabs";
+import { useInboxDrafts } from "./view";
 import { InboxPage } from "./InboxPage";
 import { ChannelPreview } from "./ChannelPreview";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
@@ -393,6 +394,7 @@ function fixture(
     journal: () => journal,
     view: (
       <StrictMode>
+        <DraftsShortcut session={owner.session} />
         <InboxPage
           host={host}
           tabs={(props) => <PageTabs {...props} host={host} />}
@@ -443,37 +445,41 @@ function fixture(
   };
 }
 
+function DraftsShortcut({
+  session,
+}: {
+  session: ReturnType<typeof createRelaySession>["session"];
+}) {
+  const [, setDrafts] = useInboxDrafts(session);
+  return (
+    <button type="button" onClick={() => setDrafts(true)}>
+      Drafts
+    </button>
+  );
+}
+
 async function chooseFilter(label: string, control = "Activity type") {
   const user = userEvent.setup();
-  const trigger = screen.getByRole("button", { name: "Inbox filters" });
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  await screen.findByRole("menu", { name: "Inbox filters" });
-  if (control === "Sender") {
-    const people = screen.getByRole("menuitemcheckbox", { name: "People" });
-    const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
-    // Enable the desired sender before disabling the other: never select none.
-    if (label !== "Agents" && people.getAttribute("aria-checked") !== "true")
-      await user.click(people);
-    if (label !== "Humans" && agents.getAttribute("aria-checked") !== "true")
-      await user.click(agents);
-    if (label === "Agents" && people.getAttribute("aria-checked") === "true")
-      await user.click(people);
-    if (label === "Humans" && agents.getAttribute("aria-checked") === "true")
-      await user.click(agents);
-    await user.keyboard("{Escape}");
-  } else {
+  if (label === "Drafts") {
+    await user.click(screen.getByRole("button", { name: "Drafts" }));
+    await screen.findByRole("list", { name: "Drafts" });
+  } else if (control === "Sender") {
+    await user.click(screen.getByRole("button", { name: /^From / }));
+    const menu = await screen.findByRole("menu", { name: "From" });
     await user.click(
-      screen.getByRole("menuitemradio", {
+      within(menu).getByRole("menuitemradio", {
+        name: label === "Humans" ? "People" : label,
+      }),
+    );
+  } else {
+    const back = screen.queryByRole("button", { name: "Back to Activity" });
+    if (back) await user.click(back);
+    await user.click(
+      screen.getByRole("tab", {
         name: label === "All activity" ? "All" : label,
       }),
     );
   }
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("menu", { name: "Inbox filters" }),
-    ).not.toBeInTheDocument(),
-  );
 }
 it("Drafts shares the composer storage, gates origin navigation on current membership, and deletes only after consent", async () => {
   const h = fixture({ withWriter: true });
@@ -491,29 +497,17 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   await screen.findByText("Please review this");
   await chooseFilter("Threads");
   await chooseFilter("Humans", "Sender");
-  fireEvent.click(screen.getByRole("button", { name: "Unread only" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Unread" }));
   await chooseFilter("Drafts");
   expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("Drafts");
-  expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
+    screen.getByRole("button", { name: "Back to Activity" }),
+  ).toBeVisible();
   expect(
-    screen.queryByRole("button", { name: "Unread only" }),
+    screen.queryByRole("tablist", { name: "Activity type" }),
   ).not.toBeInTheDocument();
-  const user = userEvent.setup();
-  screen.getByRole("button", { name: "Inbox filters" }).focus();
-  await user.keyboard("{Enter}");
-  await screen.findByRole("menu", { name: "Inbox filters" });
-  const people = screen.getByRole("menuitemcheckbox", { name: "People" });
-  const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
-  expect(people).toHaveAttribute("aria-disabled", "true");
-  expect(agents).toHaveAttribute("aria-disabled", "true");
   expect(
-    screen.queryByText("Sender filters don’t apply to drafts."),
+    screen.queryByRole("switch", { name: "Unread" }),
   ).not.toBeInTheDocument();
-  expect(people).toBeChecked();
-  expect(agents).not.toBeChecked();
-  await user.keyboard("{Escape}");
   expect(
     screen.queryByRole("button", { name: "Refresh" }),
   ).not.toBeInTheDocument();
@@ -565,17 +559,12 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   expect(readView(h.owner.session.scope, key, "")).toBe("");
   expect(screen.getByText("No drafts")).toBeVisible();
   await chooseFilter("Threads");
-  expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
-  expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("Threads");
-  expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("People");
-  expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
-    "aria-pressed",
+  expect(screen.getByRole("tab", { name: "Threads" })).toHaveAttribute(
+    "aria-selected",
     "true",
   );
+  expect(screen.getByRole("button", { name: "From people" })).toBeVisible();
+  expect(screen.getByRole("switch", { name: "Unread" })).toBeChecked();
   expect(h.journal()?.state.frontiers).toEqual({});
 });
 
@@ -1518,7 +1507,7 @@ it.each(["channel", "thread", "unavailable"])(
 );
 
 it.each(["delete", "send", "empty-close"])(
-  "restores focus to a remaining row then Inbox filters on %s",
+  "restores focus to a remaining row then Back to Activity on %s",
   async (exit) => {
     const h = fixture({ withWriter: true, withDm: true });
     writeView(h.owner.session.scope, "draft:room", "First draft");
@@ -1553,7 +1542,7 @@ it.each(["delete", "send", "empty-close"])(
       expect(
         name === "Open draft for #Design"
           ? remaining
-          : screen.getByRole("button", { name: "Inbox filters" }),
+          : screen.getByRole("button", { name: "Back to Activity" }),
       ).toHaveFocus();
     }
   },
@@ -1743,7 +1732,7 @@ it.each([true, false])(
     await waitFor(() =>
       expect(
         ownedFocus
-          ? screen.getByRole("button", { name: "Inbox filters" })
+          ? screen.getByRole("button", { name: "Back to Activity" })
           : outside,
       ).toHaveFocus(),
     );
