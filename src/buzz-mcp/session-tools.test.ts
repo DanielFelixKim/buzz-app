@@ -7,6 +7,7 @@ import {
   addedKey,
   sessionHint,
   sessionTools,
+  skillTool,
 } from "./session-tools";
 import { TOOLS } from "./tools";
 import type { ProtectionAction } from "../features/agent-protection/service";
@@ -26,6 +27,17 @@ it("keys the added tools whatever order plugins started in", () => {
   expect(
     addedKey([tool("notes_add"), tool("tasks_create", "Creates a task.")]),
   ).not.toBe(key);
+});
+
+it("keys the added skills whatever order plugins started in", () => {
+  const skill = (key: string) => ({
+    key,
+    name: key.split("/")[1] ?? key,
+    description: `Does ${key}.`,
+    body: "Body.",
+  });
+  const [a, b] = [skill("alpha/one"), skill("beta/two")];
+  expect(addedKey([skillTool([b, a])])).toBe(addedKey([skillTool([a, b])]));
 });
 
 it("loads the Buzz tools up front, and attention and plugins' tools on search", () => {

@@ -57,12 +57,16 @@ export type AddedSkill = Readonly<{
 export const SKILL_TOOL = "skill_get";
 
 /** The tool that reads the skills plugins add, keyed `plugin/name`. Its
- * description lists them, so a changed list changes `addedKey`. */
+ * description lists them by key, so `addedKey` changes with the list but
+ * not with the order plugins started in. */
 export const skillTool = (
   skills: readonly (AddedSkill & { key: string })[],
 ): AddedTool => ({
   name: SKILL_TOOL,
-  description: `Read a skill a plugin adds, before work its description covers. Skills: ${skills
+  description: `Read a skill a plugin adds, before work its description covers. Skills: ${[
+    ...skills,
+  ]
+    .sort((a, b) => (a.key < b.key ? -1 : 1))
     .map(({ key, description }) => `${key}: ${description}`)
     .join("; ")}`,
   inputSchema: {
