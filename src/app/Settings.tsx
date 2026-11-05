@@ -35,7 +35,6 @@ import {
   type RefObject,
   useCallback,
   useEffect,
-  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -50,8 +49,13 @@ import {
   SquaresFourIcon,
   SidebarRightIcon,
 } from "../shared/design-system/icons/index";
+import {
+  createPluginUpdateChecks,
+  pluginUpdateAvailable,
+  type PluginUpdateChecks,
+} from "../plugins/update-checks";
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
-import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
+import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import { AgentPluginRequests } from "./AgentPluginRequests";
@@ -300,11 +304,10 @@ function PluginDetails({
   onCheckAccess,
   catalog,
   authorizeGit,
-  onUpdateAvailableChange,
   reviewRequested,
   onReviewHandled,
   initialUpdateAvailable,
-  sourceCheck,
+  updateChecks,
   holdReview,
 }: {
   plugin: PluginInfo;
@@ -320,11 +323,10 @@ function PluginDetails({
   catalog: Catalog;
   authorizeGit: Parameters<typeof PluginImport>[0]["authorizeGit"];
   onCheckAccess(): void;
-  onUpdateAvailableChange(available: boolean): void;
   reviewRequested: boolean;
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
-  sourceCheck: Parameters<typeof PluginImport>[0]["sourceCheck"];
+  updateChecks: PluginUpdateChecks;
   holdReview: (() => () => void) | undefined;
 }) {
   const accessReason = restrictedPlugin(plugin)
@@ -517,9 +519,8 @@ function PluginDetails({
         <PluginImport
           key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
           initialUpdateAvailable={initialUpdateAvailable}
-          sourceCheck={sourceCheck}
+          updateChecks={updateChecks}
           actionTarget={updateAvailable ? primaryActionTarget : actionTarget}
-          onUpdateAvailableChange={onUpdateAvailableChange}
           reviewRequested={reviewRequested}
           onReviewHandled={onReviewHandled}
           holdReview={holdReview}
@@ -853,21 +854,14 @@ export function Settings({
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
   const [reviewPluginId, setReviewPluginId] = useState<string>();
-  const [updateChecks, setUpdateChecks] = useState<
-    Record<
-      string,
-      { revision: string; available: boolean; sourceRevision?: string }
-    >
-  >({});
-  const updateVersions = useRef<Record<string, number>>({});
-  const pendingSourceChecks = useRef(
-    new Map<
-      string,
-      {
-        promise: Promise<string | ImportPreview | null>;
-        revisions: Record<string, string>;
-      }
-    >(),
+  const imports = plugins.imports;
+  const updateChecks = useMemo(
+    () => createPluginUpdateChecks(imports),
+    [imports],
+  );
+  const updateSnapshot = useSyncExternalStore(
+    updateChecks.subscribe,
+    updateChecks.snapshot,
   );
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
@@ -1008,8 +1002,7 @@ export function Settings({
               const updateAvailable =
                 !!plugins.imports &&
                 !managedBy(managed, id) &&
-                updateChecks[id]?.revision === plugin.revision &&
-                !!updateChecks[id]?.available;
+                pluginUpdateAvailable(updateSnapshot, plugin);
               const name = (
                 <span className={styles.pluginName}>
                   <span>{plugin.manifest.name}</span>
@@ -1234,97 +1227,33 @@ export function Settings({
     (pubkey: string) => keyActivity(relaySession, pubkey),
     [relaySession],
   );
-  const authorizePluginGit = async (repository: string) => {
-    const connection = communities.relay.snapshot();
-    return connection.status === "ready"
-      ? ((await connection.session.authorizeGit?.(repository)) ?? null)
-      : null;
-  };
-  const authorizeUpdateCheck = useEffectEvent(authorizePluginGit);
-  const imports = plugins.imports;
+  const authorizePluginGit = useCallback(
+    async (repository: string) => {
+      const connection = communities.relay.snapshot();
+      return connection.status === "ready"
+        ? ((await connection.session.authorizeGit?.(repository)) ?? null)
+        : null;
+    },
+    [communities.relay],
+  );
   useEffect(() => {
-    if (selected !== "plugins" || !catalog || !imports || busy) return;
+    if (selected !== "plugins" || !catalog || busy) return;
     let active = true;
-    const refresh = async () => {
+    const refresh = () => {
       if (!active || document.visibilityState === "hidden") return;
-      await Promise.all(
-        catalog.plugins.map(async (plugin) => {
-          const id = plugin.manifest.id;
-          const source = plugin.updateSource;
-          if (plugin.source !== "external" || !source || managedBy(managed, id))
-            return;
-          const version = (updateVersions.current[id] ?? 0) + 1;
-          updateVersions.current[id] = version;
-          const key = JSON.stringify(
-            "root" in source
-              ? ["folder", id, source.root, source.path]
-              : ["git", source.repository, source.reference],
-          );
-          let revision: string | undefined;
-          try {
-            let pending = pendingSourceChecks.current.get(key);
-            if (pending && pending.revisions[id] !== plugin.revision) {
-              await pending.promise.catch(() => {});
-              if (!active) return;
-              pending = pendingSourceChecks.current.get(key);
-            }
-            if (!pending) {
-              const promise = (async () => {
-                if ("root" in source) return imports.checkFolder(id);
-                const signed = await authorizeUpdateCheck(source.repository);
-                return imports.checkGit(
-                  signed?.repository ?? source.repository,
-                  source.reference,
-                  signed?.token,
-                );
-              })().finally(() => pendingSourceChecks.current.delete(key));
-              pending = {
-                promise,
-                revisions: Object.fromEntries(
-                  catalog.plugins.map((item) => [
-                    item.manifest.id,
-                    item.revision,
-                  ]),
-                ),
-              };
-              pendingSourceChecks.current.set(key, pending);
-            }
-            const result = await pending.promise;
-            revision =
-              typeof result === "string"
-                ? result
-                : result?.candidates.find(
-                    (candidate) =>
-                      candidate.manifest.id === id &&
-                      candidate.path === source.path,
-                  )?.revision;
-          } catch {
-            // One unavailable source must not prevent checking the others.
-          }
-          if (active && updateVersions.current[id] === version)
-            setUpdateChecks((current) => ({
-              ...current,
-              [id]: {
-                revision: plugin.revision,
-                available:
-                  revision !== undefined && revision !== plugin.revision,
-                ...(revision === undefined ? {} : { sourceRevision: revision }),
-              },
-            }));
-        }),
-      );
+      for (const plugin of catalog.plugins)
+        if (!managedBy(managed, plugin.manifest.id))
+          void updateChecks.check(plugin, authorizePluginGit);
     };
-    const resume = () => void refresh();
-    // Strict Mode's retired mount must not start source reads.
-    queueMicrotask(resume);
-    window.addEventListener("focus", resume);
-    document.addEventListener("visibilitychange", resume);
+    queueMicrotask(refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
       active = false;
-      window.removeEventListener("focus", resume);
-      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
     };
-  }, [selected, catalog, imports, managed, busy]);
+  }, [selected, catalog, managed, busy, updateChecks, authorizePluginGit]);
   // Keep announcements outside filtered rows and the covered narrow catalog.
   const announcement = (
     <div
@@ -1674,35 +1603,13 @@ export function Settings({
           catalog={catalog}
           initialUpdateAvailable={
             !managedBy(managed, selectedPlugin.manifest.id) &&
-            updateChecks[selectedPlugin.manifest.id]?.revision ===
-              selectedPlugin.revision &&
-            updateChecks[selectedPlugin.manifest.id]?.available === true
+            pluginUpdateAvailable(updateSnapshot, selectedPlugin)
           }
-          sourceCheck={
-            updateChecks[selectedPlugin.manifest.id]?.revision ===
-            selectedPlugin.revision
-              ? updateChecks[selectedPlugin.manifest.id]
-              : undefined
-          }
+          updateChecks={updateChecks}
           authorizeGit={authorizePluginGit}
           reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
           onReviewHandled={() => setReviewPluginId(undefined)}
           holdReview={installRequests?.holdReview}
-          onUpdateAvailableChange={(available) => {
-            const id = selectedPlugin.manifest.id;
-            updateVersions.current[id] = (updateVersions.current[id] ?? 0) + 1;
-            setUpdateChecks((current) => {
-              if (
-                current[id]?.revision === selectedPlugin.revision &&
-                current[id]?.available === available
-              )
-                return current;
-              return {
-                ...current,
-                [id]: { revision: selectedPlugin.revision, available },
-              };
-            });
-          }}
           failure={selectedFailure}
           retryable={canRetryPlugin(
             selectedPlugin,

@@ -12,12 +12,19 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useMemo,
+  useSyncExternalStore,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
 import { FolderOpenIcon } from "../shared/design-system/icons/index";
 import { PluginAccessReview } from "./PluginAccessReview";
+import {
+  createPluginUpdateChecks,
+  pluginUpdateCheck,
+  type PluginUpdateChecks,
+} from "../plugins/update-checks";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
 import type { GitPluginSource } from "../features/navigation/targets";
@@ -64,7 +71,7 @@ export function PluginImport({
   initialGit,
   requestSignal,
   initialUpdateAvailable = false,
-  sourceCheck,
+  updateChecks,
   plugins,
   catalog,
   busy,
@@ -88,7 +95,7 @@ export function PluginImport({
   initialGit?: GitPluginSource | undefined;
   requestSignal?: AbortSignal | undefined;
   initialUpdateAvailable?: boolean;
-  sourceCheck?: { sourceRevision?: string } | undefined;
+  updateChecks?: PluginUpdateChecks | undefined;
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
@@ -126,6 +133,15 @@ export function PluginImport({
     (item) => item.manifest.id === updateId,
   );
   const savedSource = currentPlugin?.updateSource;
+  const checks = useMemo(
+    () => updateChecks ?? createPluginUpdateChecks(imports),
+    [updateChecks, imports],
+  );
+  const checkSnapshot = useSyncExternalStore(checks.subscribe, checks.snapshot);
+  const sourceCheck = pluginUpdateCheck(checkSnapshot, currentPlugin);
+  const checkedRevision = sourceCheck?.revision;
+  const checking = !!sourceCheck?.checking;
+  const checkError = sourceCheck?.error;
   const [repository, setRepository] = useState(
     initialGit?.repository ??
       (savedSource && "repository" in savedSource
@@ -157,9 +173,6 @@ export function PluginImport({
   const [bound, setBound] = useState<PluginInstallRequest>();
   const requested = !!bound && !updateId;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
-  const [checkedRevision, setCheckedRevision] = useState<string>();
-  const [checking, setChecking] = useState(false);
-  const checkPending = useRef(false);
 
   const [discarding, setDiscarding] = useState(false);
   const [selected, setSelected] = useState("");
@@ -274,25 +287,8 @@ export function PluginImport({
     setRepository("");
     setReference("");
   }
-  async function checkSource(operation: () => Promise<string>) {
-    if (checkPending.current) return;
-    checkPending.current = true;
-    const current = lifetime.current;
-    setChecking(true);
-    try {
-      const revision = await operation();
-      if (current.active) {
-        setCheckedRevision(revision);
-        setError(null);
-      }
-    } catch (reason) {
-      if (current.active) setError(String(reason));
-    } finally {
-      checkPending.current = false;
-      if (current.active) setChecking(false);
-    }
-  }
-  const startSavedFolder = useEffectEvent(() => {
+  const startSavedFolder = useEffectEvent((initial = false) => {
+    if (initial && sourceCheck) return;
     if (
       imports &&
       savedSource &&
@@ -302,14 +298,14 @@ export function PluginImport({
       !busy &&
       document.visibilityState !== "hidden"
     )
-      void checkSource(() => imports.checkFolder(updateId));
+      if (currentPlugin) void checks.check(currentPlugin, authorizeGit);
   });
   useEffect(() => {
     const current = { active: true, token: "", installing: false };
     lifetime.current = current;
     // Defer until effects settle so Strict Mode's retired mount never acquires.
     queueMicrotask(() => {
-      if (current.active) startSavedFolder();
+      if (current.active) startSavedFolder(true);
     });
     return () => {
       current.active = false;
@@ -380,27 +376,19 @@ export function PluginImport({
         : existing.revision);
   const updateAvailable =
     !error &&
+    !(checkError && !preview) &&
     (preview
       ? !upToDate
       : checkedRevision !== undefined
         ? checkedRevision !== currentPlugin?.revision
         : initialUpdateAvailable);
-  const acceptSourceCheck = useEffectEvent((revision: string | undefined) => {
-    if (!open && revision !== undefined) {
-      setCheckedRevision(revision);
-      setError(null);
-    }
-  });
-  useEffect(() => {
-    acceptSourceCheck(sourceCheck?.sourceRevision);
-  }, [sourceCheck]);
   const notifyUpdateAvailable = useEffectEvent((available: boolean) =>
     onUpdateAvailableChange?.(available),
   );
   useEffect(() => {
-    if (error || preview || checkedRevision !== undefined)
+    if (error || checkError || preview || checkedRevision !== undefined)
       notifyUpdateAvailable(updateAvailable);
-  }, [updateAvailable, checkedRevision, preview, error]);
+  }, [updateAvailable, checkedRevision, preview, error, checkError]);
   useEffect(() => {
     if (!reviewRequested || loading) return;
     if (error) {
@@ -474,6 +462,8 @@ export function PluginImport({
     linked = false,
   ) {
     if (!imports || pending.current || blocked) return;
+    const observe =
+      currentPlugin && savedSource ? checks.observe(currentPlugin) : undefined;
     const returnTo = document.activeElement as HTMLElement | null;
     sourceTrigger.current = returnTo;
     pending.current = true;
@@ -541,9 +531,9 @@ export function PluginImport({
           );
         }
       }
+      if (next?.candidates.length === 1 && next.candidates[0])
+        observe?.(next.candidates[0].revision);
       setError(null);
-      if (updateId && next?.candidates.length === 1)
-        setCheckedRevision(next.candidates[0]?.revision);
       setPreview(next);
       setReviewing(next?.candidates.length === 1);
       setExisting(
@@ -557,7 +547,10 @@ export function PluginImport({
         next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
       );
     } catch (reason) {
-      if (current.active) showError(reason, returnTo);
+      if (current.active) {
+        observe?.(undefined, String(reason));
+        showError(reason, returnTo);
+      }
     } finally {
       pending.current = false;
       if (current.active) {
@@ -665,40 +658,25 @@ export function PluginImport({
   function checkSavedGit(checkOnly = true) {
     const source = savedSource;
     if (!imports || !source || !("repository" in source)) return;
+    if (checkOnly) {
+      if (currentPlugin) void checks.check(currentPlugin, authorizeGit);
+      return;
+    }
     const acquire = async () => {
-      if (!checkOnly && lifetime.current.token) {
+      if (lifetime.current.token) {
         await imports.discard(lifetime.current.token);
         lifetime.current.token = "";
       }
       const signed = await authorizeGit?.(source.repository);
-      return (checkOnly ? imports.checkGit : imports.git)(
+      return imports.git(
         signed?.repository ?? source.repository,
         source.reference,
         signed?.token,
       );
     };
-    if (!checkOnly) {
-      void load(acquire);
-      return;
-    }
-    void checkSource(async () => {
-      const result = await acquire();
-      if (!result) throw new Error("No update source found");
-      const candidate = result.candidates.find(
-        (item) => item.manifest.id === updateId && item.path === source.path,
-      );
-      if (!candidate)
-        throw new Error(
-          result.warnings.find((warning) =>
-            warning.startsWith(
-              `${source.path === "." ? "Selected folder" : source.path}:`,
-            ),
-          ) ??
-            "The saved repository no longer contains this plugin at its installed path.",
-        );
-      return candidate.revision;
-    });
+    void load(acquire);
   }
+
   const addButton = (
     <Button
       ref={trigger}
@@ -791,18 +769,19 @@ export function PluginImport({
           >
             {null}
           </LoadingRegion>
-          {error && !open ? (
+          {(error || checkError) && !open ? (
             <p role="alert">
               Source{" "}
               {savedSource && "repository" in savedSource
                 ? "repository"
                 : "folder"}{" "}
-              unavailable. {error}
+              unavailable. {error ?? checkError}
             </p>
           ) : null}
           {(preview || checkedRevision !== undefined) &&
           !open &&
           !error &&
+          !checkError &&
           !updateAvailable ? (
             statusTarget ? (
               createPortal(<span role="status">Up to date</span>, statusTarget)
