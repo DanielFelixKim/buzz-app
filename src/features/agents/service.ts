@@ -1,3 +1,4 @@
+import { hasFeature } from "./bestie-features";
 import { followUpQueue } from "../messages/follow-up-queue";
 import type {} from "../navigation/service";
 import {
@@ -2156,7 +2157,7 @@ export class AgentsService extends Service implements Agents {
             candidate?.pubkey === agent.pubkey &&
             candidate.owner === agent.owner &&
             typeof instructions === "string" &&
-            /<!-- buzz:bestie\/inbox v\d+ -->/.test(instructions)
+            hasFeature(instructions, { id: "inbox" })
           );
         };
         if (
@@ -2177,9 +2178,15 @@ export class AgentsService extends Service implements Agents {
           throw new Error(
             "Your owner has not allowed Inbox access for this Bestie.",
           );
+        const unread = session.unread.inbox();
+        const feed = session.inboxFeed.snapshot();
         await Promise.all([
-          session.unread.ensure(),
-          session.inboxFeed.ensure(),
+          unread.status === "error" || unread.freshness === "stale"
+            ? session.unread.refresh()
+            : session.unread.ensure(),
+          feed.status === "error"
+            ? session.inboxFeed.refresh()
+            : session.inboxFeed.ensure(),
         ]);
         if (
           (await session.mainAgent.read()) !== agent.pubkey ||
@@ -2188,7 +2195,22 @@ export class AgentsService extends Service implements Agents {
           throw new Error(
             "Your owner has not allowed Inbox access for this Bestie.",
           );
-        return { items: session.unread.inbox().items };
+        // A successful await can still leave failed or retired evidence. Never
+        // turn that into notification content, partial results, or an empty Inbox.
+        const live = relay.snapshot();
+        const result = session.unread.inbox();
+        const settled = session.inboxFeed.snapshot();
+        if (
+          live.status !== "ready" ||
+          live.viewer !== agent.owner ||
+          live.session !== session ||
+          result.status !== "ready" ||
+          result.freshness !== "observed" ||
+          settled.status !== "ready" ||
+          settled.incomplete.length
+        )
+          throw new Error("Inbox is not ready. Please retry.");
+        return { items: result.items };
       },
       resumeFollowUps: (agent, turns) => {
         const session = this.bindingOf(agent)?.session;

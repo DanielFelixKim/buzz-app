@@ -108,6 +108,28 @@ model can read what they return. Protection reviews these calls and their
 results as it does other Buzz tools. See
 [configuration](configuration.md#owner-mcp-community-flag).
 
+## Bestie Inbox access
+
+The optional `AgentHandle.inbox` delegates the owner's bounded notification
+projection to the account's current local Bestie. The service verifies the owner
+session, strongly reads the account choice, and checks the saved Inbox feature
+before and after loading. Settings and authorization share the marked-section
+policy in `bestie-features.ts`: incomplete or damaged markers deny access; edits
+inside complete sections remain enabled. This is not separate per-use consent.
+
+The service releases items only from observed, ready unread evidence and a ready
+Inbox feed with no unresolved edit/deletion targets. Any stale, error, loading or
+retired snapshot returns a retryable error, never a successful partial/empty list.
+The next call retries existing read errors. The captured runner lifetime is checked
+again after the read, so retirement or retype cannot release a late result. The
+shared MCP client also checks a supplied cancellation signal before and after the
+read; ordinary Interrupt does not supply a per-turn fence in every harness.
+
+Inbox grants no channel membership, history access or posting rights. Owner-private
+use and non-disclosure remain prompt rules, not tool-enforced context or output
+confinement. Already returned tool data can remain in harness history. No posting
+preview/approval workflow or default-state change is part of these safeguards.
+
 ## External app authorization
 
 The build flag `BUZZ_EXTERNAL_MCP_COMMUNITIES` lists the allowed community

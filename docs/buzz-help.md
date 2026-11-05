@@ -825,6 +825,10 @@ available rather than silently discarding it.
   its access to **Participating** to let it post. This panel does not add it to DMs.
   Changing Inbox access does not change membership,
   and removing channel membership does not turn off Inbox access.
+  If Inbox cannot finish checking notification updates, the tool asks you to
+  retry instead of returning an empty or partial Inbox. Inbox access does not
+  add message approval before Bestie posts. Its instructions say to keep Inbox
+  content private to you; this is not a technical guarantee against disclosure.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

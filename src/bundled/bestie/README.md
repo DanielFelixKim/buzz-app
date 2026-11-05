@@ -99,7 +99,22 @@ available only while that exact agent remains the owner’s account-saved Bestie
 The tool reads the owner’s bounded Inbox projection, which can include private
 DM and private-channel notifications; it does not add Bestie to any of those
 conversations, let it read their history, or let it reply. Turning the switch
-off removes the capability. Inbox content must not be copied to memory.
+off removes the capability. The tool uses the same saved instruction-section
+check as Settings: a missing or damaged section denies access, while edits inside
+a complete section stay allowed. It returns no items while unread evidence is
+stale, either read reports an error, or edit/deletion reconciliation is unfinished.
+It reports a retryable error instead of an empty or partial Inbox; the next call
+retries a prior read error. Pending results are withheld after the runner stops
+or its type is replaced, and permission and account Bestie choice are checked
+again before release. Previously returned content cannot be retracted.
+
+The instructions say to read Inbox only in a private conversation with the owner
+and never copy its content to memory or disclose it elsewhere. Those are prompt
+rules, not an enforced conversation or output boundary. Inbox adds no posting
+approval workflow. Ordinary session Interrupt is not uniformly a cancellation
+boundary for pending tool responses across harnesses; runner retirement/retype
+is. Enforced owner-only conversation access, a separate Inbox opt-in, and
+preview-and-approve for outward messages remain team discussion items.
 
 **Private channels** lists the private channels you share with
 Bestie, each with **Remove**, which asks first, as the Members dialog does.

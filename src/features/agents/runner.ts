@@ -2957,9 +2957,14 @@ export class AgentRunners {
         templates: () => this.host.templates(agent),
         ...(this.host.inbox
           ? {
-              inbox: () =>
-                this.host.inbox?.(agent) ??
-                Promise.reject(new Error("Inbox access is unavailable")),
+              inbox: async () => {
+                lifetime.throwIfAborted();
+                const result = await this.host.inbox?.(agent);
+                lifetime.throwIfAborted();
+                if (!result || runner.transitioning)
+                  throw new Error("Inbox access is unavailable");
+                return result;
+              },
             }
           : {}),
         tabs: () => this.host.tabs(agent),

@@ -1,6 +1,10 @@
 import { federatedFixture } from "../federated-identity/testing";
 import { createNativeSession } from "../../bundled/builderlab/session";
 import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
+import { inbox, withFeature } from "../../bundled/bestie/features";
+import { createRelaySession } from "../relay/session";
+import type { LiveCallbacks } from "../relay/live";
+import { metadata, roster } from "../relay/testing";
 import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices } from "./choices";
@@ -3266,6 +3270,228 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   await service.remove(bot);
   expect(plugin.agents.handle(bot)).toBeUndefined();
+});
+
+describe("delegated Inbox reads", () => {
+  async function inboxSetup() {
+    const f = await setup();
+    const relay = keypair();
+    const author = keypair();
+    const original = message(author, channel, "OLD BODY", 100, [["p", viewer]]);
+    let selected: string | null = bot;
+    let live!: LiveCallbacks;
+    const query = vi.fn(async (filters: readonly ReadFilter[]) =>
+      filters[0]?.["#e"] ? [] : [original],
+    );
+    const account = vi.fn(async () => selected);
+    const owner = createRelaySession({
+      viewer,
+      relayAuthor: relay.pubkey,
+      query,
+      media: () => undefined,
+      readMainAgent: account,
+      writeMainAgent: async () => {},
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
+    live.state({ status: "connected", routes: [] });
+    live.receive([
+      roster(relay, channel, [viewer, bot, author.pubkey], 10),
+      metadata(relay, channel, "Inbox source", 10),
+    ]);
+    Object.assign(f.session, {
+      unread: owner.session.unread,
+      inboxFeed: owner.session.inboxFeed,
+      mainAgent: owner.session.mainAgent,
+    });
+    const instructions = withFeature("", inbox, true);
+    await f.service.create({
+      type: "example/echo",
+      name: "Echo",
+      config: { reply: "ok", instructions },
+    });
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const handle = f.plugin.agents.handle(bot);
+    if (!handle?.inbox) throw new Error("Missing Inbox reader");
+    return {
+      ...f,
+      owner,
+      query,
+      original,
+      instructions,
+      handle,
+      account,
+      author,
+      live,
+      readInbox: () =>
+        callTool(
+          appClient(handle, {
+            read: vi.fn(),
+            memories: async () => ({ entries: [], partial: false }),
+          }),
+          {},
+          "inbox",
+          {},
+        ),
+      selectBestie: (pubkey: string | null) => {
+        selected = pubkey;
+      },
+      saveInstructions: (text: string) =>
+        f.service.save(bot, {
+          config: { reply: "ok", instructions: text },
+        }),
+      close: async () => {
+        owner.dispose();
+        await f.ctx.fiber.dispose();
+      },
+    };
+  }
+
+  it.each([
+    ["missing permission", ""],
+    ["missing end", "<!-- buzz:bestie/inbox v1 -->\nAllowed."],
+    [
+      "damaged end",
+      "<!-- buzz:bestie/inbox v1 -->\nAllowed.\n<!-- /buzz:bestie/inbox-->",
+    ],
+    [
+      "whole plus damaged copy",
+      `${withFeature("", inbox, true)}\n<!-- buzz:bestie/inbox v1 -->`,
+    ],
+  ])("denies %s without reading notification content", async (_name, text) => {
+    const f = await inboxSetup();
+    try {
+      await f.saveInstructions(text);
+      await expect(f.handle.inbox?.()).rejects.toThrow(/Inbox access/);
+      expect(f.query).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("allows customized instructions and returns only reconciled edits and deletions", async () => {
+    const f = await inboxSetup();
+    try {
+      await f.saveInstructions(
+        f.instructions.replace("# Inbox access", "# My triage rules"),
+      );
+      const edited = signed(f.author, {
+        kind: 40003,
+        content: "CURRENT BODY",
+        created_at: 101,
+        tags: [
+          ["h", channel],
+          ["e", f.original.id],
+        ],
+      });
+      f.query.mockImplementation(async ([filter]) =>
+        filter?.["#e"]
+          ? filter.until === undefined
+            ? [edited]
+            : []
+          : [f.original],
+      );
+      const result = JSON.parse((await f.readInbox()) as string);
+      expect(result.map((item: { preview: string }) => item.preview)).toEqual([
+        "CURRENT BODY",
+      ]);
+      const deletion = signed(f.author, {
+        kind: 5,
+        content: "",
+        created_at: 102,
+        tags: [
+          ["h", channel],
+          ["e", f.original.id],
+        ],
+      });
+      f.query.mockImplementation(async ([filter]) =>
+        filter?.["#e"]
+          ? filter.until === undefined
+            ? [edited, deletion]
+            : []
+          : [f.original],
+      );
+      f.owner.session.inboxFeed.stale();
+      expect(JSON.parse((await f.readInbox()) as string)).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it.each(["unread", "overlays"])(
+    "rejects a failed %s read instead of stale content, then retries",
+    async (stage) => {
+      const f = await inboxSetup();
+      try {
+        f.query.mockImplementation(async ([filter]) => {
+          if (stage === "overlays" ? !!filter?.["#e"] : !!filter?.["#h"])
+            throw new Error("Notification read failed");
+          return filter?.["#e"] ? [] : [f.original];
+        });
+        await expect(f.readInbox()).rejects.toThrow(/Inbox.*retry/i);
+        f.query.mockImplementation(async ([filter]) =>
+          filter?.["#e"] ? [] : [f.original],
+        );
+        expect(JSON.parse((await f.readInbox()) as string)[0]?.preview).toBe(
+          "OLD BODY",
+        );
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  it.each([
+    "permission",
+    "Bestie choice",
+    "retype",
+    "stop",
+    "cache clear",
+    "disconnect",
+  ])("withholds a held read after %s changes", async (change) => {
+    const f = await inboxSetup();
+    const gate = runnerGate<RelayEvent[]>();
+    const started = runnerGate();
+    f.query.mockImplementation(async ([filter]) => {
+      if (filter?.["#e"]) {
+        started.resolve();
+        return gate.promise;
+      }
+      return [f.original];
+    });
+    const pending = f.handle.inbox?.();
+    const rejected = expect(pending).rejects.toThrow();
+    try {
+      await started.promise;
+      expect(f.owner.session.inboxFeed.snapshot().incomplete).toContain(
+        f.original.id,
+      );
+      if (change === "permission") await f.saveInstructions("");
+      if (change === "Bestie choice") f.selectBestie(sibling);
+      if (change === "retype") {
+        f.plugin.agents.register({
+          id: "replacement",
+          title: "Replacement",
+          defaults: () => ({ config: {} }),
+          run: vi.fn(),
+        });
+        await f.service.retype(bot, "example/replacement", {
+          config: { instructions: f.instructions },
+        });
+      }
+      if (change === "stop") await f.ctx.fiber.dispose();
+      if (change === "cache clear") await f.owner.clearCache();
+      if (change === "disconnect")
+        f.live.state({ status: "retrying", routes: [] });
+      gate.resolve([]);
+      await rejected;
+    } finally {
+      gate.resolve([]);
+      await f.close();
+    }
+  });
 });
 
 it("leaves a plugin's note for an agent's next turn in a channel, once, while this copy runs it", async () => {
