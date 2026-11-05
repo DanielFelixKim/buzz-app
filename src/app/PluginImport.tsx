@@ -472,8 +472,7 @@ export function PluginImport({
     linked = false,
   ) {
     if (!imports || pending.current || blocked) return;
-    const observe =
-      currentPlugin && savedSource ? checks.observe(currentPlugin) : undefined;
+    const observe = currentPlugin ? checks.observe(currentPlugin) : undefined;
     const returnTo = document.activeElement as HTMLElement | null;
     sourceTrigger.current = returnTo;
     pending.current = true;
