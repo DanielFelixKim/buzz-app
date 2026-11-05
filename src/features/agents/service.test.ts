@@ -9339,26 +9339,21 @@ it("deletes a hosted agent from its provider, then from its community", async ()
   expect(service.find(hostedKey)).toBeUndefined();
 });
 
-it("forgets a hosted agent without its provider only once Delete finds the provider doesn't know it", async () => {
+it("forgets a hosted agent without its provider only when the provider says then that it doesn't know it", async () => {
   const { service, plugin } = await setup();
   const { type, remote } = cloud();
   plugin.agents.register(type);
   await service.create({ type: "example/cloud", name: "Sky" });
-  await expect(service.forget(hostedKey)).rejects.toThrow(
-    "provider doesn't know it",
-  );
-  remote.remove.mockRejectedValueOnce(new Error("provider down"));
-  await expect(service.remove(hostedKey)).rejects.toThrow("provider down");
-  await expect(service.forget(hostedKey)).rejects.toThrow(
-    "provider doesn't know it",
-  );
   remote.remove.mockRejectedValueOnce(new UnknownHostedAgent("not here"));
   await expect(service.remove(hostedKey)).rejects.toThrow("not here");
+  remote.remove.mockRejectedValueOnce(new Error("provider down"));
+  await expect(service.forget(hostedKey)).rejects.toThrow("provider down");
   expect(service.find(hostedKey)?.place).toBe("hosted");
+  remote.remove.mockRejectedValueOnce(new UnknownHostedAgent("not here"));
   steps.length = 0;
   await service.forget(hostedKey);
   expect(steps).toEqual(["unshare", "leave"]);
-  expect(remote.remove).toHaveBeenCalledTimes(2);
+  expect(remote.remove).toHaveBeenCalledTimes(3);
   expect(service.find(hostedKey)).toBeUndefined();
 });
 

@@ -139,8 +139,8 @@ absence from another account's list. Registration retains its replay UUID until
 Agents has saved unfinished setup and begins activation, or provider deletion
 is confirmed. On another device, removal resolves the ID from the signed-in
 account's list; an unknown key is refused with `UnknownHostedAgent`, after
-which Delete offers Remove from Buzz to take it out of the community without
-Beekeeper. Existing Settings-created
+which Delete offers Remove from Buzz: it asks Beekeeper again and takes the
+agent out of the community even if that refusal repeats. Existing Settings-created
 agents are not migrated into this type.
 
 - `session.ts` is the `BuilderlabSession` consumers share. In an FI build it
