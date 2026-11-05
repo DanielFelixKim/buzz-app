@@ -967,7 +967,7 @@ function CodeActions({
   children,
 }: {
   code: string;
-  language?: string;
+  language: string | undefined;
   children?: ReactNode;
 }) {
   const notify = useToastNotification();
