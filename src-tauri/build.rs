@@ -178,6 +178,7 @@ fn main() {
             "plugin_host_mcp_close",
             "plugin_host_forward_admission",
             "plugin_host_forward_open",
+            "plugin_host_forward_associate",
             "plugin_host_forward_seal",
             "plugin_host_forward_close",
             "plugin_host_read_file",

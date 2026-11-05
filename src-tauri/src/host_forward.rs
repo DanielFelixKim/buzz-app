@@ -1,5 +1,5 @@
-//! Loopback forwarding from a local harness (Claude Code) to the build's
-//! agent gateway, with Buzz's context headers composed in natively.
+//! Loopback forwarding from a local harness (Claude Code, goose) to the
+//! build's agent gateway, with Buzz's context headers composed in natively.
 //! The harness is pointed at a generation's base URL and keeps its own
 //! credentials, bodies, streaming, retries and cancellation; this adds only
 //! the reserved headers the page fixed when it opened the generation.
@@ -20,7 +20,8 @@
 //!   revokes what opened under an older one, aborting its streams. A request
 //!   is admitted under the same lock that revocation takes.
 //! - Inference must name the generation's harness session in the harness's own
-//!   header. A generation is opened with its session, which never changes.
+//!   header. A Claude generation is opened with its session; a goose one opens
+//!   for discovery only and is associated once, before its first prompt.
 //! - Sealing is terminal: later requests get 410, which harnesses don't retry,
 //!   while admitted streams finish. Closing forgets the handle (404) and aborts
 //!   its streams. Neither leaves a record behind.
@@ -81,6 +82,7 @@ type Reply = Response<BoxBody<Bytes, BoxError>>;
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Harness {
     Claude,
+    Goose,
 }
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -96,15 +98,17 @@ impl Harness {
     fn capability(self) -> &'static str {
         match self {
             Harness::Claude => "claude-code",
+            Harness::Goose => "goose",
         }
     }
     fn session_header(self) -> &'static str {
         match self {
             Harness::Claude => "x-claude-code-session-id",
+            Harness::Goose => "agent-session-id",
         }
     }
     /// What the request is, from the exact routes each harness was observed
-    /// to send (Claude Code 2.1.318).
+    /// to send (Claude Code 2.1.318, goose-acp 1.57.0).
     fn classify(self, method: &Method, path: &str, query: Option<&str>) -> Option<Class> {
         let segments: Vec<&str> = path.strip_prefix('/')?.split('/').collect();
         match (self, method, segments.as_slice(), query) {
@@ -112,9 +116,31 @@ impl Harness {
             (Harness::Claude, &Method::POST, ["v1", "messages"], None | Some("beta=true")) => {
                 Some(Class::Inference)
             }
+            (Harness::Goose, &Method::GET, ["api", "2.0", "serving-endpoints"], None) => {
+                Some(Class::Discovery)
+            }
+            (Harness::Goose, &Method::GET, ["api", "2.0", "serving-endpoints", model], None)
+                if model_name(model) =>
+            {
+                Some(Class::Discovery)
+            }
+            (Harness::Goose, &Method::POST, ["serving-endpoints", model, "invocations"], None)
+                if model_name(model) =>
+            {
+                Some(Class::Inference)
+            }
             _ => None,
         }
     }
+}
+
+/// A serving-endpoint name: no separator, dot segment or escape.
+fn model_name(segment: &str) -> bool {
+    (1..=128).contains(&segment.len())
+        && !segment.starts_with('.')
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
 /// An opaque ID the page or harness names: a route or a harness session.
@@ -256,7 +282,7 @@ struct Generation {
     route: String,
     revision: u64,
     harness: Harness,
-    session: String,
+    session: Option<String>,
     inference: HeaderMap,
     discovery: HeaderMap,
     state: State,
@@ -392,7 +418,7 @@ impl HostForward {
         route: &str,
         revision: u64,
         harness: Harness,
-        session: String,
+        session: Option<String>,
         inference: &BTreeMap<String, String>,
         discovery: &BTreeMap<String, String>,
         events: Channel<ForwardEvent>,
@@ -405,8 +431,12 @@ impl HostForward {
         if !opaque(route) {
             return Err("Invalid route".into());
         }
-        if !opaque(&session) {
-            return Err("Invalid harness session".into());
+        // A Claude process is spawned on its session; goose learns its own
+        // and is associated once it has one.
+        match (harness, &session) {
+            (Harness::Claude, Some(session)) if opaque(session) => {}
+            (Harness::Goose, None) => {}
+            _ => return Err("Invalid harness session".into()),
         }
         let inference = bundle(gateway, inference)?;
         let discovery = bundle(gateway, discovery)?;
@@ -455,6 +485,24 @@ impl HostForward {
             id,
             url: format!("http://{authority}/{handle}"),
         })
+    }
+
+    /// Names a goose generation's session, once.
+    fn associate(&self, plugin: &str, id: u64, session: String) -> Result<(), String> {
+        if !opaque(&session) {
+            return Err("Invalid harness session".into());
+        }
+        let mut registry = self.registry();
+        let handle = registry.handle_of(plugin, id)?;
+        let generation = registry.generations.get_mut(&handle).expect("found");
+        if generation.harness != Harness::Goose || generation.session.is_some() {
+            return Err("The generation's session is already set".into());
+        }
+        if generation.state != State::Open {
+            return Err("The generation has ended".into());
+        }
+        generation.session = Some(session);
+        Ok(())
     }
 
     fn seal(&self, plugin: &str, id: u64) -> Result<(), String> {
@@ -563,13 +611,20 @@ impl HostForward {
             (Some(value), None) => Some(value.to_str().unwrap_or_default()),
             (Some(_), Some(_)) => return Err(refuse(StatusCode::BAD_REQUEST, "session_ambiguous")),
         };
-        let matches = match (class, session) {
-            (Class::Discovery, None) => true,
-            (Class::Inference, None) => false,
-            (_, Some(session)) => session == generation.session,
+        let expected = generation.session.as_deref();
+        // Before association, goose's discovery may already name its session.
+        let matches = match (class, session, expected) {
+            (Class::Inference, None, _) => false,
+            (Class::Discovery, None, _) | (Class::Discovery, Some(_), None) => true,
+            (_, Some(session), expected) => expected == Some(session),
         };
         if !matches {
-            return Err(refuse(StatusCode::BAD_REQUEST, "session_mismatch"));
+            let reason = if expected.is_none() {
+                "session_unassociated"
+            } else {
+                "session_mismatch"
+            };
+            return Err(refuse(StatusCode::BAD_REQUEST, reason));
         }
         if !current.admits || current.revision != generation.revision {
             return Err(refuse(StatusCode::GONE, "generation_revoked"));
@@ -918,7 +973,7 @@ pub(crate) async fn plugin_host_forward_open(
     route: String,
     route_revision: u64,
     harness: Harness,
-    session: String,
+    session: Option<String>,
     inference: BTreeMap<String, String>,
     discovery: BTreeMap<String, String>,
     on_event: Channel<ForwardEvent>,
@@ -936,6 +991,17 @@ pub(crate) async fn plugin_host_forward_open(
         &discovery,
         on_event,
     )
+}
+
+/// Names a goose generation's session before its first prompt.
+#[tauri::command]
+pub(crate) fn plugin_host_forward_associate(
+    forward: tauri::State<'_, HostForward>,
+    id: String,
+    generation: u64,
+    session: String,
+) -> Result<(), String> {
+    forward.associate(&id, generation, session)
 }
 
 /// Ends the generation's admission for good; admitted streams finish.

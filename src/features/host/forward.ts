@@ -4,7 +4,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
  * (`src-tauri/src/host_forward.rs`). Desktop only. */
 
 export type ForwardOwner = Readonly<{ id: string; revision: string }>;
-export type ForwardHarness = "claude";
+export type ForwardHarness = "claude" | "goose";
 export type ForwardClass = "discovery" | "inference";
 
 export type ForwardEvent =
@@ -33,7 +33,8 @@ export type ForwardOpen = Readonly<{
   route: string;
   routeRevision: number;
   harness: ForwardHarness;
-  session: string;
+  /** Claude: its spawn session. goose: omitted, then `associateForward`. */
+  session?: string;
   inference: Readonly<Record<string, string>>;
   discovery: Readonly<Record<string, string>>;
   onEvent: (event: ForwardEvent) => void;
@@ -65,6 +66,19 @@ export function openForward(
     revision: owner.revision,
     ...options,
     onEvent: new Channel<ForwardEvent>(onEvent),
+  });
+}
+
+/** Names a goose generation's session, once, before its first prompt. */
+export function associateForward(
+  owner: ForwardOwner,
+  generation: number,
+  session: string,
+): Promise<void> {
+  return invoke<void>("plugin_host_forward_associate", {
+    id: owner.id,
+    generation,
+    session,
   });
 }
 

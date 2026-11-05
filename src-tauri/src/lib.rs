@@ -111,8 +111,8 @@ use host_files::{
     plugin_host_save_bytes,
 };
 use host_forward::{
-    plugin_host_forward_admission, plugin_host_forward_close, plugin_host_forward_open,
-    plugin_host_forward_seal, HostForward,
+    plugin_host_forward_admission, plugin_host_forward_associate, plugin_host_forward_close,
+    plugin_host_forward_open, plugin_host_forward_seal, HostForward,
 };
 use host_mcp::{
     plugin_host_mcp_authorize, plugin_host_mcp_close, plugin_host_mcp_pairing,
@@ -761,6 +761,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_close,
         plugin_host_forward_admission,
         plugin_host_forward_open,
+        plugin_host_forward_associate,
         plugin_host_forward_seal,
         plugin_host_forward_close,
         plugin_host_read_file,

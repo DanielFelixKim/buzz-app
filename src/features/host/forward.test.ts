@@ -2,6 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
+  associateForward,
   closeForward,
   openForward,
   pushForwardAdmission,
@@ -91,5 +92,29 @@ it("seals and closes by generation", async () => {
   expect(invoke).toHaveBeenNthCalledWith(2, "plugin_host_forward_close", {
     id: "buzz.agents",
     generation: 7,
+  });
+});
+
+it("opens a goose generation without a session, then associates it", async () => {
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  await openForward(owner, {
+    route: "route-a",
+    routeRevision: 2,
+    harness: "goose",
+    inference: {},
+    discovery: {},
+    onEvent: () => {},
+  });
+  const [, args] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    Record<string, unknown>,
+  ];
+  expect(args.harness).toBe("goose");
+  expect("session" in args).toBe(false);
+  await associateForward(owner, 7, "20261104_1");
+  expect(invoke).toHaveBeenLastCalledWith("plugin_host_forward_associate", {
+    id: "buzz.agents",
+    generation: 7,
+    session: "20261104_1",
   });
 });
