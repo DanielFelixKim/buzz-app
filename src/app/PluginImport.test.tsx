@@ -3198,40 +3198,54 @@ it("keeps a known Update usable while background discovery is pending", async ()
   }
 });
 
-it("retains a manually discovered update for an installation without a saved source", async () => {
-  const user = userEvent.setup();
-  const imports = {
-    folder: vi.fn(async () => ({
-      ...rememberedPreview,
-      candidates: [rememberedPreview.candidates[0]],
-    })),
-    discard: vi.fn(async () => {}),
-  };
-  const manager = {
-    imports,
-    installImport: vi.fn(),
-  } as unknown as PluginManager;
-  const checks = createPluginUpdateChecks(manager.imports);
-  render(
-    <PluginImport
-      plugins={manager}
-      catalog={{
-        profile: "test",
-        location: "test",
-        plugins: [rememberedPlugin],
-      }}
-      busy={false}
-      updateId={rememberedManifest.id}
-      updateChecks={checks}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Update Remembered" }));
-  await user.click(
-    screen.getByRole("button", { name: "Browse plugin folder" }),
-  );
-  await screen.findByRole("button", { name: /^Update$/ });
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(pluginUpdateAvailable(checks.snapshot(), rememberedPlugin)).toBe(true);
-  expect(manager.installImport).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "retains a manually discovered update without a saved source (multiple=%s)",
+  async (multiple) => {
+    const user = userEvent.setup();
+    const imports = {
+      folder: vi.fn(async () => ({
+        ...rememberedPreview,
+        candidates: multiple
+          ? rememberedPreview.candidates
+          : [rememberedPreview.candidates[0]],
+      })),
+      discard: vi.fn(async () => {}),
+    };
+    const manager = {
+      imports,
+      installImport: vi.fn(),
+    } as unknown as PluginManager;
+    const checks = createPluginUpdateChecks(manager.imports);
+    render(
+      <PluginImport
+        plugins={manager}
+        catalog={{
+          profile: "test",
+          location: "test",
+          plugins: [rememberedPlugin],
+        }}
+        busy={false}
+        updateId={rememberedManifest.id}
+        updateChecks={checks}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Update Remembered" }));
+    await user.click(
+      screen.getByRole("button", { name: "Browse plugin folder" }),
+    );
+    if (multiple) {
+      await user.click((await screen.findAllByRole("radio"))[1] as HTMLElement);
+      await user.click(screen.getByRole("button", { name: "Continue" }));
+    }
+    await screen.findByRole("button", { name: /^Update$/ });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(pluginUpdateAvailable(checks.snapshot(), rememberedPlugin)).toBe(
+      true,
+    );
+    expect(checks.snapshot()[rememberedManifest.id]?.revision).toBe(
+      multiple ? "alternate" : "new",
+    );
+    expect(manager.installImport).not.toHaveBeenCalled();
+  },
+);

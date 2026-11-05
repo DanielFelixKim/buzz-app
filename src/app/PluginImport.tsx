@@ -1075,6 +1075,8 @@ export function PluginImport({
                   type="button"
                   disabled={blocked || !candidate}
                   onClick={() => {
+                    if (currentPlugin && candidate)
+                      checks.observe(currentPlugin)(candidate.revision);
                     setExisting(
                       catalog.plugins.find(
                         (item) => item.manifest.id === candidate?.manifest.id,
