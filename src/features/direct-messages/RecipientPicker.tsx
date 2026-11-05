@@ -22,16 +22,17 @@ import { XIcon } from "../../shared/design-system/icons/index";
 import { usePeople, type Recipient } from "./usePeople";
 import {
   useVerifiedNames,
+  verifiedName,
   withVerifiedNames,
   type VerifiedPerson,
 } from "../profiles/useVerifiedNames";
+import type { VerifiedProfile } from "../relay/verified-profile";
 import { peopleRelationships } from "../profiles/relationships";
 import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
 const noExclusions: readonly string[] = [];
-const noPageNames = new Map<string, never>();
 const personKey = (pubkey: string) => `person:${pubkey}`;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** At most 24 characters, cut between characters rather than inside one. */
@@ -106,6 +107,24 @@ export function RecipientPicker({
     () => withVerifiedNames(directory.people, verified, profiles),
     [directory.people, verified, profiles],
   );
+  // Chosen people keep being checked, without waiting for a directory, so a
+  // choice made before its read answered, or a restored one, gets its
+  // verified name. The new label goes up to the chips, header and saved view.
+  const selectedVerified = useVerifiedNames(session, selected);
+  const named = useMemo(
+    () => withVerifiedNames(selected, selectedVerified, profiles),
+    [selected, selectedVerified, profiles],
+  );
+  useEffect(() => {
+    if (
+      named.some(
+        (person, index) =>
+          person.name !== selected[index]?.name ||
+          person.username !== selected[index]?.username,
+      )
+    )
+      onChange([...named]);
+  }, [named, selected, onChange]);
   const viewer = session.viewer;
   const {
     controlled,
@@ -142,25 +161,27 @@ export function RecipientPicker({
         ].filter((name): name is string => !!name),
       ),
     ];
-    // People the shared profiles verified by a matching name, which the
-    // directory's profile-name search cannot find, as Command-K finds them.
-    const byVerifiedName = query.trim()
-      ? withVerifiedNames(
-          [...profiles].flatMap(([pubkey, profile]): Recipient[] => {
-            const identity = profile.verified;
-            return identity &&
-              !profile.isAgent &&
-              !inDirectory.has(pubkey) &&
-              [identity.displayName, identity.username, identity.fullName].some(
-                (name) => !!name && matchPerson(name, query) !== undefined,
-              )
-              ? [{ ...profile, pubkey }]
-              : [];
-          }),
-          noPageNames,
-          profiles,
-        )
-      : [];
+    // People verified by a matching name, in the shared profiles (as Command-K
+    // finds them) or found here and verified for a page. The directory's
+    // profile-name search cannot find them by that name.
+    const pool: Recipient[] = [];
+    const pageNames = new Map<string, VerifiedProfile>();
+    if (query.trim())
+      for (const [pubkey, person] of [...profiles, ...known.current]) {
+        if (person.isAgent || inDirectory.has(pubkey) || pageNames.has(pubkey))
+          continue;
+        const identity = verifiedName(session.profiles, pubkey);
+        if (
+          identity &&
+          [identity.displayName, identity.username, identity.fullName].some(
+            (name) => !!name && matchPerson(name, query) !== undefined,
+          )
+        ) {
+          pageNames.set(pubkey, identity);
+          pool.push({ ...person, pubkey });
+        }
+      }
+    const byVerifiedName = withVerifiedNames(pool, pageNames, profiles);
     const byAgentName = query.trim()
       ? agents.identities.flatMap((agent): Recipient[] => {
           if (
@@ -265,6 +286,7 @@ export function RecipientPicker({
     usage,
     selected,
     excludedPubkeys,
+    session.profiles,
   ]);
   const discriminator = (person: Recipient) => identities.get(person.pubkey);
   // Only a community-verified identity supplies the detail beside the name.
@@ -272,7 +294,8 @@ export function RecipientPicker({
     person.profileNames
       ? [
           person.fullName !== person.name ? person.fullName : undefined,
-          person.username !== person.name ? `@${person.username}` : undefined,
+          // Kept when it equals the name: it marks the name as verified.
+          `@${person.username}`,
         ]
           .filter(Boolean)
           .join(" · ") || undefined
