@@ -818,7 +818,8 @@ available rather than silently discarding it.
   help triage notifications, including those from private channels and DMs. It
   does not join those conversations, grant their history, or allow replies there.
   It starts off until you turn it on. Choosing a Bestie again preserves its
-  saved Inbox preference. Reads are allowed
+  saved Inbox preference. A former Bestie's Inbox switch saves that preference,
+  but access stays inactive until it is your current Bestie. Reads are allowed
   only in an explicitly private DM or Solo chat containing just you and Bestie.
   Private-channel rows let you remove Bestie,
   add it to one channel, or add it to all your currently eligible private

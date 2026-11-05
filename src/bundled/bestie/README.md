@@ -94,7 +94,8 @@ Remembers you and Checks in. Changing one access path does not
 change the other.
 
 **Inbox** starts off until explicitly enabled. Choosing or reselecting a Bestie
-preserves its saved Inbox preference, including an off choice.
+preserves its saved Inbox preference, including an off choice. The Former Bestie
+tab explains that its switch saves a preference while access is inactive.
 Inbox adds an instruction section and makes the read-only `inbox` tool available
 only to runs while that exact agent remains the owner’s account-saved Bestie.
 The tool reads the owner’s bounded Inbox projection, which can include private

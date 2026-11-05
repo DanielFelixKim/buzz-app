@@ -216,7 +216,7 @@ function BestieTab({
         {former ? (
           <PreferenceRow
             icon={<BestieIcon size="1rem" />}
-            title={`${name} is no longer your Bestie. These are still on.`}
+            title={`${name} is no longer your Bestie. Manage its saved settings and channel access below.`}
             trailing={
               <Button
                 variant="outline"
@@ -432,7 +432,9 @@ function FeatureSwitch({
                   // Watching plugin is off.
                   checked && feature.timer && !agent.attentionEnabled
                   ? "Paused: watches aren't running on this device. Turn on the Attention plugin."
-                  : feature.description
+                  : former && feature === inbox
+                    ? `Inactive while ${agent.name || "this agent"} is not your Bestie. This saves your preference for when you choose it again.`
+                    : feature.description
         }
         checked={checked}
         // One left on can still be turned off.

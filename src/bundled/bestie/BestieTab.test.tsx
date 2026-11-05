@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, AgentChange, Agents } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { setDefaultAgent } from "../../features/solo/default-agent";
 import { onBestieMade } from "../agents/BestieChoice";
@@ -551,6 +552,57 @@ it("keeps Inbox consent in read access, separate from memory and channel members
   expect(screen.getByRole("switch", { name: "Remembers you" })).toBeChecked();
 });
 
+it("explains a former Bestie's saved Inbox preference and turns it off without changing memory or channels", async () => {
+  const user = userEvent.setup();
+  const { relay, mainAgent } = community(bea.pubkey);
+  const { agents, save } = host();
+  const session = relay.snapshot().session;
+  const channel = {
+    id: "plans",
+    name: "plans",
+    channelType: "stream",
+    private: true,
+    members: [OWNER, ada.pubkey],
+  } as ChannelSummary;
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [channel],
+  });
+  const add = vi.fn();
+  const remove = vi.fn();
+  Object.assign(session, {
+    memberAdditions: { add },
+    memberAdministration: { run: remove },
+  });
+  const instructions = withFeature("Be brief.", memory, true);
+  const agent = {
+    ...ada,
+    config: { instructions: withFeature(instructions, inbox, true) },
+  } as Agent;
+  const Tab = formerBestieTab(relay, agents).component;
+  const { rerender } = render(<Tab agent={agent} />);
+  const readInbox = screen.getByRole("switch", { name: "Inbox" });
+  expect(readInbox).toBeChecked();
+  expect(readInbox).toBeEnabled();
+  expect(readInbox).toHaveAccessibleDescription(
+    "Inactive while Ada is not your Bestie. This saves your preference for when you choose it again.",
+  );
+  await user.click(readInbox);
+  expect(save).toHaveBeenCalledExactlyOnceWith(ada.key, {
+    config: { instructions },
+  });
+  rerender(<Tab agent={{ ...agent, config: { instructions } }} />);
+  expect(readInbox).not.toBeChecked();
+  expect(screen.getByRole("switch", { name: "Remembers you" })).toBeChecked();
+  expect(session.directMessages.open).not.toHaveBeenCalled();
+  expect(mainAgent.write).not.toHaveBeenCalled();
+  expect(add).not.toHaveBeenCalled();
+  expect(remove).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("button", { name: "Remove Ada from #plans" }),
+  ).toBeVisible();
+});
+
 it("keeps memory on through the owner's edits, and offers Restore for edited markers", async () => {
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
@@ -902,7 +954,9 @@ it("shows a Former Bestie tab while a former Bestie has a setting on, with a way
   const Tab = tab.component;
   render(<Tab agent={remembering} />);
   expect(
-    screen.getByText("Ada is no longer your Bestie. These are still on."),
+    screen.getByText(
+      "Ada is no longer your Bestie. Manage its saved settings and channel access below.",
+    ),
   ).toBeVisible();
   expect(screen.getByRole("switch", { name: "Remembers you" })).toBeChecked();
   const hourly = screen.getByRole("switch", { name: "Checks in" });
