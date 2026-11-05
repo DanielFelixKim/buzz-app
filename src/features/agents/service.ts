@@ -889,11 +889,17 @@ export type RemoteAgentType = Readonly<{
       signal: AbortSignal;
     }>,
   ): Promise<boolean>;
-  /** Stops it and deletes its key. An agent already gone counts as removed. */
+  /** Stops it and deletes its key. An agent already gone counts as removed.
+   * Rejects with `UnknownHostedAgent` when the provider can't tell whether it
+   * is gone, as for one made under another account, so the owner can
+   * `forget` it instead. */
   remove(
     input: Readonly<{ pubkey: string; community: string; signal: AbortSignal }>,
   ): Promise<void>;
 }>;
+/** The provider has no record of a hosted agent for the signed-in account:
+ * it may be gone, or run by another account. */
+export class UnknownHostedAgent extends Error {}
 export type RegisteredAgentType = Contribution<AgentType>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
@@ -1210,7 +1216,9 @@ export type Agents = {
     deleting?: true;
   }>[];
   /** Deletes the agent from a community Delete cannot reach without leaving
-   * it there: it may stay in that community's channels. */
+   * it there: it may stay in that community's channels. A hosted agent whose
+   * Delete found its provider doesn't know it is taken out of its community
+   * without its provider, so another account may still run it. */
   forget(agent: AgentKey): Promise<void>;
   /** The owner's agents on this device that the selected community can add:
    * each in one of its other communities, by its home there. */
@@ -1640,6 +1648,9 @@ export class AgentsService extends Service implements Agents {
   /** Hosted agents whose setup, save or delete is running, so one waits for
    * the others. */
   private busy = new Set<string>();
+  /** Hosted agents whose Delete found their provider doesn't know them, so
+   * they can be forgotten. */
+  private unknownHosted = new Set<string>();
   /** Hosted and elsewhere agents as last shown, kept while unchanged. */
   private shown = new Map<string, Agent>();
   /** By origin: the agents last said to be online there, and when. */
@@ -4078,6 +4089,14 @@ export class AgentsService extends Service implements Agents {
     }));
   }
   async forget(key: AgentKey) {
+    const pubkey = pubkeyOf(key);
+    if (!this.identities.some((identity) => identity.pubkey === pubkey)) {
+      if (!this.unknownHosted.has(pubkey))
+        throw new Error(
+          "Only an agent whose provider doesn't know it can be forgotten",
+        );
+      return this.removeHosted(pubkey, false);
+    }
     const native = this.native;
     const member = this.liveMember(key);
     if (!native || !member) throw new Error("No such agent on this device");
@@ -4237,10 +4256,11 @@ export class AgentsService extends Service implements Agents {
     return done ? undefined : stillArchived(identity.name);
   }
 
-  /** Has a hosted agent's provider remove it, then takes it out of the
-   * community as Delete does for one here. Its record goes last, so a failure
-   * leaves it listed for Delete to be tried again. */
-  private removeHosted(pubkey: string) {
+  /** Has a hosted agent's provider remove it, unless it is being forgotten,
+   * then takes it out of the community as Delete does for one here. Its
+   * record goes last, so a failure leaves it listed for Delete to be tried
+   * again. */
+  private removeHosted(pubkey: string, provider = true) {
     if (
       this.state.agents.some(
         (agent) => agent.pubkey === pubkey && agent.place === "elsewhere",
@@ -4250,12 +4270,20 @@ export class AgentsService extends Service implements Agents {
     return this.exclusive(pubkey, async () => {
       const { agent, remote, origin, binding } = this.hosted(pubkey, true);
       const { signal } = binding.controller;
-      await remote.remove({ pubkey, community: agent.relay, signal });
+      if (provider)
+        await remote
+          .remove({ pubkey, community: agent.relay, signal })
+          .catch((error: unknown) => {
+            if (error instanceof UnknownHostedAgent)
+              this.unknownHosted.add(pubkey);
+            throw error;
+          });
       // Before its record goes, so a failure leaves it listed to Delete again.
       await unshare(binding.session, binding.viewer, pubkey, signal);
       // An unfinished one may have published its profile before setup failed.
       await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
       this.unlist(origin, pubkey);
+      this.unknownHosted.delete(pubkey);
       await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       );
