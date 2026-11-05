@@ -3549,9 +3549,13 @@ export function createChannelStore(
             );
           };
           let incoming = retain();
+          const merged = new Map(
+            state.events.map((event) => [event.id, event]),
+          );
           while (
             advancing.length > 1 &&
-            listByteSize(incoming) > maxHistoryBytes / 2
+            listByteSize(incoming.filter((event) => !merged.has(event.id))) >
+              maxHistoryBytes / 2
           ) {
             advancing = advancing.slice(
               0,
@@ -3560,9 +3564,6 @@ export function createChannelStore(
             incoming = retain();
           }
           const partial = advancing.length < newer.length;
-          const merged = new Map(
-            state.events.map((event) => [event.id, event]),
-          );
           for (const event of incoming) merged.set(event.id, event);
           const head =
             !partial &&

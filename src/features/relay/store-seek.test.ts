@@ -254,7 +254,7 @@ it.each([
     h.live.receive([evicted]);
     expect(h.window().rows.map((row) => row.id)).not.toContain(evicted.id);
     const forward = new Set(h.window().rows.map((row) => row.id));
-    for (let step = 0; h.window().hasNewer && step < 100; step++) {
+    for (let step = 0; h.window().hasNewer && step < 10; step++) {
       const before = h.window().rows.map((row) => row.id);
       h.channels.loadNewer?.("c");
       await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
