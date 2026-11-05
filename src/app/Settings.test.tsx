@@ -3175,3 +3175,40 @@ it.each(["opt-out", "removal"])(
     expect(checkGit).toHaveBeenCalledOnce();
   },
 );
+
+it("restores an explicit pane check after opting out during automatic discovery", async () => {
+  const fixture = reviewPluginFixture();
+  Object.assign(fixture.external, { updateSource: savedGitSource });
+  let finish!: (result: ReturnType<typeof gitCheckResult>) => void;
+  const checkGit = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(gitCheckResult("new"));
+  Object.assign(fixture.manager, { imports: { checkGit } });
+  await act(async () => fixture.publish());
+  await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  const pane = screen.getByRole("complementary", {
+    name: "Zebra external details",
+  });
+  expect(
+    within(pane).getByRole("button", { name: "Check for updates" }),
+  ).toBeDisabled();
+  Object.assign(fixture.external, { updateChecks: false });
+  await act(async () => fixture.publish());
+  await act(async () => finish(gitCheckResult("new")));
+  const check = within(pane).getByRole("button", { name: "Check for updates" });
+  expect(check).toBeEnabled();
+  fireEvent.click(check);
+  await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
+  expect(
+    await within(pane).findByRole("button", { name: /^Update$/ }),
+  ).toBeVisible();
+});

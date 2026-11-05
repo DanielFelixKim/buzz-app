@@ -47,6 +47,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     {
       sequence: number;
       revisions: Record<string, string>;
+      consumers: Map<string, () => boolean>;
       promise: Promise<string | ImportPreview | null>;
     }
   >();
@@ -66,7 +67,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     const id = plugin.manifest.id;
     const installed = installation(plugin);
     installations.set(id, installed);
-    const current = () => installations.get(id) === installed && eligible();
+    const current = () => installations.get(id) === installed;
     if (!force && pluginUpdateCheck(snapshot, plugin)) return;
     const key = JSON.stringify(
       "root" in source
@@ -81,23 +82,26 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
         (snapshot[id]?.sequence ?? 0) > request.sequence)
     ) {
       await request.promise.catch(() => {});
-      if (current()) return check(plugin, authorize, true, eligible);
+      if (current() && eligible())
+        return check(plugin, authorize, true, eligible);
       return;
     }
     if (!request) {
+      const consumers = new Map([[id, () => current() && eligible()]]);
       const promise = (async () => {
         if ("root" in source) return imports.checkFolder(id);
         const signed = await authorize?.(source.repository);
-        if (!current()) return null;
+        if (![...consumers.values()].some((active) => active())) return null;
         return imports.checkGit(
           signed?.repository ?? source.repository,
           source.reference,
           signed?.token,
         );
       })().finally(() => pending.delete(key));
-      request = { sequence: ++sequence, revisions: {}, promise };
+      request = { sequence: ++sequence, revisions: {}, consumers, promise };
       pending.set(key, request);
     }
+    request.consumers.set(id, () => current() && eligible());
     request.revisions[id] = plugin.revision;
     const previous = pluginUpdateCheck(snapshot, plugin);
     const next = {
@@ -132,7 +136,11 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
       error = String(reason);
     }
     if (current() && snapshot[id]?.sequence === request.sequence)
-      publish(id, { ...next, checking: false, revision, error });
+      publish(id, {
+        ...next,
+        checking: false,
+        ...(eligible() && { revision, error }),
+      });
   }
   return {
     snapshot: () => snapshot,

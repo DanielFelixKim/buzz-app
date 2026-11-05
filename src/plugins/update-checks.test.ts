@@ -249,3 +249,57 @@ it("rechecks automatic eligibility after authorization resolves", async () => {
   await checking;
   expect(checkGit).not.toHaveBeenCalled();
 });
+
+it("settles the matching pending indicator after automatic eligibility is revoked", async () => {
+  let finish!: (value: ReturnType<typeof preview>) => void;
+  let eligible = true;
+  const checkGit = vi.fn(
+    () =>
+      new Promise<ReturnType<typeof preview>>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  const checking = checks.check(plugin(), undefined, true, () => eligible);
+  await Promise.resolve();
+  eligible = false;
+  finish(preview("new"));
+  await checking;
+  expect(pluginUpdateCheck(checks.snapshot(), plugin())?.checking).toBe(false);
+  expect(
+    pluginUpdateCheck(checks.snapshot(), plugin())?.revision,
+  ).toBeUndefined();
+  expect(pluginUpdateCheck(checks.snapshot(), plugin())?.error).toBeNull();
+});
+
+it("keeps an authorized shared read alive for an eligible sibling", async () => {
+  let authorize!: (value: null) => void;
+  let eligible = true;
+  const sign = vi.fn(
+    () =>
+      new Promise<null>((resolve) => {
+        authorize = resolve;
+      }),
+  );
+  const checkGit = vi.fn(async () => preview("new"));
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  const first = checks.check(plugin(), sign, true, () => eligible);
+  const sibling = checks.check(
+    plugin("example.two", "two"),
+    sign,
+    true,
+    () => true,
+  );
+  eligible = false;
+  authorize(null);
+  await Promise.all([first, sibling]);
+  expect(checkGit).toHaveBeenCalledOnce();
+  expect(
+    pluginUpdateAvailable(checks.snapshot(), plugin("example.two", "two")),
+  ).toBe(true);
+  expect(pluginUpdateCheck(checks.snapshot(), plugin())?.checking).toBe(false);
+});
