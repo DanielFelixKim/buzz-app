@@ -4,6 +4,8 @@ import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
 import { inbox, withFeature } from "../../bundled/bestie/features";
 import { createRelaySession } from "../relay/session";
 import type { LiveCallbacks } from "../relay/live";
+import type { ReadStateHost } from "../relay/read-state-host";
+import { readJournal, type ReadJournal } from "../relay/read-state-storage";
 import { metadata, roster } from "../relay/testing";
 import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
@@ -3273,7 +3275,11 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
 });
 
 describe("delegated Inbox reads", () => {
-  async function inboxSetup(discover = true, maxDiscoveryBytes?: number) {
+  async function inboxSetup(
+    discover = true,
+    maxDiscoveryBytes?: number,
+    readState?: ReadStateHost,
+  ) {
     const f = await setup();
     const relay = keypair();
     const author = keypair();
@@ -3292,6 +3298,7 @@ describe("delegated Inbox reads", () => {
             : [];
     const query = vi.fn(healthyQuery);
     const account = vi.fn(async () => selected);
+    let journal: ReadJournal | undefined;
     const owner = createRelaySession(
       {
         viewer,
@@ -3300,12 +3307,23 @@ describe("delegated Inbox reads", () => {
         media: () => undefined,
         readMainAgent: account,
         writeMainAgent: async () => {},
+        readState,
         subscribe(callbacks) {
           live = callbacks;
           return { update() {}, retry() {}, dispose() {} };
         },
       },
-      { maxDiscoveryBytes },
+      {
+        maxDiscoveryBytes,
+        readStateFloor: () => 0,
+        readStateStorage: {
+          async update(change) {
+            journal = readJournal(change(journal), viewer);
+            return journal;
+          },
+          close() {},
+        },
+      },
     );
     live.state({ status: "connected", routes: [] });
     if (discover) {
@@ -3529,6 +3547,113 @@ describe("delegated Inbox reads", () => {
       f.owner.session.inboxFeed.stale();
       expect(JSON.parse((await f.readInbox()) as string)).toEqual([]);
     } finally {
+      await f.close();
+    }
+  });
+
+  it("rejects failed read-marker sync, then retries and applies the remote read frontier", async () => {
+    const marker = event("f", {
+      pubkey: viewer,
+      kind: 30078,
+      tags: [
+        ["d", `read-state:${"f".repeat(32)}`],
+        ["t", "read-state"],
+      ],
+      content: "host-encrypted read frontier",
+    });
+    const f = await inboxSetup(true, undefined, {
+      decode: async (events) =>
+        events.map(({ id }) => ({
+          eventId: id,
+          blob: {
+            v: 1,
+            client_id: "other-device",
+            contexts: { [channel]: 100 },
+          },
+        })),
+    });
+    let fail = true;
+    f.query.mockImplementation(async (filters) => {
+      if (filters[0]?.kinds?.includes(30078)) {
+        if (fail) throw new Error("Read-marker enumeration failed");
+        return [marker];
+      }
+      return f.healthyQuery(filters);
+    });
+    const markerReads = () =>
+      f.query.mock.calls.filter(([filters]) =>
+        filters[0]?.kinds?.includes(30078),
+      ).length;
+    try {
+      await expect(f.readInbox()).rejects.toThrow(/Inbox.*retry/i);
+      expect(f.owner.session.unread.inbox()).toMatchObject({
+        status: "ready",
+        freshness: "observed",
+        items: [expect.objectContaining({ unreadCount: 1 })],
+      });
+      expect(f.owner.session.unread.sync()).toMatchObject({ status: "error" });
+      const before = markerReads();
+      fail = false;
+      const result = JSON.parse((await f.readInbox()) as string);
+      expect(markerReads()).toBe(before + 1);
+      expect(result).toEqual([
+        expect.objectContaining({ preview: "OLD BODY", unread_count: 0 }),
+      ]);
+      expect(f.owner.session.unread.sync().status).toBe("reconciled");
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("recovers local-only Inbox after a connection gap without remote read markers", async () => {
+    const f = await inboxSetup();
+    try {
+      expect(JSON.parse((await f.readInbox()) as string)[0]?.unread_count).toBe(
+        1,
+      );
+      expect(f.owner.session.unread.sync()).toMatchObject({
+        capability: "unsupported",
+        status: "local",
+      });
+      f.live.state({ status: "retrying", routes: [] });
+      f.live.state({ status: "connected", routes: [] });
+      expect(JSON.parse((await f.readInbox()) as string)[0]?.unread_count).toBe(
+        1,
+      );
+      expect(
+        f.query.mock.calls.some(([filters]) =>
+          filters.some((filter) => filter.kinds?.includes(30078)),
+        ),
+      ).toBe(false);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("withholds observed notifications when read sync fails during the final Bestie check", async () => {
+    const f = await inboxSetup(true, undefined, { decode: async () => [] });
+    const gate = runnerGate<string | null>();
+    const started = runnerGate();
+    try {
+      await f.readInbox();
+      f.account.mockResolvedValueOnce(bot).mockImplementationOnce(() => {
+        started.resolve();
+        return gate.promise;
+      });
+      const pending = f.readInbox();
+      const rejected = expect(pending).rejects.toThrow(/Inbox.*retry/i);
+      await started.promise;
+      f.query.mockImplementation(async (filters) => {
+        if (filters[0]?.kinds?.includes(30078))
+          throw new Error("Read-marker enumeration failed");
+        return f.healthyQuery(filters);
+      });
+      await f.owner.session.unread.retrySync();
+      expect(f.owner.session.unread.sync().status).toBe("error");
+      gate.resolve(bot);
+      await rejected;
+    } finally {
+      gate.resolve(bot);
       await f.close();
     }
   });

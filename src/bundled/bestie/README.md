@@ -101,10 +101,12 @@ DM and private-channel notifications; it does not add Bestie to any of those
 conversations, let it read their history, or let it reply. Turning the switch
 off removes the capability. The tool uses the same saved instruction-section
 check as Settings: a missing or damaged section denies access, while edits inside
-a complete section stay allowed. It returns no items while unread evidence is
-stale, either read reports an error, or edit/deletion reconciliation is unfinished.
-It reports a retryable error instead of an empty or partial Inbox; the next call
-retries a prior read error. Pending results are withheld after the runner stops
+a complete section stay allowed. It returns no items while channel discovery is
+pending, failed or partial; unread evidence is stale; read-marker synchronization
+is loading, failed or stale remotely; or edit/deletion reconciliation is unfinished.
+Valid local-only read state and pending publication remain usable. It reports a
+retryable error instead of an empty or partial Inbox; the next call retries prior
+read errors through the existing channel and unread owners. Pending results are withheld after the runner stops
 or its type is replaced, and permission and account Bestie choice are checked
 again before release. Previously returned content cannot be retracted.
 

@@ -123,7 +123,11 @@ or retries the existing discovery read and returns a retryable error without rea
 notifications. The service releases items only from observed, ready unread evidence
 and a ready Inbox feed with no unresolved edit/deletion targets. Any stale, error, loading or
 retired snapshot returns a retryable error, never a successful partial/empty list.
-The next call retries existing read errors. The captured runner lifetime is checked
+Read-marker synchronization must also be healthy: loading, failed or stale remote
+sync withholds results even when notification evidence is observed. The next call retries
+failed/stale marker reads through the existing unread owner. Valid local-only and
+pending publication states remain usable; remote reconciliation is not required on
+every host. The next call also retries notification read errors. The captured runner lifetime is checked
 again after the read, so retirement or retype cannot release a late result. The
 shared MCP client also checks a supplied cancellation signal before and after the
 read; ordinary Interrupt does not supply a per-turn fence in every harness.
