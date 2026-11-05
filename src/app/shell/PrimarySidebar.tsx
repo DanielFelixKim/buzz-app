@@ -2,6 +2,7 @@ import { soloNavigationFor } from "../../features/channel-navigation/solo-naviga
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -204,6 +205,26 @@ function ScopedSidebar({
   const filter = restriction ? "solo" : view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
   const unreadScopes = useUnreadScopes(connection.session, connection.viewer);
+  const filterItems = useMemo(() => {
+    const named =
+      soloTitle === "Solo"
+        ? filters
+        : [filters[0], filters[2], { ...filters[1], label: soloTitle }];
+    return named.map((item) => {
+      const unread =
+        item.value === "solo"
+          ? unreadScopes.solo
+          : item.value === "team"
+            ? unreadScopes.team
+            : false;
+      return unread
+        ? {
+            ...item,
+            trailing: <span className="sr-only">, unread</span>,
+          }
+        : item;
+    });
+  }, [soloTitle, unreadScopes.solo, unreadScopes.team]);
   // Without the tabs there is no tab to label the panel.
   const panelId = restriction ? undefined : `sidebar-${filter}`;
   const header = (
@@ -225,15 +246,7 @@ function ScopedSidebar({
               variant="segmented"
               size="sm"
               value={filter}
-              items={
-                soloTitle === "Solo"
-                  ? filters
-                  : [
-                      filters[0],
-                      filters[2],
-                      { ...filters[1], label: soloTitle },
-                    ]
-              }
+              items={filterItems}
               onValueChange={setFilter}
             />
           )}
