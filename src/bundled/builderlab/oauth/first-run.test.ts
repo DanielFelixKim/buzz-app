@@ -617,3 +617,99 @@ it.each(["server check", "browser callback"] as const)(
     await saved.dispose();
   },
 );
+
+describe("Welcome's Cancel", () => {
+  /** Welcome over a shared owner, whose catalog reads and saves `hold` can
+   * hold, one call at a time. */
+  async function welcomeLaunch() {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+    const { createSavedSignIn, browserCredential, logout } = await import(
+      "./browser"
+    );
+    const { createOAuthSession } = await import("./session");
+    const held: Partial<Record<string, () => void>> = {};
+    const holding = new Set<string>();
+    const saves: unknown[] = [];
+    const wait = (command: string) =>
+      holding.delete(command)
+        ? new Promise<void>((resolve) => {
+            held[command] = resolve;
+          })
+        : undefined;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const input = args as { request?: { url: string } } | undefined;
+      switch (command) {
+        case "plugin_catalog":
+          await wait(command);
+          return catalog(true);
+        case "oauth_callback_begin":
+          return { id: "a", callbackUrl: "http://127.0.0.1:1/cb" };
+        case "oauth_callback_wait":
+          return { parameters: [["code", "code"]] };
+        case "builderlab_session_save":
+          await wait(command);
+          saves.push(args);
+          return undefined;
+        case "plugin_host_request":
+          return input?.request?.url.endsWith("/exchange")
+            ? { status: 200, headers: {}, body: '{"session_credential":"a"}' }
+            : { status: 200, headers: {}, body: '{"subject":"a"}' };
+        default:
+          return null;
+      }
+    });
+    const saved = createSavedSignIn();
+    const welcome = createOAuthSession(
+      (signal) => browserCredential(bundledHost, signal),
+      logout(bundledHost),
+      undefined,
+      saved,
+    );
+    return { saved, welcome, held, holding, saves };
+  }
+
+  it("during the save, then an immediate retry: the retry signs in", async () => {
+    const k = await welcomeLaunch();
+    k.holding.add("builderlab_session_save");
+    const first = new AbortController();
+    const canceled = firstRunCredential(first.signal, undefined, k.welcome);
+    await vi.waitFor(() =>
+      expect(k.held.builderlab_session_save).toBeDefined(),
+    );
+    // Welcome's own login drops it at once; its save is still running.
+    first.abort();
+    const settled = expect(canceled).rejects.toThrow();
+    // The old save settles while the retry is still preparing.
+    k.holding.add("plugin_catalog");
+    const retry = firstRunCredential(
+      new AbortController().signal,
+      undefined,
+      k.welcome,
+    );
+    await vi.waitFor(() => expect(k.held.plugin_catalog).toBeDefined());
+    k.held.builderlab_session_save?.();
+    await vi.waitFor(() => expect(k.saves).toHaveLength(1));
+    k.held.plugin_catalog?.();
+    await settled;
+    await expect(retry).resolves.toMatchObject({ value: "a" });
+    expect(k.saved.current()?.value).toBe("a");
+    await k.saved.dispose();
+  });
+
+  it("during preparation ends with Sign-in canceled. and saves nothing", async () => {
+    const k = await welcomeLaunch();
+    k.holding.add("plugin_catalog");
+    const attempt = new AbortController();
+    const canceled = firstRunCredential(attempt.signal, undefined, k.welcome);
+    await vi.waitFor(() => expect(k.held.plugin_catalog).toBeDefined());
+    attempt.abort();
+    k.held.plugin_catalog?.();
+    await expect(canceled).rejects.toThrow("Sign-in canceled.");
+    expect(vi.mocked(invoke).mock.calls.map(([c]) => c)).not.toContain(
+      "oauth_callback_begin",
+    );
+    expect(k.saves).toEqual([]);
+    expect(k.saved.current()).toBeUndefined();
+    await k.saved.dispose();
+  });
+});

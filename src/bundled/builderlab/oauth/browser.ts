@@ -234,6 +234,7 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
   let failed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
+  let retirements = 0;
   let queue: Promise<unknown> = Promise.resolve();
   const listeners = new Set<() => void>();
   const notify = () => {
@@ -288,6 +289,8 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
     /** Changes with every sign-in, sign-out and retirement: an attempt
      * started at one acts only while it is still current. */
     generation: () => generation,
+    /** Advances only when NIP-FI takes over or Builderlab rejects it. */
+    retirements: () => retirements,
     /** A retired sign-in's cleanup has failed so far; it keeps retrying. */
     failed: () => failed,
     subscribe(listener: () => void) {
@@ -374,6 +377,7 @@ export function createSavedSignIn(store: SavedCredential = savedCredential) {
      * Builderlab rejects it; deleting and revoking it retry until done. */
     retire() {
       const held = active;
+      retirements++;
       generation++;
       active = undefined;
       void retiring(held, true);

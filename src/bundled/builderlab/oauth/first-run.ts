@@ -60,7 +60,8 @@ export async function firstRunCredential(
   browserSession = welcomeBrowser,
 ): Promise<Credential> {
   // A takeover during the checks below ends this sign-in before the browser.
-  const start = browserSession.generation();
+  // A Cancel ends it through `signal`; another attempt settling doesn't.
+  const start = browserSession.retirements();
   const result = await invoke<StorageResult>("plugin_catalog").catch(() => {
     throw new Error("Could not complete Builderlab sign-in. Try again.");
   });
@@ -87,8 +88,7 @@ export async function firstRunCredential(
           headers: { Accept: "application/json" },
         }),
       )) === "browser");
-  signal.throwIfAborted();
-  if (browser && browserSession.generation() !== start)
+  if (signal.aborted || (browser && browserSession.retirements() !== start))
     throw new Error("Sign-in canceled.");
   if (browser) {
     // The plugin's own sign-in attempt, so the shared owner fences it: a
