@@ -5415,6 +5415,62 @@ it("reports a reaction seen-state save failure", async () => {
   );
 });
 
+it("keeps a reaction arriving in the same second as the seen one unread", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  const unreadMark = () =>
+    within(reactionRow() ?? document.body).queryByRole("img", {
+      name: "Unread",
+    });
+  fireEvent.click(
+    within(reactionRow() ?? document.body).getByRole("button", {
+      name: /^Open /,
+    }),
+  );
+  await findReader();
+  await waitFor(() => expect(unreadMark()).toBeNull());
+  const sameSecond = reactionTo(h.alice, h.root, "🎉", 30);
+  h.addEvent(sameSecond);
+  act(() => h.owner.session.reactionFeed.accept([sameSecond]));
+  await waitFor(() => expect(unreadMark()).toBeInTheDocument());
+});
+
+it("retries a failed reaction seen-state save", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  const unreadMark = () =>
+    within(reactionRow() ?? document.body).queryByRole("img", {
+      name: "Unread",
+    });
+  const setItem = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("quota");
+    });
+  fireEvent.click(
+    within(reactionRow() ?? document.body).getByRole("button", {
+      name: /^Open /,
+    }),
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Could not save Inbox reactions on this device. Try again.",
+  );
+  expect(unreadMark()).toBeInTheDocument();
+  setItem.mockRestore();
+  fireEvent.click(within(alert).getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() => expect(unreadMark()).toBeNull());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("closes a reaction row's tab when its channel is archived, and does not reopen it on restore", async () => {
   const h = fixture();
   if (!h.root) throw new Error("Missing fixture root");

@@ -46,12 +46,15 @@ list as a conversation row would: a thread at that message, or a whole DM or
 Solo timeline.
 
 A reaction row is unread when its newest reaction is newer than the row's seen
-watermark. Opening the row saves the watermark; a newer reaction makes it unread
-again, and the context menu's Mark unread forgets it. Watermarks are device-local
-view intent under `inbox:reaction-seen`, partitioned like archives, keeping the
-1,000 latest writes; they do not sync across devices or change channel read
-state. Unread only applies to reaction rows. A failed save shows the Inbox
-error alert. The sidebar preview does not show reactions.
+watermark, or shares the watermark's second without being one of the reactions
+seen at it. Opening the row saves the watermark and the newest reactions' IDs; a
+newer reaction makes it unread again, and the context menu's Mark unread forgets
+it. Watermarks are device-local view intent under `inbox:reaction-seen`,
+partitioned like archives, keeping the 1,000 latest writes; they do not sync
+across devices or change channel read state. Unread only applies to reaction
+rows. A failed save shows the Inbox error alert, whose Retry repeats the save
+while the row's reactions remain and no later Inbox action replaced it. The
+sidebar preview does not show reactions.
 
 Only reactions carrying a NIP-25 `p` tag for the message's author are found.
 Buzz's app and agent `react` tool add it; older reactions and other publishers'

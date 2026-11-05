@@ -34,6 +34,7 @@ import {
 import { reactionRows, type ReactionRow } from "./reactions";
 import {
   reactionSeenKey,
+  reactionsUnseen,
   readReactionSeen,
   updateReactionSeen,
 } from "./reaction-seen";
@@ -449,21 +450,25 @@ function InboxList({
   );
   const seen = useMemo(() => readReactionSeen(seenRevision), [seenRevision]);
   const reactionUnread = (row: ReactionRow) =>
-    row.createdAt > (seen.get(row.messageId) ?? -1);
+    reactionsUnseen(seen.get(row.messageId), row.createdAt, row.newestIds);
   function markReactions(row: ReactionRow, unread: boolean) {
-    try {
-      updateReactionSeen(
-        archiveScope,
-        row.messageId,
-        unread ? undefined : row.createdAt,
-      );
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not save Inbox reactions on this device. Try again.",
-      );
-    }
+    // Opening a row already ended any earlier Retry; Mark unread ends it here.
+    if (unread) cancelRetry();
+    const intent = intentRevision.current;
+    // Retry saves the row as the click saw it, while its message still has
+    // reactions in the feed and no newer Inbox action replaced the intent.
+    const valid = () =>
+      active.current &&
+      intentRevision.current === intent &&
+      session.reactionFeed
+        .snapshot()
+        .notices.some((notice) => notice.messageId === row.messageId);
+    const seenThrough = unread
+      ? undefined
+      : { through: row.createdAt, ids: row.newestIds };
+    void run(async () => {
+      updateReactionSeen(archiveScope, row.messageId, seenThrough);
+    }, valid);
   }
   // The tab a row opened, which archive closes even after its row regroups.
   // Selection lasts as long as that tab.

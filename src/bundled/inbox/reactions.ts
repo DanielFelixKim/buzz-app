@@ -10,6 +10,8 @@ export type ReactionRow = Readonly<{
   targetContent: string;
   /** The newest reaction's time. */
   createdAt: number;
+  /** Every reaction at `createdAt`; seen state tells same-second arrivals apart. */
+  newestIds: readonly string[];
   /** Distinct reactors, newest first. */
   reactorIds: readonly string[];
   /** Distinct reaction contents, in the order first reacted. */
@@ -37,6 +39,9 @@ export function reactionRows(
         rootId: newest.rootId,
         targetContent: newest.targetContent,
         createdAt: newest.createdAt,
+        newestIds: group
+          .filter((notice) => notice.createdAt === newest.createdAt)
+          .map((notice) => notice.id),
         reactorIds: [...new Set(group.map((notice) => notice.reactorId))],
         contents: [
           ...new Set([...group].reverse().map((notice) => notice.content)),
