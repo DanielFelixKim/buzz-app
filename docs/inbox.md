@@ -274,11 +274,15 @@ checks do not attest native/live acceptance.
 
 ## Reaction activity
 
-`session.inboxFeed.reactions` owns a separate bounded projection of recipient-tagged
-kind-7 events. App and MCP writers add the target author's `p` tag. It recovers
-50 recent addressed events and retains up to 100 candidates, including live arrivals;
-it does not backfill legacy tagless reactions. Exact target ownership, current channel
-eligibility and edit/deletion closure are checked before displaying any preview.
+`session.inboxFeed.reactions` owns a separate bounded projection of kind-7 events on
+the viewer's messages. App and MCP writers add the target author's `p` tag; reactions
+from clients that omit it are candidates too, and those whose `p` tags name only
+other people are ignored without a read. It recovers 50 recent events from the
+relay's `#p: [viewer]` index, which lists untagged reactions only where the relay has
+derived the target's author, and retains up to 100 candidates, including live
+arrivals. A candidate whose target is not the viewer's message is dropped after one
+check. Exact target ownership, current channel eligibility and edit/deletion closure
+are checked before displaying any preview.
 Incomplete settlement withholds rows and offers retry rather than showing stale text.
 
 After filtering reactors, the page and hover preview group emoji used by multiple

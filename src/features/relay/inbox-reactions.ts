@@ -63,12 +63,18 @@ export function createInboxReactions({
   let closed = false;
   let requested = false;
   let dirty = false;
-  const eligible = (event: RelayEvent) =>
-    event.kind === 7 &&
-    event.pubkey !== viewer &&
-    !!targetOf(event) &&
-    validReactionContent(event.content) &&
-    event.tags.some(([name, value]) => name === "p" && value === viewer);
+  // Every channel reaction reaches receive(), so only untagged reactions and
+  // those tagging the viewer may cost a target fetch.
+  const eligible = (event: RelayEvent) => {
+    const recipients = event.tags.filter(([name]) => name === "p");
+    return (
+      event.kind === 7 &&
+      event.pubkey !== viewer &&
+      !!targetOf(event) &&
+      validReactionContent(event.content) &&
+      (!recipients.length || recipients.some(([, value]) => value === viewer))
+    );
+  };
   const allowedChannel = (channel: ChannelSummary) =>
     !channel.cached &&
     !channel.archived &&
@@ -235,7 +241,7 @@ export function createInboxReactions({
     }
     items.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     known = new Set(evidence.map((event) => event.id));
-    retained = reactions;
+    retained = relevant;
     for (const reaction of reactions) pending.delete(reaction.id);
     publish({ status: "ready", items: Object.freeze(items) });
     signal.throwIfAborted();
