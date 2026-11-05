@@ -664,6 +664,44 @@ function hosted(running: boolean | Promise<boolean> = true) {
   };
 }
 
+it("notes a finished local request that ran without its gateway, and nothing for one that didn't", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<ActivityAccessory {...f.props} />);
+  const begin = () =>
+    local.begin({
+      scope: "test",
+      channelId: "c",
+      threadRootId: root,
+      messageId: root,
+      agent: A,
+    });
+  try {
+    act(() => {
+      const work = begin();
+      work.started();
+      work.finish({ ok: true });
+    });
+    expect(screen.queryByText(/Blossom ·/)).not.toBeInTheDocument();
+    act(() => {
+      const work = begin();
+      work.notice(
+        "Ran without the Workforce gateway: Buzz couldn't reach the gateway.",
+      );
+      work.started();
+      work.finish({ ok: true });
+    });
+    expect(
+      screen.getByText(
+        "Blossom · Ran without the Workforce gateway: Buzz couldn't reach the gateway.",
+      ),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it.each(["waiting", "working"])(
   "stops a local request that is %s through its harness, then notes it stopped",
   async (state) => {

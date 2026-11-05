@@ -15142,8 +15142,6 @@ describe("Workforce routing", () => {
 describe("Workforce gateway gate", () => {
   const GATEWAY_BLOCKED =
     "Buzz couldn't reach the Workforce gateway. Check your network or VPN connection, then try again.";
-  const UNSUPPORTED =
-    "This agent type can't use the Workforce gateway yet, so it can't run in this community.";
   const eligible: EligibleRoute = Object.freeze({
     kind: "eligible",
     revision: 3,
@@ -15154,6 +15152,7 @@ describe("Workforce gateway gate", () => {
       agent_pubkey: bot,
     }),
     access: "unrestricted",
+    harnesses: Object.freeze(["relay"]),
   });
   const blockedRoute = Object.freeze({
     kind: "blocked",
@@ -15203,38 +15202,28 @@ describe("Workforce gateway gate", () => {
       defaults: () => ({ config: {} }),
       run,
       models,
-      ...(capable ? { workforce: true as const } : {}),
+      ...(capable ? { workforce: { harness: "relay" } } : {}),
     });
     await f.service.create({ type: "example/relay", name: "Relay" });
     f.emit({ events: [asked], channelId });
     return { ...f, run, models };
   }
-  const refused = async (
-    f: Awaited<ReturnType<typeof mentioned>>,
-    error: string,
-  ) => {
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      await vi.waitFor(() =>
-        expect(f.activity.reader.work()[0]).toMatchObject({
-          state: "error",
-          error,
-        }),
-      );
-    } finally {
-      err.mockRestore();
-    }
-    expect(f.run).not.toHaveBeenCalled();
-  };
+  const NOTICE =
+    "Ran without the Workforce gateway: Buzz couldn't reach the gateway.";
 
-  it("fails the turn with the route's message and never runs the type when the route is blocked", async () => {
+  it("runs a blocked membership's harness with its own configuration and notes that on the turn", async () => {
     ready.mockResolvedValue(blockedRoute);
     const f = await mentioned(true);
-    await refused(f, GATEWAY_BLOCKED);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(ready).toHaveBeenCalledWith(bot, expect.any(AbortSignal));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      messageId: mention.id,
+      notice: NOTICE,
+    });
   });
 
-  it("asks a blocked membership's type nothing, not even its models for a model request", async () => {
+  it("asks a blocked membership's type for its own models for a model request", async () => {
     ready.mockResolvedValue(blockedRoute);
     const f = await mentioned(
       true,
@@ -15247,14 +15236,35 @@ describe("Workforce gateway gate", () => {
         ],
       }),
     );
-    await refused(f, GATEWAY_BLOCKED);
-    expect(f.models).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.models).toHaveBeenCalled();
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(f.activity.reader.work()[0]?.notice).toBe(NOTICE);
   });
 
-  it("fails an eligible turn whose type can't route through the gateway, without running it", async () => {
-    ready.mockResolvedValue(eligible);
+  it("notes nothing on a turn that routes through the gateway or keeps its behavior", async () => {
+    for (const route of [eligible, external, { ...eligible, harnesses: [] }]) {
+      ready.mockResolvedValue(route);
+      const f = await mentioned(true);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+      workforceRoutes.removeMembership(bot as never);
+    }
+  });
+
+  it("runs a type that names no harness unchanged, without waiting on the gateway", async () => {
+    ready.mockResolvedValue(blockedRoute);
     const f = await mentioned(false);
-    await refused(f, UNSUPPORTED);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("runs a harness the gateway doesn't enable for the membership unchanged", async () => {
+    ready.mockResolvedValue({ ...eligible, harnesses: ["pi"] });
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
   });
 
   it("hands an eligible route and the turn's frozen context to a type that routes through the gateway", async () => {
@@ -15350,9 +15360,9 @@ describe("Workforce gateway gate", () => {
     expect(ready).not.toHaveBeenCalled();
   });
 
-  it("adds no Workforce field for an external membership, whatever its type", async () => {
+  it("adds no Workforce field for an external membership, even for a harness", async () => {
     ready.mockResolvedValue(external);
-    const f = await mentioned(false);
+    const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
     expect(ready).toHaveBeenCalledTimes(1);

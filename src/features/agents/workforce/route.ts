@@ -46,6 +46,9 @@ export type EligibleRoute = Readonly<{
   gatewayOrigin: string;
   identity: WorkforceIdentity;
   access: WorkforceAccess;
+  /** The harnesses the gateway enables for this membership (its rollout
+   * flag); a harness not listed keeps its existing behavior. */
+  harnesses: readonly string[];
 }>;
 export type BlockedRoute = Readonly<{
   kind: "blocked";
@@ -94,10 +97,31 @@ const MESSAGES: Record<BlockedReason, string> = {
     "The Workforce gateway couldn't confirm model access. Try again shortly.",
 };
 
+/** Why a turn ran without the gateway, as its per-turn notice says. */
+const FALLBACK: Record<BlockedReason, string> = {
+  readiness_pending: "Workforce access was still being checked",
+  descriptor_invalid: "this build's Workforce configuration is invalid",
+  community_id_missing: "this community didn't identify itself",
+  community_id_mismatch:
+    "this community doesn't match this build's Workforce configuration",
+  identity_invalid: "this agent's owner or key isn't valid for Workforce",
+  auth: "the gateway didn't accept your employee sign-in",
+  network: "Buzz couldn't reach the gateway",
+  gateway_error: "the gateway couldn't confirm model access",
+};
+/** The notice on a turn that a blocked route sent to the harness's own
+ * configuration before dispatch, instead of failing it. */
+export const fallbackNotice = (route: BlockedRoute) =>
+  `Ran without the Workforce gateway: ${FALLBACK[route.reason]}.`;
+
 type Readiness =
   | Readonly<{ status: "probing"; settled: Promise<void> }>
-  | Readonly<{ status: "ready"; access: WorkforceAccess }>
+  | Readonly<{ status: "ready"; answer: AccessAnswer }>
   | Readonly<{ status: "failed"; reason: BlockedReason }>;
+type AccessAnswer = Readonly<{
+  access: WorkforceAccess;
+  harnesses: readonly string[];
+}>;
 
 export class WorkforceRoutes {
   private readonly members = new Map<AgentKey, WorkforceMembership>();
@@ -177,7 +201,7 @@ export class WorkforceRoutes {
           revision: this.revision(key),
           gatewayOrigin: decided.gateway,
           identity: decided.identity,
-          access: state.access,
+          ...state.answer,
         })
       : blocked(
           decided.gateway,
@@ -310,9 +334,9 @@ export class WorkforceRoutes {
         this.readiness.set(
           decided.cache,
           Object.freeze(
-            typeof result === "string"
-              ? { status: "ready", access: result }
-              : { status: "failed", reason: result.reason },
+            "reason" in result
+              ? { status: "failed", reason: result.reason }
+              : { status: "ready", answer: result },
           ),
         );
         this.notify(key);
@@ -341,12 +365,14 @@ export class WorkforceRoutes {
   }
 }
 
-/** The gateway's model-access answer for this caller, or why it failed. */
+/** The gateway's model-access answer for this caller, or why it failed. An
+ * absent `harnesses` enables none, so a gateway without the rollout flag
+ * leaves every harness on its existing behavior. */
 export async function probeAccess(
   request: WorkforceRequest,
   gateway: string,
   headers: Readonly<Record<string, string>>,
-): Promise<WorkforceAccess | Readonly<{ reason: BlockedReason }>> {
+): Promise<AccessAnswer | Readonly<{ reason: BlockedReason }>> {
   let response: HostResponse;
   try {
     response = await request({
@@ -371,18 +397,37 @@ export async function probeAccess(
     typeof body !== "object" ||
     body === null ||
     Array.isArray(body) ||
-    Object.keys(body).join() !== "open_models_only"
+    !Object.keys(body).every((name) => ANSWER_KEYS.includes(name)) ||
+    !("open_models_only" in body)
   )
     return { reason: "gateway_error" };
-  const value = (body as { open_models_only: unknown }).open_models_only;
-  return value === true
-    ? "open_models_only"
-    : value === false
-      ? "unrestricted"
-      : value === null
-        ? "unresolved"
-        : { reason: "gateway_error" };
+  const { open_models_only: value, harnesses = [] } = body as {
+    open_models_only: unknown;
+    harnesses?: unknown;
+  };
+  const access =
+    value === true
+      ? "open_models_only"
+      : value === false
+        ? "unrestricted"
+        : value === null
+          ? "unresolved"
+          : undefined;
+  if (
+    !access ||
+    !Array.isArray(harnesses) ||
+    harnesses.length > 32 ||
+    !harnesses.every((name) => typeof name === "string" && HARNESS.test(name))
+  )
+    return { reason: "gateway_error" };
+  return Object.freeze({
+    access,
+    harnesses: Object.freeze([...new Set<string>(harnesses)]),
+  });
 }
+const ANSWER_KEYS = ["open_models_only", "harnesses"];
+/** A harness name a type declares and the gateway's flag lists. */
+export const HARNESS = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 const blocked = (
   gatewayOrigin: string,

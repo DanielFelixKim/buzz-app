@@ -549,3 +549,19 @@ it("retries through the session only for this scope and accessible channels", ()
     "This request can't be retried here",
   );
 });
+
+it("keeps a turn's notice through its steps and outcome, and drops it on a new attempt", () => {
+  const activity = createLocalAgentActivity();
+  const work = activity.begin(request());
+  work.notice("  Ran without the gateway.  ");
+  work.notice("");
+  work.started();
+  work.step("Read", "notes.txt");
+  work.finish({ ok: true });
+  expect(activity.reader.work()[0]).toMatchObject({
+    state: "done",
+    notice: "Ran without the gateway.",
+  });
+  activity.begin(request());
+  expect(activity.reader.work()[0]?.notice).toBeUndefined();
+});

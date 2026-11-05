@@ -94,7 +94,7 @@ import {
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
 import type { DeviceSettings } from "../../shared/device-settings";
-import { workforceRoutes } from "./workforce/route";
+import { fallbackNotice, workforceRoutes } from "./workforce/route";
 import { turnContextFor } from "./workforce/turn";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
@@ -2460,9 +2460,13 @@ export class AgentRunners {
     return timer && { lane: lane(timer), job: timer };
   }
   /** The membership's Workforce route and this turn's context, frozen before
-   * the type is asked to run; undefined when it doesn't route there. A
-   * blocked membership, or an eligible one whose type can't route through the
-   * gateway, fails the turn visibly: it never falls back to direct providers. */
+   * the type is asked to run; undefined when it doesn't route there. A type
+   * that names no harness, or whose harness the gateway doesn't enable for
+   * this membership, keeps its existing behavior without waiting on the
+   * gateway. A blocked membership runs it with its own configuration and
+   * none of the Buzz context, noting that on the turn: the choice is made
+   * here, before dispatch, so nothing is ever replayed. A turn whose access
+   * is revoked after dispatch is the harness's to fail visibly. */
   private async workforce(
     agent: Agent,
     type: RegisteredAgentType,
@@ -2470,14 +2474,15 @@ export class AgentRunners {
     anchor: ConversationWake | undefined,
     signal: AbortSignal,
   ) {
-    if (!workforceRoutes.configured) return undefined;
+    const harness = type.workforce?.harness;
+    if (!workforceRoutes.configured || !harness) return undefined;
     const route = await workforceRoutes.routeReady(agent.key, signal);
     if (route.kind === "external") return undefined;
-    if (route.kind === "blocked") throw new Error(route.message);
-    if (!type.workforce)
-      throw new Error(
-        "This agent type can't use the Workforce gateway yet, so it can't run in this community.",
-      );
+    if (route.kind === "blocked") {
+      job.work?.notice(fallbackNotice(route));
+      return undefined;
+    }
+    if (!route.harnesses.includes(harness)) return undefined;
     const { trigger } = job;
     const turn = turnContextFor(trigger, {
       channelId: job.channelId,

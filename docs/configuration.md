@@ -102,9 +102,16 @@ every membership on its existing behavior.
 
 With it set, a local agent membership in a listed community routes through the
 gateway only when the relay's NIP-11 `read_state_snapshot.community_id` is
-exactly the listed ID and the gateway's model-access probe succeeds; until then
-its turns fail visibly and never fall back to direct providers. Memberships in
-other communities and hosted agents are unchanged. See
+exactly the listed ID, the gateway's model-access probe succeeds, and the
+probe's `harnesses` list (the gateway's rollout flag) names the agent type's
+declared harness. A type with no declared harness, or one the gateway doesn't
+list, keeps its existing behavior. When the route is blocked (auth, network,
+gateway error or still checking), a type that declares a harness runs with the
+user's own harness configuration and none of the Buzz request context, and the
+turn is noted "Ran without the Workforce gateway" with the reason. That choice
+is made before dispatch; a turn whose gateway access is revoked after dispatch
+fails visibly and is never replayed. Memberships in other communities and
+hosted agents are unchanged. See
 `src/features/agents/workforce/` for the shared route, session and request
 context contract that harnesses consume.
 

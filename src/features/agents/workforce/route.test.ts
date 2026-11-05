@@ -128,6 +128,7 @@ describe("WorkforceRoutes", () => {
         agent_pubkey: member("b1", session).pubkey,
       },
       access: "unresolved",
+      harnesses: [],
     });
   });
 
@@ -140,8 +141,33 @@ describe("WorkforceRoutes", () => {
     [
       '{"open_models_only":false}',
       200,
-      { kind: "eligible", access: "unrestricted" },
+      { kind: "eligible", access: "unrestricted", harnesses: [] },
     ],
+    [
+      '{"open_models_only":false,"harnesses":["pi","codex","pi","future"]}',
+      200,
+      {
+        kind: "eligible",
+        access: "unrestricted",
+        harnesses: ["pi", "codex", "future"],
+      },
+    ],
+    [
+      '{"open_models_only":true,"harnesses":[]}',
+      200,
+      { kind: "eligible", harnesses: [] },
+    ],
+    [
+      '{"open_models_only":true,"harnesses":"pi"}',
+      200,
+      { kind: "blocked", reason: "gateway_error" },
+    ],
+    [
+      '{"open_models_only":true,"harnesses":["Pi"]}',
+      200,
+      { kind: "blocked", reason: "gateway_error" },
+    ],
+    ['{"harnesses":["pi"]}', 200, { kind: "blocked", reason: "gateway_error" }],
     ["", 401, { kind: "blocked", reason: "auth" }],
     ["", 403, { kind: "blocked", reason: "auth" }],
     ["", 500, { kind: "blocked", reason: "gateway_error" }],

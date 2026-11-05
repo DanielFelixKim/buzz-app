@@ -165,7 +165,8 @@ function MessageActivity(
     if (
       recorded.has(entry.agent) &&
       entry.state !== "error" &&
-      entry.state !== "stopped"
+      entry.state !== "stopped" &&
+      !entry.notice
     )
       return false;
     const threadScoped =
@@ -268,7 +269,8 @@ function MessageActivity(
         entry.state === "error" ||
         !props.representedAgents?.includes(entry.agent)),
   );
-  // Once its live bubble has left, a stopped request stays noted here. It sits
+  // Once its live bubble has left, a stopped request, or a finished one with a
+  // notice about how it ran, stays noted here. It sits
   // in the incoming message frame without a gutter, so it starts at the reply
   // avatars' edge.
   const noted = bubble.length ? [] : stopped.filter(visible);
@@ -292,7 +294,15 @@ function MessageActivity(
           }))}
         />
         <span>
-          {noted.map(({ agent }) => named(agent)).join(", ")} · Stopped
+          {[...new Set(noted.map((entry) => entry.notice ?? "Stopped"))]
+            .map(
+              (text) =>
+                `${noted
+                  .filter((entry) => (entry.notice ?? "Stopped") === text)
+                  .map(({ agent }) => named(agent))
+                  .join(", ")} · ${text}`,
+            )
+            .join(" · ")}
         </span>
       </div>
     </div>

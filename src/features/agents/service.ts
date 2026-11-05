@@ -869,10 +869,11 @@ export type AgentType<Config = unknown> = {
    * again marked `resumed` if the owner chooses to resume it, to carry on in
    * the conversation's saved session, or in a new one shown the conversation. */
   resumes?: boolean;
-  /** The type routes eligible Workforce memberships' inference through the
-   * gateway with `Delivery.workforce`. Without it, an eligible membership's
-   * turns fail visibly instead of going to direct providers. */
-  workforce?: true;
+  /** The type can route inference through the Workforce gateway with
+   * `Delivery.workforce`, under this stable harness name (e.g. "pi"). It does
+   * only for memberships whose gateway enables the harness; otherwise, and
+   * for types without it, turns keep their existing behavior. */
+  workforce?: Readonly<{ harness: string }>;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
