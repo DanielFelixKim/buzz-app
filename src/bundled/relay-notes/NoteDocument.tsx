@@ -684,27 +684,6 @@ export function NoteDocument({
                   <MenuItem onClick={copyLink}>Copy note link</MenuItem>
                   {canEdit && !note.deleted && (
                     <MenuItem
-                      onClick={() => {
-                        const enabled = !autoSave;
-                        setAutoSave(enabled);
-                        setSaveError("");
-                        if (
-                          !writeView(
-                            workspace.session.scope,
-                            autoSaveKey,
-                            enabled,
-                          )
-                        )
-                          setError(
-                            "This auto-save setting could not be remembered on this device.",
-                          );
-                      }}
-                    >
-                      {autoSave ? "Disable auto-save" : "Enable auto-save"}
-                    </MenuItem>
-                  )}
-                  {canEdit && !note.deleted && (
-                    <MenuItem
                       disabled={busy}
                       onClick={() => {
                         setSource(editing ? !source : true);
@@ -749,7 +728,29 @@ export function NoteDocument({
                         offset,
                       });
                     }}
-                  />
+                  >
+                    {canEdit && !note.deleted && (
+                      <MenuItem
+                        onClick={() => {
+                          const enabled = !autoSave;
+                          setAutoSave(enabled);
+                          setSaveError("");
+                          if (
+                            !writeView(
+                              workspace.session.scope,
+                              autoSaveKey,
+                              enabled,
+                            )
+                          )
+                            setError(
+                              "This auto-save setting could not be remembered on this device.",
+                            );
+                        }}
+                      >
+                        {autoSave ? "Disable auto-save" : "Enable auto-save"}
+                      </MenuItem>
+                    )}
+                  </NoteHistoryMenu>
                   <MenuItem onClick={exportMarkdown}>Export Markdown</MenuItem>
                   {canEdit && !note.deleted && (
                     <MenuItem

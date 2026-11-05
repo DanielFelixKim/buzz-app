@@ -4,6 +4,7 @@ import {
   useState,
   useSyncExternalStore,
   type RefObject,
+  type ReactNode,
 } from "react";
 import type { MemberChange } from "../../features/channel-members/administration-protocol";
 import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
@@ -15,6 +16,7 @@ import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import {
   MenuItem,
   MenuNote,
+  MenuSeparator,
   MenuSubmenu,
   MenuSubmenuPopup,
   MenuSubmenuTrigger,
@@ -179,7 +181,9 @@ export function NoteHistoryMenu({
   workspace,
   disabled,
   onSelect,
+  children,
 }: {
+  children?: ReactNode;
   note: Note;
   workspace: NotesWorkspace;
   disabled: boolean;
@@ -204,6 +208,8 @@ export function NoteHistoryMenu({
         Revision history
       </MenuSubmenuTrigger>
       <MenuSubmenuPopup aria-label="Revision history">
+        {children}
+        {children && <MenuSeparator />}
         {busy && <MenuNote role="status">Reading revisions…</MenuNote>}
         {error && (
           <>

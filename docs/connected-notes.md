@@ -109,7 +109,7 @@ the retained snapshots and whether more remain.
 **New note** opens a blank document in the same centered editor, with a heading
 input, rich-text body and formatting dock. Storage is allocated only after typing
 and the first save; body-only notes use **Untitled note**. New-note actions offer
-source mode and the auto-save toggle. **Share note** explicitly creates an empty
+source mode and a Revision history submenu containing the auto-save toggle. **Share note** explicitly creates an empty
 untitled note if necessary, then opens the same member picker as existing notes.
 Drafts stay mounted across Back/Forward; inactive drafts do not begin auto-saving.
 First-save completion replaces the creation address, preserves edits made in
@@ -145,7 +145,7 @@ are reconciled after the save receipt. Clean remote updates are adopted, while a
 dirty draft requires comparison before a concurrent revision can be overwritten.
 Failures pause automatic attempts, retain the draft and offer Retry save.
 
-Note actions offers Disable auto-save / Enable auto-save, persisted through the
+Note actions → Revision history offers Disable auto-save / Enable auto-save, persisted through the
 existing scoped view store for this account, community and note on this device.
 This is a local editing preference, not shared document metadata. When disabled,
 a small prominent Save action appears after Viewing/Editing and before Refresh

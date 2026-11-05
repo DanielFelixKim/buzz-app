@@ -10,6 +10,10 @@ import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
+  MenuNote,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
   MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -286,13 +290,19 @@ export function NewNoteDocument({
               }
             />
             <MenuPopup>
-              <MenuItem
-                onClick={() => {
-                  setAutoSave(!autoSave);
-                }}
-              >
-                {autoSave ? "Disable auto-save" : "Enable auto-save"}
-              </MenuItem>
+              <MenuSubmenu>
+                <MenuSubmenuTrigger>Revision history</MenuSubmenuTrigger>
+                <MenuSubmenuPopup aria-label="Revision history">
+                  <MenuItem
+                    onClick={() => {
+                      setAutoSave(!autoSave);
+                    }}
+                  >
+                    {autoSave ? "Disable auto-save" : "Enable auto-save"}
+                  </MenuItem>
+                  <MenuNote>No saved revisions yet.</MenuNote>
+                </MenuSubmenuPopup>
+              </MenuSubmenu>
               <MenuItem onClick={() => setSource(!source)}>
                 {source ? "Formatted text" : "Markdown source"}
               </MenuItem>

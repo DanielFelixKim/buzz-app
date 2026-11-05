@@ -10,6 +10,9 @@ async function settleNotePane(page) {
 async function disableAutoSave(page, document) {
   await document.getByRole("button", { name: "Note actions" }).click();
   await page
+    .getByRole("menuitem", { name: "Revision history", exact: true })
+    .click();
+  await page
     .getByRole("menuitem", { name: "Disable auto-save", exact: true })
     .click();
 }
@@ -1242,6 +1245,9 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   await body.fill("Reduced motion draft");
   await expect(save).toBeVisible();
   await document.getByRole("button", { name: "Note actions" }).click();
+  await page
+    .getByRole("menuitem", { name: "Revision history", exact: true })
+    .click();
   await page
     .getByRole("menuitem", { name: "Enable auto-save", exact: true })
     .click();

@@ -116,7 +116,19 @@ it("opens a fresh editor without allocating storage, then auto-saves after idle"
 });
 
 it("saves body-only notes with an untitled fallback and honors manual saving", async () => {
-  const f = await fixture({ markdown: "First thought", autoSave: false });
+  const f = await fixture({ markdown: "First thought" });
+  fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+  await advance(0);
+  expect(
+    screen.queryByRole("menuitem", { name: "Disable auto-save" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Revision history" }));
+  await advance(0);
+  expect(
+    screen.getByRole("menu", { name: "Revision history" }),
+  ).toHaveTextContent("No saved revisions yet.");
+  expect(f.create).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Disable auto-save" }));
   await advance(15_000);
   expect(f.create).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));

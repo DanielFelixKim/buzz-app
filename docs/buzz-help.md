@@ -339,7 +339,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   not feed this page; existing published records are unchanged.
   Notes open in **Editing** with the title focused when you have edit access, with the formatting bar
   pinned at the bottom. The byline shows **Saved** with its timestamp, or **Saving…** while saving. Changes auto-save after a short typing pause, with a
-  maximum interval during continuous typing. **Note actions → Disable auto-save**
+  maximum interval during continuous typing. **Note actions → Revision history → Disable auto-save**
   remembers your choice for that note on this device. When disabled, **Save**
   appears between the mode dropdown and Refresh when modified. Choose **Viewing**
   to preview. Save failures keep your draft and offer **Retry save**; conflicting

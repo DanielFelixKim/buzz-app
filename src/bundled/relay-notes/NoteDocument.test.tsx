@@ -280,6 +280,11 @@ it("persists Disable auto-save per note and account, cancels the timer, and keep
   await advance(1000);
   fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
   await advance(0);
+  expect(
+    screen.queryByRole("menuitem", { name: "Disable auto-save" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Revision history" }));
+  await advance(0);
   fireEvent.click(screen.getByRole("menuitem", { name: "Disable auto-save" }));
   await advance(10_000);
   expect(f.save).not.toHaveBeenCalled();
@@ -301,6 +306,9 @@ it("persists Disable auto-save per note and account, cancels the timer, and keep
   f.mount();
   await screen.findByRole("button", { name: "Note actions" });
   fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Revision history" }),
+  );
   expect(
     await screen.findByRole("menuitem", { name: "Enable auto-save" }),
   ).toBeVisible();
