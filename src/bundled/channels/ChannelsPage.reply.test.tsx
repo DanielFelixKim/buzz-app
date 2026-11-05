@@ -91,16 +91,22 @@ afterEach(() => {
 async function fixture({
   type = "stream",
   tab = false,
+  foreignAgentTarget = false,
 }: {
   type?: "stream" | "solo";
   tab?: boolean;
+  foreignAgentTarget?: boolean;
 } = {}) {
   const viewer = keypair(),
     authority = keypair();
   const channelId = "alpha";
-  const root = signed(viewer, {
+  const agent = keypair();
+  const root = signed(foreignAgentTarget ? authority : viewer, {
     kind: 9,
-    tags: [["h", channelId]],
+    tags: [
+      ["h", channelId],
+      ...(foreignAgentTarget ? [["p", agent.pubkey]] : []),
+    ],
     content: "Reply target",
   });
   const events = [
@@ -115,6 +121,9 @@ async function fixture({
         : [["t", "stream"]],
     ),
     profile(authority, { name: "Teammate" }),
+    ...(foreignAgentTarget
+      ? [profile(agent, { name: "Honey", is_agent: true })]
+      : []),
     root,
   ];
   let live!: LiveCallbacks;
@@ -391,4 +400,20 @@ it("presents the reply immediately and keeps typing available while only Send wa
     gate.release();
     await h.user.pointer({ keys: "[/MouseLeft]" });
   }
+});
+
+it("does not copy another author's agent mentions into an empty inline reply", async () => {
+  const h = await fixture({ foreignAgentTarget: true });
+  expect(h.input).toHaveTextContent(/^$/);
+  await h.hold();
+  await act(async () => {});
+  expect(h.input).toHaveTextContent(/^$/);
+  act(() => h.input.insertText("Reply without notifying an agent"));
+  await h.user.keyboard("{Enter}");
+  await waitFor(() => expect(h.publish).toHaveBeenCalled());
+  const message = h.publish.mock.calls
+    .map(([event]) => event)
+    .find((event) => event.content === "Reply without notifying an agent");
+  expect(message).toBeDefined();
+  expect(message?.tags.some(([key]) => key === "p")).toBe(false);
 });

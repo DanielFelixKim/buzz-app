@@ -1571,6 +1571,23 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  const replyToMessage = useCallback(
+    (id: string) => {
+      const row = rowsById.get(id);
+      if (!row || !onReply) return;
+      const element = scroller.current;
+      if (element) {
+        const position = { ...positionAt(element), bottom: false };
+        intent.current++;
+        follow.current = false;
+        layoutCorrection.current = false;
+        savedPosition.current = position;
+        restoredAnchor.current = position.anchor;
+      }
+      onReply(row);
+    },
+    [onReply, rowsById],
+  );
   return (
     <section
       ref={scroller}
@@ -1757,25 +1774,7 @@ function Timeline({
             const renderMessage = (row: ChannelMessage, inside = false) => {
               return (
                 <MessageRow
-                  onReply={
-                    onReply
-                      ? () => {
-                          const element = scroller.current;
-                          if (element) {
-                            const position = {
-                              ...positionAt(element),
-                              bottom: false,
-                            };
-                            intent.current++;
-                            follow.current = false;
-                            layoutCorrection.current = false;
-                            savedPosition.current = position;
-                            restoredAnchor.current = position.anchor;
-                          }
-                          onReply(row);
-                        }
-                      : undefined
-                  }
+                  onReply={onReply ? replyToMessage : undefined}
                   representedAgents={stableActivity.agents(
                     row.id,
                     presentation.representedAgents.get(row.id),

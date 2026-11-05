@@ -14,7 +14,6 @@ type ReplyComposer = Pick<
   | "focusRequest"
   | "threadRootId"
   | "replyParentId"
-  | "threadSeed"
   | "onCancelReply"
   | "replyContext"
   | "sendDisabled"
@@ -117,7 +116,6 @@ export function useInlineReply(
       ? {
           threadRootId: target.rootId,
           replyParentId: target.id,
-          threadSeed: reply,
           sendDisabled: !verified,
           onCancelReply: cancel,
           replyContext: reply ? (
