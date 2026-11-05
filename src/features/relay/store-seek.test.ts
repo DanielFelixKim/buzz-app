@@ -704,3 +704,39 @@ it("continues membership-notice descent after the history window slides", async 
     expect(h.window().rows.map((row) => row.id)).toContain(target.id),
   );
 });
+
+it("does not resurrect a joining message deleted and evicted during an older read", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const joining = h.window().rows[0];
+  assert.exists(joining);
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadOlder("c");
+  h.live.receive([
+    signed(h.alice, {
+      kind: 5,
+      created_at: T0 + 101 * HOUR,
+      tags: [
+        ["h", "c"],
+        ["e", joining.id],
+      ],
+      content: "",
+    }),
+  ]);
+  h.live.receive(
+    Array.from({ length: 60 }, (_, i) =>
+      message(h.alice, "c", `new${i}`, T0 + 102 * HOUR + i),
+    ),
+  );
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(
+    h.window().rows.find((row) => row.id === joining.id)?.content,
+  ).not.toBe(joining.content);
+});

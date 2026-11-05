@@ -21,7 +21,7 @@ import {
   channelLabelTags,
   compareChannelAge,
 } from "./channel-labels";
-import { foldMessages } from "./fold";
+import { deletionApplies, foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import {
   LARGE_READ_DEADLINE_MS,
@@ -57,6 +57,7 @@ type WindowState = {
   snapshot: ChannelWindow;
   cursor: WindowCursor | null;
   events: readonly RelayEvent[];
+  joining?: Map<string, RelayEvent> | undefined;
   atHead: boolean;
   /** Detached: rows created at or after this (unix seconds) are not loaded;
    * the window holds a seek segment below it. Undefined at the head. */
@@ -981,7 +982,10 @@ export function createChannelStore(
   async function loadPage(state: WindowState, cursor: WindowCursor | null) {
     if (!transport || !canReadRemote(state.channelId)) return;
     const generation = state.generation;
-    const joining = cursor ? state.events : [];
+    const joining = cursor
+      ? new Map(state.events.map((event) => [event.id, event]))
+      : undefined;
+    state.joining = joining;
     const controller = new AbortController();
     state.controller = controller;
     // Shown rows wait on this head read; a seek must not treat it as the end.
@@ -1000,10 +1004,9 @@ export function createChannelStore(
       // A settled catch-up aborts an older read that has already resolved.
       if (!live(state, generation) || controller.signal.aborted) return;
       const combined = new Map(
-        (cursor ? [...joining, ...state.events] : []).map((event) => [
-          event.id,
-          event,
-        ]),
+        (cursor ? [...(joining?.values() ?? []), ...state.events] : []).map(
+          (event) => [event.id, event],
+        ),
       );
       for (const event of page.events) combined.set(event.id, event);
       const retained = cursor
@@ -1060,6 +1063,7 @@ export function createChannelStore(
             },
       );
     } finally {
+      if (state.joining === joining) state.joining = undefined;
       if (state.controller === controller) state.controller = undefined;
       // Aborted reads end here too; a newer head read keeps the flag.
       if (
@@ -3801,6 +3805,18 @@ export function createChannelStore(
     for (const state of windows.values()) {
       if (disposed || generation !== epoch) return;
       if (!authorized(state.channelId)) continue;
+      for (const event of events) {
+        if (event.kind !== 5 && event.kind !== 9005) continue;
+        for (const [name, id] of event.tags) {
+          const target = id && state.joining?.get(id);
+          if (
+            name === "e" &&
+            target &&
+            deletionApplies(event, target, transport.relayAuthor)
+          )
+            state.joining?.delete(id);
+        }
+      }
       const ids = new Set(state.events.map((event) => event.id));
       const incomingIds = new Set(ids);
       const incoming: RelayEvent[] = [];
