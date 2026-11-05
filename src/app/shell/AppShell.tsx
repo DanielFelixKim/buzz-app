@@ -29,6 +29,7 @@ import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { headerPageSelection, pagePlacement, orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
+import { useInboxDrafts } from "../../bundled/inbox/view";
 import { BestieNavigationProvider } from "./BestieNavigation";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
@@ -127,6 +128,7 @@ function AppShellContent({
   const [creationOpen, setCreationOpen] = useState(false);
   const connection = useRelayConnection(communities.relay);
   const sidebarScope = connection.scope ?? "disconnected";
+  const [inboxDrafts, setInboxDrafts] = useInboxDrafts(connection.session);
   const channelsNavigation = selected === "buzz.channels/channels";
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 650px)").matches,
@@ -199,6 +201,8 @@ function AppShellContent({
             searchServices && {
               relay: communities.relay,
               navigation: searchServices.navigation,
+              drafts: inboxDrafts,
+              showInbox: () => setInboxDrafts(false),
             }
           }
         />
@@ -238,6 +242,8 @@ function AppShellContent({
     creationInSidebar,
     searchServices,
     communities.relay,
+    inboxDrafts,
+    setInboxDrafts,
   ]);
   const headerPages = useMemo(
     () =>

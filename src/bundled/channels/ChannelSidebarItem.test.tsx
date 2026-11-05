@@ -771,3 +771,39 @@ it("describes saved drafts without changing the channel name, then clears the de
     act(() => clearView(session.scope, "draft:alpha"));
   }
 });
+
+it("marks DM message and reply drafts and clears each without changing the DM name", () => {
+  const { session } = owner();
+  const root = "a".repeat(64);
+  const reply = `draft:alpha:thread:${root}`;
+  render(
+    <ChannelSidebarItem
+      {...itemProps(session, false, {
+        id: "alpha",
+        name: "Alice",
+        channelType: "dm",
+      })}
+    />,
+  );
+  const row = screen.getByRole("button", { name: "Alice" });
+  try {
+    act(() => {
+      writeView(session.scope, "draft:alpha", "message");
+      writeView(session.scope, reply, "reply");
+    });
+    expect(row).toHaveAccessibleName("Alice");
+    expect(row).toHaveAccessibleDescription("2 drafts");
+    expect(row.querySelector("[data-draft-indicator]")).toBeVisible();
+    expect(row.querySelector("[data-draft-indicator]")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    act(() => clearView(session.scope, reply));
+    expect(row).toHaveAccessibleDescription("1 draft");
+    act(() => clearView(session.scope, "draft:alpha"));
+    expect(row).not.toHaveAttribute("aria-describedby");
+    expect(row.querySelector("[data-draft-indicator]")).toBeNull();
+  } finally {
+    act(() => clearView(session.scope, "draft:alpha", reply));
+  }
+});

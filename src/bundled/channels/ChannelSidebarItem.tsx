@@ -257,11 +257,7 @@ function ChannelSidebarItemCore({
           {channel.ttlSeconds !== undefined && agents.length === 0 && (
             <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
           )}
-          {channel.channelType !== "dm" && draftCount > 0 && (
-            <span aria-hidden="true">
-              <DraftIndicator session={session} channelId={channel.id} />
-            </span>
-          )}
+          <DraftIndicator count={draftCount} />
         </>
       }
       wrapSelect={(trigger) => {
@@ -311,7 +307,7 @@ function ChannelSidebarItemCore({
       presenceDescription={
         [
           presence === "unknown" ? undefined : `Presence: ${presence}`,
-          channel.channelType !== "dm" && draftCount
+          draftCount
             ? `${draftCount} ${draftCount === 1 ? "draft" : "drafts"}`
             : undefined,
         ]

@@ -5,6 +5,8 @@ const solo = "33333333-3333-4333-8333-333333333333";
 const team = "55555555-5555-4555-8555-555555555555";
 test.use({
   productionBroker: true,
+  dmLabels: true,
+  dmMembers: { "dm-peer": [0] },
   channelIds: [solo, team],
   channelNames: { [solo]: "Alpha", [team]: "Beta" },
   soloChannels: [solo],
@@ -14,7 +16,7 @@ test.use({
 
 // Browser-only: real shell composition, routed exact-root editor, keyboard
 // activation and dialog focus. Content/count matrices stay in the store tests.
-test("Drafts below Inbox opens its draft filter and shares live counts with Solo and Team icons", async ({
+test("Drafts below Inbox opens its draft filter and shares live counts with Solo, Team and DM icons", async ({
   page,
   app,
 }) => {
@@ -24,6 +26,7 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
     ({ scope, solo, team, root }) => {
       for (const [key, text] of [
         [`draft:${solo}`, "Solo pending"],
+        ["draft:dm-peer", "DM pending"],
         [`draft:${team}:thread:${root}`, "Team reply pending"],
       ])
         localStorage.setItem(
@@ -36,6 +39,14 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
   await page.goto(app.origin);
   await newChat(page);
   const soloRow = page.locator(`[data-solo-channel-id="${solo}"]`);
+  const dmRow = page.locator(`button[data-channel-id="dm-peer"]`);
+  await expect(dmRow.locator("[data-draft-indicator]")).toBeVisible();
+  // Profile resolution is independent of drafts. Neither supported label may
+  // acquire the draft count as part of its accessible name.
+  await expect(dmRow).toHaveAccessibleName(
+    new RegExp(`^(?:Alice Fixture|${app.participants[0].slice(0, 10)})$`),
+  );
+  await expect(dmRow).toHaveAccessibleDescription(/1 draft/);
   const teamRow = page.locator(`button[data-channel-id="${team}"]`);
   await expect(soloRow.locator("[data-draft-indicator]")).toBeVisible();
   await expect(teamRow.locator("[data-draft-indicator]")).toBeVisible();
@@ -56,6 +67,14 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
       .toBeLessThan(1);
   };
   await expectAligned();
+  await expect
+    .poll(async () =>
+      Math.abs(
+        (await right(dmRow.locator("[data-draft-indicator]"))) -
+          (await right(teamPencil)),
+      ),
+    )
+    .toBeLessThan(1);
   const pencilRight = await right(soloPencil);
   await soloRow.hover();
   await expectAligned();
@@ -72,16 +91,44 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
   await expectAligned();
   const pages = page.getByRole("navigation", { name: "Pages", exact: true });
   const drafts = pages.getByRole("button", { name: /^Drafts/ });
-  await expect(drafts).toHaveText("Drafts2 drafts");
-  expect(await pages.getByRole("button").allTextContents()).toEqual(
-    expect.arrayContaining(["Inbox", "Drafts2 drafts"]),
-  );
+  await expect(drafts).toHaveAccessibleName("Drafts");
+  await expect(drafts).toHaveAccessibleDescription("3 drafts");
+  await expect(drafts.locator("[data-draft-count]")).toHaveText("3");
+  expect(
+    await pages.locator(".navigation-item-label").allTextContents(),
+  ).toEqual(expect.arrayContaining(["Inbox", "Drafts"]));
   await drafts.focus();
   await drafts.press("Enter");
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(inbox.getByRole("button", { name: "Inbox filters" })).toHaveText(
     "Drafts",
   );
+  const inboxButton = pages.getByRole("button", { name: "Inbox", exact: true });
+  await expect(drafts).toHaveAttribute("aria-current", "page");
+  await expect(inboxButton).not.toHaveAttribute("aria-current");
+  const filter = inbox.getByRole("button", { name: "Inbox filters" });
+  await filter.click();
+  await page.getByRole("menuitemradio", { name: "All", exact: true }).click();
+  await expect(inboxButton).toHaveAttribute("aria-current", "page");
+  await expect(drafts).not.toHaveAttribute("aria-current");
+  await newChat(page);
+  await page.goBack();
+  await expect(filter).toHaveText("All");
+  await expect(inboxButton).toHaveAttribute("aria-current", "page");
+  await page.goForward();
+  await expect(drafts).not.toHaveAttribute("aria-current");
+  await page.goBack();
+  await expect(filter).toHaveText("All");
+  await drafts.click();
+  await expect(drafts).toHaveAttribute("aria-current", "page");
+  await inboxButton.click();
+  await expect(filter).toHaveText("All");
+  await drafts.click();
+  await expect(filter).toHaveText("Drafts");
+  await newChat(page);
+  await page.goBack();
+  await expect(filter).toHaveText("Drafts");
+  await expect(drafts).toHaveAttribute("aria-current", "page");
   const list = inbox.getByRole("list", { name: "Drafts", exact: true });
   await list
     .getByRole("listitem")
@@ -102,12 +149,27 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
     .toEqual([0, "Team reply pending".length]);
   await editor.press("Backspace");
   await expect(editor).toHaveText("");
-  await expect(drafts).toHaveText("Drafts1 draft");
+  await expect(drafts).toHaveAccessibleDescription("2 drafts");
+  await expect(drafts.locator("[data-draft-count]")).toHaveText("2");
   await expect(teamRow.locator("[data-draft-indicator]")).toHaveCount(0);
   await expect(teamRow).toHaveAccessibleDescription("");
   await inbox
     .getByRole("button", { name: "Close detail", exact: true })
     .click();
+  await list
+    .getByRole("listitem")
+    .filter({ hasText: "DM pending" })
+    .getByRole("button")
+    .click();
+  await inbox
+    .getByRole("button", { name: "Delete draft…", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog", { name: "Delete draft?" })
+    .getByRole("button", { name: "Delete draft", exact: true })
+    .click();
+  await expect(drafts).toHaveAccessibleDescription("1 draft");
+  await expect(dmRow.locator("[data-draft-indicator]")).toHaveCount(0);
   await list
     .getByRole("listitem")
     .filter({ hasText: "Solo pending" })

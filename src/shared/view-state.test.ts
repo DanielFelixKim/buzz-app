@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
   clearView,
+  clearViewValue,
   clearViewScope,
   draftCoordinates,
   listDraftViews as enumerateDrafts,
@@ -195,4 +196,21 @@ it("uses one raw read with unchanged fallback and falsy-value semantics", () => 
   read.mockClear();
   expect(readView("scope", "value", "fallback")).toBe("fallback");
   expect(read).toHaveBeenCalledExactlyOnceWith(key);
+});
+
+it("identifies removed keys and still reports a full-scope reset", () => {
+  writeView("scope", "draft:room", "message");
+  writeView("scope", "draft:other", "reply");
+  const changed = vi.fn();
+  const stop = subscribeView("scope", changed);
+  try {
+    clearView("scope", "draft:room");
+    expect(changed).toHaveBeenLastCalledWith("draft:room");
+    clearViewValue("draft:other", "reply");
+    expect(changed).toHaveBeenLastCalledWith("draft:other");
+    clearViewScope("scope");
+    expect(changed).toHaveBeenLastCalledWith(undefined);
+  } finally {
+    stop();
+  }
 });

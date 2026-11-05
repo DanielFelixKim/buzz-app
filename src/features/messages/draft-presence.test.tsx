@@ -1,12 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import {
-  act,
-  cleanup,
-  render,
-  renderHook,
-  screen,
-} from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
@@ -15,7 +9,6 @@ import { attachmentDraft } from "./attachment-draft";
 import { followupDraft, mentionDraft } from "./mention-draft";
 import { typedDraft } from "./composer-testing";
 import { listComposerDrafts, useDraftCount } from "./draft-presence";
-import { DraftIndicator } from "./DraftIndicator";
 
 afterEach(() => {
   cleanup();
@@ -95,19 +88,19 @@ it("changes row presence only when its count changes, without scanning storage f
 it("lists and marks file-only drafts without a saved text key, and removes their marker when files clear", () => {
   const { session } = fixture();
   const files = attachmentDraft(session, `${session.scope}:draft:room`, "room");
-  render(<DraftIndicator session={session} channelId="room" />);
-  expect(screen.queryByRole("img")).toBeNull();
+  const { result } = renderHook(() => useDraftCount(session, "room"));
+  expect(result.current).toBe(0);
   act(() => {
     files.adopt([
       { id: "file", file: new File(["notes"], "notes.txt"), status: "queued" },
     ]);
   });
-  expect(screen.getByRole("img", { name: "1 draft" })).toBeVisible();
+  expect(result.current).toBe(1);
   expect(listComposerDrafts(session).entries).toEqual([
     { key: "draft:room", value: "" },
   ]);
   act(() => files.clear());
-  expect(screen.queryByRole("img")).toBeNull();
+  expect(result.current).toBe(0);
   expect(listComposerDrafts(session).entries).toHaveLength(0);
 });
 
@@ -144,4 +137,23 @@ it("counts destinations beyond the preview cap and follows Huddle metadata witho
   expect(result.current).toEqual([500, 0]);
   act(() => roster([]));
   expect(result.current).toEqual([501, 1]);
+});
+
+it("clears known draft keys incrementally without reading unrelated drafts", () => {
+  const { session } = fixture();
+  writeView(session.scope, "draft:room", "first");
+  writeView(session.scope, "draft:other", "second");
+  writeView(session.scope, "panel-split", 400);
+  const { result } = renderHook(() => useDraftCount(session));
+  expect(result.current).toBe(2);
+  const enumerate = vi.spyOn(Storage.prototype, "key");
+  const read = vi.spyOn(Storage.prototype, "getItem");
+  act(() => clearView(session.scope, "panel-split"));
+  expect(result.current).toBe(2);
+  act(() => clearView(session.scope, "draft:room"));
+  expect(result.current).toBe(1);
+  expect(enumerate).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalledWith(
+    `buzz-view.v1:${JSON.stringify([session.scope, "draft:other"])}`,
+  );
 });

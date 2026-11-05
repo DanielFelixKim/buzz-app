@@ -62,15 +62,18 @@ The shell hides the card while Activity is selected and on devices without hover
 
 The sidebar includes Drafts directly below Inbox while the plugin is enabled.
 It opens the existing Inbox page with its Drafts route and shows the current
-viewer/community's number of meaningful message and reply drafts. Solo chat and
-Team channel rows show a pencil when their main composer or any thread has a
+viewer/community's number of meaningful message and reply drafts. Solo chat,
+Team channel, and DM rows show a pencil when their main composer or any thread has a
 draft. The shared presence projection reuses composer view keys and retained
 attachment counts; it stores no second draft copy and keeps row counts beyond
 the list's 500-preview limit. File-only composers appear in the list even before
 they have a saved text key. Counts update through view/storage and attachment
-notifications, with no relay reads or polling.
+notifications, with no relay reads or polling. Known-key removals update only
+that draft. Drafts highlights while the page shows its Drafts filter, including
+filter-menu changes and history traversal; Inbox highlights for activity views.
+Selecting Inbox leaves Drafts while preserving its saved activity filters.
 
-Drafts is a quiet Inbox header action. It lists only meaningful saved composer
+Drafts is also available from Inbox’s filter menu. It lists only meaningful saved composer
 text in this viewer/community scope, up to 500 with explicit truncation; an
 emptied selected editor stays open until send, close or confirmed delete. The
 list preserves the Inbox row hierarchy and supports channel, DM and exact-root

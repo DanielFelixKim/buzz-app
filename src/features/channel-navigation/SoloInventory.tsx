@@ -462,12 +462,16 @@ function SoloConversationRow({
                 />
               </span>
               {draftCount > 0 && (
-                <span aria-hidden="true">
-                  <DraftIndicator session={session} channelId={id} />
-                  <span className="sr-only" id={draftDescriptionId}>
+                <>
+                  <DraftIndicator count={draftCount} />
+                  <span
+                    aria-hidden="true"
+                    className="sr-only"
+                    id={draftDescriptionId}
+                  >
                     {draftCount} {draftCount === 1 ? "draft" : "drafts"}
                   </span>
-                </span>
+                </>
               )}
             </span>
           }

@@ -53,7 +53,14 @@ export function PageNavigation({
   placement?: "sidebar" | "topbar" | "toolbar";
   /** Show page hover previews; only the sidebar's own navigation opts in. */
   previews?: boolean;
-  inbox?: { relay: RelayData; navigation: Navigation } | undefined;
+  inbox?:
+    | {
+        relay: RelayData;
+        navigation: Navigation;
+        drafts: boolean;
+        showInbox(): void;
+      }
+    | undefined;
 }) {
   const presentation = usePagePresentation();
   const hover = useHoverPointer();
@@ -99,7 +106,10 @@ export function PageNavigation({
         <Badge />
       </ContributionBoundary>
     );
+    const isInbox = page.key === "buzz.inbox/inbox" && !!inbox;
+    const rowSelected = selected === page.key && !(isInbox && inbox.drafts);
     const select = () => {
+      if (isInbox) inbox.showInbox();
       onSelect(page.key);
       document.getElementById("main-content")?.focus({ preventScroll: true });
     };
@@ -147,9 +157,9 @@ export function PageNavigation({
       <NavigationItem
         key={page.key}
         onClick={select}
-        selected={selected === page.key}
+        selected={rowSelected}
         aria-current={
-          selected === page.key && currentPage !== selected ? true : undefined
+          rowSelected && currentPage !== selected ? true : undefined
         }
         label={
           page.key === BESTIE_PAGE ? <BestieUnreadLabel label={label} /> : label
@@ -189,7 +199,10 @@ export function PageNavigation({
     return page.key === "buzz.inbox/inbox" && inbox ? (
       <Fragment key={page.key}>
         {row}
-        <DraftsNavigation {...inbox} />
+        <DraftsNavigation
+          {...inbox}
+          selected={selected === page.key && inbox.drafts}
+        />
       </Fragment>
     ) : (
       row

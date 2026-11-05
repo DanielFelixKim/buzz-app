@@ -122,7 +122,7 @@ function createDraftPresence(session: RelaySession) {
         ({ key }) => key,
       ),
     );
-    filesChanged();
+    publish();
   };
   refresh();
   return {

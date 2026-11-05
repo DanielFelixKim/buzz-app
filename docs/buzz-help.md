@@ -191,11 +191,12 @@ that agent in Buzz; they do not notify the external app through this connection.
   established.
 - **Drafts**, below Inbox in the sidebar, opens Inbox's Drafts filter. Its count
   shows saved message and reply drafts for this account and community on this
-  device. A pencil on a Solo chat or Team channel marks a draft there, including
+  device. A pencil on a Solo chat, Team channel, or DM marks a draft there, including
   thread replies. Select Drafts to find and edit the exact message. Empty text and
   automatic agent-mention prefills do not count. Files remain available within
   the current app session; they do not survive a reload. The Drafts entry is
-  available while the Inbox plugin is enabled.
+  available while the Inbox plugin is enabled. Drafts highlights while that filter
+  is open; selecting Inbox returns to its activity list.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and

@@ -200,7 +200,7 @@ export function clearViewValue(key: string, value: unknown) {
   } catch {
     /* Storage unavailable; nothing was saved to forget. */
   }
-  for (const scope of scopes) changed(scope);
+  for (const scope of scopes) changed(scope, key);
 }
 
 /** Recovery callers must confirm cleanup before retiring their durable operation. */
@@ -210,6 +210,6 @@ export function clearView(scope: string, ...keys: string[]) {
     localStorage.removeItem(storageKey);
     if (localStorage.getItem(storageKey) !== null)
       throw new Error("Could not clear the saved message. Try again.");
+    changed(scope, key);
   }
-  changed(scope);
 }
