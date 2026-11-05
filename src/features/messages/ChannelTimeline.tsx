@@ -166,6 +166,7 @@ export type ChannelTimelineProps = {
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
+  onReply?: ((row: ChannelMessage) => void) | undefined;
   onOpenThread?(
     messageId: string,
     threadRootId: string,
@@ -210,6 +211,7 @@ function Timeline({
   marksRead = true,
   navigation,
   onOpenThread,
+  onReply,
   onOpenMediaReview,
   chatPresentation = false,
   startsThreads = true,
@@ -1464,6 +1466,25 @@ function Timeline({
             const renderMessage = (row: ChannelMessage, inside = false) => {
               return (
                 <MessageRow
+                  onReply={
+                    onReply
+                      ? () => {
+                          const element = scroller.current;
+                          if (element) {
+                            const position = {
+                              ...positionAt(element),
+                              bottom: false,
+                            };
+                            intent.current++;
+                            follow.current = false;
+                            layoutCorrection.current = false;
+                            savedPosition.current = position;
+                            restoredAnchor.current = position.anchor;
+                          }
+                          onReply(row);
+                        }
+                      : undefined
+                  }
                   representedAgents={stableActivity.agents(
                     row.id,
                     presentation.representedAgents.get(row.id),

@@ -1,3 +1,4 @@
+import { useInlineReply } from "../../features/messages/use-inline-reply";
 import { useEffect, useState } from "react";
 import type { MessageComposerProps } from "../../features/messages/MessageComposer";
 import {
@@ -36,6 +37,7 @@ export function ChannelPreview({
   const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);
   const [sentId, setSentId] = useState<string>();
+  const reply = useInlineReply(session, channelId, setSentId);
   const [inlineSignal, setInlineSignal] = useState<AbortSignal>();
   useEffect(() => {
     if (!anchor) return;
@@ -89,6 +91,7 @@ export function ChannelPreview({
         <div className={styles.previewHistory}>
           {window.rows.length > 0 && (
             <ConversationTimeline
+              onReply={reply.select}
               window={window}
               {...(draft ? { transient: true } : {})}
               revealMessageId={sentId}
@@ -141,7 +144,7 @@ export function ChannelPreview({
               ? `Message ${channelName}`
               : `Message #${channelName}`
           }
-          onSend={setSentId}
+          {...reply.composer}
           onDraftSaved={onDraftSaved}
           autoFocus={autoFocus}
         />

@@ -1,3 +1,4 @@
+import { useMessageReplyHold } from "./use-message-reply-hold";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
@@ -364,6 +365,16 @@ function MessageRowContent({
     !archived &&
     !readOnly
   );
+  const replyDisabled =
+    !!(row.delivery && !["accepted", "seen"].includes(row.delivery)) ||
+    archived ||
+    (!!session?.channels.get && (!listed || readOnly));
+  const replyHold = useMessageReplyHold(
+    row.id,
+    onReply && !replyDisabled && !row.membership && !row.huddle
+      ? () => onReply(row.id)
+      : undefined,
+  );
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const active = useConversationPresentation();
@@ -641,11 +652,7 @@ function MessageRowContent({
               )
           : undefined)
       }
-      replyDisabled={
-        !!(row.delivery && !["accepted", "seen"].includes(row.delivery)) ||
-        archived ||
-        (!!session?.channels.get && (!listed || readOnly))
-      }
+      replyDisabled={replyDisabled}
       onSendToChannel={
         session &&
         listed &&
@@ -902,6 +909,7 @@ function MessageRowContent({
     );
   const message = (
     <div
+      {...replyHold}
       data-message-id={renderMessage ? undefined : row.id}
       data-huddle-row={row.huddle ? "" : undefined}
     >

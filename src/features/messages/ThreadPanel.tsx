@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { ReplyContext } from "./ReplyContext";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
@@ -22,8 +23,6 @@ import { replyTree } from "./reply-tree";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -72,7 +71,7 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
-  /** Solo agents answer at top level, so a Solo thread is read-only. */
+  /** Whether this thread belongs to a Solo chat. */
   soloConversation?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
@@ -534,7 +533,7 @@ function ThreadMessages({
   routePending?: boolean | undefined;
   /** A same-thread link that couldn't open; the current thread stays usable. */
   selectionFailure?: SelectionFailure | undefined;
-  /** Solo agents answer at top level, so a Solo thread is read-only. */
+  /** Whether this thread belongs to a Solo chat. */
   soloConversation?: boolean | undefined;
   disabled?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -1020,10 +1019,15 @@ function ThreadMessages({
     setReplyParent(undefined);
     setReplyFocus((value) => value + 1);
   }, []);
-  const targetReply = useCallback((id: string) => {
-    setReplyParent((current) => (current === id ? undefined : id));
-    setReplyFocus((value) => value + 1);
-  }, []);
+  const targetReply = useCallback(
+    (id: string) => {
+      captureResizePosition();
+      follow.current = false;
+      setReplyParent((current) => (current === id ? undefined : id));
+      setReplyFocus((value) => value + 1);
+    },
+    [captureResizePosition],
+  );
   useEffect(() => {
     if (replyRequest) focusReply();
   }, [replyRequest, focusReply]);
@@ -1528,9 +1532,7 @@ function ThreadMessages({
             extensions={extensions}
             session={session}
             scope={scope}
-            onReply={
-              snapshot.root && !soloConversation ? targetReply : undefined
-            }
+            onReply={snapshot.root ? targetReply : undefined}
             row={row}
             getThreadRoot={getThreadRoot}
             stackPrevious={inside || continuation}
@@ -1663,7 +1665,10 @@ function ThreadMessages({
       );
     });
   }
-  const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  const selectedParent =
+    snapshot.root?.id === replyParent
+      ? snapshot.root
+      : snapshot.replies.find((row) => row.id === replyParent);
   const captureOlderAnchor = (element: HTMLElement) => {
     follow.current = false;
     const row = [
@@ -1718,7 +1723,6 @@ function ThreadMessages({
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
-    !soloConversation &&
     (!requireReadyRoot ||
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
@@ -1843,7 +1847,7 @@ function ThreadMessages({
               extensions={extensions}
               session={session}
               scope={scope}
-              onReply={soloConversation ? undefined : focusReply}
+              onReply={targetReply}
               stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
               row={snapshot.root}
               representedAgents={stableActivity.agents(
@@ -1993,10 +1997,12 @@ function ThreadMessages({
           scope={scope}
           channelId={channelId}
           channelName={channelName}
+          soloConversation={soloConversation}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
           threadSeed={threadSeed}
           replyParentId={replyParent}
+          onCancelReply={replyParent ? focusReply : undefined}
           disabled={
             disabled ||
             (requireReadyRoot &&
@@ -2013,27 +2019,11 @@ function ThreadMessages({
               </div>
             ) : (
               selectedParent && (
-                <div className={styles.replyContext}>
-                  <Avatar
-                    src={avatarMedia(
-                      profiles.get(selectedParent.authorId)?.picture,
-                      session.media,
-                    )}
-                    alt=""
-                    fallback={senderName(selectedParent)}
-                    size="default"
-                  />
-                  <div>
-                    <span>Replying to {senderName(selectedParent)}</span>
-                    <p>{selectedParent.content}</p>
-                  </div>
-                  <IconButton
-                    size="sm"
-                    aria-label="Cancel reply target"
-                    onClick={focusReply}
-                    icon={<XIcon size={16} aria-hidden="true" />}
-                  />
-                </div>
+                <ReplyContext
+                  row={selectedParent}
+                  session={session}
+                  onCancel={focusReply}
+                />
               )
             )
           }

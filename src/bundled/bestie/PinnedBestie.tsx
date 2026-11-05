@@ -1,3 +1,4 @@
+import { useInlineReply } from "../../features/messages/use-inline-reply";
 import { useEffect, useState } from "react";
 import { AgentPortrait } from "../agents/AgentCard";
 import { ChannelBody } from "../channels/ChannelBody";
@@ -346,6 +347,7 @@ function BestieConversation({
   const thread =
     routed?.channelId === channel.id ? routed.messageId : localThread;
   const [composerFocus, focusComposer] = useState(0);
+  const reply = useInlineReply(session, channel.id, setSent, composerFocus);
   const ownsCurrentVisit =
     !!navigation &&
     !navigation.signal.aborted &&
@@ -426,6 +428,7 @@ function BestieConversation({
         ) : (
           <SoloColumn>
             <ChannelBody
+              onReply={reply.select}
               viewer={session.viewer}
               cached={!!channel.cached}
               revealMessageId={sent}
@@ -434,8 +437,7 @@ function BestieConversation({
             />
             <ConversationComposer
               label={`Message ${bestie}`}
-              focusRequest={composerFocus}
-              onSend={setSent}
+              {...reply.composer}
             />
           </SoloColumn>
         )}
