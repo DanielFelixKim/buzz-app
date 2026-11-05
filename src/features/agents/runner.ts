@@ -2460,11 +2460,13 @@ export class AgentRunners {
     return timer && { lane: lane(timer), job: timer };
   }
   /** The membership's Workforce route and this turn's context, frozen before
-   * the type is asked to run; undefined when it doesn't route there. A type
+   * the type is asked to run, as `workforce`; nothing when it doesn't route
+   * there. A type
    * that names no harness, or whose harness the gateway doesn't enable for
    * this membership, keeps its existing behavior without waiting on the
    * gateway. A blocked membership runs it with its own configuration and
-   * none of the Buzz context, noting that on the turn: the choice is made
+   * none of the Buzz context, as `workforceFallback`, and notes that on a
+   * mention's request: the choice is made
    * here, before dispatch, so nothing is ever replayed. A turn whose access
    * is revoked after dispatch is the harness's to fail visibly. */
   private async workforce(
@@ -2475,21 +2477,24 @@ export class AgentRunners {
     signal: AbortSignal,
   ) {
     const harness = type.workforce?.harness;
-    if (!workforceRoutes.configured || !harness) return undefined;
+    if (!workforceRoutes.configured || !harness) return {};
     const route = await workforceRoutes.routeReady(agent.key, signal);
-    if (route.kind === "external") return undefined;
+    if (route.kind === "external") return {};
     if (route.kind === "blocked") {
-      job.work?.notice(fallbackNotice(route));
-      return undefined;
+      const notice = fallbackNotice(route);
+      job.work?.notice(notice);
+      return {
+        workforceFallback: Object.freeze({ reason: route.reason, notice }),
+      };
     }
-    if (!route.harnesses.includes(harness)) return undefined;
+    if (!route.harnesses.includes(harness)) return {};
     const { trigger } = job;
     const turn = turnContextFor(trigger, {
       channelId: job.channelId,
       wake: anchor,
       flat: (channelId) => this.host.flat(agent, channelId),
     });
-    return Object.freeze({ route, turn });
+    return { workforce: Object.freeze({ route, turn }) };
   }
 
   /** Runs `job` in `lane`, holding the lane until it may take another. */
@@ -2550,7 +2555,7 @@ export class AgentRunners {
         handle.protection.assertAvailable();
       }
       // Before any type code (its models included) runs for this turn.
-      const workforce = await this.workforce(agent, type, job, anchor, signal);
+      const routing = await this.workforce(agent, type, job, anchor, signal);
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
@@ -2559,7 +2564,7 @@ export class AgentRunners {
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
-        ...(workforce ? { workforce } : {}),
+        ...routing,
         agent: handle,
         config: start.config,
         revisions: start.revisions,

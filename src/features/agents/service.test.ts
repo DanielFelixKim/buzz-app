@@ -15216,11 +15216,89 @@ describe("Workforce gateway gate", () => {
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(ready).toHaveBeenCalledWith(bot, expect.any(AbortSignal));
-    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery).not.toHaveProperty("workforce");
+    expect(delivery?.workforceFallback).toEqual({
+      reason: "network",
+      notice: NOTICE,
+    });
+    expect(Object.isFrozen(delivery?.workforceFallback)).toBe(true);
     expect(f.activity.reader.work()[0]).toMatchObject({
       messageId: mention.id,
       notice: NOTICE,
     });
+  });
+
+  it("hands a blocked watch turn the fallback, keeping its one signed event", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    const f = await setup();
+    f.plugin.agents.register({
+      ...f.type,
+      id: "watcher",
+      workforce: { harness: "relay" },
+    });
+    await f.service.create({ type: "example/watcher", name: "Watcher" });
+    await f.service.save(bot, {
+      attentionEnabled: true,
+      attention: everything,
+    });
+    const watched = event("fallback-watch", { created_at: nowSeconds() });
+    f.emit({ events: [watched] });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.trigger).toMatchObject({
+      type: "watch",
+      event: { id: watched.id },
+    });
+    expect(delivery).not.toHaveProperty("workforce");
+    expect(delivery?.workforceFallback).toEqual({
+      reason: "network",
+      notice: NOTICE,
+    });
+    // No request row: the type shows the notice in its own turn activity.
+    expect(f.activity.reader.work()).toEqual([]);
+  });
+
+  it("hands a blocked timer turn the fallback without inventing a message", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      ready.mockResolvedValue(blockedRoute);
+      const f = await setup();
+      f.plugin.agents.register({
+        ...f.type,
+        id: "timed",
+        workforce: { harness: "relay" },
+      });
+      await f.service.create({ type: "example/timed", name: "Timed" });
+      await f.service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/t": {
+            type: "timer",
+            interest_id: "default",
+            prompt: "tick",
+            enabled: true,
+            interval_secs: 60,
+            armed_at: 1_000,
+            max_occurrences: 1,
+            expires_at: null,
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(f.run).toHaveBeenCalledTimes(1);
+      const delivery = f.run.mock.calls[0]?.[0];
+      expect(delivery?.trigger.type).toBe("timer");
+      expect(delivery).not.toHaveProperty("workforce");
+      expect(delivery).not.toHaveProperty("channelId");
+      expect(delivery?.workforceFallback).toEqual({
+        reason: "network",
+        notice: NOTICE,
+      });
+      expect(f.activity.reader.work()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("asks a blocked membership's type for its own models for a model request", async () => {
@@ -15248,6 +15326,7 @@ describe("Workforce gateway gate", () => {
       const f = await mentioned(true);
       await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
       expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforceFallback");
       workforceRoutes.removeMembership(bot as never);
     }
   });
@@ -15257,6 +15336,7 @@ describe("Workforce gateway gate", () => {
     const f = await mentioned(false);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforceFallback");
     expect(ready).not.toHaveBeenCalled();
   });
 
@@ -15265,6 +15345,7 @@ describe("Workforce gateway gate", () => {
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforceFallback");
   });
 
   it("hands an eligible route and the turn's frozen context to a type that routes through the gateway", async () => {

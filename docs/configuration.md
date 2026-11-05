@@ -108,7 +108,9 @@ declared harness. A type with no declared harness, or one the gateway doesn't
 list, keeps its existing behavior. When the route is blocked (auth, network,
 gateway error or still checking), a type that declares a harness runs with the
 user's own harness configuration and none of the Buzz request context, and the
-turn is noted "Ran without the Workforce gateway" with the reason. That choice
+turn is noted "Ran without the Workforce gateway" with the reason: under the
+request for a mention, and in the harness's own turn activity for other turns,
+which receive it as `delivery.workforceFallback`. That choice
 is made before dispatch; a turn whose gateway access is revoked after dispatch
 fails visibly and is never replayed. Memberships in other communities and
 hosted agents are unchanged. See

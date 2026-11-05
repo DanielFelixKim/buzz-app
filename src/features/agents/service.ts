@@ -199,7 +199,11 @@ import {
 import type { AgentPlugins } from "../../plugins/requests";
 import type { DeviceSettings } from "../../shared/device-settings";
 import type { TurnContext } from "./workforce/contract";
-import { type EligibleRoute, workforceRoutes } from "./workforce/route";
+import {
+  type BlockedReason,
+  type EligibleRoute,
+  workforceRoutes,
+} from "./workforce/route";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -671,9 +675,15 @@ export type Delivery<Config = unknown> = Readonly<{
   wakeText?(): Promise<string | undefined>;
   /** This membership routes inference through the Workforce gateway: its
    * eligible route and this turn's context, both frozen at dispatch. Absent
-   * when it doesn't (an external community, or Workforce off in this
-   * build); a blocked membership fails before its type is asked to run. */
+   * when it doesn't: an external community, Workforce off in this build, a
+   * type that names no harness or one the gateway doesn't enable, or a
+   * blocked route (see `workforceFallback`). */
   workforce?: Readonly<{ route: EligibleRoute; turn: TurnContext }>;
+  /** A blocked route sent this turn to the type's own configuration, decided
+   * before dispatch; never with `workforce`. The host owns the decision and
+   * `notice`; a type shows `notice` in this turn's visible activity where the
+   * host can't (any turn but a mention, whose request it already notes). */
+  workforceFallback?: Readonly<{ reason: BlockedReason; notice: string }>;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a
