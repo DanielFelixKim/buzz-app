@@ -93,48 +93,54 @@ export async function locate(
     } else if (ceiling === null) return { kind: "newest" };
     else lo = ceiling;
   }
-  while (found === undefined) {
-    const top = hi ?? now + 1;
-    // More than a page of rows share one second.
-    if (top - lo <= 1) {
-      if (!fromId) throw new SeekLimitError();
-      // A composite sliding boundary can be inside a dense second. Walk its
-      // keyset pages, keeping the crossing page and its immediately newer one.
-      let cursor = ceilingCursor(top);
-      let previous: WindowPage | undefined;
-      for (;;) {
-        const page = await get(cursor, true);
-        const reached = page.events.some(
-          (event) =>
-            WINDOW_KINDS.includes(event.kind) &&
-            (event.created_at < from ||
-              (event.created_at === from && event.id >= fromId)),
-        );
-        if (reached || !page.cursor) {
-          const events = [...(previous?.events ?? []), ...page.events];
-          const upper = events.find((event) =>
-            WINDOW_KINDS.includes(event.kind),
+  for (;;) {
+    while (found === undefined) {
+      const top = hi ?? now + 1;
+      // More than a page of rows share one second.
+      if (top - lo <= 1) {
+        if (!fromId) throw new SeekLimitError();
+        // A composite sliding boundary can be inside a dense second. Walk its
+        // keyset pages, keeping the crossing page and its immediately newer one.
+        let cursor = ceilingCursor(top);
+        let previous: WindowPage | undefined;
+        for (;;) {
+          const page = await get(cursor, true);
+          const reached = page.events.some(
+            (event) =>
+              WINDOW_KINDS.includes(event.kind) &&
+              (event.created_at < from ||
+                (event.created_at === from && event.id >= fromId)),
           );
-          return {
-            kind: "segment",
-            ceiling: previous ? (upper?.created_at ?? top) : top,
-            ...(previous && upper ? { ceilingId: upper.id } : {}),
-            page: { ...page, events },
-          };
+          if (reached || !page.cursor) {
+            const events = [...(previous?.events ?? []), ...page.events];
+            const upper = events.find((event) =>
+              WINDOW_KINDS.includes(event.kind),
+            );
+            return {
+              kind: "segment",
+              ceiling: previous ? (upper?.created_at ?? top) : top,
+              ...(previous && upper ? { ceilingId: upper.id } : {}),
+              page: { ...page, events },
+            };
+          }
+          previous = page;
+          cursor = page.cursor;
         }
-        previous = page;
-        cursor = page.cursor;
       }
+      const mid = Math.floor((lo + top) / 2);
+      const outcome = classify(await get(ceilingCursor(mid), false), from);
+      if (outcome === "fits") found = mid;
+      else if (outcome === "empty") lo = mid;
+      else hi = mid;
     }
-    const mid = Math.floor((lo + top) / 2);
-    const outcome = classify(await get(ceilingCursor(mid), false), from);
-    if (outcome === "fits") found = mid;
-    else if (outcome === "empty") lo = mid;
-    else hi = mid;
+    const page = await get(found === null ? null : ceilingCursor(found), true);
+    if (classify(page, from) === "overflow") {
+      // Full reads include auxiliary data, so a smaller admitted page may no
+      // longer reach the boundary established by its bare probe.
+      hi = found;
+      found = undefined;
+      continue;
+    }
+    return { kind: "segment", page, ceiling: found };
   }
-  return {
-    kind: "segment",
-    page: await get(found === null ? null : ceilingCursor(found), true),
-    ceiling: found,
-  };
 }

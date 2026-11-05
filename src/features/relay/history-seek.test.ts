@@ -30,7 +30,7 @@ function relay(times: readonly number[]) {
     )
     .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
   const calls: { cursor: WindowCursor | null; full: boolean }[] = [];
-  const read: SeekRead = async (cursor, full) => {
+  const read: SeekRead = async (cursor, full, limit = SEEK_PAGE) => {
     calls.push({ cursor, full });
     const after = cursor
       ? rows.filter(
@@ -39,8 +39,8 @@ function relay(times: readonly number[]) {
             (row.created_at === cursor.createdAt && row.id > cursor.eventId),
         )
       : rows;
-    const events = after.slice(0, SEEK_PAGE);
-    const hasMore = after.length > SEEK_PAGE;
+    const events = after.slice(0, limit);
+    const hasMore = after.length > limit;
     const last = events.at(-1);
     return {
       events,
@@ -205,4 +205,14 @@ it("does not retry malformed seek responses as oversized pages", async () => {
   };
   await expect(locate(read, T0, T0 + DAY, true)).rejects.toBe(error);
   expect(calls).toBe(1);
+});
+
+it("rechecks boundary coverage when auxiliary data shrinks the full read", async () => {
+  const source = relay(Array.from({ length: 150 }, (_, i) => T0 + i));
+  const read: SeekRead = async (cursor, full, limit = SEEK_PAGE) => {
+    if (full && limit > 100) throw new ReadBudgetError();
+    return source.read(cursor, full, limit);
+  };
+  const located = await locate(read, T0, T0 + 150, false);
+  expect(rowsOf(located)).toContain(T0);
 });
