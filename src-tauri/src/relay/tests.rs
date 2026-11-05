@@ -1810,6 +1810,7 @@ fn media_proxy_only_reaches_relay_blobs() {
         format!("https://relay.test/media/{hash}"),
         format!("https://relay.test/media/{hash}.png"),
         format!("https://relay.test:8443/media/{hash}.thumb.jpg"),
+        format!("https://relay.test/media/{hash}.thumb.webp"),
     ] {
         assert!(media_url(&target).is_some(), "{target}");
     }
@@ -1822,6 +1823,7 @@ fn media_proxy_only_reaches_relay_blobs() {
         format!("https://relay.test/media/{hash}#"),
         format!("https://relay.test/media/{hash}.png#buzz-anim=https%3A%2F%2Frelay.test%2Fmedia%2F{hash}.png"),
         format!("https://relay.test/media/{hash}.tar.gz"),
+        format!("https://relay.test/media/{hash}.thumb.png"),
         format!("https://relay.test/upload/{hash}"),
         format!("https://relay.test/media/{}", "A".repeat(64)),
         format!("https://relay.test/media/{hash}/../../query"),
@@ -3401,7 +3403,7 @@ fn canvas_content_is_bounded_in_utf8_bytes() {
     let mut event = EventTemplate {
         kind: 40100,
         created_at: 100,
-        content: "é".repeat(12 * 1024),
+        content: "é".repeat(LIVE_CANVAS_BYTES / 2),
         tags: vec![vec![
             "h".into(),
             "11111111-1111-4111-8111-111111111111".into(),
@@ -3410,6 +3412,88 @@ fn canvas_content_is_bounded_in_utf8_bytes() {
     assert!(validate_event("https://relay.test", &event).is_ok());
     event.content.push('x');
     assert!(validate_event("https://relay.test", &event).is_err());
+}
+
+#[test]
+fn canvas_limits_mirror_the_shared_policy() {
+    let policy = include_str!("../../../src/features/channel-templates/canvas-limits.ts");
+    assert_eq!(LIVE_CANVAS_BYTES, 256 * 1024);
+    assert!(policy.contains("export const LIVE_CANVAS_BYTES = 256 * 1024;"));
+    assert_eq!(CANVAS_MAX_EVENT_BYTES, 512 * 1024 - 16);
+    assert!(policy.contains("export const CANVAS_FRAME_BYTES = 512 * 1024;"));
+    assert!(policy.contains("export const CANVAS_MAX_EVENT_BYTES = CANVAS_FRAME_BYTES - 16;"));
+    let model = include_str!("../../../src/features/channel-templates/model.ts");
+    assert!(model.contains("export const TEMPLATE_CANVAS_BYTES = 24 * 1024;"));
+    // The agent signer keeps its own copy.
+    assert_eq!(buzz_agent_controller::LIVE_CANVAS_BYTES, LIVE_CANVAS_BYTES);
+    assert_eq!(
+        buzz_agent_controller::CANVAS_MAX_EVENT_BYTES,
+        CANVAS_MAX_EVENT_BYTES
+    );
+}
+
+#[tokio::test]
+async fn canvas_signing_through_ipc_bounds_content_and_the_complete_event() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |content: String| {
+        let event = EventTemplate {
+            kind: 40100,
+            created_at: 1_700_000_000,
+            content,
+            tags: vec![vec![
+                "h".into(),
+                "11111111-1111-4111-8111-111111111111".into(),
+            ]],
+        };
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let size = |event: &serde_json::Value| serde_json::to_vec(event).unwrap().len();
+    let largest = sign("x".repeat(LIVE_CANVAS_BYTES)).unwrap();
+    assert_eq!(
+        largest["content"].as_str().unwrap().len(),
+        LIVE_CANVAS_BYTES
+    );
+    assert!(sign("x".repeat(LIVE_CANVAS_BYTES + 1)).is_err());
+
+    // Quotes escape to two bytes, so in-limit content can make a complete
+    // event exactly at, then one byte over, the relay's bound.
+    let overhead = size(&sign(String::new()).unwrap());
+    let quotes = CANVAS_MAX_EVENT_BYTES - overhead - LIVE_CANVAS_BYTES;
+    let escaped = |extra: usize| {
+        format!(
+            "{}{}",
+            "\"".repeat(quotes + extra),
+            "x".repeat(LIVE_CANVAS_BYTES - quotes - extra)
+        )
+    };
+    let boundary = sign(escaped(0)).unwrap();
+    assert_eq!(size(&boundary), CANVAS_MAX_EVENT_BYTES);
+    assert_eq!(
+        sign(escaped(1)).unwrap_err(),
+        serde_json::json!("Relay event is too large")
+    );
 }
 
 #[test]
@@ -4264,4 +4348,19 @@ async fn finished_native_reads_release_their_cancel_slot() {
             Err(error) => assert_eq!(error.to_string(), "relay down"),
         }
     }
+}
+
+#[test]
+fn reaction_author_address_is_accepted_by_packaged_signing() {
+    let event = EventTemplate {
+        kind: 7,
+        created_at: 123,
+        content: "❤️".into(),
+        tags: vec![
+            vec!["h".into(), "room".into()],
+            vec!["e".into(), "a".repeat(64)],
+            vec!["p".into(), "b".repeat(64)],
+        ],
+    };
+    assert!(validate_event("https://relay.test", &event).is_ok());
 }

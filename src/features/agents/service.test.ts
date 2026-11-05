@@ -33,6 +33,7 @@ import {
   describe,
   expect,
   it,
+  type MockInstance,
   vi,
 } from "vitest";
 import {
@@ -49,12 +50,16 @@ import type { RelaySession } from "../relay/session";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
+  type AgentHandle,
   AgentsService,
   type AgentType,
   type ConfigBinding,
   type Delivery,
+  type StandaloneTurn,
   type Trigger,
+  type TurnResult,
   fromOwner,
+  HOSTED_INSTRUCTIONS_CHANGED,
   teamPrompt,
 } from "./service";
 import {
@@ -73,6 +78,18 @@ import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams, type AgentRecord } from "./store";
+import { createPluginRequests } from "../../plugins/requests";
+import {
+  createDeviceSettings,
+  type DeviceSettings,
+  type SettingValue,
+} from "../../shared/device-settings";
+import {
+  type EligibleRoute,
+  GatewayRoutes,
+  gatewayRoutes,
+} from "./gateway/route";
+import { VECTOR_PROFILE } from "./gateway/vectors";
 import {
   bot,
   channel,
@@ -180,6 +197,8 @@ async function setup({
   /** Whether another plugin is still starting after setup, so startup is not
    * over. */
   starting = false,
+  /** The Buzz settings agents' runs can change. */
+  deviceSettings = undefined as DeviceSettings | undefined,
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -220,6 +239,7 @@ async function setup({
     activity,
     decisions,
     binding,
+    deviceSettings,
   );
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
@@ -318,6 +338,7 @@ async function setup({
     emit: fake.emit,
     confirm: fake.confirm,
     connect: fake.connect,
+    readsCommunity: fake.readsCommunity,
     signIn: fake.signIn,
     fail: fake.fail,
     relay: fake.relay,
@@ -447,6 +468,113 @@ it("brings over an identity not already an agent, with its type's defaults and w
   await expect(
     service.port({ source: "harness", pubkey: bot, type: "nope/none" }),
   ).rejects.toThrow("That agent type is not available");
+});
+
+it("binds a dedicated native agent and preserves its target when a provider change is refused", async () => {
+  const storage = memoryStorage();
+  const { ctx, plugin, service, native } = await setup({ storage });
+  const retire = vi.fn(async () => {});
+  plugin.agents.register({
+    id: "native",
+    title: "Native",
+    execution: true,
+    protection: true,
+    retire,
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  const target = {
+    workspace: "/work/task",
+    spawn: vi.fn(),
+    readFile: vi.fn(),
+    resolveDirectory: vi.fn(),
+    dispose: vi.fn(async () => {}),
+  };
+  const adapter = ctx.extend({
+    pluginOwner: {
+      id: "internal",
+      revision: "one",
+      agentExecution: ["example/native"],
+    },
+  });
+  adapter.agents.registerExecution({
+    id: "remote",
+    harnesses: ["example/native"],
+    connect: async () => target,
+  });
+  const agent = await service.create({
+    type: "example/native",
+    name: "Dedicated",
+  });
+  await service.retype(agent.key, "example/native");
+  const observed: Agent[] = [];
+  const off = service.subscribe(() => {
+    const current = service.find(agent.key);
+    if (current) observed.push(current);
+  });
+  const binding = { id: "remote", config: { profile: "scratch" } };
+  native.claim.mockResolvedValueOnce(false);
+  await expect(
+    adapter.agents.bindExecution(agent.key, binding),
+  ).rejects.toThrow("Another copy of Buzz is running this agent");
+  expect(service.executionBinding(agent.key)).toBeUndefined();
+  let finishRetirement = () => {};
+  const retiring = new Promise<void>((resolve) => {
+    finishRetirement = resolve;
+  });
+  retire.mockClear();
+  retire.mockImplementationOnce(() => retiring);
+  const changing = adapter.agents.bindExecution(agent.key, binding);
+  try {
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledWith(agent.key));
+    expect(service.executionBinding(agent.key)).toBeUndefined();
+  } finally {
+    finishRetirement();
+  }
+  await changing;
+  off();
+  expect(observed.at(-1)?.executionBinding).toEqual({
+    provider: "internal/remote",
+    config: { profile: "scratch" },
+  });
+  expect(service.executionBinding(agent.key)).toEqual({
+    provider: "internal/remote",
+    config: { profile: "scratch" },
+  });
+  const setProtection = vi.fn(async () => {});
+  Object.assign(native, { setProtection });
+  await expect(
+    plugin.agentProtection.saveAgent(agent.pubkey, 0, {}),
+  ).rejects.toThrow("Plugin execution does not support protected agents");
+  expect(setProtection).not.toHaveBeenCalled();
+  await plugin.agentProtection.saveAgent(agent.pubkey, 0, null);
+  expect(setProtection).toHaveBeenCalledWith(agent.pubkey, 0, "example", null);
+  const session = { key: "session-1", intent: "new" as const };
+  await expect(adapter.agents.execution(agent.key, session)).rejects.toThrow(
+    "Only the native harness",
+  );
+  expect((await plugin.agents.execution(agent.key, session))?.workspace).toBe(
+    "/work/task",
+  );
+  const get = storage.get;
+  const cached = vi
+    .spyOn(storage, "get")
+    .mockImplementation((key) =>
+      key.startsWith("buzz.agent.execution.v1:") ? null : get(key),
+    );
+  const read = vi.spyOn(storage, "read");
+  read.mockRejectedValueOnce(new Error("Saved state is unavailable"));
+  await expect(service.retype(agent.key, "example/echo")).rejects.toThrow(
+    "Saved state is unavailable",
+  );
+  await expect(service.retype(agent.key, "example/echo")).rejects.toThrow(
+    "does not support the saved execution binding",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  cached.mockRestore();
+  expect(service.executionBinding(agent.key)?.config).toEqual({
+    profile: "scratch",
+  });
 });
 
 it("brings back unarchived an agent whose Delete cleanup archived it, or says it stays archived", async () => {
@@ -4807,8 +4935,8 @@ it("starts a timer due while a change was saving as soon as it is saved", async 
 it("starts a due timer in a free Interest while another timer's progress saves", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   let hold: Promise<void> | undefined;
-  const storage = fileStore(new Map(), async () => {
-    await hold;
+  const storage = fileStore(new Map(), async (key) => {
+    if (!key.startsWith("buzz.agent.execution.v1:")) await hold;
   });
   const { service, run } = await setup({ storage });
   await service.create({ type: "example/echo", name: "Echo" });
@@ -5062,7 +5190,7 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     type: "example/echo",
     name: " Echo ",
     picture,
-    config: { reply: "chosen" },
+    config: { reply: "chosen", model: "model-b", effort: "high" },
   });
   expect(native.create).toHaveBeenCalledWith(
     "https://relay.example.test",
@@ -5075,17 +5203,23 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     picture,
   );
   expect(agent).toMatchObject({ pubkey: bot, name: "Echo", picture });
-  expect(agent.config).toEqual({ reply: "chosen" });
+  expect(agent.config).toEqual({
+    reply: "chosen",
+    model: "model-b",
+    effort: "high",
+  });
   expect(service.find(bot)).toMatchObject({
     picture,
-    config: { reply: "chosen" },
+    config: { reply: "chosen", model: "model-b", effort: "high" },
   });
   // Everything but the config still starts from the type's defaults.
   expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
     "interest/default",
     "watch/channel",
   ]);
-  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain("chosen");
+  expect(
+    JSON.parse(storage.getItem(`buzz.agent.v1:${bot}`) ?? "null").config,
+  ).toEqual({ reply: "chosen", model: "model-b", effort: "high" });
 });
 
 it("keeps a new agent whose picture could not be set", async () => {
@@ -9422,6 +9556,66 @@ it("has a hosted agent's provider stop its turn in one conversation", async () =
   ).resolves.toBe(true);
 });
 
+it("reads and replaces a hosted agent's instructions through its provider", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  const instructions = {
+    get: vi.fn(
+      async (_: { pubkey: string; community: string; signal: AbortSignal }) =>
+        "Be brief.",
+    ),
+    set: vi.fn(
+      async (_: {
+        pubkey: string;
+        community: string;
+        instructions: string;
+        signal: AbortSignal;
+      }) => {},
+    ),
+  };
+  plugin.agents.register({ ...type, remote: { ...remote, instructions } });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  const hosted = service.hostedInstructions(hostedKey);
+  await expect(hosted?.get()).resolves.toBe("Be brief.");
+  await hosted?.set("Be kind.", "Be brief.");
+  expect(instructions.get).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
+  expect(instructions.set).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    instructions: "Be kind.",
+    signal: expect.any(AbortSignal),
+  });
+  // An edit saved elsewhere since the caller read is never replaced.
+  instructions.set.mockClear();
+  await expect(hosted?.set("Be kind.", "Be terse.")).rejects.toThrow(
+    HOSTED_INSTRUCTIONS_CHANGED,
+  );
+  expect(instructions.set).not.toHaveBeenCalled();
+  // A caller's own signal stops the call too.
+  const stop = new AbortController();
+  await hosted?.get(stop.signal);
+  const signal = instructions.get.mock.calls.at(-1)?.[0].signal;
+  if (!signal) throw new Error("The provider was not called.");
+  expect(signal.aborted).toBe(false);
+  stop.abort();
+  expect(signal.aborted).toBe(true);
+  // A local agent, or one nobody has, has none.
+  await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.hostedInstructions(bot)).toBeUndefined();
+  expect(service.hostedInstructions("f".repeat(64))).toBeUndefined();
+});
+
+it("offers no instructions for a hosted agent whose provider has none", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.hostedInstructions(hostedKey)).toBeUndefined();
+});
+
 it("refuses to stop a hosted agent whose provider cannot", async () => {
   const { service, plugin } = await setup();
   const { type } = cloud();
@@ -12844,6 +13038,7 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
           {
             env: {
               PATH: process.env.PATH,
+              ...options.env,
               BUZZ_AGENT_CONNECTION: JSON.stringify(options.mcp),
             },
             stdio: ["pipe", "pipe", "pipe"],
@@ -12951,46 +13146,49 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
   20_000,
 );
 
-it.each(["Attention turns off", "the community reconnects"])(
-  "kills a source command when %s",
-  async (reason) => {
-    const { ctx, service, native, connect } = await setup();
-    let close!: () => void;
-    const closed = new Promise<void>((resolve) => {
-      close = resolve;
-    });
-    const kill = vi.fn(async () => {});
-    const spawn = vi.fn(async () => ({
-      exited: new Promise<number | null>(() => {}),
-      kill,
-      write: async () => {},
-      end: async () => {},
-    }));
-    ctx.provide("host", {
-      spawn,
-      serveMcp: async () => ({
-        url: "http://127.0.0.1:1234/mcp",
-        headers: [],
-        closed,
-        close: async () => {
-          close();
-        },
-      }),
-    } as unknown as import("../host/service").Host);
-    const consumer = ctx.extend({
-      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
-    });
-    await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
-    const controller = new AbortController();
-    expect(spawn).not.toHaveBeenCalled();
-    await sourceCommand(service, consumer, { signal: controller.signal });
-    if (reason === "Attention turns off")
-      await service.save(bot, { attentionEnabled: false });
-    else connect(true);
-    await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
-  },
-);
+it.each([
+  "Attention turns off",
+  "the community reconnects",
+  "the watch is removed",
+])("kills a source command when %s", async (reason) => {
+  const { ctx, service, native, connect } = await setup();
+  let close!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    close = resolve;
+  });
+  const kill = vi.fn(async () => {});
+  const spawn = vi.fn(async () => ({
+    exited: new Promise<number | null>(() => {}),
+    kill,
+    write: async () => {},
+    end: async () => {},
+  }));
+  ctx.provide("host", {
+    spawn,
+    serveMcp: async () => ({
+      url: "http://127.0.0.1:1234/mcp",
+      headers: [],
+      closed,
+      close: async () => {
+        close();
+      },
+    }),
+  } as unknown as import("../host/service").Host);
+  const consumer = ctx.extend({
+    pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+  const controller = new AbortController();
+  expect(spawn).not.toHaveBeenCalled();
+  await sourceCommand(service, consumer, { signal: controller.signal });
+  if (reason === "Attention turns off")
+    await service.save(bot, { attentionEnabled: false });
+  else if (reason === "the watch is removed")
+    await service.save(bot, { attention: { "watch/command": null } });
+  else connect(true);
+  await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+});
 
 it("exposes agent execution only inside an Attention source run", async () => {
   const { service, plugin } = await setup();
@@ -13205,6 +13403,333 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
     await server.close();
   },
 );
+
+describe("external private Solo creation", () => {
+  async function fixture(
+    scopes: readonly import("./external-connection").ExternalScope[] = [
+      "create",
+    ],
+  ) {
+    vi.stubEnv(
+      "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
+      "https://relay.example.test",
+    );
+    const f = await setup();
+    const saved = vi.fn<NonNullable<RelaySession["mainAgent"]>["read"]>(
+      async () => sibling,
+    );
+    const libraryRead = vi.fn(async () => ({
+      definitions: [],
+      identities: [{ pubkey: sibling, name: "Saved remote Bestie" }],
+    }));
+    const lifetime = new AbortController();
+    const choices = createAgentChoices({
+      scope: `https://relay.example.test:${viewer}`,
+      library: createAgentLibrary(libraryRead).queries,
+      native: {
+        snapshot: f.service.local,
+        subscribe: f.service.subscribe,
+        refresh: () => f.service.refresh(),
+      },
+      archives: {
+        snapshot: () => ({
+          status: "ready",
+          archived: [...f.archives.archived],
+        }),
+        subscribe: () => () => {},
+        state: (key) => f.archives.state(key),
+        ensure: f.archives.ensure,
+        refresh: f.archives.refresh,
+      },
+      signal: lifetime.signal,
+    });
+    Object.assign(f.session, {
+      mainAgent: { read: saved, write: vi.fn(async () => {}) },
+      agentChoices: choices,
+    });
+    let handler: import("../host/service").McpHandler | undefined;
+    const closed = runnerGate();
+    const close = vi.fn(async () => closed.resolve());
+    f.ctx.provide("host", {
+      serveMcp: async (receive: import("../host/service").McpHandler) => {
+        handler = receive;
+        return {
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [],
+          closed: closed.promise,
+          close,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const owner = f.ctx.extend({
+      pluginOwner: { id: "buzz.agents", revision: "one" },
+    });
+    const controller = new AbortController();
+    const server = await owner.agents.connectExternal(
+      bot,
+      controller.signal,
+      () => {},
+      scopes,
+    );
+    const call = handler;
+    if (!call) throw new Error("Missing external server handler");
+    f.native.publish.mockClear();
+    f.native.query.mockImplementation(async (_member, filters) => {
+      const created = f.native.publish.mock.calls.find(
+        ([, value]) => value.kind === 9007,
+      )?.[1];
+      if (!created) return [];
+      const id = created.tags?.find(([key]) => key === "h")?.[1] as string;
+      const kind = (filters[0] as { kinds?: number[] } | undefined)?.kinds?.[0];
+      if (kind === 39000)
+        return [
+          event("metadata", {
+            kind,
+            tags: [
+              ["d", id],
+              ["name", "Triage"],
+              ["private"],
+              ["t", "stream"],
+              ["t", "buzz.solo"],
+              ["t", "buzz.session.named"],
+            ],
+          }),
+        ];
+      if (kind === 39002)
+        return [
+          event("roster", {
+            kind,
+            tags: [
+              ["d", id],
+              ["p", bot, "", "owner"],
+              ...(created.tags ?? [])
+                .filter(([key]) => key === "p")
+                .map((tag) => [...tag]),
+            ],
+          }),
+        ];
+      return [];
+    });
+    return {
+      ...f,
+      saved,
+      libraryRead,
+      controller,
+      close,
+      create: (args: Record<string, unknown> = { name: "Triage" }) =>
+        call({
+          id: 1,
+          method: "tools/call",
+          params: { name: "channel_create", arguments: args },
+        }),
+      cleanup: async () => {
+        await server.close();
+        lifetime.abort();
+        await f.ctx.fiber.dispose();
+      },
+    };
+  }
+
+  it.each([sibling, bot])(
+    "uses native owner/caller and the account-saved worker %s",
+    async (worker) => {
+      const f = await fixture();
+      try {
+        f.saved.mockResolvedValueOnce(worker);
+        const reply = await f.create();
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringMatching(/^created /),
+        );
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.not.stringContaining("did not keep the Solo label"),
+        );
+        expect(f.saved).toHaveBeenCalledOnce();
+        expect(f.libraryRead).toHaveBeenCalledOnce();
+        expect(f.native.publish).toHaveBeenCalledOnce();
+        expect(f.native.publish).toHaveBeenCalledWith(
+          { pubkey: bot, relay: "wss://relay.example.test" },
+          {
+            kind: 9007,
+            content: "",
+            tags: [
+              ["h", expect.any(String)],
+              ["name", "Triage"],
+              ["visibility", "private"],
+              ["channel_type", "stream"],
+              ["t", "buzz.solo"],
+              ["t", "buzz.session.named"],
+              ["p", viewer],
+              ...(worker === bot ? [] : [["p", worker]]),
+            ],
+          },
+        );
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringContaining(`added ${viewer}`),
+        );
+        if (worker !== bot)
+          expect(reply).toHaveProperty(
+            "result.content.0.text",
+            expect.stringContaining(`added ${worker}`),
+          );
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it.each([
+    "unset",
+    "missing",
+    "invalid",
+    "unavailable",
+    "archived",
+    "unreadable",
+    "unsupported",
+  ])(
+    "fails before publication when the configured worker is %s",
+    async (reason) => {
+      const f = await fixture();
+      try {
+        if (reason === "unset") f.saved.mockResolvedValueOnce(undefined);
+        else if (reason === "missing") f.saved.mockResolvedValueOnce(null);
+        else if (reason === "invalid")
+          f.saved.mockResolvedValueOnce("not-a-key");
+        else if (reason === "unavailable")
+          f.saved.mockResolvedValueOnce("e".repeat(64));
+        else if (reason === "archived") f.archives.archived.add(sibling);
+        else if (reason === "unreadable")
+          f.saved.mockRejectedValueOnce(new Error("offline"));
+        else Object.assign(f.session, { mainAgent: undefined });
+        const reply = await f.create();
+        expect(reply).toHaveProperty("result.isError", true);
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringMatching(
+            /Bestie.*Buzz|Bestie could not be read|Bestie is not available/,
+          ),
+        );
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it("requires new consent without even looking up the configured worker", async () => {
+    const f = await fixture(["read", "post"]);
+    try {
+      expect(await f.create()).toHaveProperty("result._meta.buzz/error", {
+        code: "authorization_required",
+        required_scopes: ["create"],
+      });
+      expect(f.saved).not.toHaveBeenCalled();
+      expect(f.libraryRead).not.toHaveBeenCalled();
+      expect(f.native.publish).not.toHaveBeenCalled();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it.each(["library", "refresh"])(
+    "offers retry guidance when the worker's %s lookup fails",
+    async (source) => {
+      const f = await fixture();
+      try {
+        if (source === "library")
+          f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
+        else
+          vi.spyOn(f.service, "refresh").mockRejectedValueOnce(
+            new Error("inventory offline"),
+          );
+        const reply = await f.create();
+        expect(reply).toHaveProperty("result.isError", true);
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          "Your saved Bestie could not be checked. Check the community connection and try again.",
+        );
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it("uses a verified local Bestie despite a partial library failure", async () => {
+    const f = await fixture();
+    try {
+      f.saved.mockResolvedValueOnce(bot);
+      f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
+      expect(await f.create()).toHaveProperty(
+        "result.content.0.text",
+        expect.stringMatching(/^created /),
+      );
+      expect(f.native.publish).toHaveBeenCalledOnce();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it("reports native publication refusal without claiming that a Solo exists", async () => {
+    const f = await fixture();
+    try {
+      f.native.publish.mockRejectedValueOnce(
+        new Error("This member cannot join the Solo."),
+      );
+      const reply = await f.create();
+      expect(reply).toHaveProperty("result.isError", true);
+      expect(reply).toHaveProperty(
+        "result.content.0.text",
+        "This member cannot join the Solo.",
+      );
+      expect(f.native.publish).toHaveBeenCalledOnce();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it.each(["account", "inventory"])(
+    "revokes creation during the pending %s lookup",
+    async (stage) => {
+      const f = await fixture();
+      const started = runnerGate(),
+        release = runnerGate();
+      if (stage === "account")
+        f.saved.mockImplementationOnce(async () => {
+          started.resolve();
+          await release.promise;
+          return sibling;
+        });
+      else
+        f.libraryRead.mockImplementationOnce(async () => {
+          started.resolve();
+          await release.promise;
+          return {
+            definitions: [],
+            identities: [{ pubkey: sibling, name: "Bestie" }],
+          };
+        });
+      const outcome = f.create().catch((error) => error);
+      try {
+        await started.promise;
+        f.controller.abort();
+      } finally {
+        release.resolve();
+      }
+      try {
+        expect(await outcome).toBeInstanceOf(Error);
+        await vi.waitFor(() => expect(f.close).toHaveBeenCalled());
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+});
 
 it.each(["return", "throw"])(
   "revokes source commands on %s without losing queued output",
@@ -13613,6 +14138,15 @@ it.each(["command"])(
           id === "command"
             ? ["printf", "hello"]
             : ["--interval", "60", "https://github.com/example/repo/pull/1"],
+        env: {
+          BUZZ_ATTENTION_COMMAND: JSON.stringify([
+            bot,
+            "buzz.agents",
+            "command",
+            "watch/saved",
+            "attention-command",
+          ]),
+        },
         mcp: expect.objectContaining({ url: "http://127.0.0.1/mcp" }),
       }),
     );
@@ -14553,4 +15087,935 @@ it("keeps owned protection settings visible while the selected community reconne
   f.emit({ events: [deploy("offline-protection-settings")] });
   await settle();
   expect(f.run).not.toHaveBeenCalled();
+});
+
+it("saves reviewed import config before native identity installation and adopts the old instructions", async () => {
+  const { service, native, storage, session } = await setup();
+  const port = native.port.getMockImplementation();
+  if (!port) throw new Error("Missing native port fixture");
+  native.port.mockImplementation(async (...args) => {
+    expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain(
+      "Reviewed choice",
+    );
+    const result = await port(...args);
+    return { ...result, carry: { instructions: "Adopted instructions" } };
+  });
+  const { agent } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed choice" },
+    scope: session.scope,
+  });
+  expect(agent.config).toEqual({ reply: "Adopted instructions" });
+  expect(service.find(sibling)?.config).toEqual({
+    reply: "Adopted instructions",
+  });
+});
+
+it("refuses stale-community connection and does not import when reviewed settings cannot be saved", async () => {
+  const { service, native, storage } = await setup();
+  const input = {
+    source: "installed" as const,
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed" },
+  };
+  await expect(
+    service.port({ ...input, scope: "another-community" }),
+  ).rejects.toThrow("community changed");
+  expect(native.port).not.toHaveBeenCalled();
+  vi.spyOn(storage, "add").mockRejectedValue(new Error("Disk full"));
+  await expect(service.port(input)).rejects.toThrow("Disk full");
+  expect(native.port).not.toHaveBeenCalled();
+});
+
+it("does not overwrite settings another app saved before an inline import", async () => {
+  const { service, native, storage } = await setup();
+  const kept = JSON.stringify({
+    pubkey: sibling,
+    config: { reply: "Other app" },
+    attention: {},
+  });
+  await storage.set(`buzz.agent.v1:${sibling}`, kept);
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("already has saved setup");
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toBe(kept);
+  expect(native.port).not.toHaveBeenCalled();
+});
+
+it("reports an incomplete import when adopting settings fails after identity installation", async () => {
+  const { service, native, storage } = await setup();
+  vi.spyOn(storage, "set").mockRejectedValue(new Error("Disk full"));
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("identity was imported");
+  expect(native.port).toHaveBeenCalledOnce();
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain("Reviewed");
+  await service.refresh();
+  expect(service.find(sibling)?.config).toEqual({ reply: "Reviewed" });
+});
+
+it("serializes inline import before the staged write is durable", async () => {
+  const { service, native, storage } = await setup();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const add = storage.add.bind(storage);
+  const staged = vi
+    .spyOn(storage, "add")
+    .mockImplementation(async (key, value) => {
+      const result = await add(key, value);
+      await held;
+      return result;
+    });
+  const input = {
+    source: "installed" as const,
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed" },
+  };
+  const first = service.port(input);
+  try {
+    await vi.waitFor(() => expect(staged).toHaveBeenCalledOnce());
+    await expect(service.port(input)).rejects.toThrow(
+      "already being connected",
+    );
+    expect(native.port).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
+  await first;
+  expect(native.port).toHaveBeenCalledOnce();
+});
+
+it("preserves staged settings after native installation fails and later refreshes", async () => {
+  const { service, native, storage } = await setup();
+  native.port.mockRejectedValueOnce(new Error("Installation failed"));
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("Installation failed");
+  await service.refresh();
+  await settle();
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain("Reviewed");
+  expect(service.find(sibling)).toBeUndefined();
+});
+
+it("keeps reviewed settings when native port persists the identity then rejects", async () => {
+  const { service, native } = await setup();
+  const port = native.port.getMockImplementation();
+  if (!port) throw new Error("Missing native port fixture");
+  native.port.mockImplementation(async (...args) => {
+    await port(...args);
+    native.list.mockRejectedValueOnce(new Error("Temporary list failure"));
+    throw new Error("Native installation reported failure");
+  });
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("Native installation reported failure");
+  await service.refresh();
+  expect(service.find(sibling)?.config).toEqual({ reply: "Reviewed" });
+});
+
+it("gives a run this device's plugins as the agent, and refuses a request its removal overtakes", async () => {
+  const { service, run, emit, ctx } = await setup();
+  let release!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const checkGit = vi.fn(async () => {
+    await reading;
+    return {
+      token: "",
+      source: "owner/plugins",
+      commit: "c".repeat(40),
+      warnings: [],
+      candidates: [
+        {
+          path: ".",
+          revision: "one",
+          manifest: {
+            id: "example.tasks",
+            name: "Tasks",
+            apiVersion: 1 as const,
+          },
+        },
+      ],
+    };
+  });
+  const requests = createPluginRequests({
+    catalog: () => ({ profile: "test", location: "test", plugins: [] }),
+    imports: { checkGit } as never,
+    change: vi.fn(async () => true),
+    error: () => null,
+  });
+  ctx.provide("pluginRequests", requests);
+  try {
+    await service.create({ type: "example/echo", name: "Echo" });
+    const { plugins } = await handleOf(run, emit);
+    const input = {
+      action: "install",
+      repository: "owner/plugins",
+      reason: "Tracks the board",
+    } as const;
+    release();
+    await plugins?.request(input);
+    expect(requests.pending()).toMatchObject([
+      { requester: { pubkey: bot, name: "Echo" }, pluginId: "example.tasks" },
+    ]);
+    requests.settle(requests.pending()[0]?.id ?? "", "declined");
+    let resume!: () => void;
+    checkGit.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      return checkGit.getMockImplementation()?.() as never;
+    });
+    const overtaken = plugins?.request(input);
+    await vi.waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
+    await service.remove(bot);
+    resume();
+    await expect(overtaken).rejects.toThrow(
+      "The requesting agent is no longer available",
+    );
+    expect(requests.pending()).toEqual([]);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
+describe("Buzz settings", () => {
+  const root = "e".repeat(64);
+  function catalog() {
+    let value: SettingValue = "calm";
+    const write = vi.fn((next: SettingValue) => {
+      value = next;
+    });
+    const deviceSettings = createDeviceSettings([
+      {
+        key: "example.mood",
+        description: "A mood.",
+        schema: { type: "string", enum: ["calm", "busy"] },
+        read: () => ({ value }),
+        write,
+      },
+    ]);
+    return { deviceSettings, write };
+  }
+  /** The agent's handle from a run. */
+  async function running(f: Awaited<ReturnType<typeof setup>>) {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const handle = runnerGate<AgentHandle>();
+    f.run.mockImplementationOnce(async ({ agent }) => {
+      handle.resolve(agent);
+    });
+    f.plugin.agents.wake(bot, { channel, root, text: "hi" });
+    return handle.promise;
+  }
+
+  it("are on every run's handle, with no switch, and not a plugin's", async () => {
+    const { deviceSettings, write } = catalog();
+    const f = await setup({ deviceSettings });
+    const agent = await running(f);
+    expect(agent.settings?.list().map(({ key }) => key)).toEqual([
+      "example.mood",
+    ]);
+    expect(agent.settings?.set("example.mood", "busy")).toMatchObject({
+      value: "busy",
+      saved: true,
+    });
+    expect(write).toHaveBeenCalledExactlyOnceWith("busy");
+    expect(agent.settings?.get("example.mood").value).toBe("busy");
+    expect(f.plugin.agents.handle(bot)).not.toHaveProperty("settings");
+  });
+
+  it.each(["the call's turn signal aborts", "the agent is removed"])(
+    "change nothing when %s while the call waits for review",
+    async (what) => {
+      const { deviceSettings, write } = catalog();
+      const f = await setup({ deviceSettings });
+      const agent = await running(f);
+      const turn = new AbortController();
+      const review = runnerGate();
+      const reviewing = runnerGate();
+      const client = {
+        ...appClient(agent, {
+          read: vi.fn(),
+          memories: async () => ({ entries: [], partial: false }),
+          signal: turn.signal,
+        }),
+        protect: vi.fn(async (action: { kind: string }) => {
+          if (action.kind !== "tool") return;
+          reviewing.resolve();
+          await review.promise;
+        }),
+      };
+      const call = callSessionTool(client, {}, "settings_set", {
+        key: "example.mood",
+        value: "busy",
+      });
+      await reviewing.promise;
+      if (what === "the call's turn signal aborts")
+        turn.abort(new Error("Turn ended"));
+      else await f.service.remove(bot);
+      review.resolve();
+      await expect(call).rejects.toThrow();
+      expect(write).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("gateway routing", () => {
+  const COMMUNITY = "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+  const route = (key: string) => gatewayRoutes.routeFor(key as never);
+  let configured: MockInstance<() => boolean>;
+  let set: MockInstance<typeof gatewayRoutes.setMembership>;
+  let removed: MockInstance<typeof gatewayRoutes.removeMembership>;
+  /** What was fed for `key`, in order. */
+  const fed = (key: string = bot) =>
+    set.mock.calls.map(([member]) => member).filter((m) => m.key === key);
+  beforeEach(() => {
+    configured = vi
+      .spyOn(gatewayRoutes, "configured", "get")
+      .mockReturnValue(true);
+    set = vi.spyOn(gatewayRoutes, "setMembership");
+    removed = vi.spyOn(gatewayRoutes, "removeMembership");
+  });
+  afterEach(() => {
+    configured.mockRestore();
+    set.mockRestore();
+    removed.mockRestore();
+    // Routing state is a singleton; leave no membership behind.
+    gatewayRoutes.removeMembership(bot as never);
+  });
+
+  it("feeds a local agent with the live session and the community ID it read", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    expect(fed().at(-1)).toMatchObject({
+      key: bot,
+      origin: "https://relay.example.test",
+      owner: viewer,
+      pubkey: bot,
+    });
+    expect(fed().at(-1)?.community?.session).toBe(f.relay.snapshot().session);
+  });
+
+  it("keeps the same membership and revision across a live socket reconnect and later updates", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    const before = fed().at(-1);
+    const revision = route(bot).revision;
+    // The socket drops and returns inside the session, as live.ts does, and
+    // the service updates for unrelated reasons.
+    f.recover();
+    await f.service.save(bot, { config: { reply: "hi" } });
+    await f.service.refresh();
+    await settle();
+    for (const member of fed()) {
+      expect(member.community).toBeDefined();
+      expect(member.community?.id).toBe(COMMUNITY);
+      expect(member.community?.session).toBe(before?.community?.session);
+    }
+    expect(route(bot).revision).toBe(revision);
+  });
+
+  it("feeds a replaced session, and no community while that session is not ready", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    const old = fed().at(-1)?.community?.session;
+    const revision = route(bot).revision;
+    // The relay is reconnecting: the old session's ID must not stand in.
+    f.reconnecting();
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeUndefined());
+    expect(route(bot).revision).toBeGreaterThan(revision);
+    const pending = route(bot).revision;
+    // A new session with the same ID is new evidence.
+    f.connect(true);
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeDefined());
+    const next = fed().at(-1)?.community;
+    expect(next?.id).toBe(COMMUNITY);
+    expect(next?.session).toBe(f.relay.snapshot().session);
+    expect(next?.session).not.toBe(old);
+    expect(route(bot).revision).toBeGreaterThan(pending);
+    // Dropping the connection outright feeds none either.
+    f.connect(false);
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeUndefined());
+  });
+
+  it("feeds no ID when the replaced session has none, never the old one", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    // The next connection's transport read no NIP-11 community ID.
+    f.readsCommunity(undefined);
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => {
+      const community = fed().at(-1)?.community;
+      expect(community).toBeDefined();
+      expect(community?.session).toBe(f.relay.snapshot().session);
+    });
+    expect(fed().at(-1)?.community?.id).toBeUndefined();
+    // Only the old session ever carried the old ID.
+    const carried = fed().filter((m) => m.community?.id === COMMUNITY);
+    expect(carried.length).toBeGreaterThan(0);
+    for (const member of carried)
+      expect(member.community?.session).not.toBe(
+        fed().at(-1)?.community?.session,
+      );
+  });
+
+  it("feeds nothing for hosted agents, and nothing at all when the build has no gateway configuration", async () => {
+    const f = await setup();
+    const { type } = cloud();
+    f.plugin.agents.register(type);
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed(bot)).not.toHaveLength(0));
+    expect(fed(hostedKey)).toEqual([]);
+    expect(set.mock.calls.map(([m]) => m.pubkey)).not.toContain(hostedKey);
+    set.mockClear();
+    configured.mockReturnValue(false);
+    f.connect(false);
+    f.connect(true);
+    await settle();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("removes the membership of an agent being deleted, and never feeds one that arrives deleting", async () => {
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed()).not.toHaveLength(0));
+    expect(removed).not.toHaveBeenCalled();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    leaveChannels.mockRejectedValueOnce(new Error("offline"));
+    await expect(f.service.remove(bot)).rejects.toThrow(UNFINISHED);
+    warn.mockRestore();
+    expect(f.service.find(bot)?.deleting).toBe(true);
+    await vi.waitFor(() => expect(removed).toHaveBeenCalledWith(bot));
+    // After a relaunch the unfinished Delete is listed but not routed.
+    set.mockClear();
+    removed.mockClear();
+    const identities = await f.native.list();
+    const again = await setup({ storage: f.storage, identities });
+    expect(again.service.find(bot)?.deleting).toBe(true);
+    await settle();
+    expect(set.mock.calls.filter(([m]) => m.key === bot)).toEqual([]);
+  });
+});
+
+describe("agent gateway gate", () => {
+  const GATEWAY_BLOCKED =
+    "Buzz couldn't reach the agent gateway. Check your network connection, then try again.";
+  const eligible: EligibleRoute = Object.freeze({
+    kind: "eligible",
+    revision: 3,
+    gatewayOrigin: "https://gateway.example.test",
+    identity: Object.freeze({
+      community_id: "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      human_pubkey: viewer,
+      agent_pubkey: bot,
+    }),
+    profile: VECTOR_PROFILE,
+    harnesses: Object.freeze(["relay"]),
+  });
+  const blockedRoute = Object.freeze({
+    kind: "blocked",
+    revision: 4,
+    gatewayOrigin: "https://gateway.example.test",
+    reason: "network",
+    message: GATEWAY_BLOCKED,
+  } as const);
+  const external = Object.freeze({ kind: "external", revision: 1 } as const);
+  const mention = event("a1", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  let configured: MockInstance<() => boolean>;
+  let ready: MockInstance<typeof gatewayRoutes.routeForTurn>;
+  let upstream: MockInstance<typeof gatewayRoutes.upstream>;
+  const RELAY_UPSTREAM = Object.freeze({ base: "/upstream/relay" });
+  beforeEach(() => {
+    configured = vi
+      .spyOn(gatewayRoutes, "configured", "get")
+      .mockReturnValue(true);
+    ready = vi.spyOn(gatewayRoutes, "routeForTurn");
+    upstream = vi
+      .spyOn(gatewayRoutes, "upstream")
+      .mockImplementation((harness) =>
+        harness === "relay" ? RELAY_UPSTREAM : undefined,
+      );
+  });
+  afterEach(() => {
+    configured.mockRestore();
+    ready.mockRestore();
+    upstream.mockRestore();
+    gatewayRoutes.removeMembership(bot as never);
+  });
+
+  /** An agent of `gateway`-capable (or not) type, mentioned once. */
+  async function mentioned(
+    capable: boolean,
+    asked = mention,
+    channelId = channel,
+    prepare?: (f: Awaited<ReturnType<typeof setup>>) => void,
+  ) {
+    const f = await setup();
+    prepare?.(f);
+    const run = vi.fn<(delivery: Delivery<Record<string, never>>) => void>();
+    const models = vi.fn(async () => ({
+      current: "deep",
+      models: [{ id: "deep", label: "Deep", efforts: [] }],
+    }));
+    f.plugin.agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run,
+      models,
+      ...(capable ? { gateway: { harness: "relay" } } : {}),
+    });
+    await f.service.create({ type: "example/relay", name: "Relay" });
+    f.emit({ events: [asked], channelId });
+    return { ...f, run, models };
+  }
+  const NOTICE =
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
+
+  it("runs a blocked membership's harness with its own configuration and notes that on the turn", async () => {
+    ready.mockReturnValue(blockedRoute);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(ready).toHaveBeenCalledWith(bot);
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery).not.toHaveProperty("gateway");
+    expect(delivery?.gatewayFallback).toEqual({
+      reason: "network",
+      notice: NOTICE,
+    });
+    expect(Object.isFrozen(delivery?.gatewayFallback)).toBe(true);
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      messageId: mention.id,
+      notice: NOTICE,
+    });
+  });
+
+  it("falls back at once while a readiness probe hangs, never waiting on the gateway", async () => {
+    const id = "22222222-2222-4222-8222-222222222222";
+    const routes = new GatewayRoutes(() => ({
+      version: 2,
+      gateway: "https://gateway.example.test",
+      communities: [{ id, origin: "wss://relay.example.test" }],
+      access_path: "/v9/access",
+      ...VECTOR_PROFILE,
+      upstreams: { pi: { base: "/upstream/pi" } },
+    }));
+    const request = vi.fn(() => new Promise<never>(() => {}));
+    routes.bindRequest(request);
+    routes.setMembership({
+      key: bot as never,
+      origin: "wss://relay.example.test",
+      owner: viewer,
+      pubkey: bot,
+      community: { id, session: {} },
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    ready.mockImplementation((key) => routes.routeForTurn(key));
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]?.gatewayFallback).toEqual({
+      reason: "readiness_pending",
+      notice:
+        "Ran without the agent gateway: gateway access was still being checked.",
+    });
+  });
+
+  it("hands a blocked watch turn the fallback, keeping its one signed event", async () => {
+    ready.mockReturnValue(blockedRoute);
+    const f = await setup();
+    f.plugin.agents.register({
+      ...f.type,
+      id: "watcher",
+      gateway: { harness: "relay" },
+    });
+    await f.service.create({ type: "example/watcher", name: "Watcher" });
+    await f.service.save(bot, {
+      attentionEnabled: true,
+      attention: everything,
+    });
+    const watched = event("fallback-watch", { created_at: nowSeconds() });
+    f.emit({ events: [watched] });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.trigger).toMatchObject({
+      type: "watch",
+      event: { id: watched.id },
+    });
+    expect(delivery).not.toHaveProperty("gateway");
+    expect(delivery?.gatewayFallback).toEqual({
+      reason: "network",
+      notice: NOTICE,
+    });
+    // No request row: the type shows the notice in its own turn activity.
+    expect(f.activity.reader.work()).toEqual([]);
+  });
+
+  it("hands a blocked timer turn the fallback without inventing a message", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      ready.mockReturnValue(blockedRoute);
+      const f = await setup();
+      f.plugin.agents.register({
+        ...f.type,
+        id: "timed",
+        gateway: { harness: "relay" },
+      });
+      await f.service.create({ type: "example/timed", name: "Timed" });
+      await f.service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/t": {
+            type: "timer",
+            interest_id: "default",
+            prompt: "tick",
+            enabled: true,
+            interval_secs: 60,
+            armed_at: 1_000,
+            max_occurrences: 1,
+            expires_at: null,
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(f.run).toHaveBeenCalledTimes(1);
+      const delivery = f.run.mock.calls[0]?.[0];
+      expect(delivery?.trigger.type).toBe("timer");
+      expect(delivery).not.toHaveProperty("gateway");
+      expect(delivery).not.toHaveProperty("channelId");
+      expect(delivery?.gatewayFallback).toEqual({
+        reason: "network",
+        notice: NOTICE,
+      });
+      expect(f.activity.reader.work()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks a blocked membership's type for its own models for a model request", async () => {
+    ready.mockReturnValue(blockedRoute);
+    const f = await mentioned(
+      true,
+      event("a2", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["model", bot, "deep"],
+        ],
+      }),
+    );
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.models).toHaveBeenCalled();
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.activity.reader.work()[0]?.notice).toBe(NOTICE);
+  });
+
+  it("notes nothing on a turn that routes through the gateway or keeps its behavior", async () => {
+    for (const route of [eligible, external, { ...eligible, harnesses: [] }]) {
+      ready.mockReturnValue(route);
+      const f = await mentioned(true);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+      gatewayRoutes.removeMembership(bot as never);
+    }
+  });
+
+  it("runs a type that names no harness unchanged, without waiting on the gateway", async () => {
+    ready.mockReturnValue(blockedRoute);
+    const f = await mentioned(false);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("runs a harness this build gives no upstream unchanged, without a notice or asking for a route", async () => {
+    ready.mockReturnValue(blockedRoute);
+    upstream.mockReturnValue(undefined);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(upstream).toHaveBeenCalledWith("relay");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+    expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("runs a harness the gateway doesn't enable for the membership unchanged", async () => {
+    ready.mockReturnValue({ ...eligible, harnesses: ["pi"] });
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+  });
+
+  it("hands an eligible route and the turn's frozen context to a type that routes through the gateway", async () => {
+    ready.mockReturnValue(eligible);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.gateway?.route).toBe(eligible);
+    expect(delivery?.gateway?.upstream).toBe(RELAY_UPSTREAM);
+    expect(delivery?.gateway?.turn).toEqual({
+      channel_id: channel,
+      message_id: mention.id,
+      thread_id: mention.id,
+    });
+    expect(Object.isFrozen(delivery)).toBe(true);
+    expect(Object.isFrozen(delivery?.gateway)).toBe(true);
+    expect(Object.isFrozen(delivery?.gateway?.turn)).toBe(true);
+  });
+
+  /** The turn context of the one run `asked` started in `channelId`. */
+  const turnOf = async (
+    asked: RelayEvent,
+    channelId: string,
+    prepare?: (f: Awaited<ReturnType<typeof setup>>) => void,
+  ) => {
+    ready.mockReturnValue(eligible);
+    const f = await mentioned(true, asked, channelId, prepare);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    return f.run.mock.calls[0]?.[0].gateway?.turn;
+  };
+  const root = "e".repeat(64);
+  const reply = (id: string, h: string) =>
+    event(id, {
+      tags: [
+        ["h", h],
+        ["e", root, "", "root"],
+        ["e", "f".repeat(64), "", "reply"],
+        ["p", bot],
+      ],
+    });
+
+  it("gives an ordinary channel's reply its actual thread root", async () => {
+    expect(await turnOf(reply("b1", channel), channel)).toEqual({
+      channel_id: channel,
+      message_id: event("b1").id,
+      thread_id: root,
+    });
+  });
+
+  it("gives a group DM mention no thread, though only a two-person DM auto-wakes", async () => {
+    const asked = event("b2", {
+      tags: [
+        ["h", groupDm],
+        ["p", bot],
+      ],
+    });
+    expect(await turnOf(asked, groupDm)).toEqual({
+      channel_id: null,
+      message_id: asked.id,
+      thread_id: null,
+    });
+  });
+
+  it("gives a Solo chat mention no thread, even when it names a root", async () => {
+    const solo = "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const turn = await turnOf(reply("b3", solo), solo, ({ session }) => {
+      const list = session.channels.list();
+      vi.spyOn(session.channels, "list").mockReturnValue({
+        ...list,
+        channels: [
+          ...list.channels,
+          {
+            ...list.channels[0],
+            id: solo,
+            name: "Solo",
+            channelType: "solo",
+            members: [viewer, bot],
+          },
+        ],
+      });
+    });
+    expect(turn).toEqual({
+      channel_id: solo,
+      message_id: event("b3").id,
+      thread_id: null,
+    });
+  });
+
+  /** A gateway-capable type that answers `run` and, given one, `runOnce`;
+   * the agent has attention on with `attention`. */
+  async function automated(
+    attention: Record<string, unknown>,
+    runOnce?: (
+      turn: StandaloneTurn<Record<string, never>>,
+    ) => Promise<TurnResult>,
+  ) {
+    ready.mockReturnValue(eligible);
+    const f = await setup();
+    const run = vi.fn<(delivery: Delivery<Record<string, never>>) => void>();
+    f.plugin.agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run,
+      ...(runOnce ? { runOnce } : {}),
+      gateway: { harness: "relay" },
+    });
+    await f.service.create({ type: "example/relay", name: "Relay" });
+    await f.service.save(bot, { attentionEnabled: true, attention } as never);
+    return { ...f, run };
+  }
+  const timer = (extra: Record<string, unknown> = {}) => ({
+    type: "timer",
+    interest_id: "default",
+    prompt: "check in",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 1,
+    expires_at: null,
+    ...extra,
+  });
+
+  it("gives a timer that wakes a conversation its channel and no message", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      const f = await automated({ "watch/tick": timer({ channel }) });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const delivery = f.run.mock.calls[0]?.[0];
+      // Delivered as its conversation's wake; the context is the timer's.
+      expect(delivery?.trigger).toMatchObject({
+        type: "attention",
+        channel,
+        topLevel: true,
+      });
+      expect(delivery?.gateway?.route).toBe(eligible);
+      expect(delivery?.gateway?.turn).toEqual({
+        channel_id: channel,
+        message_id: null,
+        thread_id: null,
+      });
+      expect(Object.isFrozen(delivery?.gateway?.turn)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a standalone timer turn no channel, message or thread", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      const turns: StandaloneTurn<Record<string, never>>[] = [];
+      const f = await automated({ "watch/tick": timer() }, async (turn) => {
+        turns.push(turn);
+        return { ok: true };
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(turns).toHaveLength(1));
+      expect(turns[0]?.key).toMatch(/^timer\//);
+      expect(turns[0]?.delivery.trigger.type).toBe("timer");
+      expect(turns[0]?.delivery.gateway?.route).toBe(eligible);
+      expect(turns[0]?.delivery.gateway?.turn).toEqual({
+        channel_id: null,
+        message_id: null,
+        thread_id: null,
+      });
+      expect(f.run).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a standalone watch turn the watched event as its message, in that event's channel", async () => {
+    const turns: StandaloneTurn<Record<string, never>>[] = [];
+    const f = await automated(
+      {
+        "watch/deploys": {
+          type: "event",
+          interest_id: "default",
+          enabled: true,
+          since: 1,
+          channels: [channel],
+          kinds: [9],
+        },
+      },
+      async (turn) => {
+        turns.push(turn);
+        return { ok: true };
+      },
+    );
+    const watched = event("c1", { pubkey: viewer, tags: [["h", channel]] });
+    f.emit({ events: [watched] });
+    await vi.waitFor(() => expect(turns).toHaveLength(1));
+    expect(turns[0]?.delivery.trigger).toMatchObject({
+      type: "watch",
+      event: { id: watched.id },
+    });
+    expect(turns[0]?.delivery.gateway?.turn).toEqual({
+      channel_id: channel,
+      message_id: watched.id,
+      thread_id: null,
+    });
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it("adds no gateway field and asks for no route when the build has no configuration", async () => {
+    configured.mockReturnValue(false);
+    upstream.mockReturnValue(undefined);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("adds no gateway field for an external membership, even for a harness", async () => {
+    ready.mockReturnValue(external);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(ready).toHaveBeenCalledTimes(1);
+  });
 });

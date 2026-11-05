@@ -19,6 +19,61 @@ import {
   unsignedProfiles,
 } from "./testing";
 const user = keypair();
+it.each([
+  [" Alice ", "Alice"],
+  ["\u00a0Alice\u3000", "Alice"],
+  ["\tAlice\n", "Alice"],
+  ["\ufeffAlice\ufeff", "Alice"],
+  ["Al\u200bice", "Al\u200bice"],
+  ["Alice\u200d", "Alice\u200d"],
+  ["Alice\ufe0f", "Alice\ufe0f"],
+  ["Alice\u202e", undefined],
+  ["\u202eecilA\u202c", undefined],
+  ["\u2066Alice\u2069", undefined],
+  ["Alice\ufff9", undefined],
+  ["Alice\ufffa", undefined],
+  ["Alice\ufffb", undefined],
+  ["Al\u0000ice", undefined],
+  ["Al\u001bice", undefined],
+  ["Al\nIce", undefined],
+  ["Al\u2028ice", undefined],
+  ["Al\u2029ice", undefined],
+  ["Al\u00adice", "Al\u00adice"],
+  ["Al\u034fice", "Al\u034fice"],
+  ["Alice\u{e0061}", "Alice\u{e0061}"],
+  ["علی\u200cرضا", "علی\u200cرضا"],
+  ["葛\u{e0100}", "葛\u{e0100}"],
+  ["\u1820\u180b", "\u1820\u180b"],
+  ["Alice 👩🏽‍💻", "Alice 👩🏽‍💻"],
+  ["Zoë 愛麗絲", "Zoë 愛麗絲"],
+  ["Alice  Smith", "Alice  Smith"],
+])("projects the public name %j without layout controls", (name, expected) => {
+  const head = profile(user, { display_name: name, name, about: "Kept" });
+  const original = JSON.stringify(head);
+  const parsed = foldProfiles([head]).get(user.pubkey);
+  expect(parsed?.name).toBe(expected ?? user.pubkey.slice(0, 10));
+  expect(parsed?.nameIsFallback).toBe(expected ? undefined : true);
+  expect(parsed?.username).toBeUndefined();
+  expect(parsed?.about).toBe("Kept");
+  expect(JSON.stringify(head)).toBe(original);
+});
+
+it("falls back to a safe handle without exposing a control-bearing username", () => {
+  expect(
+    foldProfiles([
+      profile(user, {
+        display_name: "\u202eecilA\u202c",
+        name: " alice-helper ",
+      }),
+    ]).get(user.pubkey),
+  ).toEqual({ name: "alice-helper" });
+  expect(
+    foldProfiles([
+      profile(user, { display_name: "Alice Helper", name: "Al\nIce" }),
+    ]).get(user.pubkey),
+  ).toEqual({ name: "Alice Helper" });
+});
+
 it("projects about safely and publishes an about-only replacement/removal", () => {
   const wire = scriptedTransport(user.pubkey, keypair().pubkey);
   const reader = createRelayReader(wire.transport);
@@ -651,6 +706,66 @@ it("cancels background reads still in flight when it shrinks, but not foreground
     expect(directory.queries.snapshot().has(roster[0]?.pubkey as string)).toBe(
       false,
     );
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps background reads asked for after a release when the shrink runs", async () => {
+  vi.useFakeTimers();
+  const answers: {
+    authors: readonly string[];
+    resolve: (events: RelayEvent[]) => void;
+  }[] = [];
+  const read = vi.fn(
+    (
+      filters: readonly { authors?: readonly string[] | undefined }[],
+      options?: { signal?: AbortSignal },
+    ) =>
+      new Promise<RelayEvent[]>((resolve, reject) => {
+        answers.push({ authors: filters[0]?.authors ?? [], resolve });
+        options?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
+      }),
+  );
+  const directory = createProfileDirectory({ read });
+  try {
+    const profiles = unsignedProfiles(4, "N");
+    const [stale, joined, other, fresh] = profiles as [
+      RelayEvent,
+      RelayEvent,
+      RelayEvent,
+      RelayEvent,
+    ];
+    const release = directory.queries.reserve?.(1);
+    // The departing view's reads, both asked for before its release.
+    const departing = Promise.all([
+      directory.ensure([stale.pubkey], "background"),
+      directory.ensure([joined.pubkey, other.pubkey], "background"),
+    ]);
+    const before = directory.queries.evictions?.() ?? 0;
+    release?.();
+    // The next view mounts before the shrink runs: one new author, and one
+    // on the departing view's pending page.
+    const next = directory.ensure([fresh.pubkey, joined.pubkey], "background");
+    expect(answers.map((answer) => answer.authors)).toEqual([
+      [stale.pubkey],
+      [joined.pubkey, other.pubkey],
+      [fresh.pubkey, joined.pubkey],
+    ]);
+    await vi.runAllTimersAsync();
+    expect(directory.queries.limit?.()).toBe(1024);
+    // Both departing reads were cancelled.
+    expect(directory.queries.evictions?.()).toBe(before + 2);
+    for (const answer of answers) answer.resolve(profiles);
+    await Promise.all([departing, next]);
+    const snapshot = directory.queries.snapshot();
+    expect(snapshot.has(fresh.pubkey)).toBe(true);
+    expect(snapshot.has(joined.pubkey)).toBe(true);
+    expect(snapshot.has(stale.pubkey)).toBe(false);
+    expect(snapshot.has(other.pubkey)).toBe(false);
   } finally {
     directory.dispose();
     vi.useRealTimers();

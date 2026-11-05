@@ -93,6 +93,9 @@ import {
   type Stream,
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
+import type { DeviceSettings } from "../../shared/device-settings";
+import { fallbackNotice, gatewayRoutes } from "./gateway/route";
+import { turnContextFor } from "./gateway/turn";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -413,6 +416,9 @@ export type RunnerHost = {
   member(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
+  /** Whether the channel is flat, with no threads: a DM of any size or a
+   * Solo chat. */
+  flat(agent: Agent, channelId: string): boolean;
   /** While the owner is still starting this chat, settles once it can take
    * the agent's events; undefined otherwise. */
   starting?(agent: Agent, channelId: string): Promise<void> | undefined;
@@ -468,7 +474,7 @@ export type RunnerHost = {
   /** The team sections of its prompt; empty without a team. */
   team(key: AgentKey): string;
   /** What its next run starts with, from this device's storage only. */
-  start(agent: Agent): Start<unknown>;
+  start(agent: Agent): Start<unknown> | Promise<Start<unknown>>;
   protection?(agent: Agent): AgentHandle["protection"];
   agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
   createAgent(
@@ -479,12 +485,16 @@ export type RunnerHost = {
     agent: Agent,
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** This device's plugins as the agent's handle offers them. */
+  plugins?(agent: Agent): AgentHandle["plugins"];
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
+  /** Buzz settings on this device, where there are any. */
+  settings?(): DeviceSettings | undefined;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -2449,6 +2459,45 @@ export class AgentRunners {
     );
     return timer && { lane: lane(timer), job: timer };
   }
+  /** The membership's gateway route, this turn's context and its harness's
+   * upstream base, frozen before the type is asked to run, as `gateway`. It
+   * never waits on the gateway. A type that names no harness, whose harness
+   * this build gives no upstream, or whose harness the gateway doesn't
+   * enable for this membership keeps its existing behavior, without a
+   * notice. A blocked membership, including one whose readiness is still
+   * pending, runs it with its own configuration and none of the Buzz
+   * context, as `gatewayFallback`, and notes that on a mention's request.
+   * The choice is made here, before dispatch, so nothing is ever replayed. A
+   * turn whose access is revoked after dispatch is the harness's to fail
+   * visibly. */
+  private gatewayRouting(
+    agent: Agent,
+    type: RegisteredAgentType,
+    job: Job,
+    anchor: ConversationWake | undefined,
+  ) {
+    const harness = type.gateway?.harness;
+    const upstream = harness && gatewayRoutes.upstream(harness);
+    if (!upstream) return {};
+    const route = gatewayRoutes.routeForTurn(agent.key);
+    if (route.kind === "external") return {};
+    if (route.kind === "blocked") {
+      const notice = fallbackNotice(route);
+      job.work?.notice(notice);
+      return {
+        gatewayFallback: Object.freeze({ reason: route.reason, notice }),
+      };
+    }
+    if (!route.harnesses.includes(harness)) return {};
+    const { trigger } = job;
+    const turn = turnContextFor(trigger, {
+      channelId: job.channelId,
+      wake: anchor,
+      flat: (channelId) => this.host.flat(agent, channelId),
+    });
+    return { gateway: Object.freeze({ route, turn, upstream }) };
+  }
+
   /** Runs `job` in `lane`, holding the lane until it may take another. */
   private start(
     runner: Runner,
@@ -2506,14 +2555,17 @@ export class AgentRunners {
           );
         handle.protection.assertAvailable();
       }
+      // Before any type code (its models included) runs for this turn.
+      const routing = this.gatewayRouting(agent, type, job, anchor);
       const pick = await pickFor(job.trigger, agent, type);
-      const start = this.host.start(agent);
+      const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
+        ...routing,
         agent: handle,
         config: start.config,
         revisions: start.revisions,
@@ -2671,6 +2723,7 @@ export class AgentRunners {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
+    const settings = run ? this.host.settings?.() : undefined;
     const handle = guarded(
       {
         protection: protection && {
@@ -2754,9 +2807,10 @@ export class AgentRunners {
           lifetime.throwIfAborted();
           return this.host.updateAgent(agent, input);
         },
-        // Only a run hands off: a plugin's wake through `Agents.handle` would
-        // read as the agent's own.
+        // Only a run hands off or manages plugins: through `Agents.handle` a
+        // plugin's call would read as the agent's own.
         ...(run && {
+          plugins: this.host.plugins?.(agent),
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
@@ -2764,6 +2818,8 @@ export class AgentRunners {
         }),
         templates: () => this.host.templates(agent),
         tabs: () => this.host.tabs(agent),
+        // Only a run's: a plugin acting through the agent doesn't get them.
+        ...(settings && { settings }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>

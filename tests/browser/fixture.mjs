@@ -67,6 +67,7 @@ export const test = base.extend({
   lifecycleRole: ["owner", { option: true }],
   lifecycleOwnerAgent: [false, { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
+  autoJoinChannels: [[], { option: true }],
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
@@ -99,6 +100,8 @@ export const test = base.extend({
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   builderlabLogin: [false, { option: true, scope: "worker" }],
+  // An FI build with no native host: the Builderlab plugin applies, signed out.
+  federatedIdentity: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   localAgentActivity: [false, { option: true, scope: "worker" }],
   pairingFixture: [false, { option: true, scope: "worker" }],
@@ -142,6 +145,7 @@ export const test = base.extend({
       lifecycleRole,
       lifecycleOwnerAgent,
       lifecycleVisibility,
+      autoJoinChannels,
       sidebarIcons,
       channelNames,
       expectedPageFailure,
@@ -445,6 +449,7 @@ export const test = base.extend({
     }
     const hiddenChannels = new Set();
     const soloDetails = new Map();
+    const servedMembers = new Map(Object.entries(sessionMembers));
     const streams = new Map();
     const streamOwners = new Map();
     // Tall histories leave room above the older-page prefetch threshold, even
@@ -1225,7 +1230,7 @@ export const test = base.extend({
                 ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                   ? [["p", ownerAgent, "", "owner"]]
                   : []),
-                ...(sessionMembers[id] ?? []).map((pubkey) => [
+                ...(servedMembers.get(id) ?? []).map((pubkey) => [
                   "p",
                   pubkey,
                   "",
@@ -1303,6 +1308,7 @@ export const test = base.extend({
                   ],
                   ...(id === guestChannelId ? [["join_role", "guest"]] : []),
                   ...(archivedIds.has(id) ? [["archived", "true"]] : []),
+                  ...(autoJoinChannels.includes(id) ? [["auto_join"]] : []),
                   // Ordinary channels are explicitly public; do not add a public
                   // flag to private Solo chats or change the separate DM fixtures.
                   ...(!soloChannels.includes(id) &&
@@ -1543,8 +1549,14 @@ export const test = base.extend({
               ),
             ),
         ];
-      if (filter["#p"] && !filter["#h"] && filter.kinds?.includes(9)) {
-        expect([...filter.kinds].sort((a, b) => a - b)).toEqual([9, 40002]);
+      if (
+        filter["#p"] &&
+        !filter["#h"] &&
+        (filter.kinds?.includes(9) || filter.kinds?.includes(7))
+      ) {
+        expect([...filter.kinds].sort((a, b) => a - b)).toEqual(
+          filter.kinds.includes(7) ? [7] : [9, 40002],
+        );
         expect(filter["#p"]).toEqual([viewer]);
         expect(filter.limit).toBe(50);
         const candidates = [...histories.entries()]
@@ -2321,6 +2333,10 @@ export const test = base.extend({
             : 3,
         );
         const filter = body[0];
+        if (body.length === 1 && filter.read_state_snapshot === 1) {
+          report.queries.push({ community, filter });
+          return send(response, answer(community, filter));
+        }
         const result = [
           ...new Map(
             body
@@ -2715,6 +2731,12 @@ export const test = base.extend({
           servedProfiles.set(event.pubkey, event);
           return event;
         },
+        // Configure pre-existing members before opening the app. Reads stay at
+        // the modeled relay, without a second browser-owned HTTP request.
+        serveMembers(id, pubkeys) {
+          expect(rosterIds).toContain(id);
+          servedMembers.set(id, [...pubkeys]);
+        },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
         addChannelGuest(id, pubkey) {
@@ -2864,6 +2886,7 @@ export const test = base.extend({
           root,
           parent,
           attachmentTags = [],
+          createdAt,
         ) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
@@ -2882,7 +2905,7 @@ export const test = base.extend({
             ],
             content ?? `Live append ${history.length}`,
             own ? userKey : peerKey,
-            (history.at(-1)?.created_at ?? 1700000900) + 1,
+            createdAt ?? (history.at(-1)?.created_at ?? 1700000900) + 1,
           );
           history.push(event);
           if (relay && deliver) relay.publish(community, event);

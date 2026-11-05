@@ -33,6 +33,7 @@ import type { RelayData } from "../relay/service";
 import { threadReference } from "../relay/thread-reference";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
 import { wakeAnchor, wakeLands } from "./plugin-wake";
+import { readAuthorNames } from "./author-names";
 import { ownerCanvas, readProject } from "./project";
 
 /** Whether each thread is its own conversation, or the whole channel is one. */
@@ -182,7 +183,7 @@ function advance(cursor: Cursor, newest: number, contextRoot?: string) {
 const NO_TOOLS = `<buzz-tools-unavailable>
 This session has no Buzz tools: the tools named above, such as send and read, do not exist here. Your final message is posted as your reply in the conversation, so write it as that reply, and say there what you need from anyone.
 </buzz-tools-unavailable>`;
-const NAMES_TIMEOUT_MS = 2_000;
+const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 
 export function harnessKit(sources: Sources): HarnessKit {
   const admitted = new WeakMap<HarnessConversation, Admitted>();
@@ -333,7 +334,7 @@ export function harnessKit(sources: Sources): HarnessKit {
                   },
                 ]
               : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
-            { signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2) },
+            { signal: AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS) },
           );
           earlier = events
             .filter(
@@ -354,22 +355,16 @@ export function harnessKit(sources: Sources): HarnessKit {
         (item) =>
           item.created_at > since && (!since || item.pubkey !== agent.pubkey),
       );
-      const pubkeys = [
-        ...new Set([
-          event.pubkey,
-          ...unseen.map((item) => item.pubkey),
-          ...event.tags
-            .filter((tag) => tag[0] === "p")
-            .map((tag) => tag[1] ?? ""),
-        ]),
-      ].filter(Boolean);
-      if (ready)
-        await Promise.race([
-          ready.profiles.ensure(pubkeys, "foreground").catch(() => undefined),
-          new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
-        ]);
-      const members = summary(agent.key, channelId)?.members ?? [];
-      const project = (await reading)?.section;
+      const reads = ownerReads(sources.relay(agent.key), agent.pubkey);
+      const signingAuthority = reads?.workflowAuthority();
+      const [names, project] = await Promise.all([
+        readAuthorNames(
+          reads,
+          [event, ...unseen.slice(-CONTEXT_LIMIT)],
+          signingAuthority,
+        ),
+        reading.then((read) => read?.section),
+      ]);
       const text = turnPrompt({
         agent: agent.key,
         event,
@@ -380,11 +375,8 @@ export function harnessKit(sources: Sources): HarnessKit {
         ...(thread ? { thread } : {}),
         context: unseen,
         total: earlier.length + 1,
-        label: "@mention",
-        name: (pubkey) =>
-          ready?.names.resolve(pubkey, undefined, members) ??
-          ready?.profiles.snapshot().get(pubkey)?.name ??
-          undefined,
+        names,
+        ...(signingAuthority ? { signingAuthority } : {}),
         ...(project ? { project } : {}),
         ...(wake
           ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }

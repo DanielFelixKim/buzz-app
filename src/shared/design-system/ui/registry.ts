@@ -132,7 +132,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Explain an empty collection, introduce setup, or present a status action.",
     behavior:
       "Static content with a decorative icon, grouped copy, and an optional action. Uses label-sm/body-sm type, a 48ch measure, and logical spacing; callers distinguish empty results from loading or errors.",
-    variants: ["with action", "informational"],
+    variants: ["with action", "informational", "unframed"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/EmptyState.tsx",
@@ -171,7 +171,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Compact feedback without moving the page or hiding recovery actions.",
     behavior:
       "Sonner owns bottom-right placement, announcements, expiry and swipe dismissal. Buzz supplies themed content and an expanded, scrollable recovery stack. F6 focuses notifications.",
-    variants: ["transient", "actionable", "dismissible"],
+    variants: ["transient", "actionable", "dismissible", "navigable"],
     status: "core",
     collection: "components",
     source: "shared/design-system/ui/Toast.tsx",
@@ -928,6 +928,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "disabled",
       "align: start | center | end",
       "compact link",
+      "compact inverted: app-background fill",
       "compact glass-ghost (proposed)",
       "compact value suffix",
       "optional group separator",

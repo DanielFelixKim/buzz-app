@@ -183,6 +183,7 @@ export function fakeRelay(origin = "https://relay.example.test") {
     session,
   };
   const connected_ = snapshot;
+  let communityId: string | undefined;
   return {
     relay: {
       snapshot: () => snapshot,
@@ -195,7 +196,11 @@ export function fakeRelay(origin = "https://relay.example.test") {
     /** Drops the connection, or restores it with a new session. */
     connect(connected: boolean) {
       snapshot = connected
-        ? { ...connected_, session: { ...session } as RelaySession }
+        ? {
+            ...connected_,
+            session: { ...session } as RelaySession,
+            ...(communityId ? { communityId } : {}),
+          }
         : { status: "disconnected", generation: 2, session };
       for (const listener of changes) listener();
     },
@@ -218,6 +223,10 @@ export function fakeRelay(origin = "https://relay.example.test") {
     reconnecting() {
       snapshot = { status: "connecting", generation: 3, session };
       for (const listener of changes) listener();
+    },
+    /** The NIP-11 community ID the next connected session's transport reads. */
+    readsCommunity(id: string | undefined) {
+      communityId = id;
     },
     /** Drops and restores the socket inside the same session, as live.ts does. */
     recover() {
@@ -312,7 +321,7 @@ function held(identities: AgentIdentity[]) {
 
 export function fakeNative(identities: AgentIdentity[] = []) {
   let published = 0;
-  const keys = [bot, sibling];
+  const keys = [bot, sibling, "e".repeat(64)];
   const removals = held(identities);
   const wss = (relay: string) => relay.replace(/^https:/, "wss:");
   /** Its live row in the membership's community, as native finds it. */

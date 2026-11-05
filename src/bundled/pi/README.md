@@ -41,15 +41,22 @@ cd src/bundled/pi/deps
 npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolved
 ```
 
-## Block mode
+## Gateway mode
 
-A Pi agent eligible for Block mode (DXA-1152's route, not yet active: Pi
-gets no `WorkforceSeam` until rollout) runs only Block's models, through
-Block's model gateway at `<gateway>/pass-through/databricks/ai-gateway/`.
-Every other provider is listed as unavailable, and there is no fallback to
-one. A blocked route (readiness, identity, auth or network failure) lists
-nothing and runs nothing. It shows its reason instead. Missing or unresolved
-context never makes an agent external.
+A Pi agent whose route the configured model gateway makes eligible, and which
+that gateway enables for Pi, runs only the gateway's models, through the Pi
+upstream base of the build's `BUZZ_AGENT_GATEWAY` descriptor. Without that
+descriptor, or without a Pi upstream in it, every route is external.
+Every other provider is listed as unavailable while the route is eligible.
+
+When the runner sends a turn without the gateway (a blocked route: readiness,
+identity, auth or network failure), Pi runs it on the agent's ordinary
+configured provider and model, with the runner's shared fallback notice on the
+prompt. The saved choice is never rewritten. An agent whose saved provider is
+the gateway's has no ordinary choice, so its turn fails visibly with the reason;
+Pi never switches it to another model. A request already bound to the gateway
+keeps that mode when asked again and is never resent without it. Revocation
+during a gateway run stops it visibly.
 
 Each serving endpoint uses the one protocol verified for its family, with
 pi-ai 1.4.0's own client. Nothing retries a request on another protocol:
@@ -60,10 +67,13 @@ pi-ai 1.4.0's own client. Nothing retries a request on another protocol:
 | `gpt` | `openai/v1/responses` | `openai-responses` | gpt-5-4-nano |
 | any other offering it | `mlflow/v1/chat/completions` | `openai-completions` (`supportsStore: false`, `maxTokensField: "max_tokens"`) | gpt-oss-20b, qwen3-next-80b-a3b-instruct, glm-5-3-flash |
 
+pi-ai's Anthropic client sends Messages through the SDK's beta resource, so
+its path is `anthropic/v1/messages?beta=true`.
+
 Endpoints that offer none of these are not listed. That includes Gemini,
 embeddings, endpoints that are not ready, and endpoints without function
 calling. The probes listed above are synthetic, so other endpoints are
-untested on their protocol. Block models are listed with no reasoning
+untested on their protocol. Gateway models are listed with no reasoning
 levels, a 128k context window, a 16k output limit, and no cost. Images are
 the endpoint's `image_input`.
 
@@ -91,10 +101,8 @@ them writes it at the next turn and writing it again adds nothing. The
 intent is cleared only with the binding that replaces the session, before
 that turn is submitted.
 
-Responses transport is verified. Gateway `9fc567e` attributes it through
-affinity, but its harness attribution is still pending integrated and
-downstream confirmation (DXA-1162). Black-box probes saw no effect of
-affinity on Databricks caching. Databricks documents no semantics for it.
+Responses transport is verified. Black-box probes saw no effect of affinity
+on upstream caching, and none is documented.
 
 ## Limits
 

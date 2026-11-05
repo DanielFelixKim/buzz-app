@@ -4,6 +4,7 @@ import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { useClockPreference } from "../../shared/clock-preference";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -12,7 +13,11 @@ import {
 } from "../conversation/typing-presentation";
 import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { LightningIcon, RobotIcon } from "../../shared/design-system/icons";
+import {
+  DotsThreeIcon,
+  LightningIcon,
+  RobotIcon,
+} from "../../shared/design-system/icons";
 import { useProfileOwner } from "../profiles/useProfileOwner";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import { profileMentionParts } from "./profile-mentions";
@@ -86,6 +91,7 @@ import {
   MessageReadStateItem,
 } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
+import { useForwardMessage } from "./ForwardMessage";
 import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
 import {
   MenuIcon,
@@ -102,6 +108,8 @@ export type MessageRowProps = {
   row: ChannelMessage;
   recordedActivity?: ActivityRowPresentation | undefined;
   representedAgents?: readonly string[] | undefined;
+  repliedAgents?: readonly string[] | undefined;
+  stoppedRequest?: ChannelMessage | undefined;
   staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
@@ -200,6 +208,8 @@ function MessageRowContent({
   stackPrevious = layout === "continuation",
   stackNext = false,
   representedAgents,
+  repliedAgents,
+  stoppedRequest,
   alignViewer = true,
 
   mediaMode = "inline",
@@ -254,6 +264,15 @@ function MessageRowContent({
     row.channelId,
     (channel) => !!channel?.readOnly,
   );
+  const { messageTimestamps } = useClockPreference();
+  const solo = useListedChannel(
+    references?.channels,
+    row.channelId,
+    (channel) => channel?.channelType === "solo",
+  );
+  const showTime =
+    messageTimestamps === "show" ||
+    (messageTimestamps === "hide-solo" && !solo);
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
@@ -367,6 +386,7 @@ function MessageRowContent({
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const active = useConversationPresentation();
+  const forward = useForwardMessage();
   const [reporting, setReporting] = useState<"open" | "sent">();
   const registeredActions = useSyncExternalStore(
     extensions?.actions?.subscribe ?? noSubscribe,
@@ -383,9 +403,18 @@ function MessageRowContent({
       })
     : [];
   // The instance, not its key: a reinstalled plugin must not reopen a dialog.
-  const [openAction, setOpenAction] = useState<(typeof actions)[number]>();
+  const [openAction, setOpenAction] = useState<{
+    action: (typeof actions)[number];
+    session: RelaySession;
+    messageId: string;
+  }>();
   const opened =
-    openAction && actions.includes(openAction) ? openAction : undefined;
+    openAction &&
+    openAction.session === session &&
+    openAction.messageId === row.id &&
+    actions.includes(openAction.action)
+      ? openAction.action
+      : undefined;
   useEffect(() => {
     if (openAction && !opened) setOpenAction(undefined);
   }, [openAction, opened]);
@@ -421,33 +450,53 @@ function MessageRowContent({
       </MenuItem>
     </>
   );
-  const actionItems = actions.map((action) =>
-    action.placement === "menu" && session && extensions?.actions ? (
-      <ContributionBoundary key={contributionKey(action)} fallback={null}>
-        <WithTargetOpener
-          component={action.component}
-          props={{
-            message: row,
-            session,
-            close: () => setOpenAction(undefined),
-          }}
-          registry={extensions.actions}
-          entry={action}
-        />
-      </ContributionBoundary>
-    ) : (
-      <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
-        {action.icon && (
-          <MenuIcon>
-            <ContributionBoundary key={contributionKey(action)} fallback={null}>
-              <action.icon />
-            </ContributionBoundary>
-          </MenuIcon>
-        )}
-        {action.title}
-      </MenuItem>
-    ),
-  );
+  const activateAction = (action: (typeof actions)[number]) => {
+    if (
+      !session ||
+      !active ||
+      !extensions?.actions?.snapshot().includes(action)
+    )
+      return;
+    try {
+      if (action.matches(row, session))
+        setOpenAction({ action, session, messageId: row.id });
+    } catch {
+      // A failed matcher makes this action unavailable.
+    }
+  };
+  const actionItems = (contextMenu: boolean) =>
+    actions
+      .filter((action) => action.placement !== "toolbar" || contextMenu)
+      .map((action) =>
+        action.placement === "menu" && session && extensions?.actions ? (
+          <ContributionBoundary key={contributionKey(action)} fallback={null}>
+            <WithTargetOpener
+              component={action.component}
+              props={{
+                message: row,
+                session,
+                close: () => setOpenAction(undefined),
+              }}
+              registry={extensions.actions}
+              entry={action}
+            />
+          </ContributionBoundary>
+        ) : (
+          <MenuItem key={action.key} onClick={() => activateAction(action)}>
+            {action.icon && (
+              <MenuIcon>
+                <ContributionBoundary
+                  key={contributionKey(action)}
+                  fallback={null}
+                >
+                  <action.icon />
+                </ContributionBoundary>
+              </MenuIcon>
+            )}
+            {action.title}
+          </MenuItem>
+        ),
+      );
   // A message renderer may draw some attachments itself. Its claims count only
   // while its card is mounted, and they return to the host list while its
   // fallback shows. A remounted card starts healthy and claims again.
@@ -630,6 +679,7 @@ function MessageRowContent({
       rowRef={rowRef}
       menuTriggerRef={menuTrigger}
       messageId={row.id}
+      onForward={forward ? () => forward(row) : undefined}
       onReply={
         (onReply ? () => onReply(row.id) : undefined) ??
         (onOpenThread && startsThreads
@@ -666,9 +716,36 @@ function MessageRowContent({
       copyText={() =>
         messageCopyText(row, directory.profiles, directory.agents)
       }
+      toolbarItems={actions
+        .filter((action) => action.placement === "toolbar")
+        .map((action) => (
+          <IconButton
+            key={contributionKey(action)}
+            hint="helpful"
+            title={action.title}
+            aria-label={action.title}
+            size="sm"
+            icon={
+              action.icon ? (
+                <ContributionBoundary
+                  key={contributionKey(action)}
+                  fallback={null}
+                >
+                  <action.icon />
+                </ContributionBoundary>
+              ) : (
+                <DotsThreeIcon />
+              )
+            }
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true });
+              activateAction(action);
+            }}
+          />
+        ))}
       quickControls={
         <>
-          {stackPrevious && (
+          {stackPrevious && showTime && (
             <span
               className={styles.keyboardMessageTime}
               data-message-keyboard-time
@@ -705,7 +782,7 @@ function MessageRowContent({
             (session ? (
               <MessageManagementItems row={row} session={session} />
             ) : undefined)}
-          {actionItems}
+          {actionItems(!!target)}
           {activityItem}
           {reportItem}
         </>
@@ -1014,7 +1091,10 @@ function MessageRowContent({
                   </span>
                 )}
                 {!stackPrevious && (
-                  <MessageTimestamp createdAt={row.createdAt} />
+                  <MessageTimestamp
+                    createdAt={row.createdAt}
+                    visible={showTime}
+                  />
                 )}
                 {session &&
                   actions.map(
@@ -1202,6 +1282,20 @@ function MessageRowContent({
                         );
                       }
                       if (attachment.kind === "image") {
+                        // biome-ignore lint/plugin: Attachment thumbnails, not avatars.
+                        const small = media(url, "small");
+                        // Third-party URLs map to themselves: no thumbnail. JPEG
+                        // drops alpha, so these formats use the WebP variant.
+                        const alpha =
+                          /^(.+\/[0-9a-f]{64})\.(?:png|gif|webp|avif)$/.exec(
+                            url,
+                          );
+                        const thumbnail =
+                          small === source
+                            ? undefined
+                            : alpha
+                              ? media(`${alpha[1]}.thumb.webp`)
+                              : small;
                         const image = (
                           <AttachmentImage
                             onOpenLink={
@@ -1213,6 +1307,7 @@ function MessageRowContent({
                             session={session}
                             attachment={{ ...attachment, url }}
                             source={source}
+                            thumbnail={thumbnail}
                             cached={cached}
                             compact={group.length >= 4}
                             overlayCount={
@@ -1368,6 +1463,8 @@ function MessageRowContent({
           registry={extensions.accessories}
           placement="response"
           representedAgents={representedAgents}
+          repliedAgents={repliedAgents}
+          stoppedRequest={stoppedRequest}
           messageLayout={layout}
           session={session}
           scope={scope}

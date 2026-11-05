@@ -44,10 +44,10 @@ export type PiHookCall = Readonly<{
   event: "beforeTool" | "afterTool";
   input: unknown;
 }>;
-/** The host asks for a Block mode run's binding and Buzz context before it
+/** The host asks for a gateway mode run's binding and Buzz context before it
  * submits the run, and whether the run's binding is still admitted before
  * each of its model requests. */
-export type PiWorkforceCall = Readonly<
+export type PiGatewayCall = Readonly<
   | {
       op: "bind";
       agent: string;
@@ -56,18 +56,24 @@ export type PiWorkforceCall = Readonly<
       turn: unknown;
     }
   | { op: "admit"; agent: string; binding: unknown }
+  /** The gateway refused a request made at that eligibility revision. */
+  | { op: "deny"; agent: string; revision: unknown }
 >;
-export type PiWorkforceAnswer =
+export type PiGatewayAnswer =
   | {
       ok: true;
       binding?: unknown;
       bundle?: Record<string, string>;
       persist?: boolean;
+      /** The eligibility revision an admission holds at. */
+      revision?: number;
+      /** Whether a refusal dropped the route's current access. */
+      applied?: boolean;
     }
   | { ok: false; message: string };
 type Handlers = Readonly<{
   hook?(call: PiHookCall): Promise<unknown>;
-  workforce?(call: PiWorkforceCall): Promise<PiWorkforceAnswer>;
+  gateway?(call: PiGatewayCall): Promise<PiGatewayAnswer>;
   tool(call: ToolCall, signal: AbortSignal): Promise<ToolResult>;
   event(event: PiEvent): void;
   prompt?(call: {
@@ -146,8 +152,14 @@ export class Pi {
     private readonly protectedLaunch?: ProtectedLaunch,
   ) {}
 
-  /** Asks the host, starting it first if it is not running. */
-  async request<T>(method: string, params: object = {}): Promise<T> {
+  /** Asks the host, starting it first if it is not running. `admit`, when
+   * given, runs once the host is ready, just before the request is sent:
+   * throwing there sends nothing. */
+  async request<T>(
+    method: string,
+    params: object = {},
+    admit?: () => void,
+  ): Promise<T> {
     if (this.stopped) throw new Error("Pi has stopped");
     const agent = (params as { agent?: string }).agent;
     if (agent && this.protection) {
@@ -170,9 +182,9 @@ export class Pi {
       })();
       this.hosts.set(agent, next);
       const child = (await next).pi;
-      if (child) return child.request<T>(method, params);
+      if (child) return child.request<T>(method, params, admit);
     }
-    return this.rawRequest<T>(method, params);
+    return this.rawRequest<T>(method, params, admit);
   }
   /** Ends the old worker without resolving a possibly newer policy first. */
   async retire(agent: string) {
@@ -186,9 +198,14 @@ export class Pi {
     this.hosts.set(agent, retired);
     await retired;
   }
-  private async rawRequest<T>(method: string, params: object = {}): Promise<T> {
+  private async rawRequest<T>(
+    method: string,
+    params: object = {},
+    admit?: () => void,
+  ): Promise<T> {
     const connection = await this.connect();
     if (connection.gone) throw connection.gone;
+    admit?.();
     const id = ++this.requests;
     const answer = new Promise<unknown>((resolve, reject) =>
       connection.calls.set(id, { resolve, reject }),
@@ -265,7 +282,7 @@ export class Pi {
         (message.method === "tool" ||
           message.method === "prompt" ||
           message.method === "hook" ||
-          message.method === "workforce") &&
+          message.method === "gateway") &&
         message.id !== undefined
       )
         void this.answer(
@@ -446,7 +463,7 @@ export class Pi {
   private async answer(
     connection: Connection,
     id: number | string,
-    method: "tool" | "prompt" | "hook" | "workforce",
+    method: "tool" | "prompt" | "hook" | "gateway",
     params: unknown,
   ) {
     let message: Message;
@@ -463,12 +480,10 @@ export class Pi {
         result:
           method === "hook"
             ? ((await this.handlers.hook?.(params as PiHookCall)) ?? null)
-            : method === "workforce"
-              ? ((await this.handlers.workforce?.(
-                  params as PiWorkforceCall,
-                )) ?? {
+            : method === "gateway"
+              ? ((await this.handlers.gateway?.(params as PiGatewayCall)) ?? {
                   ok: false,
-                  message: "Block mode is not available here",
+                  message: "The model gateway is not available here",
                 })
               : method === "tool"
                 ? await this.handlers.tool(params as ToolCall, signal)

@@ -10,13 +10,13 @@ import {
 } from "react";
 import { onboardingTransition } from "./onboarding-transition";
 import { npubEncode } from "nostr-tools/nip19";
-import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import {
-  bundledHost,
+  createFirstRunLogin,
   firstRunCredential,
+  releaseFirstRunSession,
   type FirstRunIdentity,
 } from "../../bundled/builderlab/oauth/first-run";
-import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
+import type { Credential } from "../../bundled/builderlab/session";
 import { communityDestination } from "../communities/destination";
 import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
@@ -33,12 +33,16 @@ import type { Communities, PersonalProfile } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
 import { BackupError } from "./backup";
+import { BackupConsent } from "./BackupConsent";
 import {
   atPublicBuilderlab,
   hostedByThisBuilderlab,
 } from "./builderlab-hosted";
 import {
-  builderlabAccount,
+  signInServers,
+  type SessionSnapshot,
+} from "../federated-identity/service";
+import {
   type CommunityList,
   federatedBuilderlabAccount,
   type FirstRunAccount,
@@ -72,6 +76,7 @@ import {
   createSetup,
   findCommunities,
   importKey,
+  keepBackup,
   linkKey,
   type Resting,
   restoreCommunities,
@@ -84,23 +89,20 @@ import { WireframeScreen } from "./Wireframe";
 
 /**
  * The signed-in account: the development seed when a dev server set one
- * (production builds define it empty), else the build URL's kgoose through
- * the same bundled grant the sign-in used (in an FI build, `federated`'s
- * forwarder), and the identity's native uploader.
+ * (production builds define it empty), else kgoose through the same NIP-FI
+ * forwarder the sign-in used, and the identity's native uploader.
  */
 const firstRunAccount = (
   credential: Credential,
   identity: Identity,
-  federated?: FirstRunIdentity,
+  federated: FirstRunIdentity,
 ) => {
   const seed = parseFirstRunAccountSeed(
     import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT,
   );
   return seed
     ? seededAccount(seed, identity)
-    : federated
-      ? federatedBuilderlabAccount(credential, federated, identity)
-      : builderlabAccount(credential, bundledHost.request, identity);
+    : federatedBuilderlabAccount(credential, federated, identity);
 };
 
 /**
@@ -113,13 +115,28 @@ export function Welcome({
   invites,
   children,
   federatedIdentity,
-  connect = (signal) => firstRunCredential(signal, federatedIdentity),
+  connect = federatedIdentity &&
+    ((signal) => firstRunCredential(signal, federatedIdentity)),
+  // Only the default `connect`, which needs `federatedIdentity`, signs in
+  // without an `account`.
   account = (credential, identity) =>
-    firstRunAccount(credential, identity, federatedIdentity),
+    firstRunAccount(
+      credential,
+      identity,
+      federatedIdentity as FirstRunIdentity,
+    ),
+  servers = signInServers,
 }: {
   identity: Identity;
-  /** The live startup service: joining through it is what selects the community. */
-  communities: Pick<Communities, "snapshot" | "joined" | "select">;
+  /**
+   * The live startup service: joining through it is what selects the
+   * community, and once the gate lifts its memberships decide a missing
+   * backup choice.
+   */
+  communities: Pick<
+    Communities,
+    "snapshot" | "subscribe" | "joined" | "select"
+  >;
   /**
    * The app's invite intent: a typed address the restore did not admit is
    * handed to the rail's Add-a-community dialog as the gate lifts.
@@ -127,19 +144,33 @@ export function Welcome({
   invites: Pick<ReturnType<typeof createInviteIntent>, "open">;
   children: ReactNode;
   /**
-   * An FI build's NIP-FI session as the bundled Builderlab plugin calls it
+   * The NIP-FI session as the bundled Builderlab plugin calls it
    * (`bundledFederatedIdentity`): sign-in and the account's calls go through
-   * it instead of the plugin's network grant, which an FI build lacks.
+   * it. A build without a Builderlab sign-in server has none, and first run
+   * offers no Builderlab sign-in.
    */
   federatedIdentity?: FirstRunIdentity | undefined;
-  connect?: (signal: AbortSignal) => Promise<Credential>;
+  /** Builderlab sign-in; without it, first run offers none. */
+  connect?: ((signal: AbortSignal) => Promise<Credential>) | undefined;
   /** The account for a credential `connect` returned. */
   account?:
     | ((credential: Credential, identity: Identity) => FirstRunAccount)
     | undefined;
+  /** The build's sign-in servers, for whether its Builderlab hosts a URL. */
+  servers?: () => Promise<readonly SessionSnapshot[]>;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
-  const [login] = useState(() => createOAuthSession(connect));
+  const [login] = useState(() =>
+    createFirstRunLogin(
+      connect ??
+        (() =>
+          Promise.reject(
+            new Error("This Buzz build has no Builderlab sign-in."),
+          )),
+      federatedIdentity &&
+        ((held) => releaseFirstRunSession(federatedIdentity, held.revision)),
+    ),
+  );
   // Counts canceled sign-ins: a sign-in continues only if none was canceled
   // since it started, since the session may by then hold a later sign-in.
   const cancels = useRef(0);
@@ -174,6 +205,16 @@ export function Welcome({
   // discovery lookup; after setup, the Join Community page. Cleared on every
   // return to the landing or choices page.
   const [finding, setFinding] = useState<string>();
+  // Counts hosted-server lookups for a found community; a lookup's answer
+  // applies only while it is the latest (see FindCommunity's onFound).
+  const lookups = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new address, or unmount, retires the lookup.
+  useEffect(
+    () => () => {
+      lookups.current++;
+    },
+    [finding],
+  );
   // The code of the invite link `finding` came from, claimed on Join; "" for
   // a bare address. Every submit sets it with `finding`.
   const [inviteCode, setInviteCode] = useState("");
@@ -295,7 +336,17 @@ export function Welcome({
     identity,
     page === "landing" && auth.status !== "pending",
   );
-  if (state.status === "ready" && progress.status === "idle") return children;
+  if (state.status === "ready" && progress.status === "idle")
+    return (
+      <>
+        {children}
+        <BackupConsent
+          identity={identity}
+          communities={communities}
+          servers={servers}
+        />
+      </>
+    );
   // The linked key is backed up: Welcome back offers a restore, and an
   // import of it skips another backup.
   const backedUp = !!linked && !!backups?.includes(linked);
@@ -441,7 +492,7 @@ export function Welcome({
             throw new Error("Sign in again to finish backing up your key.");
           const credential = login.credential();
           if (credential.account.subject !== original.subject) {
-            login.signOut();
+            login.cancel();
             throw new Error(
               `Sign in as ${original.email} to back up this key.`,
             );
@@ -468,6 +519,7 @@ export function Welcome({
   };
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
+    lookups.current++;
     setOtherOptions(false);
     setFinding(undefined);
     setInviteCode("");
@@ -482,6 +534,11 @@ export function Welcome({
     setup.reset();
     cancels.current++;
     login.cancel();
+  };
+  /** "Use a different account": the landing, signed out of the rejected one. */
+  const switchAccount = () => {
+    void login.signOut();
+    backToLanding();
   };
   /**
    * The Add-a-community dialog's completion for the community the step
@@ -650,12 +707,15 @@ export function Welcome({
         // With no account this run (the connect choice), the key is nobody's
         // to link or back up, so the import is the whole setup. On the linked
         // lane only the linked key is accepted, so there is nothing to link.
-        // A Builderlab import is linked and backed up automatically; an
-        // independent community import never uploads to Builderlab.
+        // A Builderlab import is linked and backed up automatically, or, when
+        // the account already holds its backup, only saved as consented
+        // unless a choice is saved; both disclose it. An independent
+        // community import saves no backup choice: once Builderlab has a
+        // session for it, `BackupConsent` decides.
         return (
           <KeyImport
             expectedPubkey={linked}
-            automaticBackup={!!current && !backedUp}
+            automaticBackup={!!current && (backedUp ? "kept" : true)}
             onLost={
               linked && current
                 ? () =>
@@ -665,7 +725,10 @@ export function Welcome({
                     })
                 : undefined
             }
-            onBack={() =>
+            onBack={() => {
+              // Without a Builderlab sign-in, the found community led straight
+              // here, so there is no connect choice to return to.
+              if (!current && !connect) return backToLanding();
               back(
                 !current
                   ? "connect-choice"
@@ -673,15 +736,15 @@ export function Welcome({
                     ? "welcome-back"
                     : "key-choice",
                 "import",
-              )
-            }
+              );
+            }}
             onImport={async (nsec) => {
               await importKey(identity, nsec);
               if (!current) void setup.start([]);
               else
                 void setup.start([
                   ...(!linked ? [linkKey(identity, current)] : []),
-                  ...(!backedUp ? [backupKey(current)] : []),
+                  backedUp ? keepBackup(identity) : backupKey(current),
                   ...finish(),
                 ]);
             }}
@@ -706,7 +769,7 @@ export function Welcome({
               ]);
             }}
             onImport={() => pause("key-import")}
-            onSwitchAccount={backToLanding}
+            onSwitchAccount={switchAccount}
           />
         );
       case "welcome-back":
@@ -727,7 +790,7 @@ export function Welcome({
               }
               onImport={() => pause("key-import")}
               onSwitchAccount={() => {
-                if (viewer !== linked) return backToLanding();
+                if (viewer !== linked) return switchAccount();
                 void identity
                   .signOut({ wipe: false, removeAgents: false })
                   .catch(() =>
@@ -881,19 +944,21 @@ export function Welcome({
           </>
         }
       >
-        <Button
-          variant="prominent"
-          size="lg"
-          onClick={() => {
-            if (login.snapshot().status === "pending") {
-              cancels.current++;
-              login.cancel();
-            }
-            void signIn();
-          }}
-        >
-          Sign in with Builderlab
-        </Button>
+        {connect && (
+          <Button
+            variant="prominent"
+            size="lg"
+            onClick={() => {
+              if (login.snapshot().status === "pending") {
+                cancels.current++;
+                login.cancel();
+              }
+              void signIn();
+            }}
+          >
+            Sign in with Builderlab
+          </Button>
+        )}
         <Button
           size="lg"
           variant="ghost"
@@ -1035,9 +1100,12 @@ export function Welcome({
         />
       ) : auth.error ? (
         <Failure
-          title="Couldn’t sign in"
+          title={auth.retrySignOut ? "Couldn’t sign out" : "Couldn’t sign in"}
           error={auth.error}
           onBack={backToLanding}
+          onRetry={
+            auth.retrySignOut ? () => void login.retrySignOut() : undefined
+          }
         />
       ) : finding ? (
         <FindCommunity
@@ -1045,8 +1113,15 @@ export function Welcome({
           url={finding}
           onCancel={backToLanding}
           onFound={(found) => {
-            if (hostedByThisBuilderlab(found)) void signIn();
-            else pause("connect-choice");
+            // Fenced to this lookup: Cancel, another destination or unmount
+            // starts a new one, and a late answer then does nothing.
+            const lookup = ++lookups.current;
+            void hostedByThisBuilderlab(found, servers).then((hosted) => {
+              if (lookup !== lookups.current) return;
+              if (hosted) void signIn();
+              // Without a Builderlab sign-in, a key is the only way in.
+              else pause(connect ? "connect-choice" : "key-import");
+            });
           }}
           titleId="welcome-title"
         />

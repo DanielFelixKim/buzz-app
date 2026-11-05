@@ -77,7 +77,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     exact: true,
   });
   const pages = panel.getByRole("navigation", { name: "Pages" });
-  const destinations = ["Inbox", "Bestie"].map((name) =>
+  const destinations = ["Activity", "Bestie"].map((name) =>
     pages.getByRole("button", { name, exact: true }),
   );
   const assertDestinationFillParity = async () => {
@@ -231,11 +231,12 @@ test("section disclosure toggles content and honors reduced motion", async ({
   app,
 }) => {
   await open(page, app);
-  const summary = page
+  const section = page
     .getByRole("navigation", { name: "Subscribed channels" })
-    .locator("summary")
-    .filter({ hasText: /^Channels$/ });
-  const section = summary.locator("xpath=ancestor::*[@data-sidebar-section]");
+    .locator('[data-sidebar-section="channels"]');
+  const summary = section.locator(
+    ":scope > div:first-child > details > summary",
+  );
   const contentId = await summary.getAttribute("aria-controls");
   expect(contentId).toBeTruthy();
   const content = section.locator(`[id="${contentId}"]`);
@@ -726,15 +727,15 @@ test.extend({ companionFixture: true })(
       await pages.getByRole("button", { name, exact: true }).click();
       const body = page.getByRole("region", { name, exact: true });
       await expect(
-        name === "Inbox"
-          ? body.getByRole("button", { name: "Inbox filters", exact: true })
+        name === "Activity"
+          ? body.getByRole("button", { name: /^From / })
           : body.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
       return body;
     };
     for (const width of [1440, 900, 600]) {
       await page.setViewportSize({ width, height: 950 });
-      let body = await openPage("Inbox");
+      let body = await openPage("Activity");
       await launcher.click();
       await checkGeometry(body, width <= 1000);
       body = await openPage("Bestie");
@@ -743,7 +744,7 @@ test.extend({ companionFixture: true })(
       await expect(companion).not.toBeVisible();
       await selectChannel("Alpha");
       await launcher.click();
-      body = await openPage("Inbox");
+      body = await openPage("Activity");
       await checkGeometry(body, width <= 1000);
       await launcher.click();
     }
@@ -915,11 +916,11 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
   await expect(status).toBeAttached();
   await scrollToBottom(status);
   await expectUnclippedFocus(
-    sidebar.getByRole("button", { name: "Inbox", exact: true }),
+    sidebar.getByRole("button", { name: "Activity", exact: true }),
   );
-  await sidebar.getByRole("button", { name: "Inbox", exact: true }).click();
+  await sidebar.getByRole("button", { name: "Activity", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Inbox", exact: true }),
+    page.getByRole("heading", { name: "Activity", exact: true }),
   ).toBeVisible();
 });
 

@@ -1,4 +1,18 @@
-import type { RegisteredPage } from "../../features/pages/service";
+import { ACTIVITY_PAGE } from "./activity-context";
+import { ActivityNavigationIcon } from "./ActivityNavigation";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ComponentType,
+  type ReactElement,
+} from "react";
+import type {
+  PagePreviewProps,
+  RegisteredPage,
+} from "../../features/pages/service";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
   ContributionBoundary,
@@ -9,6 +23,11 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PageIcon } from "./PageIcon";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import {
+  PopoverPopup,
+  PopoverRoot,
+  PopoverTrigger,
+} from "../../shared/design-system/ui/Popover";
 import {
   BestieUnreadBadge,
   BestieUnreadLabel,
@@ -22,14 +41,22 @@ export function PageNavigation({
   currentPage = selected,
   onSelect,
   placement = "sidebar",
+  previews = false,
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
   currentPage?: string;
   onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
   placement?: "sidebar" | "topbar" | "toolbar";
+  /** Show page hover previews; only the sidebar's own navigation opts in. */
+  previews?: boolean;
 }) {
   const presentation = usePagePresentation();
+  const hover = useHoverPointer();
+  const badgeId = useId();
+  // A selected page is already showing what its preview would summarize.
+  const previewed = (page: RegisteredPage) =>
+    previews && hover && page.key !== selected;
   if (placement === "topbar") {
     return (
       <Tabs
@@ -46,9 +73,24 @@ export function PageNavigation({
           return {
             value: page.key,
             label: presentation(page).label,
-            icon: (
-              <PageIcon icon={icon} image={image} size={16} strokeWidth={2.5} />
-            ),
+            icon:
+              page.key === ACTIVITY_PAGE ? (
+                <ActivityNavigationIcon>
+                  <PageIcon
+                    icon={icon}
+                    image={image}
+                    size={16}
+                    strokeWidth={2.5}
+                  />
+                </ActivityNavigationIcon>
+              ) : (
+                <PageIcon
+                  icon={icon}
+                  image={image}
+                  size={16}
+                  strokeWidth={2.5}
+                />
+              ),
             panelId: `shell-page-${page.key}`,
             trailing: Badge ? (
               <ContributionBoundary key={contributionKey(page)} fallback={null}>
@@ -60,7 +102,7 @@ export function PageNavigation({
       />
     );
   }
-  return pages.map((page) => {
+  return pages.map((page, index) => {
     const { label, icon, image, avatar } = presentation(page);
     const Badge = page.badge;
     const badge = Badge && (
@@ -72,7 +114,7 @@ export function PageNavigation({
       onSelect(page.key);
       document.getElementById("main-content")?.focus({ preventScroll: true });
     };
-    const pageIcon = avatar ? (
+    const baseIcon = avatar ? (
       <Avatar
         key={page.key}
         src={avatar.src}
@@ -90,19 +132,37 @@ export function PageNavigation({
         strokeWidth={2.5}
       />
     );
-    return placement === "toolbar" ? (
-      <span className="shell-toolbar-page" key={page.key}>
-        <IconButton
-          aria-label={label}
-          title={label}
-          variant="chrome"
-          aria-current={selected === page.key ? "page" : undefined}
-          onClick={select}
-          icon={pageIcon}
-        />
-        {badge && <span className="shell-toolbar-badge">{badge}</span>}
-      </span>
-    ) : (
+    const pageIcon =
+      page.key === ACTIVITY_PAGE ? (
+        <ActivityNavigationIcon key={page.key}>
+          {baseIcon}
+        </ActivityNavigationIcon>
+      ) : (
+        baseIcon
+      );
+    // The toolbar badge sits beside its icon-only button, not inside it, so
+    // the button names the page and the badge describes it.
+    const describedBy = badge ? `${badgeId}-${index}` : undefined;
+    if (placement === "toolbar")
+      return (
+        <span className="shell-toolbar-page" key={page.key}>
+          <IconButton
+            aria-label={label}
+            aria-describedby={describedBy}
+            title={label}
+            variant="chrome"
+            aria-current={selected === page.key ? "page" : undefined}
+            onClick={select}
+            icon={pageIcon}
+          />
+          {badge && (
+            <span id={describedBy} className="shell-toolbar-badge">
+              {badge}
+            </span>
+          )}
+        </span>
+      );
+    const item = (
       <NavigationItem
         key={page.key}
         onClick={select}
@@ -113,7 +173,7 @@ export function PageNavigation({
         label={
           page.key === BESTIE_PAGE ? <BestieUnreadLabel label={label} /> : label
         }
-        title={label}
+        title={page.preview && previewed(page) ? undefined : label}
         variant="row"
         trailing={
           page.key === BESTIE_PAGE ? (
@@ -132,5 +192,102 @@ export function PageNavigation({
         }
       />
     );
+    return page.preview && previewed(page) ? (
+      <PagePreview
+        key={page.key}
+        page={page}
+        preview={page.preview}
+        label={label}
+      >
+        {item}
+      </PagePreview>
+    ) : (
+      item
+    );
   });
+}
+
+const hoverQuery = "(hover: hover) and (pointer: fine)";
+function useHoverPointer() {
+  const [hover, setHover] = useState(
+    () => window.matchMedia?.(hoverQuery).matches ?? false,
+  );
+  useEffect(() => {
+    const query = window.matchMedia?.(hoverQuery);
+    if (!query) return;
+    const update = () => setHover(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return hover;
+}
+
+/** The shell owns a preview's trigger, timing, placement and dismissal; the
+ * page supplies only the content. */
+function PagePreview({
+  page,
+  preview: Preview,
+  label,
+  children,
+}: {
+  page: RegisteredPage;
+  preview: ComponentType<PagePreviewProps>;
+  label: string;
+  children: ReactElement;
+}) {
+  const [open, setOpen] = useState(false);
+  const actions =
+    useRef<
+      NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
+    >(null);
+  // Content that opens something hands focus to it; Base UI would otherwise
+  // return focus to this row after closing.
+  const handoff = useRef(false);
+  const popup = useRef<HTMLDivElement>(null);
+  const close = () => {
+    handoff.current = true;
+    if (actions.current) actions.current.close();
+    else setOpen(false);
+  };
+  return (
+    <PopoverRoot
+      modal={false}
+      open={open}
+      actionsRef={actions}
+      onOpenChange={(next, details) => {
+        // Hover only: pressing the row selects the page instead.
+        if (next) handoff.current = false;
+        setOpen(next && details.reason !== "trigger-press");
+      }}
+    >
+      {/* Marked transient, so a conversation's default focus is not held back. */}
+      <PopoverTrigger
+        openOnHover="preview"
+        data-popup-preview=""
+        render={children}
+      />
+      <PopoverPopup
+        size="wide"
+        padding="list"
+        side="right"
+        align="start"
+        // 6px beside the row's hover background, lifted so the line under the
+        // preview's header meets the background's top edge. Offsets ignore the
+        // open animation's transform.
+        sideOffset={6}
+        alignOffset={() => {
+          const header = popup.current?.querySelector("header");
+          return header ? 1 - header.offsetTop - header.offsetHeight : 0;
+        }}
+        ref={popup}
+        aria-label={label}
+        finalFocus={() => !handoff.current}
+      >
+        <ContributionBoundary key={contributionKey(page)} fallback={null}>
+          <Preview close={close} />
+        </ContributionBoundary>
+      </PopoverPopup>
+    </PopoverRoot>
+  );
 }

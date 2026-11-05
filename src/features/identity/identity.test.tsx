@@ -32,18 +32,21 @@ import { IdentitySetup } from "./IdentitySetup";
 import { PrivateKey } from "./PrivateKey";
 import { SignOutDialog, WIPE_PHRASE } from "./SignOut";
 import { Welcome } from "./Welcome";
-import { federatedFixture } from "../federated-identity/testing";
+import {
+  federatedFixture,
+  forwardingSession,
+} from "../federated-identity/testing";
 import { ProfileStep } from "./ProfileStep";
 import { OnboardingScreen } from "./OnboardingScreen";
-import type { Credential } from "../../bundled/builderlab/oauth/browser";
+import type { Credential } from "../../bundled/builderlab/session";
 import { BackupError, type BackupStatus } from "./backup";
 import {
-  builderlabAccount,
+  federatedBuilderlabAccount,
   type FirstRunAccount,
   type OwnedCommunity,
 } from "./builderlab-account";
 import type { JoinPolicy } from "../communities/join-policy";
-import { createCommunities } from "../communities/service";
+import { type ClientSnapshot, createCommunities } from "../communities/service";
 import { connectNativeTransport } from "../relay/native";
 import {
   keypair,
@@ -51,6 +54,8 @@ import {
   profile,
   signed,
 } from "../relay/testing";
+import type { SessionSnapshot } from "../federated-identity/service";
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => true),
@@ -69,7 +74,7 @@ const key = "nsec-fixture-only";
 const owned = keypair();
 const ownedNsec = nsecEncode(owned.secret);
 const credential: Credential = {
-  value: "private-token",
+  revision: "revision-1",
   account: {
     subject: "user",
     email: "a@example.com",
@@ -96,6 +101,9 @@ function deferred<T>() {
 /** Welcome reads the Communities service only to join; these screens never get there. */
 const noJoin: ComponentProps<typeof Welcome>["communities"] = {
   snapshot() {
+    throw new Error("Welcome consulted communities before a join");
+  },
+  subscribe() {
     throw new Error("Welcome consulted communities before a join");
   },
   joined() {
@@ -836,8 +844,25 @@ it("first launch prioritizes email and preserves community entry behind Other op
 });
 
 /**
+ * The uploader the opened app watches, idle so no backup choice is decided;
+ * any other command throws.
+ */
+function idleUploader(command: string) {
+  if (command === "nsec_backup_watch") return Promise.resolve();
+  if (command === "nsec_backup_state")
+    return Promise.resolve({
+      seq: 1,
+      pass: 0,
+      builderlab: false,
+      status: "idle",
+    });
+  throw new Error(`Unexpected command ${command}`);
+}
+
+/**
  * A first launch where installed old Buzz's data folder check answers
- * `legacy` and its import answers `imported`; any other command throws.
+ * `legacy` and its import answers `imported`; once the app opens it watches
+ * an idle uploader, and any other command throws.
  */
 function legacyLaunch(
   legacy: Promise<boolean>,
@@ -855,7 +880,7 @@ function legacyLaunch(
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_legacy_available") return legacy;
     if (command === "identity_import_legacy") return imported();
-    throw new Error(`Unexpected command ${command}`);
+    return idleUploader(command);
   });
   const account = vi.fn(unlinked);
   const identity = createIdentity();
@@ -890,7 +915,12 @@ const focusInside = (dialog: HTMLElement) =>
   waitFor(() =>
     expect(dialog).toContainElement(document.activeElement as HTMLElement),
   );
-const commands = () => vi.mocked(invoke).mock.calls.map(([command]) => command);
+/** Commands sent, less the uploader watch the opened app starts. */
+const commands = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.map(([command]) => command)
+    .filter((command) => !/^nsec_backup_(watch|state)$/.test(command));
 
 it.each([
   [
@@ -1519,7 +1549,9 @@ it("Use an existing key from the choice imports the key with no sign-in, no link
     viewer: owned.pubkey,
   });
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", {
+      name: "Sync your identity with Builderlab?",
+    }),
   ).toBeNull();
   expect(
     screen.queryByRole("heading", { name: "Connect to a community" }),
@@ -1648,46 +1680,71 @@ it("a landing URL that cannot be reached fails before sign-in, and Cancel keeps 
   identity.dispose();
 });
 
-it("a landing URL hosted by this build's Builderlab signs in at once, with no connect choice", async () => {
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
-  const relay = landingRelay("https://design.communities.buzz.xyz");
-  relay.info.resolve();
-  const connect = vi
-    .fn<(signal: AbortSignal) => Promise<Credential>>()
-    .mockImplementation(() => new Promise(() => {}));
-  const identity = createIdentity();
-  const user = userEvent.setup();
-  render(
-    <Welcome
-      identity={identity}
-      communities={noJoin}
-      invites={invites}
-      account={unlinked}
-      connect={connect}
-    >
-      <p>Signed in</p>
-    </Welcome>,
-  );
-  await screen.findByRole("button", { name: SIGN_IN });
-  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
-  await screen.findByRole("button", { name: "Other options" });
-  expect(connect).toHaveBeenCalledTimes(1);
-  expect(
-    screen.queryByRole("heading", { name: "Connect to your community" }),
-  ).toBeNull();
-  expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
-  expect(relay.relayCalls).toEqual(relay.lookup);
-  expect(identity.snapshot().status).toBe("missing");
-  identity.dispose();
-});
+/** A build whose first compiled sign-in server is bb-public. */
+const publicServers = async (): Promise<SessionSnapshot[]> => [
+  {
+    status: "signed-out",
+    authority: {
+      id: "bb-public",
+      identityOrigin: "https://app.builderlab.xyz",
+      apiBasePath: "/api/goose/",
+      signIn: "on-demand",
+      organization: null,
+      communityHosts: ["*.communities.buzz.xyz", "communities.buzz.xyz"],
+    },
+    revision: "",
+    email: null,
+    failure: null,
+    expiresAt: null,
+    expiring: false,
+    cleanup: false,
+  },
+];
+
+it.each([["bb-public compiled", publicServers]])(
+  "a landing URL hosted by this build's Builderlab (%s) signs in at once, with no connect choice",
+  async (_, servers) => {
+    const relay = landingRelay("https://design.communities.buzz.xyz");
+    relay.info.resolve();
+    const connect = vi
+      .fn<(signal: AbortSignal) => Promise<Credential>>()
+      .mockImplementation(() => new Promise(() => {}));
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    render(
+      <Welcome
+        identity={identity}
+        communities={noJoin}
+        invites={invites}
+        account={unlinked}
+        connect={connect}
+        servers={servers}
+      >
+        <p>Signed in</p>
+      </Welcome>,
+    );
+    await screen.findByRole("button", { name: SIGN_IN });
+    await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+    await screen.findByRole("button", { name: "Other options" });
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("heading", { name: "Connect to your community" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    expect(identity.snapshot().status).toBe("missing");
+    identity.dispose();
+  },
+);
 
 it.each([
-  ["https://app.builderlab.xyz", "buzz.block.builderlab.xyz"],
-  ["", "design.communities.buzz.xyz"],
+  ["bb-public", publicServers, "buzz.block.builderlab.xyz"],
+  ["no", async () => [], "design.communities.buzz.xyz"],
 ])(
-  "a build whose Builderlab (%j) does not host a landing URL pauses on the ordinary connect choice: %s",
-  async (build, host) => {
-    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", build);
+  "a build with %s sign-in server that does not cover a landing URL pauses on the ordinary connect choice: %s",
+  async (_, servers, host) => {
+    // Another Builderlab deployment: the built-in server's hosts don't apply.
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://block.builderlab.xyz");
     const relay = landingRelay(`https://${host}`);
     const connect = vi.fn();
     const identity = createIdentity();
@@ -1699,6 +1756,7 @@ it.each([
         invites={invites}
         account={unlinked}
         connect={connect}
+        servers={servers}
       >
         <p>Signed in</p>
       </Welcome>,
@@ -1721,6 +1779,39 @@ it.each([
     identity.dispose();
   },
 );
+
+it("a build with no Builderlab sign-in sends a found community to Enter your private key, and Back returns to the landing with the address kept", async () => {
+  const relay = landingRelay();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      servers={async () => []}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("button", { name: "Other options" });
+  expect(screen.queryByRole("button", { name: SIGN_IN })).toBeNull();
+  await user.type(urlField(), "relay.example.com:8443{Enter}");
+  await act(async () => relay.info.resolve());
+  expect(
+    await screen.findByRole("heading", { name: "Enter your private key" }),
+  ).toBeVisible();
+  // Back is the landing: there is no connect choice whose Builderlab sign-in
+  // this build could run.
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(welcomeHeading()).toBeVisible();
+  expect(screen.queryByRole("heading", { name: /^Connect to / })).toBeNull();
+  expect(screen.queryByRole("button", { name: SIGN_IN })).toBeNull();
+  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(relay.relayCalls).toEqual(relay.lookup);
+  expect(identity.snapshot().status).toBe("missing");
+  identity.dispose();
+});
 
 it("canceling or failing sign-in after a landing URL returns to the landing with the address kept and no second lookup", async () => {
   const relay = landingRelay("https://relay.example.com");
@@ -1818,7 +1909,7 @@ it("a canceled sign-in that returns after a later sign-in is ignored: setup is n
     throw new Error(`Unexpected command ${command}`);
   });
   const second: Credential = {
-    value: "second-token",
+    revision: "second-token",
     account: { ...credential.account, email: "b@example.com" },
   };
   // The first exchange ignores the abort, as native HTTP does, and returns
@@ -1828,7 +1919,6 @@ it("a canceled sign-in that returns after a later sign-in is ignored: setup is n
     .fn((_signal: AbortSignal) => Promise.resolve(second))
     .mockImplementationOnce(() => stale.promise);
   const account = vi.fn(unlinked);
-  const digest = vi.spyOn(crypto.subtle, "digest");
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -1857,13 +1947,10 @@ it("a canceled sign-in that returns after a later sign-in is ignored: setup is n
   expect(connect).toHaveBeenCalledTimes(2);
   expect(account).toHaveBeenCalledTimes(1);
   expect(account).toHaveBeenCalledWith(second, identity);
-  const digests = digest.mock.calls.length;
   await act(async () => {
     stale.resolve(credential);
-    // The canceled attempt's last wait is its account digest; the rest is
-    // microtasks, which all run before the next macrotask.
-    await vi.waitFor(() => expect(digest).toHaveBeenCalledTimes(digests + 1));
-    await digest.mock.results[digests]?.value;
+    // The superseded attempt settles in microtasks, which all run before the
+    // next macrotask.
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   expect(
@@ -2054,7 +2141,7 @@ it("Use a different account on Get started with Buzz signs the session out, retu
     throw new Error(`Unexpected command ${command}`);
   });
   const second: Credential = {
-    value: "second-token",
+    revision: "second-token",
     account: { ...credential.account, email: "b@example.com" },
   };
   const first = deferred<Credential>();
@@ -2084,6 +2171,8 @@ it("Use a different account on Get started with Buzz signs the session out, retu
       ...noCreation,
     };
   });
+  // The shared native session first run signed in as.
+  const fi = federatedFixture();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -2093,11 +2182,13 @@ it("Use a different account on Get started with Buzz signs the session out, retu
       invites={invites}
       account={account}
       connect={connect}
+      federatedIdentity={fi.service}
     >
       <p>Signed in</p>
     </Welcome>,
   );
   await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  fi.publish({ status: "signed-in", revision: credential.revision });
   await act(async () => first.resolve(credential));
   expect(
     await screen.findByRole("heading", { name: "Get started with Buzz" }),
@@ -2116,6 +2207,9 @@ it("Use a different account on Get started with Buzz signs the session out, retu
   ).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(identity.snapshot().status).toBe("missing");
+  // The rejected account is signed out natively, not just forgotten here.
+  await vi.waitFor(() => expect(fi.service.signOut).toHaveBeenCalledOnce());
+  expect(fi.service.snapshot().status).toBe("signed-out");
   expect(connect).toHaveBeenCalledTimes(1);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
@@ -2134,6 +2228,95 @@ it("Use a different account on Get started with Buzz signs the session out, retu
   expect(linkedKeys[1]).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("Signed in as b@example.com.")).toBeNull();
   expect(screen.queryByText("Signed in as a@example.com.")).toBeNull();
+  identity.dispose();
+});
+
+it("Use a different account leaves a newer session signed in, and reports and retries a failed sign-out", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "nsec_backup_choice")
+      return Promise.resolve({
+        available: false,
+        pubkey: viewer,
+        automatic: null,
+      });
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const fi = federatedFixture();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinkedWith(() => Promise.resolve())}
+      connect={async () => credential}
+      federatedIdentity={fi.service}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  const reject = async () => {
+    await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+    await user.click(
+      await screen.findByRole("button", { name: "Use a different account" }),
+    );
+  };
+  // A newer sign-in (Settings, another copy) replaced first run's session:
+  // native is asked for first run's revision only, and leaves the newer one.
+  fi.publish({ status: "signed-in", revision: "newer" });
+  await reject();
+  expect(welcomeHeading()).toBeVisible();
+  expect(fi.service.signOut).toHaveBeenLastCalledWith({
+    revision: credential.revision,
+  });
+  expect(fi.service.snapshot().revision).toBe("newer");
+  expect(screen.queryByRole("alert")).toBeNull();
+  // Native retires A at a new revision, then resolves a failed record
+  // removal there as unavailable with cleanup.
+  const failCleanup = (revision: string) =>
+    vi.mocked(fi.service.signOut).mockImplementationOnce(async () =>
+      fi.publish({
+        status: "unavailable",
+        revision,
+        failure: "storage-denied",
+        cleanup: true,
+      }),
+    );
+  const alert = "Couldn't sign out of that account. Try again.";
+  fi.publish({ status: "signed-in", revision: credential.revision });
+  failCleanup("retired");
+  await reject();
+  expect(await screen.findByRole("alert")).toHaveTextContent(alert);
+  // A thrown retry stays retryable, still at native's revision.
+  vi.mocked(fi.service.signOut).mockRejectedValueOnce(new Error("offline"));
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(alert);
+  expect(fi.service.signOut).toHaveBeenLastCalledWith({ revision: "retired" });
+  // Storage recovers: the retry, fenced to that revision, finishes cleanup.
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(fi.service.signOut).toHaveBeenLastCalledWith({ revision: "retired" });
+  expect(fi.service.snapshot()).toMatchObject({ status: "signed-out" });
+  // A replacement before the retry is refused natively and stays signed in.
+  fi.publish({
+    status: "signed-in",
+    revision: credential.revision,
+    cleanup: false,
+  });
+  failCleanup("retired-again");
+  await reject();
+  expect(await screen.findByRole("alert")).toHaveTextContent(alert);
+  fi.publish({ status: "signed-in", revision: "replacement", cleanup: false });
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(fi.service.signOut).toHaveBeenLastCalledWith({
+    revision: "retired-again",
+  });
+  expect(fi.service.snapshot().revision).toBe("replacement");
+  expect(welcomeHeading()).toBeVisible();
   identity.dispose();
 });
 
@@ -4572,7 +4755,9 @@ it("a link that keeps failing after a key is imported for a new account stays on
     screen.queryByRole("heading", { name: "Connect to a community" }),
   ).toBeNull();
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", {
+      name: "Sync your identity with Builderlab?",
+    }),
   ).toBeNull();
   expect(backUp).not.toHaveBeenCalled();
   expect(screen.queryByText("Signed in")).toBeNull();
@@ -5004,7 +5189,7 @@ it.each(["same", "different", "canceled"])(
     const refreshedBackup = vi.fn(async () => {});
     const refreshed = {
       ...credential,
-      value: "refreshed-token",
+      revision: "refreshed-token",
       account: {
         ...credential.account,
         subject:
@@ -5020,7 +5205,9 @@ it.each(["same", "different", "canceled"])(
     const account = vi.fn((value: Credential) =>
       unlinkedWith(async () => {}, {
         backUp:
-          value.value === "refreshed-token" ? refreshedBackup : expiredBackup,
+          value.revision === "refreshed-token"
+            ? refreshedBackup
+            : expiredBackup,
       })(value, identity),
     );
     const identity = createIdentity();
@@ -5164,7 +5351,7 @@ it("Automatic backup with the real account waits on the native uploader's pass f
     if (command === "nsec_backup_set_choice")
       return { available: true, pubkey: owned.pubkey, automatic: true };
     if (command === "nsec_backup_session")
-      return (args as { credential: string | null }).credential ? 4 : null;
+      return (args as { federated: string | null }).federated ? 4 : null;
     throw new Error(`Unexpected command ${command}`);
   });
   const answer = (body: object) => ({
@@ -5188,13 +5375,17 @@ it("Automatic backup with the real account waits on the native uploader's pass f
   const identity = createIdentity();
   const user = userEvent.setup();
   await welcomeBackPage(user, identity, (credential, identity) =>
-    builderlabAccount(credential, request, identity),
+    federatedBuilderlabAccount(
+      credential,
+      forwardingSession(credential.revision, request),
+      identity,
+    ),
   );
   await importLinkedKey(user);
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith(
       "nsec_backup_session",
-      expect.objectContaining({ credential: "private-token" }),
+      expect.objectContaining({ federated: "revision-1" }),
     ),
   );
   expect(screen.getByRole("status")).toHaveTextContent("Backing up your key…");
@@ -5223,19 +5414,12 @@ it("Automatic backup with the real account waits on the native uploader's pass f
     ["nsec_backup_set_choice", { pubkey: owned.pubkey, automatic: true }],
     [
       "nsec_backup_session",
-      {
-        source: "builderlab",
-        generation: expect.any(Number),
-        credential: "private-token",
-      },
+      { federated: "revision-1", generation: expect.any(Number) },
     ],
+    // The Builderlab plugin hands over the same session, so it stays.
     [
       "nsec_backup_session",
-      {
-        source: "builderlab",
-        generation: expect.any(Number),
-        credential: null,
-      },
+      { federated: "revision-1", generation: expect.any(Number) },
     ],
   ]);
   identity.dispose();
@@ -5318,7 +5502,7 @@ it("a backup status lookup that fails hides Restore from backup, and Enter your 
   identity.dispose();
 });
 
-it("importing a linked key backup status already lists skips the backup offer", async () => {
+it("importing a linked key backup status already lists discloses automatic backup and keeps it backed up with no upload or backup offer", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "nsec_backup_choice")
       return Promise.resolve({
@@ -5334,6 +5518,20 @@ it("importing a linked key backup status already lists skips the backup offer", 
       return Promise.reject(RECOVERY_UNAVAILABLE);
     if (command === "nsec_restore_cancel") return Promise.resolve();
     if (command === "identity_import") return Promise.resolve(owned.pubkey);
+    if (command === "nsec_backup_watch") return Promise.resolve();
+    if (command === "nsec_backup_state")
+      return Promise.resolve({
+        seq: 1,
+        pass: 0,
+        builderlab: true,
+        status: "idle",
+      });
+    if (command === "nsec_backup_set_choice")
+      return Promise.resolve({
+        available: true,
+        pubkey: owned.pubkey,
+        automatic: true,
+      });
     throw new Error(`Unexpected command ${command}`);
   });
   const backUp = vi.fn((_pubkey: string) => Promise.resolve());
@@ -5354,15 +5552,29 @@ it("importing a linked key backup status already lists skips the backup offer", 
   await user.click(
     screen.getByRole("button", { name: "Enter my private key" }),
   );
+  // Saving consent turns automatic backup on, so it is disclosed first.
+  expect(
+    screen.getByText(
+      /^Buzz will automatically sync this key with your Builderlab account unless you chose to manage it yourself\./,
+    ),
+  ).toBeVisible();
   await user.paste(ownedNsec);
   await user.click(continueWithKey());
   expect(
     await screen.findByRole("heading", { name: "Connect to a community" }),
   ).toBeVisible();
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", {
+      name: "Sync your identity with Builderlab?",
+    }),
   ).toBeNull();
   expect(backUp).not.toHaveBeenCalled();
+  // Saved as consented unless a choice is saved, so no later prompt asks about it.
+  expect(invoke).toHaveBeenCalledWith("nsec_backup_set_choice", {
+    pubkey: owned.pubkey,
+    automatic: true,
+    unlessSaved: true,
+  });
   identity.dispose();
 });
 
@@ -5408,7 +5620,11 @@ function backedUpAccount(
     ),
   }));
   return (credential, identity) =>
-    builderlabAccount(credential, request, identity);
+    federatedBuilderlabAccount(
+      credential,
+      forwardingSession(credential.revision, request),
+      identity,
+    );
 }
 /** Native recovery's answer, holding a backup of each key. */
 const backupsOf = (...pubkeys: string[]): RecoveryResult => ({
@@ -5480,6 +5696,11 @@ it.each([
       nsec_restore_wait: () => Promise.reject(refusal),
       nsec_restore_cancel: () => undefined,
       identity_import: () => owned.pubkey,
+      nsec_backup_set_choice: () => ({
+        available: true,
+        pubkey: owned.pubkey,
+        automatic: true,
+      }),
     });
     const identity = createIdentity();
     const user = userEvent.setup();
@@ -5522,6 +5743,7 @@ it.each([
       "nsec_restore_wait",
       "nsec_restore_cancel",
       "identity_import",
+      "nsec_backup_set_choice",
     ]);
     identity.dispose();
   },
@@ -5646,6 +5868,11 @@ it("a restore whose backups do not hold the linked key offers Enter your private
     nsec_restore_wait: () => backupsOf(stranger.pubkey),
     nsec_restore_cancel: () => undefined,
     identity_import: () => owned.pubkey,
+    nsec_backup_set_choice: () => ({
+      available: true,
+      pubkey: owned.pubkey,
+      automatic: true,
+    }),
   });
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -5678,6 +5905,7 @@ it("a restore whose backups do not hold the linked key offers Enter your private
     "nsec_restore_wait",
     "nsec_restore_cancel",
     "identity_import",
+    "nsec_backup_set_choice",
   ]);
   identity.dispose();
 });
@@ -5794,6 +6022,9 @@ it("I lost my key lists the communities the old key owns, Back returns to Welcom
     screen.getByText(
       /Starting over replaces the key linked to your Builderlab account/,
     ),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Starting over permanently unlinks your old key."),
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Go back" }));
   expect(
@@ -6553,7 +6784,8 @@ it("restore denial does not become first run or generate a replacement", async (
   } as unknown as ReturnType<typeof getCurrentWindow>);
   vi.mocked(invoke)
     .mockRejectedValueOnce("Keychain access was denied")
-    .mockResolvedValueOnce(viewer);
+    .mockResolvedValueOnce(viewer)
+    .mockImplementation(idleUploader);
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -6583,10 +6815,7 @@ it("restore denial does not become first run or generate a replacement", async (
     screen.getByRole("button", { name: "Retry secure storage access" }),
   );
   expect(await screen.findByText("Restored")).toBeVisible();
-  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
-    "identity_restore",
-    "identity_restore",
-  ]);
+  expect(commands()).toEqual(["identity_restore", "identity_restore"]);
   identity.dispose();
 });
 
@@ -6932,7 +7161,7 @@ it.each(["ready", "error"] as const)(
         });
       if (command === "identity_restore") return restored.promise;
       if (command === "plugin:window|show") return Promise.resolve();
-      throw new Error(`Unexpected command ${command}`);
+      return idleUploader(command);
     });
     const identity = createIdentity();
     try {
@@ -7124,8 +7353,6 @@ it("an FI build's Sign in with Builderlab signs in through the native session an
     "/api/goose/v1/buzz/known-communities/list",
     "/api/goose/v1/buzz/nostr-identities/current",
   ]);
-  expect(commands()).not.toContain("plugin_host_request");
-  expect(commands()).not.toContain("oauth_callback_begin");
   identity.dispose();
 });
 
@@ -7176,3 +7403,194 @@ it.each(["unavailable", "not_offered"] as const)(
     identity.dispose();
   },
 );
+
+/** A compiled list whose only server hosts none of the landing's communities. */
+const blockServers = async (): Promise<SessionSnapshot[]> =>
+  (await publicServers()).map((server) => ({
+    ...server,
+    authority: server.authority && {
+      ...server.authority,
+      id: "bb-block",
+      identityOrigin: "https://block.builderlab.xyz",
+      communityHosts: ["buzz.block.builderlab.xyz"],
+    },
+  }));
+
+function lookupWelcome() {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  landingRelay().info.resolve();
+  const answers: ReturnType<typeof deferred<SessionSnapshot[]>>[] = [];
+  const servers = () => {
+    const answer = deferred<SessionSnapshot[]>();
+    answers.push(answer);
+    return answer.promise;
+  };
+  const connect = vi
+    .fn<(signal: AbortSignal) => Promise<Credential>>()
+    .mockImplementation(() => new Promise(() => {}));
+  const identity = createIdentity();
+  const view = render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinked}
+      connect={connect}
+      servers={servers}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  return { answers, connect, identity, view, user: userEvent.setup() };
+}
+
+it("ignores a hosted-server answer that arrives after Cancel", async () => {
+  const { answers, connect, identity, user } = lookupWelcome();
+  await screen.findByRole("button", { name: SIGN_IN });
+  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(1));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await act(async () => answers[0]?.resolve(await publicServers()));
+  expect(connect).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
+  identity.dispose();
+});
+
+it("ignores a lookup for an earlier address once another address is looked up", async () => {
+  const { answers, connect, identity, user } = lookupWelcome();
+  await screen.findByRole("button", { name: SIGN_IN });
+  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(1));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.clear(urlField());
+  await user.type(urlField(), "kalvin.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(2));
+  // The earlier address's late "hosted" does not sign in…
+  await act(async () => answers[0]?.resolve(await publicServers()));
+  expect(connect).not.toHaveBeenCalled();
+  // …and the new address's genuine "not hosted" still applies.
+  await act(async () => answers[1]?.resolve(await blockServers()));
+  expect(
+    await screen.findByRole("heading", { name: "Connect to your community" }),
+  ).toBeVisible();
+  expect(connect).not.toHaveBeenCalled();
+  identity.dispose();
+});
+
+it("ignores a hosted-server answer that arrives after unmount", async () => {
+  const { answers, connect, identity, user, view } = lookupWelcome();
+  await screen.findByRole("button", { name: SIGN_IN });
+  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(1));
+  view.unmount();
+  await act(async () => answers[0]?.resolve(await publicServers()));
+  expect(connect).not.toHaveBeenCalled();
+  identity.dispose();
+});
+
+it("applies the latest lookup's answer", async () => {
+  const { answers, connect, identity, user } = lookupWelcome();
+  await screen.findByRole("button", { name: SIGN_IN });
+  await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+  await waitFor(() => expect(answers).toHaveLength(1));
+  await act(async () => answers[0]?.resolve(await publicServers()));
+  await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  identity.dispose();
+});
+
+/** Native backup for a signed-in key with no saved choice: the uploader waits for consent. */
+function awaitingConsent(command: string) {
+  if (command === "nsec_backup_choice")
+    return { available: true, pubkey: viewer, automatic: null };
+  if (command === "nsec_backup_watch") return undefined;
+  if (command === "nsec_backup_state")
+    return {
+      seq: 1,
+      pass: 1,
+      builderlab: true,
+      status: "waiting",
+      reason: "no_consent",
+    };
+  throw new Error(`Unexpected command ${command}`);
+}
+
+it("first-run onboarding never asks about backup, even while the uploader waits for consent", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  const backUp = vi.fn(async () => {
+    throw new BackupError("unavailable");
+  });
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return null;
+    if (command === "identity_legacy_available") return false;
+    if (command === "identity_create") return viewer;
+    return awaitingConsent(command);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinkedWith(async () => {}, { backUp })}
+      connect={async () => credential}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await createMyKey(user);
+  await user.click(
+    await screen.findByRole("button", { name: "Continue without backup" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  // The wait is published; an app-level decision would now read `noJoin`, which throws.
+  await act(() => identity.backup.ready());
+  expect(identity.backup.snapshot()).toMatchObject({ reason: "no_consent" });
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  identity.dispose();
+});
+
+it("once the app opens, a key with no backup choice and only independent communities is asked about over it", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "nsec_backup_set_choice")
+      return { available: true, pubkey: viewer, automatic: true };
+    return awaitingConsent(command);
+  });
+  const client = {
+    status: "ready",
+    memberships: [{ id: "https://relay.example.com", name: "Relay" }],
+  } as ClientSnapshot;
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={{
+        ...noJoin,
+        snapshot: () => client,
+        subscribe: () => () => {},
+      }}
+      invites={invites}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  const prompt = await screen.findByRole("alertdialog", {
+    name: "Sync your identity with Builderlab?",
+  });
+  expect(screen.getByText("Signed in")).toBeInTheDocument();
+  await user.click(
+    within(prompt).getByRole("button", { name: "Sync with Builderlab" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(invoke).toHaveBeenCalledWith("nsec_backup_set_choice", {
+    pubkey: viewer,
+    automatic: true,
+  });
+  identity.dispose();
+});

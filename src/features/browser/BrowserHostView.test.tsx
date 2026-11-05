@@ -723,6 +723,7 @@ it("routes address and navigation controls to the active session", async () => {
   expect(platform.navigate).toHaveBeenCalledWith(
     "session-1",
     "https://other.example",
+    false,
   );
   expect(platform.action).toHaveBeenCalledWith("session-1", "back");
   expect(platform.action).toHaveBeenCalledWith("session-1", "forward");
@@ -755,6 +756,37 @@ it("keeps Reload keyboard-accessible while the website is loading", async () => 
   expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(platform.action).toHaveBeenCalledWith("session-1", "reload");
+});
+
+it("navigates address input without a scheme over https, falling back to http", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.status).toHaveBeenCalledWith("session-1"),
+  );
+  const address = screen.getByLabelText("Address");
+  await user.clear(address);
+  await user.type(address, "grugbrain.dev/{Enter}");
+  expect(platform.navigate).toHaveBeenCalledWith(
+    "session-1",
+    "https://grugbrain.dev/",
+    true,
+  );
+  await user.clear(address);
+  await user.type(address, "https://example.org/{Enter}");
+  expect(platform.navigate).toHaveBeenLastCalledWith(
+    "session-1",
+    "https://example.org/",
+    false,
+  );
 });
 
 it("shows a synchronous address validation error", async () => {
@@ -858,7 +890,7 @@ it.each([false, true])(
     const sessions = new BrowserSessions(platform);
     const lifetime = new AbortController();
     const builderlab = {
-      credential: "private",
+      federated: "private",
       storage: "viewer-test",
       signal: lifetime.signal,
     };
@@ -905,7 +937,7 @@ it("restores the last approved app after eviction instead of a later consent tic
   const sessions = new BrowserSessions(platform);
   const lifetime = new AbortController();
   const builderlab = {
-    credential: "private",
+    federated: "private",
     storage: "viewer-test",
     signal: lifetime.signal,
   };
