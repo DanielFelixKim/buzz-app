@@ -45,7 +45,7 @@ import lockfile from "proper-lockfile";
 
 /** Protected Pi uses the same snapshots for review and execution. The model
  * barrier is inside Models.applyAuth, before every provider dispatch, including
- * compaction and retry/recovery paths. Payload hooks that change a request fail closed. */
+ * compaction and retry/recovery paths. Payload hooks that replace a request fail closed. */
 export function protectModels(models, inspect, conversationFor) {
   const requests = new Set([
     "stream",
@@ -92,7 +92,7 @@ export function protectModels(models, inspect, conversationFor) {
           ...settings,
           signal,
           telemetry,
-          // Pi passes its payload hooks to every request: one that changes
+          // Pi passes its payload hooks to every request: one that replaces
           // the reviewed request fails it.
           ...(onPayload && {
             onPayload: async (payload, model) => {
@@ -265,6 +265,8 @@ const Replies = defineDoc({
 const CUT_OFF = {
   restart_limit:
     "Pi stopped this turn because it crashed partway through it several times in a row.",
+  interrupted:
+    "Pi stopped this turn because it was cut off while the model was answering, and it had no retries left.",
 };
 /** Messages that arrive while Pi works join its run at the next boundary. */
 const SETTINGS = { steeringMode: "all" };
@@ -1017,11 +1019,12 @@ export function serve({
     /** `sent`: once every event so far has gone out. */
     const state = { busy: false, observation: undefined, sent: () => queue };
     // Events go out in order, each after the reads it needs. The observer
-    // itself must not wait.
+    // must not wait or call the Session, so a read is queued as a function
+    // and starts only when its turn comes.
     const send = (event) => {
       queue = queue
         .then(async () => {
-          const ready = await event;
+          const ready = await (typeof event === "function" ? event() : event);
           if (ready)
             notify("event", { agent: opened.agent, conversation, ...ready });
         })
@@ -1034,7 +1037,9 @@ export function serve({
     let parts = 0;
     const look = (view, initial) => {
       const live = view.docs["pi.live"] ?? {};
-      state.busy = Boolean(live.run);
+      // A run that answered keeps `run` while its `afterRun` tasks finish; a
+      // new request then starts the next run, not steers this one.
+      state.busy = Boolean(live.run && !live.run.afterRun);
       if (!live.run) {
         inputs.clear();
         calls.clear();
@@ -1043,7 +1048,7 @@ export function serve({
       for (const id of live.run?.inputs ?? []) {
         if (inputs.has(id)) continue;
         inputs.add(id);
-        if (!initial) send(placed(opened, id));
+        if (!initial) send(() => placed(opened, id));
       }
       for (const slot of [...(live.tools ?? []), ...(live.nestedTools ?? [])]) {
         // A step is a start: Pi shows each run of a call running, in a commit

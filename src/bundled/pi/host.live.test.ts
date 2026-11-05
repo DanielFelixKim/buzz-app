@@ -32,18 +32,20 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import lockfile from "proper-lockfile";
 import { AuthFile, serve } from "./host.mjs";
-import { defineExtension, defineTool, Harness } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { defineExtension, defineTool, GenerationTask, Harness, hook } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 const originalOpen = Harness.open;
 let openedHarness;
 Harness.open = async (...args) => {
   openedHarness = await originalOpen(...args);
-  // While \`statusGate\` is set, reads of a request's status wait for it.
+  // While \`statusGate\` is set, reads of a request's status wait for it;
+  // while \`failRead\` is, the next one fails.
   const submission = openedHarness.submission.bind(openedHarness);
   openedHarness.submission = async (...ids) => {
     const found = await submission(...ids);
     return found && new Proxy(found, { get: (target, key) => key === "status"
-      ? async (...rest) => { const gate = statusGate; if (gate) { gate.entered.release(); await gate.gate; } return target.status(...rest); }
+      ? async (...rest) => { if (failRead) { failRead = false; throw new Error("Storage failed"); } const gate = statusGate; if (gate) { gate.entered.release(); await gate.gate; } return target.status(...rest); }
       : typeof target[key] === "function" ? target[key].bind(target) : target[key] });
   };
   // While \`staleSnapshot\` is set, a watch gets a commit before the value
@@ -81,8 +83,8 @@ const tools = [
   { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
 ];
 const out = {};
-let blockTools = false, rewriteTools = false, rewriteCommand = false, blockedMessages = [], statusGate, staleSnapshot = false;
-function start(prompt = async () => undefined) {
+let blockTools = false, rewriteTools = false, rewriteCommand = false, blockedMessages = [], statusGate, staleSnapshot = false, failRead = false;
+function start(prompt = async () => undefined, extensions = [nesting]) {
   const input = new PassThrough(), output = new PassThrough();
   const events = [], tools = [], pending = new Map();
   let id = 0;
@@ -116,7 +118,7 @@ function start(prompt = async () => undefined) {
     pending.set(++id, { resolve, reject });
     input.write(JSON.stringify({ id, method, params }) + "\\n");
   });
-  const { stop } = serve({ data, models, packages: { extensions: [nesting], errors: [] }, dir: data, input, output, exit: () => {} });
+  const { stop } = serve({ data, models, packages: { extensions, errors: [] }, dir: data, input, output, exit: () => {} });
   return { rpc, events, tools, stop };
 }
 const turn = (request, text) => ({ agent, key: "chan/root", at: 100, context: { channel: "chan", root: "root" }, text, steer: "steer: " + text, request, provider: "faux", model: "faux-1", instructions: "Test.", cwd: data });
@@ -252,6 +254,23 @@ faux.setResponses([
 const againFrom = pi.events.length;
 const again = await pi.rpc("deliver", turn("SAME", "again"));
 out.again = { wait: await pi.rpc("wait", { agent, submission: again.submission }), targets: pi.events.slice(againFrom).filter((event) => event.type === "step" && event.tool === "bash").map((event) => event.target) };
+// A read for a placed event that fails while an earlier one waits is
+// reported, and the host goes on: the read starts only in its turn.
+statusGate = { ...held(), entered: held() };
+faux.setResponses([() => fauxAssistantMessage("First"), () => fauxAssistantMessage("Second")]);
+const failing = (request, text) => ({ ...turn(request, text), key: "chan/failing", context: { channel: "chan", root: "failing" } });
+const f1 = await pi.rpc("deliver", failing("FR1", "first"));
+await statusGate.entered.gate;
+failRead = true;
+const f2 = await pi.rpc("deliver", failing("FR2", "second"));
+// Read past the proxy: settled, its run started long before. Then a turn
+// of the event loop, where Node finds a rejection nothing handles.
+await (await Object.getPrototypeOf(openedHarness).submission.call(openedHarness, f2.submission, BACKGROUND_CONTEXT)).wait(BACKGROUND_CONTEXT);
+await new Promise((resolve) => setImmediate(resolve));
+statusGate.release();
+statusGate = undefined;
+out.failedRead = await Promise.all([f1, f2].map((x) => pi.rpc("wait", { agent, submission: x.submission })));
+failRead = false;
 // A watch whose first value is older than a commit it got takes the commit:
 // the run it shows ended, so a request starts a turn rather than steering.
 staleSnapshot = true;
@@ -451,6 +470,23 @@ await Promise.all(submitted.map(({ submission }) => pi.rpc("wait", { agent: prom
 out.refresh = { calls: promptCalls, entries: JSON.stringify((await pi.rpc("entries", { agent: promptAgent, conversation: submitted[0].conversation })).entries) };
 out.refresh.dropped = await pi.rpc("deliver", refreshing("R3", 999));
 out.refresh.seen = (await pi.rpc("place", { agent: promptAgent, key: "refresh" })).seen;
+await pi.stop();
+// A run that answered keeps its run while its afterRun hooks work; a request
+// meanwhile starts the next run with its own turn, rather than steering.
+const finishing = held(), finished = held();
+const afterRun = defineExtension({ name: "after-run", hooks: [hook(GenerationTask, { afterRun: async () => { finishing.release(); await finished.gate; return undefined; } })] });
+const afterAgent = "d".repeat(64);
+pi = start(undefined, [nesting, afterRun]);
+await pi.rpc("open", { agent: afterAgent, tools });
+let afterSaw = [];
+faux.setResponses([fauxAssistantMessage("Answered"), (context) => { afterSaw = context.messages.filter((m) => m.role === "user").map((m) => m.content); return fauxAssistantMessage("Next"); }]);
+const after = (request, text) => ({ ...turn(request, text), agent: afterAgent });
+const ar1 = await pi.rpc("deliver", after("AR1", "answered"));
+const ar1Wait = await pi.rpc("wait", { agent: afterAgent, submission: ar1.submission });
+await finishing.gate;
+const ar2 = await pi.rpc("deliver", after("AR2", "next"));
+finished.release();
+out.afterRun = { first: ar1Wait, second: await pi.rpc("wait", { agent: afterAgent, submission: ar2.submission }), saw: afterSaw };
 await pi.stop();
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
 // another process refreshed first, keeps the sign-in.
@@ -778,6 +814,16 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.again.targets).toEqual(["printf one", "printf two"]);
     expect(out.stale.wait).toMatchObject({ status: "done", text: "Fresh" });
     expect(out.stale.saw).toEqual(["stale"]);
+    expect(out.failedRead).toMatchObject([
+      { status: "done", text: "First" },
+      { status: "done", text: "Second" },
+    ]);
+    expect(out.afterRun.first).toMatchObject({
+      status: "done",
+      text: "Answered",
+    });
+    expect(out.afterRun.second).toMatchObject({ status: "done", text: "Next" });
+    expect(out.afterRun.saw).toEqual(["answered", "next"]);
     expect(out.toolStop.wait).toMatchObject({
       status: "unanswered",
       reason: "aborted",
