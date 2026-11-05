@@ -308,6 +308,16 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   });
 });
 
+it("shows unread activity on its Solo or Team scope until it is read", () => {
+  const f = fixture(true);
+  const solo = screen.getByRole("tab", { name: "Solo" });
+  const scope = solo.closest("[data-unread-solo]");
+  expect(scope).toHaveAttribute("data-unread-solo", "true");
+  expect(scope).not.toHaveAttribute("data-unread-team");
+  f.clearUnread();
+  expect(solo.closest("[data-unread-solo]")).toBeNull();
+});
+
 it("collapses the Solo and Team inventories independently in All", async () => {
   const user = userEvent.setup();
   fixture(true);
