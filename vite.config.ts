@@ -10,6 +10,7 @@ import {
   relayOrigin,
 } from "./src/features/communities/destination.ts";
 import { parseFirstRunAccountSeed } from "./src/features/identity/first-run-seed.ts";
+import { parseWorkforceDescriptor } from "./src/features/agents/workforce/descriptor.ts";
 
 function sharedBuilderlabUrl() {
   const key = "BUZZ_BUILDERLAB_URL";
@@ -110,6 +111,12 @@ export default defineConfig(async ({ command, mode }) => {
   const firstRunAccount =
     command === "serve" ? (env.BUZZ_DEV_FIRST_RUN_ACCOUNT ?? "") : "";
   parseFirstRunAccountSeed(firstRunAccount);
+  // The public Workforce deployment descriptor. Read from the process only,
+  // as native reads it for the Agents plugin's gateway grant, so the two
+  // can't disagree; unset (the release default) leaves routing off.
+  const workforce = parseWorkforceDescriptor(
+    process.env.BUZZ_WORKFORCE_GATEWAY ?? "",
+  );
   const plugins: PluginOption[] = [react()];
   if (command === "serve")
     plugins.push(
@@ -149,6 +156,9 @@ export default defineConfig(async ({ command, mode }) => {
     plugins,
     define: {
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
+      "import.meta.env.VITE_BUZZ_WORKFORCE_GATEWAY": JSON.stringify(
+        workforce ? JSON.stringify(workforce) : "",
+      ),
       "import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED": JSON.stringify(
         command === "serve" && env.BUZZ_DEV_NOTIFICATIONS === "0" ? "1" : "0",
       ),

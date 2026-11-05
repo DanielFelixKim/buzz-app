@@ -10,6 +10,39 @@ mod federated_identity_config;
 const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
 const BUILDERLAB_APPS_DOMAIN_KEY: &str = "BUZZ_BUILDERLAB_APPS_DOMAIN";
 const BUILDERLAB_API_BASE_PATH_KEY: &str = "BUZZ_BUILDERLAB_API_BASE_PATH";
+const WORKFORCE_KEY: &str = "BUZZ_WORKFORCE_GATEWAY";
+
+/// The gateway origin the public `BUZZ_WORKFORCE_GATEWAY` descriptor names,
+/// or empty when it is unset. Like the FI descriptor, it is read from the
+/// process only; Vite validates the whole descriptor for the frontend.
+fn workforce_gateway(process: Option<String>) -> Result<String, &'static str> {
+    let Some(raw) = process.filter(|raw| !raw.trim().is_empty()) else {
+        return Ok(String::new());
+    };
+    let value: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|_| "Workforce descriptor isn't JSON")?;
+    let keys: Vec<_> = value
+        .as_object()
+        .map(|o| o.keys().collect())
+        .unwrap_or_default();
+    if keys != ["communities", "gateway", "version"]
+        || value.get("version") != Some(&serde_json::Value::from(1))
+        || !value["communities"]
+            .as_array()
+            .is_some_and(|c| !c.is_empty())
+    {
+        return Err("Workforce descriptor needs exactly version 1, a gateway and communities");
+    }
+    let gateway = value
+        .get("gateway")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("Workforce descriptor needs a gateway")?;
+    let url = url::Url::parse(gateway).map_err(|_| "Invalid Workforce gateway")?;
+    if url.scheme() != "https" || url.origin().ascii_serialization() != gateway {
+        return Err("Workforce gateway must be an https:// origin without a path or credentials");
+    }
+    Ok(gateway.into())
+}
 
 fn builderlab_target(
     local: &Path,
@@ -132,11 +165,51 @@ fn main() {
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_ORIGIN={origin}");
     println!("cargo:rustc-env={BUILDERLAB_API_BASE_PATH_KEY}={api_base_path}");
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_APPS_DOMAIN={apps_domain}");
+    println!("cargo:rerun-if-env-changed={WORKFORCE_KEY}");
+    let gateway =
+        workforce_gateway(process(WORKFORCE_KEY)).expect("Invalid Workforce build configuration");
+    println!("cargo:rustc-env=BUZZ_WORKFORCE_GATEWAY_ORIGIN={gateway}");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workforce_grant_is_only_the_descriptor_gateway_origin() {
+        assert_eq!(workforce_gateway(None).unwrap(), "");
+        assert_eq!(workforce_gateway(Some(" ".into())).unwrap(), "");
+        let descriptor = |gateway: &str| {
+            Some(format!(
+                r#"{{"version":1,"gateway":"{gateway}","communities":[{{}}]}}"#
+            ))
+        };
+        assert_eq!(
+            workforce_gateway(descriptor("https://gateway.example")).unwrap(),
+            "https://gateway.example"
+        );
+        for gateway in [
+            "http://gateway.example",
+            "https://gateway.example/",
+            "https://gateway.example/path",
+            "https://user@gateway.example",
+            "https://GATEWAY.example",
+            "gateway.example",
+        ] {
+            assert!(workforce_gateway(descriptor(gateway)).is_err(), "{gateway}");
+        }
+        assert!(workforce_gateway(Some("not json".into())).is_err());
+        assert!(workforce_gateway(Some(
+            r#"{"version":2,"gateway":"https://gateway.example","communities":[{}]}"#.into()
+        ))
+        .is_err());
+        for raw in [
+            r#"{"version":1,"gateway":"https://gateway.example","communities":[]}"#,
+            r#"{"version":1,"gateway":"https://gateway.example","communities":[{}],"token":"x"}"#,
+        ] {
+            assert!(workforce_gateway(Some(raw.into())).is_err(), "{raw}");
+        }
+    }
 
     #[test]
     fn exact_apps_domain_uses_trusted_build_input_and_public_default() {

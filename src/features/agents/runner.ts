@@ -94,6 +94,8 @@ import {
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
 import type { DeviceSettings } from "../../shared/device-settings";
+import { workforceRoutes } from "./workforce/route";
+import { turnContextFor } from "./workforce/turn";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -414,6 +416,9 @@ export type RunnerHost = {
   member(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
+  /** Whether the channel is flat, with no threads: a DM of any size or a
+   * Solo chat. */
+  flat(agent: Agent, channelId: string): boolean;
   /** While the owner is still starting this chat, settles once it can take
    * the agent's events; undefined otherwise. */
   starting?(agent: Agent, channelId: string): Promise<void> | undefined;
@@ -2454,6 +2459,34 @@ export class AgentRunners {
     );
     return timer && { lane: lane(timer), job: timer };
   }
+  /** The membership's Workforce route and this turn's context, frozen before
+   * the type is asked to run; undefined when it doesn't route there. A
+   * blocked membership, or an eligible one whose type can't route through the
+   * gateway, fails the turn visibly: it never falls back to direct providers. */
+  private async workforce(
+    agent: Agent,
+    type: RegisteredAgentType,
+    job: Job,
+    anchor: ConversationWake | undefined,
+    signal: AbortSignal,
+  ) {
+    if (!workforceRoutes.configured) return undefined;
+    const route = await workforceRoutes.routeReady(agent.key, signal);
+    if (route.kind === "external") return undefined;
+    if (route.kind === "blocked") throw new Error(route.message);
+    if (!type.workforce)
+      throw new Error(
+        "This agent type can't use the Workforce gateway yet, so it can't run in this community.",
+      );
+    const { trigger } = job;
+    const turn = turnContextFor(trigger, {
+      channelId: job.channelId,
+      wake: anchor,
+      flat: (channelId) => this.host.flat(agent, channelId),
+    });
+    return Object.freeze({ route, turn });
+  }
+
   /** Runs `job` in `lane`, holding the lane until it may take another. */
   private start(
     runner: Runner,
@@ -2511,6 +2544,8 @@ export class AgentRunners {
           );
         handle.protection.assertAvailable();
       }
+      // Before any type code (its models included) runs for this turn.
+      const workforce = await this.workforce(agent, type, job, anchor, signal);
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
@@ -2519,6 +2554,7 @@ export class AgentRunners {
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
+        ...(workforce ? { workforce } : {}),
         agent: handle,
         config: start.config,
         revisions: start.revisions,

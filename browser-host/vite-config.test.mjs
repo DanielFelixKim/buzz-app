@@ -165,6 +165,30 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
             }
             delete process.env.BUZZ_DATABRICKS_HOST;
+            // The Workforce descriptor is read from the process only (never
+            // .env files), compiled canonically, and off when unset.
+            const workforce = (communities) => JSON.stringify({
+              version: 1, gateway: 'https://gateway.example', communities,
+            });
+            const id = '22222222-2222-4222-8222-222222222222';
+            writeFileSync('.env.production', 'BUZZ_WORKFORCE_GATEWAY=' + workforce([{ id, origin: 'wss://env.example' }]));
+            for (const [raw, expected] of [
+              [undefined, ''],
+              ['', ''],
+              [workforce([{ id, origin: 'wss://block.example/' }]), workforce([{ id, origin: 'https://block.example' }])],
+            ]) {
+              if (raw === undefined) delete process.env.BUZZ_WORKFORCE_GATEWAY;
+              else process.env.BUZZ_WORKFORCE_GATEWAY = raw;
+              const result = await loadConfigFromFile({ command: 'build', mode: 'production' }, configFile);
+              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_WORKFORCE_GATEWAY'], JSON.stringify(expected));
+            }
+            rmSync('.env.production');
+            process.env.BUZZ_WORKFORCE_GATEWAY = JSON.stringify({ version: 1, gateway: 'https://u:secret@gateway.example', communities: [] });
+            await assert.rejects(
+              loadConfigFromFile({ command: 'build', mode: 'production' }, configFile),
+              error => !String(error).includes('secret') && /BUZZ_WORKFORCE_GATEWAY/.test(String(error)),
+            );
+            delete process.env.BUZZ_WORKFORCE_GATEWAY;
             // A fresh checkout uses production for both dev and packaged frontends.
             // Explicit empty values retain the deployment opt-out.
             for (const local of ['', 'BUZZ_BUILDERLAB_URL=']) {

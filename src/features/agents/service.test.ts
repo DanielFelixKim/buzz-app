@@ -33,6 +33,7 @@ import {
   describe,
   expect,
   it,
+  type MockInstance,
   vi,
 } from "vitest";
 import {
@@ -80,6 +81,7 @@ import {
   type DeviceSettings,
   type SettingValue,
 } from "../../shared/device-settings";
+import { type EligibleRoute, workforceRoutes } from "./workforce/route";
 import {
   bot,
   channel,
@@ -328,6 +330,7 @@ async function setup({
     emit: fake.emit,
     confirm: fake.confirm,
     connect: fake.connect,
+    readsCommunity: fake.readsCommunity,
     signIn: fake.signIn,
     fail: fake.fail,
     relay: fake.relay,
@@ -14983,4 +14986,375 @@ describe("Buzz settings", () => {
       expect(write).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("Workforce routing", () => {
+  const COMMUNITY = "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+  const route = (key: string) => workforceRoutes.routeFor(key as never);
+  let configured: MockInstance<() => boolean>;
+  let set: MockInstance<typeof workforceRoutes.setMembership>;
+  let removed: MockInstance<typeof workforceRoutes.removeMembership>;
+  /** What was fed for `key`, in order. */
+  const fed = (key: string = bot) =>
+    set.mock.calls.map(([member]) => member).filter((m) => m.key === key);
+  beforeEach(() => {
+    configured = vi
+      .spyOn(workforceRoutes, "configured", "get")
+      .mockReturnValue(true);
+    set = vi.spyOn(workforceRoutes, "setMembership");
+    removed = vi.spyOn(workforceRoutes, "removeMembership");
+  });
+  afterEach(() => {
+    configured.mockRestore();
+    set.mockRestore();
+    removed.mockRestore();
+    // Routing state is a singleton; leave no membership behind.
+    workforceRoutes.removeMembership(bot as never);
+  });
+
+  it("feeds a local agent with the live session and the community ID it read", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    expect(fed().at(-1)).toMatchObject({
+      key: bot,
+      origin: "https://relay.example.test",
+      owner: viewer,
+      pubkey: bot,
+    });
+    expect(fed().at(-1)?.community?.session).toBe(f.relay.snapshot().session);
+  });
+
+  it("keeps the same membership and revision across a live socket reconnect and later updates", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    const before = fed().at(-1);
+    const revision = route(bot).revision;
+    // The socket drops and returns inside the session, as live.ts does, and
+    // the service updates for unrelated reasons.
+    f.recover();
+    await f.service.save(bot, { config: { reply: "hi" } });
+    await f.service.refresh();
+    await settle();
+    for (const member of fed()) {
+      expect(member.community).toBeDefined();
+      expect(member.community?.id).toBe(COMMUNITY);
+      expect(member.community?.session).toBe(before?.community?.session);
+    }
+    expect(route(bot).revision).toBe(revision);
+  });
+
+  it("feeds a replaced session, and no community while that session is not ready", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    const old = fed().at(-1)?.community?.session;
+    const revision = route(bot).revision;
+    // The relay is reconnecting: the old session's ID must not stand in.
+    f.reconnecting();
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeUndefined());
+    expect(route(bot).revision).toBeGreaterThan(revision);
+    const pending = route(bot).revision;
+    // A new session with the same ID is new evidence.
+    f.connect(true);
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeDefined());
+    const next = fed().at(-1)?.community;
+    expect(next?.id).toBe(COMMUNITY);
+    expect(next?.session).toBe(f.relay.snapshot().session);
+    expect(next?.session).not.toBe(old);
+    expect(route(bot).revision).toBeGreaterThan(pending);
+    // Dropping the connection outright feeds none either.
+    f.connect(false);
+    await vi.waitFor(() => expect(fed().at(-1)?.community).toBeUndefined());
+  });
+
+  it("feeds no ID when the replaced session has none, never the old one", async () => {
+    const f = await setup();
+    f.readsCommunity(COMMUNITY);
+    f.connect(true);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed().at(-1)?.community?.id).toBe(COMMUNITY));
+    // The next connection's transport read no NIP-11 community ID.
+    f.readsCommunity(undefined);
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => {
+      const community = fed().at(-1)?.community;
+      expect(community).toBeDefined();
+      expect(community?.session).toBe(f.relay.snapshot().session);
+    });
+    expect(fed().at(-1)?.community?.id).toBeUndefined();
+    // Only the old session ever carried the old ID.
+    const carried = fed().filter((m) => m.community?.id === COMMUNITY);
+    expect(carried.length).toBeGreaterThan(0);
+    for (const member of carried)
+      expect(member.community?.session).not.toBe(
+        fed().at(-1)?.community?.session,
+      );
+  });
+
+  it("feeds nothing for hosted agents, and nothing at all when the build has no Workforce configuration", async () => {
+    const f = await setup();
+    const { type } = cloud();
+    f.plugin.agents.register(type);
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed(bot)).not.toHaveLength(0));
+    expect(fed(hostedKey)).toEqual([]);
+    expect(set.mock.calls.map(([m]) => m.pubkey)).not.toContain(hostedKey);
+    set.mockClear();
+    configured.mockReturnValue(false);
+    f.connect(false);
+    f.connect(true);
+    await settle();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("removes the membership of an agent being deleted, and never feeds one that arrives deleting", async () => {
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(fed()).not.toHaveLength(0));
+    expect(removed).not.toHaveBeenCalled();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    leaveChannels.mockRejectedValueOnce(new Error("offline"));
+    await expect(f.service.remove(bot)).rejects.toThrow(UNFINISHED);
+    warn.mockRestore();
+    expect(f.service.find(bot)?.deleting).toBe(true);
+    await vi.waitFor(() => expect(removed).toHaveBeenCalledWith(bot));
+    // After a relaunch the unfinished Delete is listed but not routed.
+    set.mockClear();
+    removed.mockClear();
+    const identities = await f.native.list();
+    const again = await setup({ storage: f.storage, identities });
+    expect(again.service.find(bot)?.deleting).toBe(true);
+    await settle();
+    expect(set.mock.calls.filter(([m]) => m.key === bot)).toEqual([]);
+  });
+});
+
+describe("Workforce gateway gate", () => {
+  const GATEWAY_BLOCKED =
+    "Buzz couldn't reach the Workforce gateway. Check your network or VPN connection, then try again.";
+  const UNSUPPORTED =
+    "This agent type can't use the Workforce gateway yet, so it can't run in this community.";
+  const eligible: EligibleRoute = Object.freeze({
+    kind: "eligible",
+    revision: 3,
+    gatewayOrigin: "https://gateway.example.test",
+    identity: Object.freeze({
+      community_id: "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      human_pubkey: viewer,
+      agent_pubkey: bot,
+    }),
+    access: "unrestricted",
+  });
+  const blockedRoute = Object.freeze({
+    kind: "blocked",
+    revision: 4,
+    gatewayOrigin: "https://gateway.example.test",
+    reason: "network",
+    message: GATEWAY_BLOCKED,
+  } as const);
+  const external = Object.freeze({ kind: "external", revision: 1 } as const);
+  const mention = event("a1", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  let configured: MockInstance<() => boolean>;
+  let ready: MockInstance<typeof workforceRoutes.routeReady>;
+  beforeEach(() => {
+    configured = vi
+      .spyOn(workforceRoutes, "configured", "get")
+      .mockReturnValue(true);
+    ready = vi.spyOn(workforceRoutes, "routeReady");
+  });
+  afterEach(() => {
+    configured.mockRestore();
+    ready.mockRestore();
+    workforceRoutes.removeMembership(bot as never);
+  });
+
+  /** An agent of `workforce`-capable (or not) type, mentioned once. */
+  async function mentioned(
+    capable: boolean,
+    asked = mention,
+    channelId = channel,
+    prepare?: (f: Awaited<ReturnType<typeof setup>>) => void,
+  ) {
+    const f = await setup();
+    prepare?.(f);
+    const run = vi.fn<(delivery: Delivery<Record<string, never>>) => void>();
+    const models = vi.fn(async () => ({
+      current: "deep",
+      models: [{ id: "deep", label: "Deep", efforts: [] }],
+    }));
+    f.plugin.agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run,
+      models,
+      ...(capable ? { workforce: true as const } : {}),
+    });
+    await f.service.create({ type: "example/relay", name: "Relay" });
+    f.emit({ events: [asked], channelId });
+    return { ...f, run, models };
+  }
+  const refused = async (
+    f: Awaited<ReturnType<typeof mentioned>>,
+    error: string,
+  ) => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await vi.waitFor(() =>
+        expect(f.activity.reader.work()[0]).toMatchObject({
+          state: "error",
+          error,
+        }),
+      );
+    } finally {
+      err.mockRestore();
+    }
+    expect(f.run).not.toHaveBeenCalled();
+  };
+
+  it("fails the turn with the route's message and never runs the type when the route is blocked", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    const f = await mentioned(true);
+    await refused(f, GATEWAY_BLOCKED);
+    expect(ready).toHaveBeenCalledWith(bot, expect.any(AbortSignal));
+  });
+
+  it("asks a blocked membership's type nothing, not even its models for a model request", async () => {
+    ready.mockResolvedValue(blockedRoute);
+    const f = await mentioned(
+      true,
+      event("a2", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["model", bot, "deep"],
+        ],
+      }),
+    );
+    await refused(f, GATEWAY_BLOCKED);
+    expect(f.models).not.toHaveBeenCalled();
+  });
+
+  it("fails an eligible turn whose type can't route through the gateway, without running it", async () => {
+    ready.mockResolvedValue(eligible);
+    const f = await mentioned(false);
+    await refused(f, UNSUPPORTED);
+  });
+
+  it("hands an eligible route and the turn's frozen context to a type that routes through the gateway", async () => {
+    ready.mockResolvedValue(eligible);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.workforce?.route).toBe(eligible);
+    expect(delivery?.workforce?.turn).toEqual({
+      channel_id: channel,
+      message_id: mention.id,
+      thread_id: mention.id,
+    });
+    expect(Object.isFrozen(delivery)).toBe(true);
+    expect(Object.isFrozen(delivery?.workforce)).toBe(true);
+    expect(Object.isFrozen(delivery?.workforce?.turn)).toBe(true);
+  });
+
+  /** The turn context of the one run `asked` started in `channelId`. */
+  const turnOf = async (
+    asked: RelayEvent,
+    channelId: string,
+    prepare?: (f: Awaited<ReturnType<typeof setup>>) => void,
+  ) => {
+    ready.mockResolvedValue(eligible);
+    const f = await mentioned(true, asked, channelId, prepare);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    return f.run.mock.calls[0]?.[0].workforce?.turn;
+  };
+  const root = "e".repeat(64);
+  const reply = (id: string, h: string) =>
+    event(id, {
+      tags: [
+        ["h", h],
+        ["e", root, "", "root"],
+        ["e", "f".repeat(64), "", "reply"],
+        ["p", bot],
+      ],
+    });
+
+  it("gives an ordinary channel's reply its actual thread root", async () => {
+    expect(await turnOf(reply("b1", channel), channel)).toEqual({
+      channel_id: channel,
+      message_id: event("b1").id,
+      thread_id: root,
+    });
+  });
+
+  it("gives a group DM mention no thread, though only a two-person DM auto-wakes", async () => {
+    const asked = event("b2", {
+      tags: [
+        ["h", groupDm],
+        ["p", bot],
+      ],
+    });
+    expect(await turnOf(asked, groupDm)).toEqual({
+      channel_id: null,
+      message_id: asked.id,
+      thread_id: null,
+    });
+  });
+
+  it("gives a Solo chat mention no thread, even when it names a root", async () => {
+    const solo = "5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const turn = await turnOf(reply("b3", solo), solo, ({ session }) => {
+      const list = session.channels.list();
+      vi.spyOn(session.channels, "list").mockReturnValue({
+        ...list,
+        channels: [
+          ...list.channels,
+          {
+            ...list.channels[0],
+            id: solo,
+            name: "Solo",
+            channelType: "solo",
+            members: [viewer, bot],
+          },
+        ],
+      });
+    });
+    expect(turn).toEqual({
+      channel_id: solo,
+      message_id: event("b3").id,
+      thread_id: null,
+    });
+  });
+
+  it("adds no Workforce field and asks for no route when the build has no configuration", async () => {
+    configured.mockReturnValue(false);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("adds no Workforce field for an external membership, whatever its type", async () => {
+    ready.mockResolvedValue(external);
+    const f = await mentioned(false);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(ready).toHaveBeenCalledTimes(1);
+  });
 });

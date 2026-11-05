@@ -13,6 +13,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
+| `BUZZ_WORKFORCE_GATEWAY` | Shared frontend/native build, process environment only: public Workforce deployment descriptor (approved gateway origin and exact corporate community IDs/origins). Unset, the release default, leaves Workforce routing off. See [Workforce gateway](#workforce-gateway). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native build: federated identity authority, adapter prefix and community hosts. See below. |
@@ -81,6 +82,31 @@ plugin starts receives it as `DATABRICKS_HOST`, so goose reports Databricks as
 configured and ignores a host saved in goose's config. Only the host is set:
 the model, thinking level and sign-in stay goose's own. Leave it unset for OSS
 builds.
+
+## Workforce gateway
+
+`BUZZ_WORKFORCE_GATEWAY` names the Workforce gateway and the corporate
+communities whose local agent memberships route inference through it:
+
+```json
+{"version":1,"gateway":"https://gateway.example","communities":[{"id":"<NIP-11 community UUID>","origin":"wss://relay.example"}]}
+```
+
+It is public routing data with no credential. Both the frontend build and the
+plugin-manager native build read it from the process environment only, never
+from `.env` files, and an invalid value fails either build without echoing it.
+The frontend compiles the canonical descriptor. Native compiles only the
+gateway origin, as the bundled Agents plugin's single extra network grant for
+the model-access readiness probe. Leave it unset (the release default) to keep
+every membership on its existing behavior.
+
+With it set, a local agent membership in a listed community routes through the
+gateway only when the relay's NIP-11 `read_state_snapshot.community_id` is
+exactly the listed ID and the gateway's model-access probe succeeds; until then
+its turns fail visibly and never fall back to direct providers. Memberships in
+other communities and hosted agents are unchanged. See
+`src/features/agents/workforce/` for the shared route, session and request
+context contract that harnesses consume.
 
 ## Builderlab URL build input
 
