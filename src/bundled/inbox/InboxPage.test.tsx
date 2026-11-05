@@ -4419,6 +4419,38 @@ it("Retry keeps a message marked unread in an already-unread next conversation",
   expect(h.owner.session.unread.snapshot(dm).manual).toBe("local-only");
 });
 
+it("Retry keeps a response marked unread in the next Solo chat timeline", async () => {
+  const h = fixture({ withWriter: true, soloChannel: true, memberAgents: 1 });
+  const progress = message(h.agent, "room", "Agent progress", 30);
+  h.addEvent(progress);
+  render(h.view);
+  act(() => h.emit([progress]));
+  await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
+  const thread = rows()[1] as HTMLElement;
+  fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  h.failSave();
+  await archiveOpened(h);
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  // Marking a response unread is a newer choice that reading it would clear.
+  const response = {
+    kind: "message",
+    channelId: "room",
+    messageId: progress.id,
+  } as const;
+  await act(() => h.owner.session.unread.markUnreadLocal(response));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(h.owner.session.unread.snapshot(response).manual).toBe("local-only");
+});
+
 it("Retry still reads the next conversation after an unrelated save", async () => {
   const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
   render(h.view);

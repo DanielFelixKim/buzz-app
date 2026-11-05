@@ -165,6 +165,27 @@ const targetOf = (item: InboxItem) => ({
   ...(item.rootId ? { rootId: item.rootId } : {}),
 });
 
+/** How reading a row clears it, with the targets that read clears: a later
+ * Mark as unread on any of them is newer intent that a Retry must keep. */
+const rowRead = (
+  item: InboxItem,
+): {
+  kind: "channel" | "timeline" | "steps";
+  targets: readonly InboxItem["target"][];
+} =>
+  item.target.kind === "channel"
+    ? { kind: "channel", targets: [item.target] }
+    : item.timeline
+      ? {
+          kind: "timeline",
+          targets: item.messageIds.map((messageId) => ({
+            kind: "message" as const,
+            channelId: item.channelId,
+            messageId,
+          })),
+        }
+      : { kind: "steps", targets: item.readThrough.map((step) => step.target) };
+
 /** DMs and a Solo chat's own messages open whole; others open at their
  * message. Someone else's chat opens at the tag its row previews: in its
  * thread, or the whole chat at a top-level tag. */
@@ -806,10 +827,11 @@ function InboxList({
           if (canRead && hasUnread(next))
             try {
               // Read it as selecting it would, through what this row shows.
+              const plan = rowRead(next);
               readNext =
-                next.target.kind === "channel"
+                plan.kind === "channel"
                   ? session.unread.prepareChannelRead(next.channelId)
-                  : next.timeline
+                  : plan.kind === "timeline"
                     ? () =>
                         session.unread.markTimelineRead(
                           next.channelId,
@@ -824,16 +846,7 @@ function InboxList({
                             ),
                           ),
                         );
-              readTargets =
-                next.target.kind === "channel"
-                  ? [next.target]
-                  : next.timeline
-                    ? next.messageIds.map((messageId) => ({
-                        kind: "message" as const,
-                        channelId: next.channelId,
-                        messageId,
-                      }))
-                    : next.readThrough.map((step) => step.target);
+              readTargets = plan.targets;
               readSince = session.unread.revision();
               reading = readNext();
             } catch {
@@ -947,11 +960,12 @@ function InboxList({
     // Prepare once per click, not once per Retry: later arrivals are a new intent.
     let readChannel: (() => Promise<unknown>) | undefined;
     const work = async () => {
+      const plan = rowRead(item).kind;
       if (unread) await session.unread.markUnreadLocal(item.target);
-      else if (item.target.kind === "channel") {
+      else if (plan === "channel") {
         readChannel ??= session.unread.prepareChannelRead(item.channelId);
         await readChannel();
-      } else if (item.timeline)
+      } else if (plan === "timeline")
         await session.unread.markTimelineRead(item.channelId, item.messageIds);
       else
         while (remaining.length) {
