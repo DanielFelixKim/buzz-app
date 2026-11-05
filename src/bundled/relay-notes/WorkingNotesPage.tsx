@@ -332,6 +332,7 @@ export function WorkingNotesCommunity({
         },
         browse,
         entries: visible,
+        canFilter: !!collection.notes.length || trash,
         open,
         items: [
           ...opened.map((address) => {

@@ -333,7 +333,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   create nothing. New notes are private to you; **Share note** opens the same
   member picker as Solo chats and team channels. Sharing a blank draft first
   creates its note. The filter button inside search offers
-  **Show deleted notes**.
+  **Show deleted notes**. Search and filters disable for an empty collection;
+  existing queries and active filters remain clearable. Deleted notes keep the
+  filter available.
   People and agents author the same channel-backed documents, which retain
   revisions. Published NIP-23 notes and the separate plural `notes_*` tools do
   not feed this page; existing published records are unchanged.

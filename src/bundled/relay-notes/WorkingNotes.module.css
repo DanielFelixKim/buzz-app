@@ -37,9 +37,6 @@
   flex: 1;
   min-width: 12rem;
 }
-.sharingSettings {
-  padding-inline: var(--space-control-inset);
-}
 .revision {
   display: flex;
   flex-direction: column;

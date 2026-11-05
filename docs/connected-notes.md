@@ -183,8 +183,10 @@ card previews or author folders. A subtle **+ New note** action follows
 the note titles. Empty collections put the creation button inside the empty state;
 search is disabled until there are notes, unless a query needs clearing. **Show
 deleted notes** lives in the search field's trailing filter menu, retaining the
-existing history-backed filter state. Author and revision metadata remain
-in the note viewer. The list, document content and formatting bar share the channel
+existing history-backed filter state.
+The filter disables only when no notes are loaded and it is inactive; retained
+deleted notes keep it available even when the visible list is empty.
+Author and revision metadata remain in the note viewer. The list, document content and formatting bar share the channel
 timeline/composer's centered 52rem maximum width and shrink to fit narrow panes.
 Notes retain the shared reader's heading, author/avatar and update byline,
 document spacing, scrollport and Markdown styles, alongside access notices,

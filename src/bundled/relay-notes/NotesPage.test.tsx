@@ -25,6 +25,7 @@ async function fixture() {
     selected: "browse",
     query: "",
     trash: false,
+    canFilter: true,
     searchRef: { current: null },
     loading: false,
     more: false,
@@ -149,9 +150,20 @@ it("keeps loading and failed reads distinct from empty and retains useful conten
   expect(screen.getByRole("link", { name: "Latest note" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Refresh notes" }));
   expect(props.refresh).toHaveBeenCalledOnce();
-  view.rerender(<NotesPage {...props} entries={[]} />);
+  view.rerender(<NotesPage {...props} entries={[]} canFilter={false} />);
   expect(screen.getByText("No notes yet")).toBeVisible();
   expect(screen.getByRole("button", { name: "New note" })).toBeVisible();
+  const filter = screen.getByRole("button", { name: "Filter notes" });
+  expect(filter).toBeDisabled();
+  await user.click(filter);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  view.rerender(<NotesPage {...props} entries={[]} trash />);
+  expect(filter).toBeEnabled();
+  await user.click(filter);
+  await user.click(
+    await screen.findByRole("menuitemcheckbox", { name: "Show deleted notes" }),
+  );
+  expect(props.showDeleted).toHaveBeenCalledWith(false, expect.anything());
 });
 
 it("searches loaded documents and delegates filters, creation and pagination to the workspace", async () => {

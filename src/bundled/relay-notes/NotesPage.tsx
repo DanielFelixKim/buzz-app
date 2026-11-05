@@ -42,6 +42,7 @@ export type NotesPageProps = {
   selected: string;
   query: string;
   trash: boolean;
+  canFilter: boolean;
   searchRef: RefObject<HTMLElement | null>;
   loading: boolean;
   more: boolean;
@@ -63,6 +64,7 @@ export function NotesPage({
   selected,
   query,
   trash,
+  canFilter,
   searchRef,
   loading,
   more,
@@ -197,6 +199,7 @@ export function NotesPage({
                 trailing={
                   <MenuRoot>
                     <MenuTrigger
+                      disabled={!canFilter}
                       render={
                         <IconButton
                           aria-label="Filter notes"

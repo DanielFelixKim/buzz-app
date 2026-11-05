@@ -128,9 +128,9 @@ export function NoteSharing({
         change,
       }}
       accessSettings={
-        <div className={`${styles.stack} ${styles.sharingSettings}`}>
+        <div className={styles.stack}>
           {error && (
-            <div>
+            <div className="px-control-inset">
               <p role="alert">{error}</p>
               <Button
                 size="sm"
@@ -152,10 +152,6 @@ export function NoteSharing({
             subject="note"
             {...(accessChannel ? { channel: accessChannel } : {})}
           />
-          <p className="text-caption text-subtle">
-            View-only members can read; participants can edit, delete and
-            restore. Owners and admins can also manage access.
-          </p>
         </div>
       }
     />
