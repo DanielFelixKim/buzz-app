@@ -253,12 +253,20 @@ it.each([
     assert.exists(evicted);
     h.live.receive([evicted]);
     expect(h.window().rows.map((row) => row.id)).not.toContain(evicted.id);
-    for (let step = 0; h.window().hasNewer && step < 10; step++) {
+    const forward = new Set(h.window().rows.map((row) => row.id));
+    for (let step = 0; h.window().hasNewer && step < 100; step++) {
+      const before = h.window().rows.map((row) => row.id);
       h.channels.loadNewer?.("c");
       await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+      expect([
+        h.window().rows.map((row) => row.id),
+        !!h.window().hasNewer,
+      ]).not.toEqual([before, true]);
+      for (const row of h.window().rows) forward.add(row.id);
       bounded();
     }
     expect(h.window().hasNewer).toBeFalsy();
+    expect(forward.size).toBe(100);
     expect(h.window().rows.map((row) => row.id)).toContain(evicted.id);
     h.channels.loadOlder("c");
     await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
@@ -266,6 +274,25 @@ it.each([
     bounded();
   },
 );
+
+it("keeps both retained messages at a sliding boundary's second", async () => {
+  const h = setup({ count: 60, maxHistoryRows: 40, spacing: 0 });
+  await h.open();
+  for (let page = 0; page < 2; page++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const retained = [...h.history].sort(newestFirst).slice(20);
+  const [boundary, neighbor] = retained;
+  assert.exists(boundary);
+  assert.exists(neighbor);
+  expect(boundary.created_at).toBe(neighbor.created_at);
+  expect(h.window().rows.map((row) => row.id)).toEqual(
+    expect.arrayContaining([boundary.id, neighbor.id]),
+  );
+  expect(h.window().rows).toHaveLength(40);
+  expect(h.window().hasNewer).toBe(true);
+});
 
 it("loadNewer trims the oldest rows past maxHistoryRows", async () => {
   const h = setup({ maxHistoryRows: 100 });
