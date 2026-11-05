@@ -5352,3 +5352,65 @@ it("applies a Reactions route", async () => {
   expect(rows()[0]).toBe(reactionRow());
   expect(filterSummary()).toHaveTextContent("Reactions");
 });
+
+it("marks a reaction row seen when opened, unread again on a newer reaction or Mark unread", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  const unreadMark = () =>
+    within(reactionRow() ?? document.body).queryByRole("img", {
+      name: "Unread",
+    });
+  expect(unreadMark()).toBeInTheDocument();
+  await chooseFilter("Unread only", "Attention");
+  expect(rows()).toHaveLength(1);
+  fireEvent.click(
+    within(reactionRow() ?? document.body).getByRole("button", {
+      name: /^Open /,
+    }),
+  );
+  await findReader();
+  await waitFor(() => expect(unreadMark()).toBeNull());
+  // The selected row stays listed under Unread only until it is left.
+  expect(rows()).toHaveLength(1);
+  const newer = reactionTo(h.alice, h.root, "🎉", 40);
+  h.addEvent(newer);
+  act(() => h.owner.session.reactionFeed.accept([newer]));
+  await waitFor(() => expect(unreadMark()).toBeInTheDocument());
+  fireEvent.click(
+    within(reactionRow() ?? document.body).getByRole("button", {
+      name: /^Open /,
+    }),
+  );
+  await waitFor(() => expect(unreadMark()).toBeNull());
+  fireEvent.contextMenu(
+    within(reactionRow() ?? document.body).getByRole("button", {
+      name: /^Open /,
+    }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark unread" }));
+  await waitFor(() => expect(unreadMark()).toBeInTheDocument());
+});
+
+it("reports a reaction seen-state save failure", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  fireEvent.click(
+    within(reactionRow() ?? document.body).getByRole("button", {
+      name: /^Open /,
+    }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not save Inbox reactions on this device. Try again.",
+  );
+});

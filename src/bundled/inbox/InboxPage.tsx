@@ -33,6 +33,11 @@ import {
 } from "./InboxRow";
 import { reactionRows, type ReactionRow } from "./reactions";
 import {
+  reactionSeenKey,
+  readReactionSeen,
+  updateReactionSeen,
+} from "./reaction-seen";
+import {
   useChannelList,
   useProfileGeneration,
   useRelayConnection,
@@ -437,6 +442,27 @@ function InboxList({
     () => archiveIndex(readArchives(archiveRevision)),
     [archiveRevision],
   );
+  const seenRevision = useSyncExternalStore(subscribeArchives, () =>
+    viewRevision(archiveScope, reactionSeenKey),
+  );
+  const seen = useMemo(() => readReactionSeen(seenRevision), [seenRevision]);
+  const reactionUnread = (row: ReactionRow) =>
+    row.createdAt > (seen.get(row.messageId) ?? -1);
+  function markReactions(row: ReactionRow, unread: boolean) {
+    try {
+      updateReactionSeen(
+        archiveScope,
+        row.messageId,
+        unread ? undefined : row.createdAt,
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not save Inbox reactions on this device. Try again.",
+      );
+    }
+  }
   // The tab a row opened, which archive closes even after its row regroups.
   // Selection lasts as long as that tab.
   const [opened, setOpened] = useState(() => selections.get(session)?.opened);
@@ -631,8 +657,15 @@ function InboxList({
       fallbackControl.current?.focus({ preventScroll: true });
   });
   useEffect(() => {
-    if (menu && !items.some((item) => item.id === menu.id)) setMenu(undefined);
-  }, [items, menu]);
+    if (
+      menu &&
+      !items.some((item) => item.id === menu.id) &&
+      !reactionFeed.notices.some(
+        (notice) => `reaction:${notice.messageId}` === menu.id,
+      )
+    )
+      setMenu(undefined);
+  }, [items, reactionFeed.notices, menu]);
   // Enrich bounded activity candidates before applying Sender: unknown authors
   // must be able to appear after their profiles arrive, even in an empty view.
   // Keep main's bounded optional profile demand, independent of presentation.
@@ -691,9 +724,10 @@ function InboxList({
   const visible = matching;
   const matchingReactions = reactionItems.filter(
     (row) =>
-      senderFilter === "everyone" ||
-      senderKind(row.reactorIds[0] ?? "") ===
-        (senderFilter === "agents" ? "agent" : "human"),
+      (senderFilter === "everyone" ||
+        senderKind(row.reactorIds[0] ?? "") ===
+          (senderFilter === "agents" ? "agent" : "human")) &&
+      (!unreadOnly || reactionUnread(row) || row.id === selectedReaction),
   );
   // Conversation and reaction rows interleave by their newest activity.
   const entries = [
@@ -1084,52 +1118,86 @@ function InboxList({
       name,
     );
     const selectedRow = selectedReaction === row.id;
+    const unread = reactionUnread(row);
     return (
       <li
         key={row.id}
         data-inbox-row={row.id}
         className={styles.row}
+        data-unread={unread || undefined}
         data-selected={selectedRow || undefined}
       >
-        <div className={styles.rowSurface}>
-          <ReactionRowButton
-            row={row}
-            identity={identity}
-            media={session.media}
-            time={relativeTimestamp(row.createdAt)}
-            previewId={`${previewId}-${row.id}`}
-            unread={false}
-            disabled={pending}
-            selected={selectedRow}
-            onClick={() => {
-              if (busy.current) return;
-              // DMs and a Solo chat's own messages open whole, as conversation rows do.
-              const tab: PageTabTarget =
-                channel?.channelType === "dm" ||
-                (channel?.channelType === "solo" && !row.rootId)
-                  ? { channelId: row.channelId }
-                  : {
-                      channelId: row.channelId,
-                      threadId: row.rootId ?? row.messageId,
-                      messageId: row.messageId,
-                    };
-              const shown = openTab(tab);
-              setOpened(shown ? tab : undefined);
-              if (!shown)
-                void navigator.open({
-                  version: 1,
-                  kind: "conversation",
-                  scope,
-                  channelId: row.channelId,
-                  messageId: row.messageId,
-                  ...(row.rootId && { threadRootId: row.rootId }),
-                });
-              cancelRetry();
-              setSelectedTarget(undefined);
-              setSelectedReaction(row.id);
+        <ContextMenuRoot
+          open={menu?.id === row.id}
+          onOpenChange={(open) => setMenu(open ? { id: row.id } : undefined)}
+        >
+          <ContextMenuTrigger
+            render={<div className={styles.rowSurface} />}
+            onKeyDown={(event) => {
+              if (
+                event.key === "ContextMenu" ||
+                (event.shiftKey && event.key === "F10")
+              ) {
+                event.preventDefault();
+                setMenu({ id: row.id, anchor: event.target as HTMLElement });
+              }
             }}
-          />
-        </div>
+          >
+            <ReactionRowButton
+              row={row}
+              identity={identity}
+              media={session.media}
+              time={relativeTimestamp(row.createdAt)}
+              previewId={`${previewId}-${row.id}`}
+              unread={unread}
+              disabled={pending}
+              selected={selectedRow}
+              onClick={() => {
+                if (busy.current) return;
+                // DMs and a Solo chat's own messages open whole, as conversation rows do.
+                const tab: PageTabTarget =
+                  channel?.channelType === "dm" ||
+                  (channel?.channelType === "solo" && !row.rootId)
+                    ? { channelId: row.channelId }
+                    : {
+                        channelId: row.channelId,
+                        threadId: row.rootId ?? row.messageId,
+                        messageId: row.messageId,
+                      };
+                const shown = openTab(tab);
+                setOpened(shown ? tab : undefined);
+                if (!shown)
+                  void navigator.open({
+                    version: 1,
+                    kind: "conversation",
+                    scope,
+                    channelId: row.channelId,
+                    messageId: row.messageId,
+                    ...(row.rootId && { threadRootId: row.rootId }),
+                  });
+                cancelRetry();
+                setSelectedTarget(undefined);
+                setSelectedReaction(row.id);
+                if (unread) markReactions(row, false);
+              }}
+            />
+          </ContextMenuTrigger>
+          <MenuPopup
+            size="compact"
+            aria-label={`Actions for ${identity.sender} in ${identity.context}`}
+            anchor={menu?.id === row.id ? menu.anchor : undefined}
+          >
+            <MenuItem
+              disabled={pending || unread}
+              onClick={() => {
+                setMenu(undefined);
+                markReactions(row, true);
+              }}
+            >
+              Mark unread
+            </MenuItem>
+          </MenuPopup>
+        </ContextMenuRoot>
       </li>
     );
   }
