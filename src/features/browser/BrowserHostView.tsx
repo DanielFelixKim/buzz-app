@@ -468,7 +468,7 @@ export function BrowserHostView({
             {status.title}
           </span>
         ) : null}
-        {actions}
+        {actions?.(status.url || url)}
       </div>
       {error ? (
         <div className={styles.error} role="alert">

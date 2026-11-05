@@ -96,14 +96,17 @@ export function applyApps(
       canResumeUrl: viewerAppDomain() ? isViewerTarget : undefined,
       label: appName(target),
       actions: apps
-        ? createElement(ShareApp, {
-            // A new sign-in or app looks the app up again.
-            key: `${state.account?.subject}\n${target}`,
-            url: target,
-            apps,
-            communities: joined,
-            relay: ctx.relay,
-          })
+        ? (current: string) =>
+            isAppUrl(current) &&
+            createElement(ShareApp, {
+              // Sharing follows the app the panel shows now: another sign-in
+              // or app starts over, dropping any answer for the previous one.
+              key: `${state.account?.subject}\n${new URL(current).host}`,
+              url: current,
+              apps,
+              communities: joined,
+              relay: ctx.relay,
+            })
         : undefined,
     });
   };
@@ -360,7 +363,7 @@ export function applyApps(
   ctx.agents.addTool({
     name: "apps_communities",
     description:
-      "List the Buzz communities your owner has joined that an app can be shared with: each one's community_id for apps_community, its name and its relay address.",
+      "List the Buzz communities your owner has joined that an app can be shared with: each one's id (apps_community's community_id), its name and its relay address.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -378,7 +381,7 @@ export function applyApps(
         app_id: { type: "string" },
         community_id: {
           type: "string",
-          description: "The community's community_id from apps_communities.",
+          description: "The community's id from apps_communities.",
         },
         action: { type: "string", enum: ["grant", "revoke"] },
       },
