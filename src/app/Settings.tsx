@@ -1259,15 +1259,21 @@ export function Settings({
     },
     [communities.relay],
   );
+  const pendingSourceRefresh = useRef(false);
   const refreshPluginSources = useCallback(
     (force: boolean) => {
       if (
         selected !== "plugins" ||
         !catalog ||
-        busy ||
         document.visibilityState === "hidden"
       )
         return;
+      if (busy) {
+        pendingSourceRefresh.current ||= force;
+        return;
+      }
+      force ||= pendingSourceRefresh.current;
+      pendingSourceRefresh.current = false;
       for (const plugin of catalog.plugins) {
         const source = plugin.updateSource;
         if (

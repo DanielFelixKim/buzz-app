@@ -3109,3 +3109,31 @@ it("does not reacquire unchanged Git sources after management actions", async ()
   fireEvent.focus(window);
   await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
 });
+
+it("replays a forced focus refresh once management becomes idle", async () => {
+  const fixture = reviewPluginFixture();
+  Object.assign(fixture.external, { updateSource: savedGitSource });
+  const checkGit = vi
+    .fn()
+    .mockResolvedValueOnce(gitCheckResult("current"))
+    .mockResolvedValue(gitCheckResult("new"));
+  Object.assign(fixture.manager, { imports: { checkGit } });
+  await act(async () => fixture.publish());
+  await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+  await act(async () => {
+    Object.assign(fixture.manager.snapshot(), { busy: true });
+    fixture.publish();
+  });
+  fireEvent.focus(window);
+  fireEvent.focus(window);
+  expect(checkGit).toHaveBeenCalledOnce();
+  await act(async () => {
+    Object.assign(fixture.manager.snapshot(), { busy: false });
+    fixture.publish();
+  });
+  expect(
+    await screen.findByRole("button", { name: "Update Zebra external" }),
+  ).toBeVisible();
+  expect(checkGit).toHaveBeenCalledTimes(2);
+});
+
