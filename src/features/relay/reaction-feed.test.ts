@@ -9,7 +9,7 @@ import {
   type Key,
 } from "./testing";
 import type { RelayEvent, ReadFilter } from "./events";
-import type { LiveCallbacks } from "./live";
+import { LIVE_RESUME_LAG, type LiveCallbacks } from "./live";
 import { matchesEvent } from "./projection";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -331,7 +331,7 @@ it("stale keeps verified notices, drops an in-flight live lookup, and reconnect 
   const later = message(h.viewer, "room", "Later", 25);
   h.stored.push(later);
   const lookup = h.hold((filter) => !!filter.ids);
-  const second = react(h.bob, later, "🎉", 31);
+  const second = react(h.bob, later, "🎉", Math.floor(Date.now() / 1000));
   h.deliver([second]);
   await vi.waitFor(() => expect(lookup.started()).toBe(true));
   h.session.reactionFeed.stale();
@@ -342,6 +342,7 @@ it("stale keeps verified notices, drops an in-flight live lookup, and reconnect 
     freshness: "stale",
     notices: [{ id: first.id }],
   });
+  // Stored after the first catch-up, so the resumed read's window holds it.
   h.stored.push(second);
   h.session.reactionFeed.reconnect();
   await vi.waitFor(() =>
@@ -354,6 +355,79 @@ it("stale keeps verified notices, drops an in-flight live lookup, and reconnect 
     second.id,
     first.id,
   ]);
+});
+
+it("reconnect resumes from the last catch-up instead of rereading retained deletions", async () => {
+  const h = setup();
+  const now = Math.floor(Date.now() / 1000);
+  const mine = message(h.viewer, "room", "Mine", 20);
+  const other = message(h.viewer, "room", "Other", 21);
+  const kept = react(h.alice, mine, "👍", 30);
+  const retracted = react(h.bob, other, "🎉", 31);
+  h.stored.push(mine, other, kept, retracted);
+  await h.session.reactionFeed.ensure();
+  expect(h.feed().notices).toHaveLength(2);
+
+  h.query.mockClear();
+  h.session.reactionFeed.stale();
+  h.session.reactionFeed.reconnect();
+  await vi.waitFor(() => expect(h.feed().status).toBe("ready"));
+  // Unchanged: one reaction read and one deletion read, both from the cursor;
+  // deletions stay scoped to the retained reactions and messages.
+  expect(h.query).toHaveBeenCalledTimes(2);
+  const filters = h.query.mock.calls.flatMap(([filters]) => filters);
+  expect(filters.every((filter) => filter.since !== undefined)).toBe(true);
+  expect(filters[1]?.["#e"]).toEqual(
+    expect.arrayContaining([kept.id, retracted.id, mine.id, other.id]),
+  );
+  expect(filters[0]?.since).toBeLessThanOrEqual(now - LIVE_RESUME_LAG);
+
+  // Changes while disconnected: a new reaction and a retraction.
+  const arrived = react(h.bob, mine, "🎉", now);
+  h.stored.push(arrived, remove(h.bob, retracted.id, now));
+  h.session.reactionFeed.stale();
+  h.session.reactionFeed.reconnect();
+  await vi.waitFor(() =>
+    expect(h.feed().notices.map((notice) => notice.id)).toEqual([
+      arrived.id,
+      kept.id,
+    ]),
+  );
+});
+
+it("reconnect falls back to a full read when the resumed window exceeds a page", async () => {
+  const h = setup();
+  const now = Math.floor(Date.now() / 1000);
+  const mine = message(h.viewer, "room", "Mine", 20);
+  h.stored.push(mine);
+  await h.session.reactionFeed.ensure();
+  h.stored.push(
+    ...Array.from({ length: 101 }, (_, index) =>
+      react(h.alice, mine, `${index}`, now - index),
+    ),
+  );
+  h.query.mockClear();
+  h.session.reactionFeed.reconnect();
+  await vi.waitFor(() => expect(h.feed().status).toBe("ready"));
+  const filters = h.query.mock.calls.flatMap(([filters]) => filters);
+  expect(
+    filters.some(
+      (filter) => filter.kinds?.includes(7) && filter.since === undefined,
+    ),
+  ).toBe(true);
+  expect(h.feed().notices.length).toBeGreaterThan(0);
+});
+
+it("an explicit refresh rereads in full after a catch-up", async () => {
+  const h = setup();
+  const mine = message(h.viewer, "room", "Mine", 20);
+  h.stored.push(mine, react(h.alice, mine, "👍", 30));
+  await h.session.reactionFeed.ensure();
+  h.query.mockClear();
+  await h.session.reactionFeed.refresh();
+  const filters = h.query.mock.calls.flatMap(([filters]) => filters);
+  expect(filters.some((filter) => filter.since !== undefined)).toBe(false);
+  expect(filters.some((filter) => filter["#e"])).toBe(true);
 });
 
 it("the session clears retained notices with its cache", async () => {

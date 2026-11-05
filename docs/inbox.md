@@ -56,6 +56,16 @@ rows. A failed save shows the Inbox error alert, whose Retry repeats the save
 while the row's reactions remain and no later Inbox action replaced it. The
 sidebar preview does not show reactions.
 
+The first load reads the latest 100 reactions addressed to the viewer and every
+deletion of them, their messages and the retained rows. A reconnect after a
+successful load reads only reactions and deletions created since it, less
+`LIVE_RESUME_LAG`. Deletion reads stay scoped by `#e` to the retained rows and
+their messages, 500 IDs per read, so an unchanged reconnect makes one reaction
+read and one to four deletion reads. New reactions and their messages still get
+the full deletion check. A window holding more than 100
+reactions or 2,000 deletions falls back to the full read, as do the Inbox
+page's refresh and Retry actions.
+
 Only reactions carrying a NIP-25 `p` tag for the message's author are found.
 Buzz's app and agent `react` tool add it; older reactions and other publishers'
 reactions without it do not appear.

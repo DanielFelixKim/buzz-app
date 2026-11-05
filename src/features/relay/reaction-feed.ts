@@ -3,6 +3,7 @@ import type { ChannelQueries } from "./contracts";
 import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { RelayEvent, ReadFilter } from "./events";
 import { deletionApplies } from "./fold";
+import { LIVE_RESUME_LAG } from "./live";
 import type { RelayReader } from "./reader";
 import { threadReference } from "./thread-reference";
 
@@ -35,6 +36,14 @@ const deletionKinds = [5, 9005];
 const maxNotices = 1000;
 const maxBytes = 2 * 1024 * 1024;
 const maxUnmatched = 1000;
+/** The full read's page of reactions, and a walk's deletion budget. */
+const reactionPage = 100;
+const deletionBudget = 2000;
+class ReadBudgetExceeded extends Error {
+  constructor() {
+    super("Reaction updates exceed the read budget. Retry inbox.");
+  }
+}
 const cursorOf = (event: RelayEvent) => ({
   until: event.created_at,
   before_id: event.id,
@@ -82,6 +91,9 @@ export function createReactionFeed({
   let work: Promise<void> | undefined;
   let controller: AbortController | undefined;
   let requested = false;
+  // Client clock (unix seconds) when the last successful catch-up began its
+  // reads. Reconnect resumes from it; only reset and dispose forget it.
+  let caughtUpAt: number | undefined;
   // Live target lookups outlive no reset; refresh owns `controller`.
   let liveReads = new AbortController();
   const notices = new Map<string, ReactionNotice>();
@@ -267,44 +279,109 @@ export function createReactionFeed({
     }
     return changed;
   }
-  async function deletionsFor(ids: readonly string[], signal: AbortSignal) {
-    const collected: RelayEvent[] = [];
-    for (let start = 0; start < ids.length; start += 500) {
-      const batch = ids.slice(start, start + 500);
-      let cursor: ReturnType<typeof cursorOf> | undefined;
-      for (;;) {
-        const page = [
-          ...(await reader.read(
-            [
-              {
-                kinds: deletionKinds,
-                "#e": batch,
-                limit: 500,
-                ...(cursor ?? {}),
-              },
-            ],
-            { signal },
-          )),
-        ].sort(
-          (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-        );
-        const previous = cursor;
-        if (previous && page.some((event) => !older(event, previous)))
-          throw new Error("Reaction updates did not advance. Retry inbox.");
-        collected.push(...page);
-        if (collected.length > 2000)
-          throw new Error(
-            "Reaction updates exceed the read budget. Retry inbox.",
-          );
-        const last = page.at(-1);
-        // Authorized responses can have short pages. Only empty ends the walk.
-        if (!last) break;
-        cursor = cursorOf(last);
-      }
+  /** Every event `filter` matches, until an empty page; authorized responses
+   * can have short pages. Throws `ReadBudgetExceeded` past `budget` events. */
+  async function walk(
+    filter: ReadFilter,
+    signal: AbortSignal,
+    budget: number,
+    collected: RelayEvent[] = [],
+  ) {
+    let cursor: ReturnType<typeof cursorOf> | undefined;
+    for (;;) {
+      const page = [
+        ...(await reader.read([{ ...filter, ...(cursor ?? {}) }], { signal })),
+      ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
+      const previous = cursor;
+      if (previous && page.some((event) => !older(event, previous)))
+        throw new Error("Reaction updates did not advance. Retry inbox.");
+      collected.push(...page);
+      if (collected.length > budget) throw new ReadBudgetExceeded();
+      const last = page.at(-1);
+      if (!last) return collected;
+      cursor = cursorOf(last);
     }
+  }
+  /** Deletions of `ids`, or only those stored at or after `since`. */
+  async function deletionsFor(
+    ids: readonly string[],
+    signal: AbortSignal,
+    since?: number,
+  ) {
+    const collected: RelayEvent[] = [];
+    for (let start = 0; start < ids.length; start += 500)
+      await walk(
+        {
+          kinds: deletionKinds,
+          "#e": ids.slice(start, start + 500),
+          ...(since === undefined ? {} : { since }),
+          limit: 500,
+        },
+        signal,
+        deletionBudget,
+        collected,
+      );
     return collected;
   }
-  async function refresh() {
+  /** The latest page of reactions, and every deletion of them, their targets,
+   * and every retained notice and target. */
+  async function fullRead(signal: AbortSignal) {
+    const filter: ReadFilter = {
+      kinds: [7],
+      "#p": [viewer],
+      limit: reactionPage,
+    };
+    const reactions = (await reader.read([filter], { signal })).filter(
+      candidate,
+    );
+    const targets = await targetsFor(reactions, signal);
+    const ids = [
+      ...new Set([
+        ...reactions.map((event) => event.id),
+        ...notices.keys(),
+        ...targets.keys(),
+      ]),
+    ];
+    return { reactions, targets, deletions: await deletionsFor(ids, signal) };
+  }
+  /** Changes since `since`. Retained notices and targets were checked through
+   * the last catch-up, so only deletions stored after it apply to them; new
+   * reactions and targets get the full deletion check. Undefined when the
+   * window exceeds a full read's budget. */
+  async function incrementalRead(since: number, signal: AbortSignal) {
+    try {
+      const reactions = (
+        await walk(
+          { kinds: [7], "#p": [viewer], since, limit: reactionPage },
+          signal,
+          reactionPage,
+        )
+      ).filter(candidate);
+      const targets = await targetsFor(reactions, signal);
+      const fresh = new Set(
+        reactions
+          .flatMap((event) => [event.id, targetOf(event) ?? ""])
+          .filter(Boolean),
+      );
+      const retained = [
+        ...new Set([...notices.keys(), ...targets.keys()]),
+      ].filter((id) => !fresh.has(id));
+      return {
+        reactions,
+        targets,
+        deletions: [
+          ...(await deletionsFor(retained, signal, since)),
+          ...(await deletionsFor([...fresh], signal)),
+        ],
+      };
+    } catch (error) {
+      if (error instanceof ReadBudgetExceeded) return undefined;
+      throw error;
+    }
+  }
+  /** `full` rereads the latest page and every retained deletion; otherwise a
+   * catch-up after a successful one reads only what changed since. */
+  async function catchUp(full: boolean) {
     if (closed) return;
     if (work) return work;
     requested = true;
@@ -313,25 +390,22 @@ export function createReactionFeed({
     controller = owned;
     work = (async () => {
       try {
-        const filter: ReadFilter = { kinds: [7], "#p": [viewer], limit: 100 };
-        const reactions = (
-          await reader.read([filter], { signal: owned.signal })
-        ).filter(candidate);
-        const targets = await targetsFor(reactions, owned.signal);
-        const ids = [
-          ...new Set([
-            ...reactions.map((event) => event.id),
-            ...notices.keys(),
-            ...targets.keys(),
-          ]),
-        ];
-        const deletions = await deletionsFor(ids, owned.signal);
+        const startedAt = Math.floor(Date.now() / 1000);
+        const since =
+          full || caughtUpAt === undefined
+            ? undefined
+            : caughtUpAt - LIVE_RESUME_LAG;
+        const { reactions, targets, deletions } =
+          (since !== undefined &&
+            (await incrementalRead(since, owned.signal))) ||
+          (await fullRead(owned.signal));
         if (closed || generation !== epoch) return;
         admit(reactions, targets);
         applyDeletions(deletions);
         // Leaving a channel retires its retained reactions.
         for (const notice of notices.values())
           if (!member(notice.channelId)) notices.delete(notice.id);
+        caughtUpAt = startedAt;
         publishNotices({
           status: "ready",
           error: undefined,
@@ -385,6 +459,7 @@ export function createReactionFeed({
     notices.clear();
     deleted.clear();
     unmatched.clear();
+    caughtUpAt = undefined;
     publish({
       status: "idle",
       error: undefined,
@@ -401,8 +476,9 @@ export function createReactionFeed({
       };
     },
     ensure: () =>
-      work ?? (snapshot.status === "idle" ? refresh() : Promise.resolve()),
-    refresh,
+      work ?? (snapshot.status === "idle" ? catchUp(false) : Promise.resolve()),
+    /** An explicit full reread. */
+    refresh: () => catchUp(true),
     accept,
     /** Retained notices stay verified; only completeness is lost. */
     stale() {
@@ -412,7 +488,7 @@ export function createReactionFeed({
       publish({ status: "idle", error: undefined, freshness: "stale" });
     },
     reconnect() {
-      if (requested) void refresh();
+      if (requested) void catchUp(false);
     },
     clear: reset,
     // Access loss can retire any retained target's channel.
@@ -425,6 +501,7 @@ export function createReactionFeed({
       notices.clear();
       deleted.clear();
       unmatched.clear();
+      caughtUpAt = undefined;
       snapshot = Object.freeze({
         status: "idle",
         notices: Object.freeze([]),
