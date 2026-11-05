@@ -14,19 +14,26 @@ search for a person or agent, then add them or choose view-only access from the
 add menu. Each member's menu offers **Viewing only**, **Participating**, **Admin**
 and removal where permitted. Access includes retained revisions. Participants can
 also delete and restore the document; owners and admins manage access. Notes stay
-private. Access changes are explicit; opening or reading notes never adds members.
+private until shared. **General access → View only** makes the current note and
+all retained revisions readable across the community after confirmation; existing
+editors retain their roles. Community-readable notes appear in nonmembers’ lists.
+Access changes are explicit; opening or reading notes never adds members.
 
 The browser searches its loaded collection. **Load more notes** continues
-discovery. Titles are stacked newest first, with a subtle **New note** button above
-the note titles. Use the filter button inside search for **Show deleted
+discovery. Titles are stacked newest first in 16px medium rows, with document
+icons on the left and edit times on the right. **+ New note** sits below the
+titles, or inside the empty state. Empty collections disable search and filters;
+existing queries, active filters and retained deleted notes remain recoverable.
+Use the filter button inside search for **Show deleted
 notes**. Open a title for a full-width note;
 **Back to notes** returns to the list and preserves drafts. Notes open in
-**Editing** with the title focused when you have edit access; use the **Viewing/Editing** dropdown to
+**Editing** with the body focused when you have edit access; fresh notes focus
+the title. Use the **Viewing/Editing** dropdown to
 switch modes. Click the blank area below the body to place the cursor at the end,
 including in Markdown source mode. The byline shows **Saved** with its timestamp, or **Saving…** while saving. Changes auto-save after 1.5 seconds without
 typing, or after at most ten seconds of continuous edits, and the editor stays
 in Editing. Only changed content is saved; each accepted save retains a full
-revision. **Note actions → Disable auto-save** remembers a per-note preference
+revision. **Note actions → Revision history → Disable auto-save** remembers a per-note preference
 for your account on this device; **Enable auto-save** turns it back on. With
 auto-save disabled, a small **Save** button appears between the mode dropdown
 and Refresh when modified. **Viewing** previews the draft; auto-save remains
@@ -42,10 +49,14 @@ Conversation links open the same editor in a right-pane tab, keeping the discuss
 visible. Follow links within that pane and use **Back** to return. **Refresh note**
 reads another writer’s changes. Conflicting saves keep your draft and show the
 latest revision for comparison. **Note actions** provides history, Markdown export
-and deletion; a deleted note can be restored from history.
+and deletion. Select a revision, then **Restore this version** to save it
+immediately as a new latest revision, confirming before replacing pending edits.
+Deleted notes show their last retained content with an inline **Restore** button.
+Navigation does not permanently erase retained history.
 
 Working notes require a relay advertising NIP-AR. They use a private system channel
-per note and plaintext relay access control; the relay operator can read content.
+per note (private initially, optionally community-readable) and plaintext relay
+access control; the relay operator can read content.
 Encryption, selective history access, filesystem sync and offline editing are
 outside this version.
 
