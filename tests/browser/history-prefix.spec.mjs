@@ -70,3 +70,50 @@ test("older pages behind a retained first row preserve bottom following", async 
     )
     .toBeLessThan(2);
 });
+
+// Both ends change in one commit at the cap. Real Virtua/browser geometry must
+// preserve a reader when rows disappear from the opposite end of the window.
+test("a bounded history window reloads newer rows without skipping the reader", async ({
+  page,
+}) => {
+  await page.goto(
+    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/history-prefix.html?sliding`,
+  );
+  const snapshot = page.locator("[data-oldest]");
+  const history = page.getByRole("region", { name: "Channel message history" });
+  await expect(snapshot).toHaveAttribute("data-newest", "1700000139");
+  for (let step = 0; step < 6; step++) {
+    await page.evaluate(() => window.loadSlidingOlder());
+    await expect(snapshot).toHaveAttribute("data-loading", "false");
+  }
+  await expect(snapshot).toHaveAttribute("data-oldest", "1700000000");
+  await expect(snapshot).toHaveAttribute("data-count", "60");
+  await settle(page);
+  await history.evaluate((element) => {
+    element.scrollTop = element.scrollHeight - element.clientHeight - 1200;
+  });
+  await settle(page);
+  await page.evaluate(() => window.holdSlidingPage());
+  try {
+    await history.hover();
+    await wheel(page, 600);
+    await expect(snapshot).toHaveAttribute("data-loading", "true");
+    const reading = await anchor(page);
+    await page.evaluate(() => window.releaseSlidingPage());
+    await expect(snapshot).toHaveAttribute("data-loading", "false");
+    await expectAnchor(page, reading);
+    await expect(snapshot).toHaveAttribute("data-count", "60");
+    await expect(
+      page.getByText("History window limit reached", { exact: true }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Jump to latest", exact: true })
+      .click();
+    await expect(snapshot).toHaveAttribute("data-newest", "1700000139");
+    await expect(
+      page.getByRole("button", { name: "Load newer messages", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.releaseSlidingPage());
+  }
+});

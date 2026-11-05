@@ -733,12 +733,14 @@ function Timeline({
     ids: ReadonlySet<string>;
     floor: number;
     paging: boolean;
+    newer: boolean;
   }>({
     order: [],
     containedOwners: new Map(),
     ids: new Set(),
     floor: 0,
     paging: false,
+    newer: false,
   });
   // The reader's anchor row and its offset before this render's rows.
   const reader = useRef<{ id: string | undefined; top: number; y: number }>({
@@ -841,6 +843,7 @@ function Timeline({
       // Restoration can scroll before Virtua measures rows beneath the anchor,
       // briefly reaching the estimated bottom. Only reader input may follow.
       if (restoredAnchor.current) position.bottom = false;
+      if (window.hasNewer && userScrolled.current) position.bottom = false;
       if (pendingRestore.current !== intent.current)
         savedPosition.current = position;
       follow.current = position.bottom;
@@ -851,7 +854,7 @@ function Timeline({
         viewport: element.clientHeight,
       };
     },
-    [rows],
+    [rows, window.hasNewer],
   );
   const updateJumpToLatest = useCallback((element: HTMLElement) => {
     const bottom =
@@ -861,6 +864,7 @@ function Timeline({
   }, []);
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
+    queries.channels.attach?.(channelId);
     intent.current++;
     follow.current = true;
     restoredAnchor.current = undefined;
@@ -876,7 +880,7 @@ function Timeline({
       align: "end",
       ...(tailHeight ? { offset: tailHeight } : {}),
     });
-  }, [rows.length]);
+  }, [rows.length, queries, channelId]);
   const inlineSignal = inlineTarget?.signal;
   const targetIndex = rows.findIndex(
     (row) => row.id === (containedOwners.get(targetId ?? "") ?? targetId),
@@ -1267,6 +1271,9 @@ function Timeline({
     if (window.loadingOlder) edges.current.paging = true;
   }, [window.loadingOlder]);
   useLayoutEffect(() => {
+    if (window.loadingNewer) edges.current.newer = true;
+  }, [window.loadingNewer]);
+  useLayoutEffect(() => {
     if (
       pendingReveal.current &&
       pendingReveal.current.intent !== intent.current
@@ -1294,7 +1301,7 @@ function Timeline({
     const { floor, order } = edges.current;
     const paged = edges.current.paging && !loadingOlder.current;
     const tail = rows.findIndex((row) => row.id === order.at(-1));
-    const arrivals = rows.filter(
+    const arrivals = edges.current.newer ? 0 : rows.filter(
       (row, index) =>
         !previousIds.has(row.id) &&
         (!paged || index > tail) &&
@@ -1306,6 +1313,7 @@ function Timeline({
       ids: new Set(rows.map((row) => row.id)),
       floor: rows[0]?.createdAt ?? 0,
       paging: loadingOlder.current,
+      newer: !!window.loadingNewer,
     };
     if (
       arrivals > 0 &&
@@ -1502,6 +1510,9 @@ function Timeline({
   useLayoutEffect(() => {
     if (!window.loadingOlder) edges.current.paging = false;
   }, [window.loadingOlder]);
+  useLayoutEffect(() => {
+    if (!window.loadingNewer) edges.current.newer = false;
+  }, [window.loadingNewer]);
   const loadNearTop = useCallback(
     (element: HTMLElement, resume = false) => {
       olderDemand.current = false;
@@ -1539,6 +1550,16 @@ function Timeline({
     if (olderDemand.current && scroller.current)
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
+  const loadNearBottom = (element: HTMLElement) => {
+    if (
+      window.hasNewer &&
+      !window.loadingNewer &&
+      !window.loadingOlder &&
+      !window.error &&
+      element.scrollHeight - element.clientHeight - element.scrollTop < 800
+    )
+      queries.channels.loadNewer?.(channelId);
+  };
   const gesture = (upward = false) => {
     const restoring = pendingRestore.current === intent.current;
     restoredAnchor.current = undefined;
@@ -1579,7 +1600,11 @@ function Timeline({
       data-activity-history-scope=""
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
       data-jump-visible={showJumpToLatest || undefined}
-      onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
+      onWheel={(event) => {
+        gesture(event.deltaY < 0 && !event.ctrlKey);
+        if (event.deltaY > 0 && !event.ctrlKey)
+          loadNearBottom(event.currentTarget);
+      }}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
       }}
@@ -1590,11 +1615,19 @@ function Timeline({
             touchY.current !== undefined &&
             next > touchY.current,
         );
+        if (
+          next !== undefined &&
+          touchY.current !== undefined &&
+          next < touchY.current
+        )
+          loadNearBottom(event.currentTarget);
         touchY.current = next;
       }}
       onKeyDown={(event) => {
         moveMessageSelection(event);
         gesture(scrollsHistoryUp(event));
+        if (["ArrowDown", "PageDown", "End", " "].includes(event.key))
+          loadNearBottom(event.currentTarget);
       }}
       onPointerDown={() => {
         pointerHeld.current = true;
@@ -1652,6 +1685,9 @@ function Timeline({
       onScroll={(event) => {
         // React may receive this event before Virtua updates its handle metrics.
         const element = event.currentTarget;
+        const downward =
+          element.scrollTop >
+          (measuredPosition.current?.offset ?? element.scrollTop);
         const v = handle.current;
         if (
           v &&
@@ -1665,7 +1701,9 @@ function Timeline({
           );
           updateJumpToLatest(element);
         }
-        loadNearTop(element);
+        if (!downward) loadNearTop(element);
+        if (downward && userScrolled.current && !layoutCorrection.current)
+          loadNearBottom(element);
       }}
     >
       <div
@@ -1698,7 +1736,7 @@ function Timeline({
         ) : null}
       </div>
       <JumpToLatestButton
-        visible={showJumpToLatest}
+        visible={showJumpToLatest || !!window.hasNewer}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
       />
@@ -1894,6 +1932,19 @@ function Timeline({
         </Virtualizer>
       )}
       <div ref={activityTail}>
+        {window.hasNewer && (
+          <Button
+            type="button"
+            disabled={window.loadingNewer}
+            onClick={() => queries.channels.loadNewer?.(channelId)}
+          >
+            {window.loadingNewer
+              ? "Loading newer…"
+              : window.error
+                ? "Retry newer messages"
+                : "Load newer messages"}
+          </Button>
+        )}
         <AgentConnectionSetup
           key={channelId}
           session={queries}

@@ -61,6 +61,8 @@ type WindowState = {
   /** Detached: rows created at or after this (unix seconds) are not loaded;
    * the window holds a seek segment below it. Undefined at the head. */
   ceiling?: number | undefined;
+  /** An inclusive row boundary when paging older trims within one second. */
+  ceilingId?: string | undefined;
   /** Live rows above the ceiling that arrived while a newer page loads: the
    * page that reaches the head may predate them. */
   above?: Map<string, RelayEvent> | undefined;
@@ -439,6 +441,7 @@ export function createChannelStore(
   function attached(state: WindowState) {
     if (state.ceiling === undefined) return;
     state.ceiling = undefined;
+    state.ceilingId = undefined;
     state.floor = undefined;
     if (state.above?.size)
       state.events = [
@@ -455,6 +458,15 @@ export function createChannelStore(
     state.cursor = cursor;
     state.floor = Math.min(state.floor ?? Infinity, cursor?.createdAt ?? 0);
   }
+  function belowCeiling(state: WindowState, event: RelayEvent) {
+    return (
+      state.ceiling === undefined ||
+      event.created_at < state.ceiling ||
+      (event.created_at === state.ceiling &&
+        state.ceilingId !== undefined &&
+        event.id >= state.ceilingId)
+    );
+  }
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
     if (authorized(state.channelId) && transport) {
@@ -470,8 +482,7 @@ export function createChannelStore(
             (event) =>
               !channelRowKind(event.kind) ||
               ((floor === undefined || event.created_at >= floor) &&
-                (state.ceiling === undefined ||
-                  event.created_at < state.ceiling)),
+                belowCeiling(state, event)),
           )
           .map((event) => [event.id, event as import("./events").EventData]),
       );
@@ -964,7 +975,9 @@ export function createChannelStore(
         (cursor ? state.events : []).map((event) => [event.id, event]),
       );
       for (const event of page.events) combined.set(event.id, event);
-      const retained = [...combined.values()];
+      const retained = cursor
+        ? trimWindow(state, [...combined.values()], "oldest")
+        : [...combined.values()];
       const rows = Object.freeze(
         foldChannelMessages(state.channelId, transport.relayAuthor, retained),
       );
@@ -990,6 +1003,7 @@ export function createChannelStore(
         rows,
         hasMore: page.hasMore && page.cursor !== null,
         loadingOlder: false,
+        historyLimited: false,
         error: undefined,
         freshness: "verified",
       });
@@ -1073,6 +1087,7 @@ export function createChannelStore(
     state.events = page.events;
     state.atHead = ceiling === null;
     state.ceiling = ceiling ?? undefined;
+    state.ceilingId = undefined;
     state.floor = undefined;
     state.kept = undefined;
     state.restored = false;
@@ -1089,9 +1104,12 @@ export function createChannelStore(
     });
     void fetchProfiles(state.snapshot.rows);
   }
-  /** Keep a detached window within the history budget by dropping its oldest
-   * rows: the next older page continues from the oldest row kept. */
-  function trimOldest(state: WindowState, events: readonly RelayEvent[]) {
+  /** Retain the end being read and its overlays; the opposite end can be paged back. */
+  function trimWindow(
+    state: WindowState,
+    events: readonly RelayEvent[],
+    end: "oldest" | "newest",
+  ) {
     const rows = events
       .filter((event) => channelRowKind(event.kind))
       .sort(newestFirst);
@@ -1100,6 +1118,7 @@ export function createChannelStore(
       listByteSize(events) <= maxHistoryBytes
     )
       return events;
+    if (end === "oldest") rows.reverse();
     let kept = rows.slice(0, maxHistoryRows);
     const retain = (ids: ReadonlySet<string>) =>
       events.filter(
@@ -1113,10 +1132,20 @@ export function createChannelStore(
       kept = kept.slice(0, -Math.max(1, Math.ceil(kept.length / 4)));
       retained = retain(new Set(kept.map((event) => event.id)));
     }
-    const oldest = kept.at(-1);
-    state.floor = undefined;
-    if (oldest)
-      moveCursor(state, { createdAt: oldest.created_at, eventId: oldest.id });
+    const boundary = kept.at(-1);
+    if (boundary && end === "newest") {
+      state.floor = undefined;
+      moveCursor(state, {
+        createdAt: boundary.created_at,
+        eventId: boundary.id,
+      });
+    } else if (boundary) {
+      state.ceiling = boundary.created_at;
+      state.ceilingId = boundary.id;
+    }
+    const ids = new Set(retained.map((event) => event.id));
+    for (const id of state.traffic.keys())
+      if (!ids.has(id)) state.traffic.delete(id);
     return retained;
   }
   async function hydrate() {
@@ -3413,7 +3442,6 @@ export function createChannelStore(
         state?.snapshot.status !== "ready" ||
         !state.snapshot.hasMore ||
         state.snapshot.loadingOlder ||
-        state.snapshot.historyLimited ||
         !state.cursor ||
         state.controller
       )
@@ -3494,18 +3522,64 @@ export function createChannelStore(
           if (!live(state, generation) || controller.signal.aborted) return;
           // Nothing at or after the ceiling: the segment already ends at the head.
           const page = located.kind === "segment" ? located.page : undefined;
+          // A seek can return much more than a byte-limited window can hold.
+          // Advance from its near edge so trimming cannot skip the reader's next rows.
+          const newer = (page?.events ?? [])
+            .filter(
+              (event) =>
+                channelRowKind(event.kind) && !belowCeiling(state, event),
+            )
+            .sort(newestFirst)
+            .reverse();
+          let advancing = newer.slice(
+            0,
+            Math.max(1, Math.floor(maxHistoryRows / 2)),
+          );
+          const retain = () => {
+            const ids = new Set(
+              [...state.events, ...advancing].map((event) => event.id),
+            );
+            return (page?.events ?? []).filter(
+              (event) =>
+                ids.has(event.id) ||
+                (!channelRowKind(event.kind) &&
+                  event.tags.some(
+                    ([name, id]) => name === "e" && ids.has(id ?? ""),
+                  )),
+            );
+          };
+          let incoming = retain();
+          while (
+            advancing.length > 1 &&
+            listByteSize(incoming) > maxHistoryBytes / 2
+          ) {
+            advancing = advancing.slice(
+              0,
+              Math.max(1, Math.floor(advancing.length / 2)),
+            );
+            incoming = retain();
+          }
+          const partial = advancing.length < newer.length;
           const merged = new Map(
             state.events.map((event) => [event.id, event]),
           );
-          for (const event of page?.events ?? []) merged.set(event.id, event);
-          const head = located.kind !== "segment" || located.ceiling === null;
+          for (const event of incoming) merged.set(event.id, event);
+          const head =
+            !partial &&
+            (located.kind !== "segment" || located.ceiling === null);
           if (head)
             for (const event of state.above?.values() ?? [])
               merged.set(event.id, event);
-          const trimmed = trimOldest(state, [...merged.values()]);
+          const trimmed = trimWindow(state, [...merged.values()], "newest");
           const dropped = trimmed.length < merged.size;
           state.events = trimmed;
-          state.ceiling = head ? undefined : (located.ceiling ?? undefined);
+          const boundary = partial ? advancing.at(-1) : undefined;
+          state.ceiling =
+            boundary?.created_at ??
+            (head || located.kind !== "segment"
+              ? undefined
+              : (located.ceiling ?? undefined));
+          state.ceilingId = boundary?.id;
           setWindow(state, {
             loadingNewer: undefined,
             freshness: "verified",
@@ -3706,7 +3780,7 @@ export function createChannelStore(
           if (
             state.ceiling !== undefined &&
             channelRowKind(event.kind) &&
-            event.created_at >= state.ceiling
+            !belowCeiling(state, event)
           ) {
             state.above?.set(event.id, event);
             continue;
@@ -3756,7 +3830,20 @@ export function createChannelStore(
       for (const event of incoming)
         if (retainedIds.has(event.id)) state.traffic.set(event.id, event);
       state.events = retained;
-      setWindow(state, limited ? { historyLimited: true } : {});
+      if (limited) {
+        const oldest = retained
+          .filter((event) => channelRowKind(event.kind))
+          .sort(newestFirst)
+          .at(-1);
+        if (oldest) {
+          state.floor = undefined;
+          moveCursor(state, {
+            createdAt: oldest.created_at,
+            eventId: oldest.id,
+          });
+        }
+      }
+      setWindow(state, limited ? { historyLimited: false, hasMore: true } : {});
       if (disposed || generation !== epoch) return;
       void fetchProfiles(state.snapshot.rows.slice(-12));
     }

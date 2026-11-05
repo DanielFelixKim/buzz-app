@@ -2,6 +2,7 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import type { LiveCallbacks } from "./live";
 import type { ReadFilter, RelayEvent } from "./events";
+import { byteSize } from "./budget";
 import {
   bounds,
   keypair,
@@ -22,17 +23,21 @@ const newestFirst = (a: RelayEvent, b: RelayEvent) =>
 function harness({
   count = 300,
   maxHistoryRows,
+  maxHistoryBytes,
+  spacing = HOUR,
   prepared,
 }: {
   count?: number;
   maxHistoryRows?: number;
+  maxHistoryBytes?: number;
+  spacing?: number;
   prepared?: boolean;
 } = {}) {
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
   const history = Array.from({ length: count }, (_, i) =>
-    message(alice, "c", `m${i}`, T0 + i * HOUR),
+    message(alice, "c", `m${i}`, T0 + i * spacing),
   );
   const ordered = [...history].sort(newestFirst);
   const reads: ReadFilter[] = [];
@@ -89,6 +94,7 @@ function harness({
     {
       now: () => (T0 + count * HOUR) * 1000,
       ...(maxHistoryRows ? { maxHistoryRows } : {}),
+      ...(maxHistoryBytes ? { maxHistoryBytes } : {}),
       ...(prepared ? { prepared } : {}),
     },
   );
@@ -211,6 +217,55 @@ it("loadNewer extends the segment and reattaches at the head", async () => {
     times.every((at, i) => i === 0 || at - (times[i - 1] ?? 0) === HOUR),
   ).toBe(true);
 });
+
+it.each([
+  { maxHistoryRows: 40 },
+  { maxHistoryBytes: 12_000 },
+  { maxHistoryRows: 40, spacing: 0 },
+])(
+  "slides through older history and back to the head within %j",
+  async (limit) => {
+    const h = setup({ count: 100, ...limit });
+    await h.open();
+    const ordered = [...h.history].sort(newestFirst).reverse();
+    const seen = new Set(h.window().rows.map((row) => row.id));
+    const bounded = () => {
+      const ids = new Set(h.window().rows.map((row) => row.id));
+      expect(ids.size).toBeLessThanOrEqual(limit.maxHistoryRows ?? 2400);
+      expect(
+        byteSize(h.history.filter((event) => ids.has(event.id))),
+      ).toBeLessThanOrEqual(limit.maxHistoryBytes ?? 8 * 1024 * 1024);
+    };
+    for (let step = 0; h.window().hasMore && step < 10; step++) {
+      const before = h.window().rows.map((row) => row.id);
+      h.channels.loadOlder("c");
+      await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+      expect(h.window().historyLimited).toBeFalsy();
+      expect(h.window().rows.map((row) => row.id)).not.toEqual(before);
+      for (const row of h.window().rows) seen.add(row.id);
+      bounded();
+    }
+    expect(h.window().hasMore).toBe(false);
+    expect(seen.size).toBe(100);
+    expect(h.window().rows.map((row) => row.id)).toContain(ordered[0]?.id);
+    expect(h.window().hasNewer).toBe(true);
+    const evicted = ordered.at(-1);
+    assert.exists(evicted);
+    h.live.receive([evicted]);
+    expect(h.window().rows.map((row) => row.id)).not.toContain(evicted.id);
+    for (let step = 0; h.window().hasNewer && step < 10; step++) {
+      h.channels.loadNewer?.("c");
+      await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+      bounded();
+    }
+    expect(h.window().hasNewer).toBeFalsy();
+    expect(h.window().rows.map((row) => row.id)).toContain(evicted.id);
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    expect(h.window().historyLimited).toBeFalsy();
+    bounded();
+  },
+);
 
 it("loadNewer trims the oldest rows past maxHistoryRows", async () => {
   const h = setup({ maxHistoryRows: 100 });
