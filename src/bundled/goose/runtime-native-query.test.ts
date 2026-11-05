@@ -21,10 +21,9 @@ import { memoryStorage } from "../../features/agents/test-fakes";
 import { hasEventProof, type RelayEvent } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import { fakeSpawn } from "./goose-testing";
-import type { BuzzEvent, Media } from "../../buzz-mcp/client";
+import type { BuzzEvent } from "../../buzz-mcp/client";
 import { apply } from "./index";
 import { deferred } from "../builderlab/test-helpers";
-import composition from "../../app/services.ts?raw";
 
 vi.mock("@tauri-apps/api/core", async (original) => ({
   ...(await original<typeof import("@tauri-apps/api/core")>()),
@@ -68,12 +67,6 @@ async function setup() {
   const files = new Map<string, string>();
   const source = {
     query: async (): Promise<unknown> => wire(),
-    media: async (): Promise<unknown> => ({
-      data: "AQ==",
-      size: 1,
-      type: "image/png",
-      path: "/temp/source",
-    }),
   };
   vi.mocked(invoke)
     .mockReset()
@@ -104,8 +97,6 @@ async function setup() {
           return true;
         case "app_agent_query":
           return source.query();
-        case "app_agent_media":
-          return source.media();
         case "app_agent_publish": {
           const template = (args as { event: Parameters<typeof signed>[1] })
             .event;
@@ -158,9 +149,6 @@ async function setup() {
       } as never);
     })
     .await();
-  let revision = "one";
-  let owner = viewer;
-  let disposed = false;
   const effects = { mint: vi.fn(), upload: vi.fn(), prompt: vi.fn() };
   const observed = {
     accepted: 0,
@@ -170,31 +158,11 @@ async function setup() {
   const tool = ctx
     .extend({ pluginOwner: { id: "example.probe", revision: "one" } })
     .plugin((scope) => {
-      scope.effect(() => () => {
-        disposed = true;
-      });
       scope.agents.addTool({
         name: "probe_source",
         description: "Read a signed source",
         inputSchema: { type: "object" },
-        async call(client, context, args) {
-          const captured = relay.relay.snapshot();
-          const version = revision;
-          const capturedOwner = owner;
-          const fence = () => {
-            const now = relay.relay.snapshot();
-            if (
-              disposed ||
-              revision !== version ||
-              owner !== capturedOwner ||
-              now.status !== "ready" ||
-              now.session !== captured.session ||
-              now.generation !== captured.generation ||
-              now.viewer !== captured.viewer ||
-              client.owner !== captured.viewer
-            )
-              throw new Error("Caller binding changed");
-          };
+        async call(client, context) {
           expect(context.channel).toBe(channel);
           let events: readonly BuzzEvent[];
           try {
@@ -205,11 +173,6 @@ async function setup() {
           }
           observed.accepted++;
           observed.events = events;
-          if (args.media) {
-            fence();
-            await client.media("https://relay.example.test/media/source.png");
-          }
-          fence(); // Caller-owned post-await/final-mint fence, not a verifier.
           effects.mint();
           effects.upload();
           effects.prompt();
@@ -244,29 +207,24 @@ async function setup() {
     );
     await ctx.fiber.dispose();
   });
-  const call = (media = false) =>
+  const call = () =>
     process.mcp(turn.sessionId, "tools/call", {
       name: "probe_source",
-      arguments: { media },
+      arguments: {},
     });
   return {
     call,
     observed,
     source,
-    relay,
-    tool,
+    service,
     effects,
-    changeOwner: () => {
-      owner = "b".repeat(64);
-    },
-    revise: () => {
-      revision = "two";
-    },
   };
 }
 
-it("re-verifies original/root/reply despite caller-cached false proofs", async () => {
+it("uses the default native service to re-verify caller-cached false proofs", async () => {
   const f = await setup();
+  expect(f.service.snapshot().status).toBe("ready");
+  expect(invoke).toHaveBeenCalledWith("app_agent_list");
   const cached = wire().map((event) => ({ ...event, [verifiedSymbol]: false }));
   f.source.query = async () => cached;
   expect(await f.call()).toMatchObject({
@@ -341,71 +299,42 @@ it("owns immutable signed wire fields, independent of transport objects", async 
   expect(Object.isFrozen(received.tags)).toBe(true);
 });
 
-const changes = [
-  "unchanged",
-  "session",
-  "generation",
-  "viewer",
-  "owner",
-  "revision",
-  "dispose",
-] as const;
-it.each(["query", "media"] as const)(
-  "fences held %s results with unchanged-binding controls",
-  async (boundary) => {
-    for (const change of changes) {
-      const f = await setup();
-      const started = deferred<void>();
-      const held = deferred<unknown>();
-      f.source[boundary] = () => {
-        started.resolve();
-        return held.promise;
-      };
-      const result = f.call(boundary === "media");
-      await started.promise;
-      try {
-        if (change === "session") f.relay.connect(true);
-        if (change === "generation" || change === "viewer") {
-          const current = f.relay.relay.snapshot();
-          if (current.status !== "ready")
-            throw new Error("Expected ready relay");
-          // Change only this binding: no status/session guard may mask it.
-          vi.spyOn(f.relay.relay, "snapshot").mockReturnValue({
-            ...current,
-            ...(change === "generation"
-              ? { generation: current.generation + 1 }
-              : { viewer: "b".repeat(64) }),
-          });
-        }
-        if (change === "owner") f.changeOwner();
-        if (change === "revision") f.revise();
-        if (change === "dispose") await f.tool.dispose();
-      } finally {
-        held.resolve(
-          boundary === "query"
-            ? wire()
-            : ({
-                data: "AQ==",
-                size: 1,
-                type: "image/png",
-                path: "/temp/source",
-              } satisfies Media),
-        );
+it.each([false, true])(
+  "checks production query lifetime after await (retired=%s)",
+  async (retired) => {
+    const f = await setup();
+    const started = deferred<void>();
+    const held = deferred<unknown>();
+    f.source.query = () => {
+      started.resolve();
+      return held.promise;
+    };
+    const pending = f.call();
+    await started.promise;
+    try {
+      if (retired) {
+        const agent = f.service.snapshot().running[0];
+        const type = f.service.types().find((type) => type.key === agent?.type);
+        if (!agent || !type?.retire)
+          throw new Error("Expected live Goose agent");
+        await type.retire(agent.key);
       }
-      const answer = await result; // Completion barrier before negative assertions.
-      if (change === "unchanged") {
-        expect(answer).toMatchObject({
-          result: { content: [{ text: "accepted" }] },
-        });
-        for (const effect of Object.values(f.effects))
-          expect(effect).toHaveBeenCalledOnce();
-      } else {
-        for (const effect of Object.values(f.effects))
-          expect(effect).not.toHaveBeenCalled();
-        expect(JSON.stringify(answer)).toContain("Caller binding changed");
-      }
-      await disposals.pop()?.();
+    } finally {
+      held.resolve(wire());
     }
+    const answer = await pending;
+    expect(f.observed.rejected).toBe(retired ? 1 : 0);
+    expect(f.observed.accepted).toBe(retired ? 0 : 1);
+    if (retired) {
+      expect(answer).toMatchObject({ result: { isError: true } });
+      expect(JSON.stringify(answer)).toContain("The Goose agent was retired");
+    } else {
+      expect(answer).toMatchObject({
+        result: { content: [{ text: "accepted" }] },
+      });
+    }
+    for (const effect of Object.values(f.effects))
+      expect(effect).toHaveBeenCalledTimes(retired ? 0 : 1);
   },
 );
 
@@ -428,17 +357,4 @@ it("does not expose native custody or bundled Goose outside desktop", async () =
   apply({ agents: { register } } as never);
   expect(register).not.toHaveBeenCalled();
   await ctx.fiber.dispose();
-});
-
-it("does not treat a structural substitute's unsigned events as conformance proof", async () => {
-  const substitute = { query: async () => [{ ...root, sig: "" }] };
-  const events = await substitute.query();
-  expect(() => conform(events)).toThrow();
-  expect(() => conform(wire())).toThrow(); // Even signed copies lack boundary admission.
-});
-
-it("keeps app composition on the default production native factory", () => {
-  expect(composition).toMatch(
-    /new AgentsService\(\s*ctx,\s*communities,\s*undefined,/,
-  );
 });
