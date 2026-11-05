@@ -89,6 +89,15 @@ test("a bounded history window reloads newer rows without skipping the reader", 
   await expect(snapshot).toHaveAttribute("data-oldest", "1700000000");
   await expect(snapshot).toHaveAttribute("data-count", "60");
   await settle(page);
+  const column = await history.locator(":scope > ol").boundingBox();
+  const newer = await page
+    .getByRole("button", { name: "Load newer messages", exact: true })
+    .boundingBox();
+  expect(column).not.toBeNull();
+  expect(newer).not.toBeNull();
+  expect(
+    Math.abs(newer.x + newer.width / 2 - column.x - column.width / 2),
+  ).toBeLessThan(4);
   await history.evaluate((element) => {
     element.scrollTop = element.scrollHeight - element.clientHeight - 1200;
   });

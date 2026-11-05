@@ -1937,17 +1937,19 @@ function Timeline({
       )}
       <div ref={activityTail}>
         {window.hasNewer && (
-          <Button
-            type="button"
-            disabled={window.loadingNewer}
-            onClick={() => queries.channels.loadNewer?.(channelId)}
-          >
-            {window.loadingNewer
-              ? "Loading newer…"
-              : window.error
-                ? "Retry newer messages"
-                : "Load newer messages"}
-          </Button>
+          <div className={styles.edge}>
+            <Button
+              type="button"
+              disabled={window.loadingNewer}
+              onClick={() => queries.channels.loadNewer?.(channelId)}
+            >
+              {window.loadingNewer
+                ? "Loading newer…"
+                : window.error
+                  ? "Retry newer messages"
+                  : "Load newer messages"}
+            </Button>
+          </div>
         )}
         <AgentConnectionSetup
           key={channelId}
