@@ -165,45 +165,58 @@ export function PinnedMessages({
       pubkey,
       directory.profiles.get(pubkey)?.name ?? `${pubkey.slice(0, 10)}…`,
     );
-  // Unpins hidden before the relay confirms them. A pin below the loaded
-  // history changes no window row, so a refusal is observed here, not re-read.
-  const [unpinning, setUnpinning] = useState<readonly PinRecord[]>([]);
-  pending.current = unpinning;
+  // Unpins hidden before the relay confirms them, each with its own deletion
+  // operation. A pin below the loaded history changes no window row, so a
+  // refusal is observed here, not re-read. Matching the operation, not the
+  // pin, keeps an earlier failed attempt from settling a retry.
+  const [unpinning, setUnpinning] = useState<
+    readonly { pin: PinRecord; operation: string }[]
+  >([]);
+  pending.current = unpinning.map(({ pin }) => pin);
   useEffect(() => {
     const outbox = session.outbox;
     if (!outbox || !unpinning.length) return;
     const settle = () => {
-      const deliveries = outbox
-        .snapshot()
-        .filter(
-          (item) =>
-            item.event.kind === 5 &&
-            item.event.tags.some(
-              ([name, id]) =>
-                name === "e" && unpinning.some((pin) => pin.id === id),
-            ),
+      const deliveries = new Map(
+        outbox.snapshot().map((item) => [item.event.id, item.delivery]),
+      );
+      const failed = unpinning.filter(
+        ({ operation }) => deliveries.get(operation) === "failed",
+      );
+      const settled = unpinning.filter(
+        ({ operation }) => deliveries.get(operation) !== "sending",
+      );
+      if (!settled.length) return;
+      if (failed.length) {
+        setPins(
+          (current) => current && [...current, ...failed.map(({ pin }) => pin)],
         );
-      if (deliveries.some((item) => item.delivery === "failed")) {
-        setPins((current) => current && [...current, ...unpinning]);
-        setUnpinning([]);
         setNotice("Could not unpin the message. Try again.");
-      } else if (!deliveries.some((item) => item.delivery === "sending"))
-        setUnpinning([]);
+      }
+      setUnpinning((current) =>
+        current.filter((entry) => !settled.includes(entry)),
+      );
     };
     settle();
     return outbox.subscribe(settle);
   }, [session, unpinning]);
   const unpin = (own: readonly PinRecord[]) => {
     setNotice("");
+    const started: { pin: PinRecord; operation: string }[] = [];
     try {
-      session.messages.remove(own.map((pin) => pin.id));
-      setPins((current) => current?.filter((pin) => !own.includes(pin)));
-      setUnpinning((current) => [...current, ...own]);
+      // One deletion per pin, so each settles on its own outcome.
+      for (const pin of own)
+        started.push({ pin, operation: session.messages.remove([pin.id]) });
     } catch (cause) {
       setNotice(
         cause instanceof Error ? cause.message : "Could not unpin the message.",
       );
     }
+    if (!started.length) return;
+    setPins((current) =>
+      current?.filter((pin) => !started.some((entry) => entry.pin === pin)),
+    );
+    setUnpinning((current) => [...current, ...started]);
   };
   const feedback = error ? (
     <p role="alert" className={styles.feedback}>

@@ -52,25 +52,29 @@ function setup(events: RelayEvent[], failures = 0) {
           )),
     );
   });
-  // The outbox queues a deletion synchronously; its delivery settles later.
+  // The outbox queues a deletion synchronously and keeps failed attempts;
+  // each delivery settles later.
   let operations: {
-    event: { kind: number; tags: string[][] };
+    event: { id: string; kind: number; tags: string[][] };
     delivery: string;
   }[] = [];
   const listeners = new Set<() => void>();
   const remove = vi.fn((ids: readonly string[]) => {
+    const id = `deletion-${operations.length}`;
     operations = [
       ...operations,
-      ...ids.map((id) => ({
-        event: { kind: 5, tags: [["e", id]] },
+      {
+        event: { id, kind: 5, tags: ids.map((target) => ["e", target]) },
         delivery: "sending",
-      })),
+      },
     ];
-    return "deletion";
+    return id;
   });
-  const settle = (delivery: "accepted" | "failed") =>
+  const settle = (id: string, delivery: "accepted" | "failed") =>
     act(() => {
-      operations = operations.map((item) => ({ ...item, delivery }));
+      operations = operations.map((item) =>
+        item.event.id === id ? { ...item, delivery } : item,
+      );
       for (const listener of listeners) listener();
     });
   const session = {
@@ -219,7 +223,7 @@ it("restores a pin and reports the failure when the relay refuses its removal", 
   await waitFor(() =>
     expect(screen.queryByRole("list", { name: "Pinned messages" })).toBeNull(),
   );
-  h.settle("failed");
+  h.settle("deletion-0", "failed");
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not unpin the message. Try again.",
   );
@@ -228,5 +232,59 @@ it("restores a pin and reports the failure when the relay refuses its removal", 
       "listitem",
     ),
   ).toHaveLength(1);
+  h.owner.dispose();
+});
+
+it("settles a retried unpin by its own attempt, not the earlier refusal", async () => {
+  const pinned = message(other, channelId, "Older decision", 1);
+  const mine = pinOf(pinned, 10);
+  const h = setup([pinned, mine]);
+  const unpin = async () =>
+    fireEvent.click(
+      within(
+        await screen.findByRole("list", { name: "Pinned messages" }),
+      ).getByRole("button", { name: "Unpin message" }),
+    );
+  await unpin();
+  h.settle("deletion-0", "failed");
+  expect(await screen.findByRole("alert")).toBeVisible();
+  await unpin();
+  // The earlier failed attempt stays in the outbox while the retry sends.
+  expect(screen.queryByRole("list", { name: "Pinned messages" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  h.settle("deletion-1", "accepted");
+  expect(screen.queryByRole("list", { name: "Pinned messages" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  h.owner.dispose();
+});
+
+it("restores only the unpin the relay refused when two settle differently", async () => {
+  const first = message(other, channelId, "First decision", 1);
+  const second = message(other, channelId, "Second decision", 2);
+  const firstPin = pinOf(first, 10),
+    secondPin = pinOf(second, 20);
+  const h = setup([first, second, firstPin, secondPin]);
+  const list = await screen.findByRole("list", { name: "Pinned messages" });
+  for (const button of within(list).getAllByRole("button", {
+    name: "Unpin message",
+  }))
+    fireEvent.click(button);
+  expect(h.remove).toHaveBeenCalledTimes(2);
+  const operation = (pin: RelayEvent) =>
+    `deletion-${h.remove.mock.calls.findIndex(([ids]) => ids.includes(pin.id))}`;
+  h.settle(operation(firstPin), "accepted");
+  h.settle(operation(secondPin), "failed");
+  const rows = within(
+    await screen.findByRole("list", { name: "Pinned messages" }),
+  ).getAllByRole("listitem");
+  expect(rows).toHaveLength(1);
+  expect(within(rows[0] as HTMLElement).getByRole("link")).toBeVisible();
+  fireEvent.click(within(rows[0] as HTMLElement).getByRole("link"));
+  expect(h.openLink).toHaveBeenCalledWith(
+    `buzz://message?channel=${channelId}&id=${second.id}`,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not unpin the message. Try again.",
+  );
   h.owner.dispose();
 });
