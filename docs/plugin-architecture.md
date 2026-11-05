@@ -1946,7 +1946,10 @@ state mark. It renders only while `matches` passes, so hiding the menu entry als
 hides its mark. The host owns the menu, focus restoration and row lifetime: a row
 with an open action stays mounted while it scrolls out of view. Icon, component
 and marker failures each render nothing and leave the row and menu usable. The
-bundled Reminders plugin is the first consumer.
+bundled Reminders plugin is the first consumer. With `placement: "menu"`, `component`
+mounts inside the menu instead and also receives `MenuItem`, the host's menu item
+(`{ children, icon?, disabled?, onClick }`): it takes part in keyboard navigation and
+closes the menu on click, which a plugin's own button does not.
 
 The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
 kind 40008. Shared history, live, thread and exact readers retain these messages

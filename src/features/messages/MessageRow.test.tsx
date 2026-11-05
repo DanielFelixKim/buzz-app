@@ -36,6 +36,7 @@ import { MessageRow } from "./MessageRow";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
+import type { MessageAction } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
@@ -2705,6 +2706,92 @@ it("contains a throwing plugin action icon and opened component", async () => {
     expect(screen.getByText("Root")).toBeInTheDocument();
   } finally {
     error.mockRestore();
+    cleanup();
+  }
+});
+
+it("gives a menu-placed plugin action a host item that takes part in keyboard navigation", async () => {
+  const spy = vi.fn();
+  const entry = (id: string, component: MessageAction["component"]) => ({
+    id,
+    title: id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "one",
+    placement: "menu" as const,
+    matches: () => true,
+    component,
+  });
+  const actions = [
+    entry("Own button", () => (
+      <button type="button" role="menuitem">
+        Own button item
+      </button>
+    )),
+    entry("Plugin item", ({ MenuItem }) =>
+      MenuItem ? (
+        <MenuItem icon={<span>icon</span>} onClick={spy}>
+          Plugin item
+        </MenuItem>
+      ) : null,
+    ),
+  ];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => ({ channels: [], status: "ready" }),
+    },
+  } as unknown as RelaySession;
+  const user = userEvent.setup();
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: { snapshot: () => actions, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    await screen.findByRole("menu");
+    expect(screen.getByText("Own button item")).toBeInTheDocument();
+    const item = await screen.findByRole("menuitem", { name: /Plugin item/ });
+    for (
+      let presses = 0;
+      presses < 20 && document.activeElement !== item;
+      presses++
+    )
+      await user.keyboard("{ArrowDown}");
+    expect(item).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(spy).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  } finally {
     cleanup();
   }
 });

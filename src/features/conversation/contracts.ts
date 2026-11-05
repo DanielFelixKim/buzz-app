@@ -235,6 +235,16 @@ export type MessageAction = Readonly<{
       message: ChannelMessage;
       session: RelaySession;
       close(): void;
+      /**
+       * Host menu item for `placement: "menu"` contributions. It takes part in
+       * keyboard navigation and closes the menu through the host path.
+       */
+      MenuItem?: ComponentType<{
+        children: ReactNode;
+        icon?: ReactNode;
+        disabled?: boolean;
+        onClick(): void;
+      }>;
     }
   >;
   /**

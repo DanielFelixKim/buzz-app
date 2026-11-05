@@ -173,6 +173,27 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
     <MessageRowContent {...props} />
   );
 });
+/** The host menu item a `placement: "menu"` plugin action renders. Module scope
+ * keeps its identity stable, so a re-render never remounts the focused item. */
+function PluginMenuItem({
+  children,
+  icon,
+  disabled,
+  onClick,
+}: {
+  children: ReactNode;
+  icon?: ReactNode;
+  disabled?: boolean;
+  onClick(): void;
+}) {
+  return (
+    <MenuItem disabled={disabled ?? false} onClick={onClick}>
+      {icon && <MenuIcon>{icon}</MenuIcon>}
+      {children}
+    </MenuItem>
+  );
+}
+
 function MessageRowContent({
   row,
   shownRow,
@@ -434,6 +455,7 @@ function MessageRowContent({
             message: row,
             session,
             close: () => setOpenAction(undefined),
+            MenuItem: PluginMenuItem,
           }}
           registry={extensions.actions}
           entry={action}
