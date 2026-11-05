@@ -1,6 +1,6 @@
 // The real composer control and React lifecycle, with a read-only model catalog.
 // No native harness, relay, credentials or live agent execution.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ComposerModels } from "../../src/features/messages/ComposerModels";
 import { AgentsContext } from "../../src/features/agents/react";
@@ -103,6 +103,7 @@ function Fixture() {
   const [picks, setPicks] = useState<DraftPicks>({});
   const [error, setError] = useState("");
   const [ready, setReady] = useState(!persistence);
+  const outsidePicker = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!persistence) return;
     let live = true;
@@ -149,7 +150,9 @@ function Fixture() {
     <AgentsContext.Provider value={agents}>
       <main className="mx-auto flex max-w-2xl flex-col gap-4 p-8">
         <h1 className="text-title">Composer model and effort</h1>
-        <button type="button">Outside the picker</button>
+        <button ref={outsidePicker} type="button">
+          Outside the picker
+        </button>
         {error && <p role="alert">{error}</p>}
         <form aria-label="Composer controls">
           <ComposerModels
@@ -163,6 +166,7 @@ function Fixture() {
             startsThread={false}
             place={{ channelId: "fixture" }}
             onChange={changePicks}
+            focusAfterPickerRemoval={() => outsidePicker.current?.focus()}
             onResolved={ignoreResolved}
           />
         </form>

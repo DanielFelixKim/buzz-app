@@ -67,6 +67,7 @@ export function ComposerModels({
   resettable = false,
   explicitOnly = false,
   onChange,
+  focusAfterPickerRemoval,
   onResolved,
   onRetryInventory,
   startsThread,
@@ -82,6 +83,7 @@ export function ComposerModels({
   /** A new Solo chat keeps provider defaults unchanged unless picked. */
   explicitOnly?: boolean;
   onChange(value: DraftPicks, resetPubkeys?: readonly string[]): void;
+  focusAfterPickerRemoval(): void;
   /** null waits for choices; undefined invalidates the picker's snapshot. */
   onResolved(value: MentionPicks | null | undefined, error?: string): void;
   onRetryInventory?(): void;
@@ -174,6 +176,7 @@ export function ComposerModels({
   }, [agents, mentioned, value, onChange]);
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const restoreComposerFocusAfterReset = useRef(false);
   // Publish the displayed defaults separately from the user's draft picks.
   // A settings refresh or model-only pick must still follow the new default.
   useLayoutEffect(() => {
@@ -245,6 +248,11 @@ export function ComposerModels({
   const canReset =
     resettable &&
     pubkeys.some((pubkey) => value[pubkey]?.model || value[pubkey]?.effort);
+  useLayoutEffect(() => {
+    if (!restoreComposerFocusAfterReset.current || open) return;
+    restoreComposerFocusAfterReset.current = false;
+    if (!trigger.current?.isConnected) focusAfterPickerRemoval();
+  }, [open, focusAfterPickerRemoval]);
   if (!choices.length && !inventoryFailed && !canReset) return null;
   const picked = choices.flatMap((choice) => {
     if (choice.loading) return [];
@@ -378,6 +386,7 @@ export function ComposerModels({
                 variant="subtle"
                 size="sm"
                 onClick={() => {
+                  restoreComposerFocusAfterReset.current = true;
                   const addressed = new Set(pubkeys);
                   onChange(
                     Object.fromEntries(

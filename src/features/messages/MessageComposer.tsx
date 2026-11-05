@@ -3495,6 +3495,7 @@ function Composer({
                   resettable={stickyPicks}
                   explicitOnly={!!submission && stickyPicks}
                   onChange={changePicks}
+                  focusAfterPickerRemoval={() => input.current?.focus()}
                   onResolved={(next, error) => {
                     resolvedPicks.current =
                       next === undefined

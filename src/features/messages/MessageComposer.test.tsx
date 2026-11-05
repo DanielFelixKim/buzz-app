@@ -3629,6 +3629,7 @@ const sessionAgents = (
     efforts: readonly { id: string; label: string }[];
   }[] = [{ id: "fast", label: "Fast", efforts: [] }],
   pubkeys: readonly string[] = [first.pubkey],
+  includeSessionControls = true,
 ) => {
   const snapshot = {
     status: "ready",
@@ -3652,12 +3653,16 @@ const sessionAgents = (
     {
       key: "test/agent",
       models: () => ({ current: "fast", models }),
-      sessionControls: {
-        scope: () => scope,
-        state: () => state,
-        run: async () => {},
-        subscribe,
-      },
+      ...(includeSessionControls
+        ? {
+            sessionControls: {
+              scope: () => scope,
+              state: () => state,
+              run: async () => {},
+              subscribe,
+            },
+          }
+        : {}),
     },
   ];
   const session = vi.fn<Agents["session"]>(async () => {});
@@ -5556,7 +5561,12 @@ it("waits for a saved Solo pick's catalog before disclosing its fallback", async
 
 it("shows an unavailable Solo pick when the catalog has no selectable controls", async () => {
   const { mountChat } = soloModelPreferenceHarness(
-    sessionAgents("channel", [{ id: "fast", label: "Fast", efforts: [] }]),
+    sessionAgents(
+      "channel",
+      [{ id: "fast", label: "Fast", efforts: [] }],
+      [first.pubkey],
+      false,
+    ),
   );
   const removedPick = {
     model: "removed",
@@ -5586,6 +5596,13 @@ it("shows an unavailable Solo pick when the catalog has no selectable controls",
   expect(readView("scope", "solo:model-picks:channel", null)).toEqual({
     [first.pubkey]: removedPick,
   });
+  await composer.user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Reset model and effort",
+    }),
+  );
+  expect(readView("scope", "solo:model-picks:channel", null)).toEqual({});
+  expect(composer.input()).toHaveFocus();
   composer.unmount();
 });
 
