@@ -123,6 +123,7 @@ import {
   type RecoveryStatus,
 } from "./recovery";
 import { createReminders } from "./reminders";
+import { createPins, PIN_KIND } from "./pins";
 import {
   ARTIFACT_REVISION_KIND,
   ARTIFACT_SYNC_MAX_VIEWS,
@@ -473,7 +474,7 @@ export function createRelaySession(
    * they are never stranded. */
   const contribution = (item: OutgoingEvent) =>
     (item.delivery === "failed" || item.delivery === "sending") &&
-    [5, 7, 9, 40003].includes(item.event.kind) &&
+    [5, 7, 9, 40003, PIN_KIND].includes(item.event.kind) &&
     !isWorkflowOperation(item.event)
       ? item.event.tags.find(([name]) => name === "h")?.[1]
       : undefined;
@@ -2329,6 +2330,25 @@ export function createRelaySession(
     mainAgent,
     soloPreferences: soloPreferences.queries,
     reminders: reminders?.capability,
+    pins: transport
+      ? createPins({
+          viewer: transport.viewer,
+          outbox: writes?.outbox,
+          channels: channelQueries,
+          canWrite: channels.canWrite,
+          find: (id) =>
+            local().find((item) => item.event.id === id)?.event ??
+            recent.peek(id)?.event ??
+            retainedEvent(id),
+          observed: () => [
+            ...local().map((item) => item.event),
+            ...recent.entries().map(([, item]) => item.event),
+          ],
+          read: async (filters, { signal }): Promise<readonly EventData[]> =>
+            session.read(filters, { signal }),
+          remove: (ids): string => session.messages.remove(ids),
+        })
+      : undefined,
     live,
     /** The one automatic retry owner for background reads. Undefined offline. */
     recovery,
