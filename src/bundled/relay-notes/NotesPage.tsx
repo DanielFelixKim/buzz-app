@@ -184,10 +184,11 @@ export function NotesPage({
             />
             <div className={styles.body}>
               <SearchField
+                variant="capsule"
                 inputRef={searchRef}
                 label="Search notes"
                 disabled={!entries.length && !query}
-                placeholder="Search loaded notes…"
+                placeholder="Search"
                 value={query}
                 onValueChange={(value) => search(value)}
                 onBlur={() => search(query, true)}
