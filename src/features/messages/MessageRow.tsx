@@ -1154,7 +1154,10 @@ function MessageRowContent({
                   <span className={styles.authorWithStatus}>
                     <strong className={styles.author}>
                       {clickable && !stackPrevious ? (
-                        <AuthorLink onOpen={() => openLink(target)}>
+                        <AuthorLink
+                          pubkey={row.authorId}
+                          onOpen={() => openLink(target)}
+                        >
                           {authorName}
                         </AuthorLink>
                       ) : (
