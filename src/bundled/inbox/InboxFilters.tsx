@@ -20,12 +20,18 @@ import {
 } from "../../shared/design-system/icons";
 
 export type ShowFilter = "inbox" | "archived";
-export type ActivityFilter = "all" | "threads" | "mentions" | "dms";
+export type ActivityFilter =
+  | "all"
+  | "threads"
+  | "mentions"
+  | "reactions"
+  | "dms";
 export type SenderFilter = "everyone" | "humans" | "agents";
 const views = [
   { value: "all", label: "All" },
   { value: "threads", label: "Threads" },
   { value: "mentions", label: "Mentions" },
+  { value: "reactions", label: "Reactions" },
   { value: "dms", label: "DMs" },
   { value: "drafts", label: "Drafts" },
 ] as const;

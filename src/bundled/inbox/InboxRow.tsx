@@ -12,6 +12,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
+import { reactionTitle, type ReactionRow } from "./reactions";
 import styles from "./Inbox.module.css";
 
 type ResolveName = (
@@ -25,7 +26,7 @@ export const hasUnread = (item: InboxItem) =>
 
 /** Who sent a row and where, as the Inbox page and its sidebar preview name it. */
 export function rowIdentity(
-  item: InboxItem,
+  item: Pick<InboxItem, "authorId" | "workflowOwnerId">,
   channel: ChannelSummary | undefined,
   profiles: ReadonlyMap<string, Profile>,
   name: ResolveName,
@@ -136,6 +137,86 @@ export function InboxRowButton({
                 ? "Preview unavailable. Retry inbox."
                 : "Preview updating…"
               : messagePreview(item.preview)}
+          </span>
+        </span>
+      }
+      trailing={
+        unread ? (
+          <span className={styles.unreadSlot} role="img" aria-label="Unread">
+            <span className={styles.unreadDot} />
+          </span>
+        ) : (
+          <span className={styles.unreadSlot} aria-hidden="true" />
+        )
+      }
+    />
+  );
+}
+
+/** One reaction row's button: the newest reactor, what they reacted and the
+ * viewer's message, in the conversation row's layout. */
+export function ReactionRowButton({
+  row,
+  identity: { sender, context, profile },
+  media,
+  time,
+  previewId,
+  unread,
+  ...props
+}: {
+  row: ReactionRow;
+  identity: ReturnType<typeof rowIdentity>;
+  media: RelaySession["media"];
+  time: ReactNode;
+  previewId?: string | undefined;
+  unread: boolean;
+} & Omit<
+  ComponentProps<typeof NavigationItem>,
+  "icon" | "label" | "trailing" | "aria-label"
+>) {
+  const title = reactionTitle(row, sender);
+  return (
+    <NavigationItem
+      {...props}
+      aria-label={`Open ${title} in ${context}`}
+      aria-describedby={previewId}
+      icon={
+        <Avatar
+          size="default"
+          alt=""
+          fallback={sender}
+          src={avatarMedia(profile?.picture, media)}
+          shape={profile?.isAgent ? "squircle" : "circle"}
+        />
+      }
+      label={
+        <span className={styles.content}>
+          <span className={styles.heading}>
+            <span className={styles.identity}>
+              <strong
+                className={`text-label-sm text-standard ${styles.sender}`}
+              >
+                {title}
+              </strong>
+              <span
+                className={`text-caption ${styles.source}`}
+                data-inbox-source=""
+              >
+                {context}
+              </span>
+            </span>
+            <time
+              className={`text-caption text-subtle ${styles.rowDate}`}
+              dateTime={new Date(row.createdAt * 1000).toISOString()}
+            >
+              {time}
+            </time>
+          </span>
+          <span
+            id={previewId}
+            className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
+          >
+            {messagePreview(row.targetContent)}
           </span>
         </span>
       }

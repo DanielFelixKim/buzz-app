@@ -8,6 +8,7 @@ it.each([
   { activity: "all" },
   { activity: "threads" },
   { activity: "mentions" },
+  { activity: "reactions" },
   { activity: "dms" },
   { activity: "all", attention: "unread" },
   { show: "archived" },

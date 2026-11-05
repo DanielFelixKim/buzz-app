@@ -27,9 +27,11 @@ import { routeOf } from "./route";
 import {
   hasUnread,
   InboxRowButton,
+  ReactionRowButton,
   rowIdentity,
   rowProfileIds,
 } from "./InboxRow";
+import { reactionRows, type ReactionRow } from "./reactions";
 import {
   useChannelList,
   useProfileGeneration,
@@ -89,6 +91,7 @@ const activities = [
   { value: "dms", label: "DMs" },
   { value: "threads", label: "Threads" },
   { value: "mentions", label: "Mentions" },
+  { value: "reactions", label: "Reactions" },
 ] as const;
 const senders = [
   { value: "everyone", label: "Everyone" },
@@ -156,6 +159,8 @@ const matchesActivity = (
       return item.mentioned;
     case "threads":
       return item.thread;
+    case "reactions":
+      return false;
   }
 };
 const targetOf = (item: InboxItem) => ({
@@ -350,6 +355,11 @@ function InboxList({
     session.inboxFeed.snapshot,
     session.inboxFeed.snapshot,
   );
+  const reactionFeed = useSyncExternalStore(
+    session.reactionFeed.subscribe,
+    session.reactionFeed.snapshot,
+    session.reactionFeed.snapshot,
+  );
   const choices = useSyncExternalStore(
     session.agentChoices.subscribe,
     session.agentChoices.snapshot,
@@ -437,6 +447,11 @@ function InboxList({
     return shown;
   };
   const showing = !!opened && isOpen(opened);
+  // The reaction row whose message the open tab shows; it ends with the tab.
+  const [selectedReaction, setSelectedReaction] = useState<string>();
+  useEffect(() => {
+    if (selectedReaction && !showing) setSelectedReaction(undefined);
+  }, [selectedReaction, showing]);
   const [selectedTarget, setSelectedTarget] = useState(
     () => selections.get(session)?.target,
   );
@@ -504,10 +519,15 @@ function InboxList({
     if (list.status !== "ready") return;
     if (refreshAfterRoster) {
       setRefreshAfterRoster(false);
-      void Promise.all([session.unread.refresh(), session.inboxFeed.refresh()]);
+      void Promise.all([
+        session.unread.refresh(),
+        session.inboxFeed.refresh(),
+        session.reactionFeed.refresh(),
+      ]);
     } else {
       void session.unread.ensure();
       void session.inboxFeed.ensure();
+      void session.reactionFeed.ensure();
       session.agentChoices.ensure();
     }
   }, [session, list.status, list.asOf, refreshAfterRoster]);
@@ -543,6 +563,19 @@ function InboxList({
         ),
     )
     .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+  // Archive does not apply to reaction rows, so they show only in Inbox.
+  const reactionItems =
+    show === "inbox" && (activity === "all" || activity === "reactions")
+      ? reactionRows(reactionFeed.notices).filter((row) =>
+          list.channels.some(
+            (channel) =>
+              channel.id === row.channelId &&
+              !channel.archived &&
+              !channel.huddle &&
+              !channel.metadataPending,
+          ),
+        )
+      : [];
   // A late verified root can legitimately regroup channel:reply into
   // channel:root. Keep the captured visit by exact key, never by a namesake.
   // Keep the captured visit mounted if its archive membership changes while open.
@@ -603,7 +636,10 @@ function InboxList({
   // Enrich bounded activity candidates before applying Sender: unknown authors
   // must be able to appear after their profiles arrive, even in an empty view.
   // Keep main's bounded optional profile demand, independent of presentation.
-  const candidateIds = activityItems.slice(0, 50).map((item) => item.authorId);
+  const candidateIds = [
+    ...activityItems.slice(0, 50).map((item) => item.authorId),
+    ...reactionItems.slice(0, 50).flatMap((row) => row.reactorIds.slice(0, 1)),
+  ];
   const matchingAuthors = [...new Set(candidateIds)].sort().join(":");
   const authorIds = useMemo(
     () => (matchingAuthors ? matchingAuthors.split(":") : []),
@@ -617,8 +653,11 @@ function InboxList({
   // Classification covers every evaluated author, independently of bounded demand.
   // Winning events can change without changing folded display values.
   useSyncExternalStore(session.profiles.subscribe, () =>
-    activityItems
-      .map(({ authorId }) => session.profiles.event?.(authorId)?.id ?? "")
+    [
+      ...activityItems.map(({ authorId }) => authorId),
+      ...reactionItems.flatMap((row) => row.reactorIds.slice(0, 1)),
+    ]
+      .map((authorId) => session.profiles.event?.(authorId)?.id ?? "")
       .join(":"),
   );
   const agentIds = new Set(choices.identities.map((agent) => agent.pubkey));
@@ -650,6 +689,23 @@ function InboxList({
           item.messageIds.includes(selectedTarget?.messageId ?? ""))),
   );
   const visible = matching;
+  const matchingReactions = reactionItems.filter(
+    (row) =>
+      senderFilter === "everyone" ||
+      senderKind(row.reactorIds[0] ?? "") ===
+        (senderFilter === "agents" ? "agent" : "human"),
+  );
+  // Conversation and reaction rows interleave by their newest activity.
+  const entries = [
+    ...visible.map((item) => ({ kind: "conversation" as const, item })),
+    ...matchingReactions.map((row) => ({ kind: "reaction" as const, row })),
+  ].sort((a, b) => {
+    const first = a.kind === "conversation" ? a.item : a.row;
+    const second = b.kind === "conversation" ? b.item : b.row;
+    return (
+      second.createdAt - first.createdAt || first.id.localeCompare(second.id)
+    );
+  });
   const archiveView = useRef({ show, visible, selected, opened });
   useLayoutEffect(() => {
     archiveView.current = { show, visible, selected, opened };
@@ -771,6 +827,7 @@ function InboxList({
         await Promise.all([
           session.unread.refresh(),
           session.inboxFeed.refresh(),
+          session.reactionFeed.refresh(),
         ]);
       }
       if (retrySync && active.current) await session.unread.retrySync();
@@ -959,9 +1016,15 @@ function InboxList({
     list.status === "idle" ||
     list.status === "loading" ||
     inbox.status === "loading" ||
-    feed.status === "loading";
+    feed.status === "loading" ||
+    reactionFeed.status === "loading";
   const failure =
-    error ?? list.error ?? inbox.error ?? feed.error ?? sync.error;
+    error ??
+    list.error ??
+    inbox.error ??
+    feed.error ??
+    reactionFeed.error ??
+    sync.error;
   useLayoutEffect(() => {
     if (!retryFocus.current) return;
     retryFocus.current = false;
@@ -1012,6 +1075,64 @@ function InboxList({
       )}
     </header>
   );
+  function reactionEntry(row: ReactionRow) {
+    const channel = list.channels.find((entry) => entry.id === row.channelId);
+    const identity = rowIdentity(
+      { authorId: row.reactorIds[0] ?? "" },
+      channel,
+      profiles,
+      name,
+    );
+    const selectedRow = selectedReaction === row.id;
+    return (
+      <li
+        key={row.id}
+        data-inbox-row={row.id}
+        className={styles.row}
+        data-selected={selectedRow || undefined}
+      >
+        <div className={styles.rowSurface}>
+          <ReactionRowButton
+            row={row}
+            identity={identity}
+            media={session.media}
+            time={relativeTimestamp(row.createdAt)}
+            previewId={`${previewId}-${row.id}`}
+            unread={false}
+            disabled={pending}
+            selected={selectedRow}
+            onClick={() => {
+              if (busy.current) return;
+              // DMs and a Solo chat's own messages open whole, as conversation rows do.
+              const tab: PageTabTarget =
+                channel?.channelType === "dm" ||
+                (channel?.channelType === "solo" && !row.rootId)
+                  ? { channelId: row.channelId }
+                  : {
+                      channelId: row.channelId,
+                      threadId: row.rootId ?? row.messageId,
+                      messageId: row.messageId,
+                    };
+              const shown = openTab(tab);
+              setOpened(shown ? tab : undefined);
+              if (!shown)
+                void navigator.open({
+                  version: 1,
+                  kind: "conversation",
+                  scope,
+                  channelId: row.channelId,
+                  messageId: row.messageId,
+                  ...(row.rootId && { threadRootId: row.rootId }),
+                });
+              cancelRetry();
+              setSelectedTarget(undefined);
+              setSelectedReaction(row.id);
+            }}
+          />
+        </div>
+      </li>
+    );
+  }
   return (
     <div
       ref={split.ref}
@@ -1091,7 +1212,7 @@ function InboxList({
                     </Button>
                   </div>
                 )}
-              {!visible.length &&
+              {!entries.length &&
                 (inbox.status === "ready" || feed.status === "ready") &&
                 !loading &&
                 !failure && (
@@ -1114,7 +1235,7 @@ function InboxList({
                           ? activity === "mentions"
                             ? "Archived mentions stay here until you restore them or receive a new mention."
                             : "Archived conversations stay here until you restore them, receive a new participating-thread reply, or receive a new mention."
-                          : "Mentions, direct messages, and replies in threads you participate in appear here."
+                          : "Mentions, direct messages, replies in threads you participate in, and reactions to your messages appear here."
                       }
                       action={
                         filtered || show === "archived" ? (
@@ -1145,7 +1266,10 @@ function InboxList({
                 aria-label="Inbox conversations"
                 aria-busy={pending}
               >
-                {visible.map((item) => {
+                {entries.map((entry) => {
+                  if (entry.kind === "reaction")
+                    return reactionEntry(entry.row);
+                  const { item } = entry;
                   const channel = list.channels.find(
                     (candidate) => candidate.id === item.channelId,
                   );
@@ -1159,7 +1283,10 @@ function InboxList({
                       data-inbox-row={item.id}
                       className={styles.row}
                       data-unread={unread || undefined}
-                      data-selected={selectedId === item.id || undefined}
+                      data-selected={
+                        (!selectedReaction && selectedId === item.id) ||
+                        undefined
+                      }
                     >
                       <ContextMenuRoot
                         open={menu?.id === item.id}
@@ -1190,7 +1317,9 @@ function InboxList({
                             time={relativeTimestamp(item.createdAt)}
                             previewId={`${previewId}-${item.id}`}
                             disabled={pending}
-                            selected={selectedId === item.id}
+                            selected={
+                              !selectedReaction && selectedId === item.id
+                            }
                             ref={
                               item.id === visible[0]?.id
                                 ? fallbackRow
@@ -1225,6 +1354,7 @@ function InboxList({
                                 });
                               // The selected row is the same visit, even when its
                               // current representative changed after reading.
+                              setSelectedReaction(undefined);
                               if (selectedId === item.id) return;
                               cancelRetry();
                               setSelectedTarget(targetOf(item));

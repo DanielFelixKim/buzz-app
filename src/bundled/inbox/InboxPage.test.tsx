@@ -3985,11 +3985,18 @@ it("combines the existing filter choices without placeholder actions", async () 
   expect(
     within(menu).getByRole("menuitemcheckbox", { name: "Agents" }),
   ).toBeChecked();
-  for (const name of ["All", "Threads", "Mentions", "DMs", "Drafts"])
+  for (const name of [
+    "All",
+    "Threads",
+    "Mentions",
+    "Reactions",
+    "DMs",
+    "Drafts",
+  ])
     expect(
       within(menu).getByRole("menuitemradio", { name }),
     ).toBeInTheDocument();
-  for (const name of ["Projects", "Needs action", "Reactions"])
+  for (const name of ["Projects", "Needs action"])
     expect(within(menu).queryByRole("menuitemradio", { name })).toBeNull();
   await user.keyboard("{Escape}");
   expect(trigger).toHaveFocus();
@@ -5251,3 +5258,97 @@ it.each([false, true])(
       ).toBe(true);
   },
 );
+
+/** A reaction to `target`, addressed to its author as publishers do. */
+function reactionTo(
+  reactor: ReturnType<typeof keypair>,
+  target: RelayEvent,
+  content: string,
+  at: number,
+) {
+  return signed(reactor, {
+    kind: 7,
+    content,
+    created_at: at,
+    tags: [
+      ["h", "room"],
+      ["e", target.id],
+      ["p", target.pubkey],
+    ],
+  });
+}
+const reactionRow = () =>
+  rows().find((row) => row.dataset.inboxRow?.startsWith("reaction:"));
+
+it("lists reactions to the viewer's messages under Reactions and, by time, under All", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  // Reactions to someone else's message are not the viewer's.
+  h.addEvent(reactionTo(h.viewer, h.mention, "👀", 31));
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  expect(rows()[0]).toHaveAttribute("data-inbox-row", `reaction:${h.root.id}`);
+  const row = reactionRow();
+  if (!row) throw new Error("Missing reaction row");
+  expect(row).toHaveTextContent("Alice reacted 👍");
+  expect(row).toHaveTextContent("#Design");
+  expect(row).toHaveTextContent("Our discussion");
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toBe(reactionRow());
+  await chooseFilter("Mentions");
+  await waitFor(() => expect(reactionRow()).toBeUndefined());
+});
+
+it("groups reactions to one message into one row naming the newest reactor", async () => {
+  const h = fixture({ withSenders: true });
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  h.addEvent(reactionTo(h.agent, h.root, "🎉", 31));
+  h.addEvent(reactionTo(h.alice, h.root, "🎉", 32));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  await waitFor(() =>
+    expect(reactionRow()).toHaveTextContent("Alice and 1 other reacted 👍 🎉"),
+  );
+});
+
+it("filters reaction rows by the reactor's sender kind", async () => {
+  const h = fixture({ withSenders: true });
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  await chooseFilter("Agents", "Sender");
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  await chooseFilter("Humans", "Sender");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+});
+
+it("opens the reacted-to message beside the list", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  const row = reactionRow();
+  if (!row) throw new Error("Missing reaction row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  const detail = await findReader();
+  expect(await within(detail).findByText("Our discussion")).toBeVisible();
+  expect(row).toHaveAttribute("data-selected", "true");
+});
+
+it("applies a Reactions route", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(viewAt(h, visit({ activity: "reactions" })));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toBe(reactionRow());
+  expect(filterSummary()).toHaveTextContent("Reactions");
+});
