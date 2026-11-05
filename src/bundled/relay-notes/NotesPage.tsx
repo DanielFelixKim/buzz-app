@@ -104,7 +104,7 @@ export function NotesPage({
         role="link"
         aria-label={note.title}
         render={<a href={noteUrl(note, community)} />}
-        label={<span className="text-label-sm">{note.title}</span>}
+        label={<span className="text-label">{note.title}</span>}
         icon={
           <FileTextIcon size={16} className="text-subtle" aria-hidden="true" />
         }
@@ -247,7 +247,9 @@ export function NotesPage({
                     <NavigationItem
                       variant="text"
                       icon={<PlusIcon size={16} aria-hidden="true" />}
-                      label="New note"
+                      label={
+                        <span className="text-label font-normal">New note</span>
+                      }
                       onClick={create}
                     />
                   </li>

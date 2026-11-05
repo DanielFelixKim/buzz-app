@@ -178,7 +178,7 @@ original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.
 
 The browser lists linked note titles in newest-revision order as rows without dividers,
-with heavier titles, no underlines and a subtle document icon before each title. The last edit time sits at the far right. There are no
+with 16px medium titles, no underlines and a subtle document icon before each title. The last edit time sits at the far right. There are no
 card previews or author folders. A subtle **+ New note** action follows
 the note titles. Empty collections put the creation button inside the empty state;
 search is disabled until there are notes, unless a query needs clearing. **Show

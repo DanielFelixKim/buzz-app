@@ -103,7 +103,7 @@
   flex-direction: column;
 }
 .titleList > li {
-  padding-block: var(--space-1);
+  padding-block: var(--space-2);
 }
 
 /* Match the channel timeline's centered reading column. */
