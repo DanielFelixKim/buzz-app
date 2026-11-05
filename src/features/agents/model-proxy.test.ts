@@ -348,3 +348,64 @@ it.each([false, true])(
     }
   },
 );
+
+it.each([true, false])(
+  "leaves time for later plugins with bypass %s",
+  async (fallback) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) =>
+        key.endsWith(":a") ? JSON.stringify({ retry: true, fallback }) : null,
+    });
+    const root = new Context();
+    root.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const registry = createModelProxies(root);
+    const stalled = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          if (!fallback) setTimeout(() => resolve("trimmed"), 20000);
+        }),
+    );
+    for (const [id, run] of [
+      ["a", stalled],
+      [
+        "b",
+        ({ body }: { body: string }) =>
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve(`${body}healthy`), 10),
+          ),
+      ],
+    ] as const) {
+      await root
+        .extend({
+          pluginOwner: { id, revision: "1", modelProxies: ["claude/type"] },
+        })
+        .plugin((ctx) =>
+          registry.register(ctx, {
+            id: "transform",
+            harness: "claude/type",
+            run,
+          }),
+        )
+        .await();
+    }
+    try {
+      const result = registry
+        .dispatch("claude/type", { path: "/messages", body: "original" })
+        .then(
+          (body) => ({ body }),
+          (error) => ({ plugin: error.pluginId, code: error.code }),
+        );
+      await vi.advanceTimersByTimeAsync(25020);
+      expect(await result).toEqual({
+        body: fallback ? "originalhealthy" : "trimmedhealthy",
+      });
+      expect(stalled).toHaveBeenCalledTimes(1);
+    } finally {
+      await root.fiber.dispose();
+    }
+  },
+);

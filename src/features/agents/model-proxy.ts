@@ -53,6 +53,7 @@ export function createModelProxies(root: Context) {
       }
       const deadline = Date.now() + 25000;
       let body = request.body;
+      let pluginsRemaining = groups.size;
       plugins: for (const [pluginId, group] of groups) {
         const original = body;
         let policy: ReturnType<typeof modelProxyRecovery>;
@@ -61,13 +62,19 @@ export function createModelProxies(root: Context) {
         } catch {
           throw new ModelProxyFailure("callback_failed", pluginId);
         }
+        // A bypass must leave time for the remaining plugins.
+        const now = Date.now();
+        const pluginDeadline = policy.fallback
+          ? now + (deadline - now) / pluginsRemaining
+          : deadline;
+        pluginsRemaining--;
         for (const handler of group) {
           for (let attempt = 0; ; attempt++) {
             try {
               const next = await withTimeout(
                 Promise.resolve().then(() => handler.run({ ...request, body })),
                 "Model proxy callback timed out",
-                Math.max(1, deadline - Date.now()),
+                Math.max(1, pluginDeadline - Date.now()),
               );
               if (next !== undefined) {
                 if (typeof next !== "string")
