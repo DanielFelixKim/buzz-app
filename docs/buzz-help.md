@@ -360,6 +360,16 @@ revokes all of them, and a pairing unused for 30 days expires.
   - **You don't have access to this community**: when you're signed in through
     the community's server, it names the account it refused and offers
     **Switch account**. **Check again** once an admin has added you.
+- **Welcome channel**: on relays that support it, a community can choose a
+  public channel that new members join and open first. It starts with a
+  welcome card for everyone, showing the community's message or a default one.
+  The card isn't a message: it can't be replied to, deleted or dismissed. While
+  a new member's channels arrive, Messages says it is opening them. If none
+  arrive, **Try again** reconnects. Owners and admins choose the channel and edit
+  the message, up to 1,000 characters of plain text, in **Settings → Community
+  admin → Welcome**. That card appears only when the relay supports a welcome
+  channel. People already in the community keep their channels when the welcome
+  channel changes.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
