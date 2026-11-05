@@ -5,7 +5,6 @@ import {
   ArrowsClockwiseIcon,
   Filter2Icon,
   InfoIcon,
-  NoteIcon,
   FileIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
@@ -129,35 +128,35 @@ export function NotesPage({
   return (
     <div className={styles.page}>
       <div className={styles.collection} hidden={reading}>
-        <Panel aria-label="Notes">
+        <Panel aria-label="Pages">
           <div className={styles.page}>
             <PanelHeader
               title={
-                <PanelHeaderLabel title="Notes" icon={<NoteIcon size={16} />}>
+                <PanelHeaderLabel title="Pages" icon={<FileIcon size={16} />}>
                   <PopoverRoot>
                     <PopoverTrigger
                       render={
                         <IconButton
-                          aria-label="About notes"
-                          title="About notes"
+                          aria-label="About pages"
+                          title="About pages"
                           icon={<InfoIcon size={16} />}
                         />
                       }
                     />
                     <PopoverPopup>
-                      <PopoverTitle>About notes</PopoverTitle>
+                      <PopoverTitle>About pages</PopoverTitle>
                       <PopoverDescription
                         render={<div className={styles.description} />}
                       >
                         <p>
-                          Create documents with people and agents. Open a title
-                          to read or edit the note, then use Back to notes to
+                          Create pages with people and agents. Open a title to
+                          read or edit the page, then use Back to pages to
                           return to the list.
                         </p>
                         <p>
-                          Each note has its own sharing settings. Access
+                          Each page has its own sharing settings. Access
                           includes retained revisions. The relay operator can
-                          read note contents. Don’t include secrets.
+                          read page contents. Don’t include secrets.
                         </p>
                       </PopoverDescription>
                     </PopoverPopup>
@@ -166,8 +165,8 @@ export function NotesPage({
               }
               actions={
                 <IconButton
-                  aria-label="Refresh notes"
-                  title="Refresh notes"
+                  aria-label="Refresh pages"
+                  title="Refresh pages"
                   icon={
                     <ArrowsClockwiseIcon
                       size={16}
@@ -186,7 +185,7 @@ export function NotesPage({
               <SearchField
                 variant="capsule"
                 inputRef={searchRef}
-                label="Search notes"
+                label="Search pages"
                 disabled={!entries.length && !query}
                 placeholder="Search"
                 value={query}
@@ -201,8 +200,8 @@ export function NotesPage({
                       disabled={!canFilter}
                       render={
                         <IconButton
-                          aria-label="Filter notes"
-                          title="Filter notes"
+                          aria-label="Filter pages"
+                          title="Filter pages"
                           variant={trash ? "prominent" : "ghost"}
                           icon={<Filter2Icon size={16} aria-hidden="true" />}
                         />
@@ -214,7 +213,7 @@ export function NotesPage({
                         onCheckedChange={showDeleted}
                         closeOnClick
                       >
-                        Show deleted notes
+                        Show deleted pages
                       </MenuCheckboxItem>
                     </MenuPopup>
                   </MenuRoot>
@@ -222,43 +221,43 @@ export function NotesPage({
               />
               {loading && (
                 <span role="status" className="sr-only">
-                  Reading notes…
+                  Reading pages…
                 </span>
               )}
               {error && <p role="alert">{error}</p>}
               {empty && (
                 <EmptyState
                   icon={null}
-                  title="No notes yet"
-                  description="Create a note or ask an agent to save one."
+                  title="No pages yet"
+                  description="Create a page or ask an agent to save one."
                   action={
                     <Button variant="subtle" onClick={create}>
                       <PlusIcon size={16} aria-hidden="true" />
-                      New note
+                      New page
                     </Button>
                   }
                 />
               )}
               {!empty && (
-                <ul className={styles.titleList} aria-label="Notes">
+                <ul className={styles.titleList} aria-label="Pages">
                   {visible.map(titleLink)}
-                  <li key="new-note">
+                  <li key="new-page">
                     <NavigationItem
                       variant="text"
                       icon={<PlusIcon size={16} aria-hidden="true" />}
-                      label="New note"
+                      label="New page"
                       onClick={create}
                     />
                   </li>
                 </ul>
               )}
               {!loading && !error && query && !visible.length && (
-                <p role="status">No matching notes.</p>
+                <p role="status">No matching pages.</p>
               )}
               {more && (
                 <div>
                   <Button size="sm" loading={loading} onClick={loadMore}>
-                    Load more notes
+                    Load more pages
                   </Button>
                 </div>
               )}
@@ -267,19 +266,19 @@ export function NotesPage({
         </Panel>
       </div>
       <div className={styles.fullView} hidden={!reading}>
-        <Panel aria-label="Note details">
+        <Panel aria-label="Page details">
           <PanelHeader
             title={
               <PanelHeaderLabel
-                title={active?.label ?? "Note"}
-                icon={<NoteIcon size={16} />}
+                title={active?.label ?? "Page"}
+                icon={<FileIcon size={16} />}
               />
             }
             navigation={
               <IconButton
                 ref={backRef}
-                aria-label="Back to notes"
-                title="Back to notes"
+                aria-label="Back to pages"
+                title="Back to pages"
                 icon={<ArrowLeftIcon size={16} />}
                 onClick={browse}
               />

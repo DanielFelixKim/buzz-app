@@ -1,5 +1,5 @@
 import { Context } from "@deepseek-ai/cordis";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { AgentsService } from "../../features/agents/service";
 import {
   fakeCommunities,
@@ -12,6 +12,7 @@ import { apply, inject } from ".";
 import { provideNavigation } from "../../features/navigation/service";
 import { PanelsService } from "../../features/panels/service";
 import { PagesService } from "../../features/pages/service";
+import { notesFixture } from "../../features/notes/testing";
 
 it("owns only channel-backed note routes, tools and panels while preserving separate built-in tools", async () => {
   const ctx = new Context();
@@ -45,16 +46,45 @@ it("owns only channel-backed note routes, tools and panels while preserving sepa
     await scope;
     const added = service.tools().map((tool) => tool.name);
     expect(added).toEqual([
-      "note_get",
-      "note_set",
-      "note_history",
-      "note_delete",
-      "note_share",
+      "page_help",
+      "page_get",
+      "page_set",
+      "page_history",
+      "page_delete",
+      "page_share",
     ]);
+    const background = await notesFixture();
+    try {
+      const note = background.seed(
+        "Background community page",
+        "Read as the agent",
+      );
+      const connection = vi.spyOn(service, "relay").mockReturnValue({
+        snapshot: () => ({
+          status: "ready",
+          generation: 1,
+          origin: background.origin,
+          session: background.session,
+        }),
+        subscribe: () => () => {},
+        retry() {},
+        disconnect() {},
+        clearCache: async () => {},
+      });
+      const get = service.tools().find((tool) => tool.name === "page_get");
+      if (!get) throw new Error("Missing page_get");
+      const client = background.client();
+      const result = JSON.parse((await get.call(client, {}, note)) as string);
+      expect(result.markdown).toBe("Read as the agent");
+      expect(connection).toHaveBeenCalledWith(client.key);
+      connection.mockRestore();
+    } finally {
+      background.dispose();
+    }
     expect(pages.snapshot()).toMatchObject([
       {
         id: "notes",
-        title: "Notes",
+        title: "Pages",
         layout: "workspace",
         primary: true,
         placement: "topbar",

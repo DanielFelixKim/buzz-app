@@ -3,12 +3,12 @@ import { watchPageErrors } from "./page-errors.mjs";
 
 async function settleNotePane(page) {
   await expect(
-    page.getByRole("region", { name: "Note details", exact: true }),
+    page.getByRole("region", { name: "Page details", exact: true }),
   ).toBeVisible();
 }
 
 async function disableAutoSave(page, document) {
-  await document.getByRole("button", { name: "Note actions" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
   await page
     .getByRole("menuitem", { name: "Revision history", exact: true })
     .click();
@@ -29,20 +29,20 @@ function floatingPaint(element) {
   };
 }
 
-test("Back and Forward restore note navigation, filters, drafts, dialogs and conversation panes", async ({
+test("Back and Forward restore page navigation, filters, drafts, dialogs and conversation panes", async ({
   page,
 }, testInfo) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
-  const search = page.getByRole("searchbox", { name: "Search notes" });
+  const search = page.getByRole("searchbox", { name: "Search pages" });
   const filter = page.getByRole("button", {
-    name: "Filter notes",
+    name: "Filter pages",
     exact: true,
   });
   await filter.focus();
   await filter.press("Enter");
   const deleted = page.getByRole("menuitemcheckbox", {
-    name: "Show deleted notes",
+    name: "Show deleted pages",
     exact: true,
   });
   await expect(deleted).not.toBeChecked();
@@ -56,19 +56,19 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await filter.click();
   await expect(deleted).toBeChecked();
   await deleted.click();
-  const list = page.getByRole("list", { name: "Notes", exact: true });
+  const list = page.getByRole("list", { name: "Pages", exact: true });
   await expect(list.getByRole("link")).toHaveCount(2);
   await expect(list.getByRole("link").nth(0)).toHaveAttribute(
     "aria-label",
-    "Connected notes plan",
+    "Connected pages plan",
   );
   await expect(list.getByRole("link").nth(1)).toHaveAttribute(
     "aria-label",
     "Storage research",
   );
   await expect(
-    list.getByRole("link", { name: "Connected notes plan", exact: true }),
-  ).toHaveAttribute("href", /^buzz:\/\/note\?/);
+    list.getByRole("link", { name: "Connected pages plan", exact: true }),
+  ).toHaveAttribute("href", /^buzz:\/\/page\?/);
   const measure = await list.evaluate(
     () => 52 * parseFloat(getComputedStyle(document.documentElement).fontSize),
   );
@@ -79,12 +79,12 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   ).toBeLessThan(1);
   const firstTitle = list.getByRole("link").first();
   await expect(firstTitle).toHaveCSS("text-decoration-line", "none");
-  await expect(firstTitle.locator(".text-label-sm")).toHaveCSS(
+  await expect(firstTitle.locator(".text-label")).toHaveCSS(
     "font-weight",
     "500",
   );
   const docIcon = firstTitle.locator("svg");
-  const titleBounds = await firstTitle.locator(".text-label-sm").boundingBox();
+  const titleBounds = await firstTitle.locator(".text-label").boundingBox();
   const iconBounds = await docIcon.boundingBox();
   expect(iconBounds.x + iconBounds.width).toBeLessThan(titleBounds.x);
   expect(
@@ -97,7 +97,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   ).toBeLessThan(1);
   await expect(docIcon).toHaveAttribute("aria-hidden", "true");
   const createBounds = await list
-    .getByRole("button", { name: "New note" })
+    .getByRole("button", { name: "New page" })
     .boundingBox();
   const lastNoteBounds = await list.getByRole("link").last().boundingBox();
   expect(createBounds.y).toBeGreaterThan(
@@ -109,10 +109,10 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   const second = await links[1].boundingBox();
   expect(second.y).toBeGreaterThan(first.y + first.height);
   expect(second.x).toBe(first.x);
-  await search.fill("no matching document");
+  await search.fill("no matching page");
   await search.press("Enter");
   await expect(
-    page.getByRole("status").filter({ hasText: "No matching notes." }),
+    page.getByRole("status").filter({ hasText: "No matching pages." }),
   ).toBeVisible();
   await expect(list.getByRole("link")).toHaveCount(0);
   await search.fill("Storage");
@@ -126,13 +126,13 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await expect(search).not.toBeVisible();
   await settleNotePane(page);
   await expect(
-    page.getByRole("complementary", { name: "Note editor" }),
+    page.getByRole("complementary", { name: "Page editor" }),
   ).toHaveCount(0);
-  await expect(page.getByRole("tablist", { name: "Open notes" })).toHaveCount(
+  await expect(page.getByRole("tablist", { name: "Open pages" })).toHaveCount(
     0,
   );
   const detail = await page
-    .getByRole("region", { name: "Note details", exact: true })
+    .getByRole("region", { name: "Page details", exact: true })
     .boundingBox();
   expect(detail.width).toBeGreaterThan(page.viewportSize().width - 40);
   let document = page.getByRole("article", {
@@ -140,17 +140,17 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     exact: true,
   });
   await expect(
-    document.getByRole("textbox", { name: "Document body", exact: true }),
+    document.getByRole("textbox", { name: "Page body", exact: true }),
   ).toBeFocused();
   await disableAutoSave(page, document);
   await expect(
-    document.getByRole("combobox", { name: "Document mode", exact: true }),
+    document.getByRole("combobox", { name: "Page mode", exact: true }),
   ).toContainText("Editing");
   await document
-    .getByRole("textbox", { name: "Document body", exact: true })
+    .getByRole("textbox", { name: "Page body", exact: true })
     .fill("Keep my unsaved research");
   await page
-    .getByRole("button", { name: "Back to notes", exact: true })
+    .getByRole("button", { name: "Back to pages", exact: true })
     .click();
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("Storage");
@@ -159,26 +159,26 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     .click();
   await expect(document).toContainText("Keep my unsaved research");
   await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Editing", exact: true }).click();
   await expect(
-    document.getByRole("textbox", { name: "Document body", exact: true }),
+    document.getByRole("textbox", { name: "Page body", exact: true }),
   ).toHaveText("Keep my unsaved research");
   await page.goBack();
   await expect(
-    document.getByRole("combobox", { name: "Document mode", exact: true }),
+    document.getByRole("combobox", { name: "Page mode", exact: true }),
   ).toContainText("Viewing");
   await page.goForward();
   await expect(
-    document.getByRole("textbox", { name: "Document body", exact: true }),
+    document.getByRole("textbox", { name: "Page body", exact: true }),
   ).toHaveText("Keep my unsaved research");
   await document
-    .getByRole("button", { name: "Share note", exact: true })
+    .getByRole("button", { name: "Share page", exact: true })
     .click();
   await expect(
     page.getByRole("dialog", { name: "Share access" }),
@@ -192,7 +192,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     page.getByRole("dialog", { name: "Share access" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await document.getByRole("button", { name: "Note actions" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
   await page.getByRole("menuitem", { name: "Revision history" }).click();
   await page
     .getByRole("menu", { name: "Revision history" })
@@ -210,11 +210,11 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page
-    .getByRole("button", { name: "Back to notes", exact: true })
+    .getByRole("button", { name: "Back to pages", exact: true })
     .click();
   await expect(search).toHaveValue("Storage");
-  await page.getByRole("button", { name: "New note", exact: true }).click();
-  const create = page.getByRole("article", { name: "New note", exact: true });
+  await page.getByRole("button", { name: "New page", exact: true }).click();
+  const create = page.getByRole("article", { name: "New page", exact: true });
   await disableAutoSave(page, create);
   await create
     .getByRole("textbox", { name: "Title", exact: true })
@@ -226,37 +226,37 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     create.getByRole("textbox", { name: "Title", exact: true }),
   ).toHaveValue("Draft survives history");
   await page
-    .getByRole("button", { name: "Back to notes", exact: true })
+    .getByRole("button", { name: "Back to pages", exact: true })
     .click();
   await search.fill("Connected");
   await search.press("Enter");
   await page
-    .getByRole("link", { name: "Connected notes plan", exact: true })
+    .getByRole("link", { name: "Connected pages plan", exact: true })
     .click();
   await expect(
-    page.getByRole("article", { name: "Connected notes plan", exact: true }),
+    page.getByRole("article", { name: "Connected pages plan", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("article", { name: "Storage research", exact: true }),
   ).not.toBeVisible();
   await page.goBack();
   await expect(
-    page.getByRole("button", { name: "New note", exact: true }),
+    page.getByRole("button", { name: "New page", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Conversation", exact: true }).click();
   await page
-    .getByRole("link", { name: "Connected notes plan", exact: true })
+    .getByRole("link", { name: "Connected pages plan", exact: true })
     .click();
   document = page.getByRole("article", {
-    name: "Connected notes plan",
+    name: "Connected pages plan",
     exact: true,
   });
   await expect(document).toBeVisible();
   await expect(
-    document.getByRole("combobox", { name: "Document mode", exact: true }),
+    document.getByRole("combobox", { name: "Page mode", exact: true }),
   ).toContainText("Editing");
   await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await document
@@ -277,29 +277,29 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     exact: true,
   });
   await expect(
-    research.getByRole("combobox", { name: "Document mode", exact: true }),
+    research.getByRole("combobox", { name: "Page mode", exact: true }),
   ).toContainText("Editing");
   await research
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await research
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Editing", exact: true }).click();
   await research
-    .getByRole("textbox", { name: "Document body", exact: true })
+    .getByRole("textbox", { name: "Page body", exact: true })
     .fill("Unsaved pane research");
   await page.goBack();
   await expect(
-    research.getByRole("combobox", { name: "Document mode", exact: true }),
+    research.getByRole("combobox", { name: "Page mode", exact: true }),
   ).toContainText("Viewing");
   await page.goForward();
   await expect(
-    research.getByRole("textbox", { name: "Document body", exact: true }),
+    research.getByRole("textbox", { name: "Page body", exact: true }),
   ).toHaveText("Unsaved pane research");
   await research
-    .getByRole("button", { name: "Share note", exact: true })
+    .getByRole("button", { name: "Share page", exact: true })
     .click();
   await expect(
     page.getByRole("dialog", { name: "Share access" }),
@@ -339,7 +339,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await expect(research).not.toBeVisible();
   // Reopening is a fresh visit; closing an inactive sibling keeps it selected.
   await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await document
@@ -350,7 +350,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   expect(reopened).not.toBe(researchVisit);
   await page
     .getByRole("button", {
-      name: "Close Connected notes plan tab",
+      name: "Close Connected pages plan tab",
       exact: true,
     })
     .click();
@@ -370,12 +370,12 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   expect(errors.unexplained()).toEqual([]);
 });
 
-test("human and agents edit, link, share and export the same working note", async ({
+test("human and agents edit, link, share and export the same working page", async ({
   page,
 }, testInfo) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
-  await expect(page.getByRole("button", { name: "New note" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New page" })).toBeVisible();
   const created = await page.evaluate(() =>
     window.workingNotesFixture.agentCreate(
       "Delivery plan",
@@ -383,11 +383,11 @@ test("human and agents edit, link, share and export the same working note", asyn
     ),
   );
   await page
-    .getByRole("button", { name: "Refresh notes", exact: true })
+    .getByRole("button", { name: "Refresh pages", exact: true })
     .click();
   await expect(
     page
-      .getByRole("list", { name: "Notes", exact: true })
+      .getByRole("list", { name: "Pages", exact: true })
       .getByRole("link")
       .first(),
   ).toHaveAttribute("aria-label", "Delivery plan");
@@ -399,19 +399,19 @@ test("human and agents edit, link, share and export the same working note", asyn
   );
   await disableAutoSave(page, document);
   const canvas = document.getByRole("region", {
-    name: "Document content",
+    name: "Page content",
     exact: true,
   });
   const mode = document.getByRole("combobox", {
-    name: "Document mode",
+    name: "Page mode",
     exact: true,
   });
   await expect(mode).toContainText("Editing");
   await expect(
-    document.getByRole("textbox", { name: "Document body", exact: true }),
+    document.getByRole("textbox", { name: "Page body", exact: true }),
   ).toBeVisible();
   const initialBody = document.getByRole("textbox", {
-    name: "Document body",
+    name: "Page body",
     exact: true,
   });
   await initialBody.evaluate((field) => {
@@ -422,7 +422,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   await title.click();
   await expect(title).toBeFocused();
   const initialPage = document.getByRole("region", {
-    name: "Note contents",
+    name: "Page contents",
     exact: true,
   });
   const pageBounds = await initialPage.boundingBox();
@@ -472,16 +472,16 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(document.getByText("Linked from", { exact: true })).toHaveCount(
     0,
   );
-  await document.getByRole("button", { name: "Note actions" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
   await expect(
-    page.getByRole("menuitem", { name: "Linked notes", exact: true }),
+    page.getByRole("menuitem", { name: "Linked pages", exact: true }),
   ).toHaveCount(0);
   const menuPaint = await page
-    .getByRole("menu", { name: "Note actions", exact: true })
+    .getByRole("menu", { name: "Page actions", exact: true })
     .evaluate(floatingPaint);
   await page.keyboard.press("Escape");
   await expect(
-    document.getByRole("button", { name: "Note actions" }),
+    document.getByRole("button", { name: "Page actions" }),
   ).toBeFocused();
   const viewingBounds = await canvas.boundingBox();
   const channelMeasure = await canvas.evaluate(
@@ -494,11 +494,11 @@ test("human and agents edit, link, share and export the same working note", asyn
     ),
   ).toBeLessThan(1);
   const scrollport = document.getByRole("region", {
-    name: "Note contents",
+    name: "Page contents",
     exact: true,
   });
   const toolbar = document.getByRole("group", {
-    name: "Document formatting",
+    name: "Page formatting",
     exact: true,
   });
   await expect(toolbar).toHaveCount(0);
@@ -523,7 +523,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   ).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("viewing.png") });
   await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Editing", exact: true }).click();
 
@@ -571,10 +571,10 @@ test("human and agents edit, link, share and export the same working note", asyn
   ).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("editing-clean.png") });
   await document
-    .getByRole("textbox", { name: "Document body", exact: true })
+    .getByRole("textbox", { name: "Page body", exact: true })
     .focus();
   await document
-    .getByRole("textbox", { name: "Document body", exact: true })
+    .getByRole("textbox", { name: "Page body", exact: true })
     .press("ControlOrMeta+k");
   await expect(page.getByRole("dialog", { name: "Add link" })).toBeVisible();
   await page.goBack();
@@ -582,7 +582,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   await page.goForward();
   await expect(page.getByRole("dialog", { name: "Add link" })).toBeVisible();
   await page
-    .getByRole("combobox", { name: "Note", exact: true })
+    .getByRole("combobox", { name: "Page", exact: true })
     .fill("Delivery plan");
   await page
     .getByRole("option", { name: "Delivery plan", exact: true })
@@ -607,11 +607,11 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(document.getByRole("alert")).toHaveCount(0);
 
   await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Editing", exact: true }).click();
   const longBody = document.getByRole("textbox", {
-    name: "Document body",
+    name: "Page body",
     exact: true,
   });
   await longBody.fill(
@@ -634,10 +634,10 @@ test("human and agents edit, link, share and export the same working note", asyn
     element.scrollTop = 0;
   });
   await document
-    .getByRole("textbox", { name: "Document body", exact: true })
+    .getByRole("textbox", { name: "Page body", exact: true })
     .fill("# Taylor’s revision\n\nReady for another agent.");
   const body = document.getByRole("textbox", {
-    name: "Document body",
+    name: "Page body",
     exact: true,
   });
   await expect(
@@ -658,7 +658,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   expect(saveBounds.width).toBeLessThan(contentBounds.width);
   const modeSaveBounds = await mode.boundingBox();
   const refreshSaveBounds = await document
-    .getByRole("button", { name: "Refresh note", exact: true })
+    .getByRole("button", { name: "Refresh page", exact: true })
     .boundingBox();
   expect(saveBounds.x).toBeGreaterThan(modeSaveBounds.x + modeSaveBounds.width);
   expect(saveBounds.x + saveBounds.width).toBeLessThan(refreshSaveBounds.x);
@@ -681,7 +681,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   await page.getByRole("option", { name: "Editing", exact: true }).click();
   await expect(body.locator("strong")).toHaveText("Ready");
 
-  await document.getByRole("button", { name: "Note actions" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
   await page
     .getByRole("menuitem", { name: "Markdown source", exact: true })
     .click();
@@ -703,7 +703,7 @@ test("human and agents edit, link, share and export the same working note", asyn
       .poll(() =>
         source.evaluate((field) => {
           const bounds = field.getBoundingClientRect();
-          const pane = field.closest('[aria-label="Note contents"]');
+          const pane = field.closest('[aria-label="Page contents"]');
           const style = getComputedStyle(pane);
           return Math.abs(
             pane.getBoundingClientRect().bottom -
@@ -739,7 +739,7 @@ test("human and agents edit, link, share and export the same working note", asyn
         field.selectionEnd === field.value.length,
     ),
   ).toBe(true);
-  await document.getByRole("button", { name: "Note actions" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
   await page
     .getByRole("menuitem", { name: "Formatted text", exact: true })
     .click();
@@ -747,7 +747,7 @@ test("human and agents edit, link, share and export the same working note", asyn
   await expect(body.locator("strong")).toHaveText("Ready");
   await body.press("ArrowRight");
   await body.press("ControlOrMeta+End");
-  await page.screenshot({ path: testInfo.outputPath("document-editing.png") });
+  await page.screenshot({ path: testInfo.outputPath("page-editing.png") });
 
   await body.press("[");
   await body.press("[");
@@ -757,7 +757,7 @@ test("human and agents edit, link, share and export the same working note", asyn
       .getByRole("textbox", { name: "Text", exact: true }),
   ).toHaveValue("");
   await page
-    .getByRole("combobox", { name: "Note", exact: true })
+    .getByRole("combobox", { name: "Page", exact: true })
     .fill("Storage research");
   await page.getByRole("option", { name: "Storage research" }).click();
   await page
@@ -782,18 +782,18 @@ test("human and agents edit, link, share and export the same working note", asyn
   ).toBeVisible();
   await page
     .getByRole("article", { name: "Storage research" })
-    .getByRole("button", { name: "Note actions" })
+    .getByRole("button", { name: "Page actions" })
     .click();
   await page
-    .getByRole("menuitem", { name: "Linked notes", exact: true })
+    .getByRole("menuitem", { name: "Linked pages", exact: true })
     .click();
   await page
-    .getByRole("menu", { name: "Linked notes", exact: true })
+    .getByRole("menu", { name: "Linked pages", exact: true })
     .getByRole("menuitem", { name: "Delivery plan", exact: true })
     .click();
   await expect(document).toBeVisible();
   await document
-    .getByRole("button", { name: "Share note", exact: true })
+    .getByRole("button", { name: "Share page", exact: true })
     .click();
   const sharing = page.getByRole("dialog", { name: "Share access" });
   // Capture the browser clipboard boundary without writing to the host clipboard.
@@ -951,15 +951,15 @@ test("human and agents edit, link, share and export the same working note", asyn
   });
   await page.keyboard.press("Escape");
   await expect(
-    document.getByRole("button", { name: "Share note", exact: true }),
+    document.getByRole("button", { name: "Share page", exact: true }),
   ).toBeFocused();
-  await document.getByRole("button", { name: "Note actions" }).click();
-  await page.getByRole("menuitem", { name: "Copy note link" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
+  await page.getByRole("menuitem", { name: "Copy page link" }).click();
   await expect(
-    document.getByText("Note link copied", { exact: true }),
+    document.getByText("Page link copied", { exact: true }),
   ).toBeVisible();
   expect(await page.evaluate(() => window.noteCopiedLink)).toBe(created.link);
-  await document.getByRole("button", { name: "Note actions" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
   const download = page.waitForEvent("download");
   await page.getByRole("menuitem", { name: "Export Markdown" }).click();
   expect((await download).suggestedFilename()).toBe("Delivery plan.md");
@@ -968,7 +968,7 @@ test("human and agents edit, link, share and export the same working note", asyn
     page.getByRole("separator", { name: "Resize main and secondary panels" }),
   ).toHaveCount(0);
   const fullPaneWidth = await page
-    .getByRole("region", { name: "Note details", exact: true })
+    .getByRole("region", { name: "Page details", exact: true })
     .evaluate((element) => element.clientWidth);
   expect((await document.boundingBox()).width).toBe(fullPaneWidth);
   for (const theme of ["light", "dark"]) {
@@ -984,13 +984,13 @@ test("human and agents edit, link, share and export the same working note", asyn
     });
     await expect(document).toBeVisible();
     await expect(
-      page.getByRole("searchbox", { name: "Search notes" }),
+      page.getByRole("searchbox", { name: "Search pages" }),
     ).not.toBeVisible();
     await page
-      .getByRole("button", { name: "Back to notes", exact: true })
+      .getByRole("button", { name: "Back to pages", exact: true })
       .click();
     await expect(
-      page.getByRole("searchbox", { name: "Search notes" }),
+      page.getByRole("searchbox", { name: "Search pages" }),
     ).toBeFocused();
     await page.screenshot({
       path: testInfo.outputPath(`notes-list-narrow-${theme}.png`),
@@ -1025,40 +1025,40 @@ test("human and agents edit, link, share and export the same working note", asyn
   expect(errors.unexplained()).toEqual([]);
 });
 
-test("creates, deletes and restores a working note through the editor", async ({
+test("creates, deletes and restores a working page through the editor", async ({
   page,
 }) => {
   const errors = watchPageErrors(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/tests/fixtures/working-notes.html");
   await page.evaluate(() => window.workingNotesFixture.unverifyCarl());
-  await page.getByRole("button", { name: "New note", exact: true }).click();
-  const create = page.getByRole("article", { name: "New note", exact: true });
+  await page.getByRole("button", { name: "New page", exact: true }).click();
+  const create = page.getByRole("article", { name: "New page", exact: true });
   await create
     .getByRole("textbox", { name: "Title", exact: true })
     .fill("Research draft");
   await create
-    .getByRole("textbox", { name: "Document body", exact: true })
+    .getByRole("textbox", { name: "Page body", exact: true })
     .fill("A durable finding.");
   await expect(
     create.getByText(/These agents could not be verified/),
   ).toHaveCount(0);
   const document = page.getByRole("article", { name: "Research draft" });
   await expect(
-    document.getByRole("combobox", { name: "Document mode", exact: true }),
+    document.getByRole("combobox", { name: "Page mode", exact: true }),
   ).toContainText("Editing");
   await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Viewing", exact: true }).click();
   await expect(
-    page.getByRole("searchbox", { name: "Search notes" }),
+    page.getByRole("searchbox", { name: "Search pages" }),
   ).not.toBeVisible();
   await page
-    .getByRole("button", { name: "Back to notes", exact: true })
+    .getByRole("button", { name: "Back to pages", exact: true })
     .click();
   await expect(
-    page.getByRole("searchbox", { name: "Search notes" }),
+    page.getByRole("searchbox", { name: "Search pages" }),
   ).toBeVisible();
   await page.goBack();
   await expect(document).toBeVisible();
@@ -1069,14 +1069,14 @@ test("creates, deletes and restores a working note through the editor", async ({
       .filter({ hasText: /^A durable finding\.$/ }),
   ).toBeVisible();
   await document
-    .getByRole("button", { name: "Note actions", exact: true })
+    .getByRole("button", { name: "Page actions", exact: true })
     .click();
   await page
-    .getByRole("menuitem", { name: "Delete note", exact: true })
+    .getByRole("menuitem", { name: "Delete page", exact: true })
     .click();
   await page
-    .getByRole("dialog", { name: "Delete this note?" })
-    .getByRole("button", { name: "Delete note", exact: true })
+    .getByRole("dialog", { name: "Delete this page?" })
+    .getByRole("button", { name: "Delete page", exact: true })
     .click();
   const deletedNote = page.getByRole("article", { name: "Research draft" });
   await expect(
@@ -1099,23 +1099,23 @@ test("creates, deletes and restores a working note through the editor", async ({
   expect(errors.unexplained()).toEqual([]);
 });
 
-test("discovers only channel-backed notes while leaving published records untouched", async ({
+test("discovers only channel-backed pages while leaving published records untouched", async ({
   page,
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
-  const list = page.getByRole("list", { name: "Notes", exact: true });
+  const list = page.getByRole("list", { name: "Pages", exact: true });
   await expect(list.getByRole("link")).toHaveCount(2);
   await expect(list.getByRole("link").nth(0)).toHaveAttribute(
     "aria-label",
-    "Connected notes plan",
+    "Connected pages plan",
   );
   await expect(list.getByRole("link").nth(1)).toHaveAttribute(
     "aria-label",
     "Storage research",
   );
   await expect(
-    page.getByRole("button", { name: "Refresh notes", exact: true }),
+    page.getByRole("button", { name: "Refresh pages", exact: true }),
   ).toHaveAttribute("aria-busy", "false");
   const published = await page.evaluate(() =>
     window.workingNotesFixture.legacy(),
@@ -1124,11 +1124,11 @@ test("discovers only channel-backed notes while leaving published records untouc
   await page.evaluate(() =>
     window.workingNotesFixture.agentCreate(
       "Agent research",
-      "Written in a private note channel.",
+      "Written in a private page channel.",
     ),
   );
   await page
-    .getByRole("button", { name: "Refresh notes", exact: true })
+    .getByRole("button", { name: "Refresh pages", exact: true })
     .click();
   await expect(list.getByRole("link").first()).toHaveAttribute(
     "aria-label",
@@ -1141,12 +1141,12 @@ test("discovers only channel-backed notes while leaving published records untouc
   });
   await expect(note).toContainText("Carl");
   await expect(note).toContainText("Saved");
-  await expect(note).toContainText("Written in a private note channel.");
+  await expect(note).toContainText("Written in a private page channel.");
   await expect(
-    note.getByRole("combobox", { name: "Document mode", exact: true }),
+    note.getByRole("combobox", { name: "Page mode", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Back to notes", exact: true })
+    .getByRole("button", { name: "Back to pages", exact: true })
     .click();
   await expect(list.getByRole("link")).toHaveCount(3);
   await expect(
@@ -1166,22 +1166,22 @@ test("discovers only channel-backed notes while leaving published records untouc
   expect(errors.unexplained()).toEqual([]);
 });
 
-test("preserves a conflicting draft and opens note links in the conversation’s right pane", async ({
+test("preserves a conflicting draft and opens page links in the conversation’s right pane", async ({
   page,
 }, testInfo) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
   await page
-    .getByRole("link", { name: "Connected notes plan", exact: true })
+    .getByRole("link", { name: "Connected pages plan", exact: true })
     .click();
-  const document = page.getByRole("article", { name: "Connected notes plan" });
+  const document = page.getByRole("article", { name: "Connected pages plan" });
   await disableAutoSave(page, document);
   await document
-    .getByRole("combobox", { name: "Document mode", exact: true })
+    .getByRole("combobox", { name: "Page mode", exact: true })
     .click();
   await page.getByRole("option", { name: "Editing", exact: true }).click();
   await document
-    .getByRole("textbox", { name: "Document body", exact: true })
+    .getByRole("textbox", { name: "Page body", exact: true })
     .fill("My unsaved draft");
   await page.evaluate(() =>
     window.workingNotesFixture.agentEdit(
@@ -1191,24 +1191,24 @@ test("preserves a conflicting draft and opens note links in the conversation’s
   );
   await document.getByRole("button", { name: "Save", exact: true }).click();
   const conflict = page.getByRole("dialog", {
-    name: "This note has a newer revision",
+    name: "This page has a newer revision",
   });
   await expect(conflict).toContainText("Carl’s concurrent revision");
   await conflict
     .getByRole("button", { name: "I’ve compared; keep my draft" })
     .click();
   await expect(
-    document.getByRole("textbox", { name: "Document body", exact: true }),
+    document.getByRole("textbox", { name: "Page body", exact: true }),
   ).toHaveText("My unsaved draft");
   await document.getByRole("button", { name: "Save", exact: true }).click();
   await expect(document.getByRole("status")).toHaveText(/^Saved /);
   await page.getByRole("button", { name: "Conversation", exact: true }).click();
   await page
-    .getByRole("link", { name: "Connected notes plan", exact: true })
+    .getByRole("link", { name: "Connected pages plan", exact: true })
     .click();
   await expect(page.getByRole("textbox", { name: /message/i })).toBeVisible();
   await expect(
-    page.getByRole("article", { name: "Connected notes plan" }),
+    page.getByRole("article", { name: "Connected pages plan" }),
   ).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("note-beside-conversation.png"),
@@ -1224,14 +1224,14 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
   await page
-    .getByRole("link", { name: "Connected notes plan", exact: true })
+    .getByRole("link", { name: "Connected pages plan", exact: true })
     .click();
   const document = page.getByRole("article", {
-    name: "Connected notes plan",
+    name: "Connected pages plan",
     exact: true,
   });
   const body = document.getByRole("textbox", {
-    name: "Document body",
+    name: "Page body",
     exact: true,
   });
   await body.fill("Automatically saved body");
@@ -1248,7 +1248,7 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   await expect(document.getByRole("status")).toHaveText(/^Saved /);
   await expect(body).toBeFocused();
   await expect(
-    document.getByRole("combobox", { name: "Document mode" }),
+    document.getByRole("combobox", { name: "Page mode" }),
   ).toContainText("Editing");
   await expect(
     document.getByRole("button", { name: "Save", exact: true }),
@@ -1275,7 +1275,7 @@ test("auto-saves the editor without losing focus and animates manual Save into t
         const save = [...article.querySelectorAll("button")].find(
           (button) => button.textContent === "Save",
         );
-        const refresh = article.querySelector('[aria-label="Refresh note"]');
+        const refresh = article.querySelector('[aria-label="Refresh page"]');
         return (
           !!mode &&
           !!save &&
@@ -1293,10 +1293,10 @@ test("auto-saves the editor without losing focus and animates manual Save into t
       expect(order).toBe(true);
       const saveBox = await save.boundingBox();
       const modeBox = await document
-        .getByRole("combobox", { name: "Document mode" })
+        .getByRole("combobox", { name: "Page mode" })
         .boundingBox();
       const refreshBox = await document
-        .getByRole("button", { name: "Refresh note" })
+        .getByRole("button", { name: "Refresh page" })
         .boundingBox();
       expect(saveBox.x).toBeGreaterThan(modeBox.x + modeBox.width);
       expect(saveBox.x + saveBox.width).toBeLessThan(refreshBox.x);
@@ -1317,11 +1317,11 @@ test("auto-saves the editor without losing focus and animates manual Save into t
     )
     .toBe("Manual body");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await document.getByRole("combobox", { name: "Document mode" }).click();
+  await document.getByRole("combobox", { name: "Page mode" }).click();
   await page.getByRole("option", { name: "Editing", exact: true }).click();
   await body.fill("Reduced motion draft");
   await expect(save).toBeVisible();
-  await document.getByRole("button", { name: "Note actions" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
   await page
     .getByRole("menuitem", { name: "Revision history", exact: true })
     .click();
@@ -1341,11 +1341,11 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   // First-save creation crosses from the blank draft to its accepted address.
   // Native rich-editor selection and history replacement need a browser.
   await page
-    .getByRole("button", { name: "Back to notes", exact: true })
+    .getByRole("button", { name: "Back to pages", exact: true })
     .click();
-  await page.getByRole("button", { name: "New note", exact: true }).click();
-  const fresh = page.getByRole("article", { name: "New note", exact: true });
-  await expect(page.getByRole("dialog", { name: "New note" })).toHaveCount(0);
+  await page.getByRole("button", { name: "New page", exact: true }).click();
+  const fresh = page.getByRole("article", { name: "New page", exact: true });
+  await expect(page.getByRole("dialog", { name: "New page" })).toHaveCount(0);
   await expect(
     fresh.getByRole("textbox", { name: "Title", exact: true }),
   ).toBeFocused();
@@ -1355,17 +1355,17 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   await expect(fresh.getByRole("status")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("fresh-note.png") });
   const freshBody = fresh.getByRole("textbox", {
-    name: "Document body",
+    name: "Page body",
     exact: true,
   });
   await freshBody.fill("A fresh thought");
   await freshBody.evaluate((field) => field.setSelectionRange(2, 7));
   const savedNew = page.getByRole("article", {
-    name: "Untitled note",
+    name: "Untitled page",
     exact: true,
   });
   const savedBody = savedNew.getByRole("textbox", {
-    name: "Document body",
+    name: "Page body",
     exact: true,
   });
   await expect(savedNew.getByRole("status")).toHaveText(/^Saved /);
@@ -1380,20 +1380,20 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   const createdAddress = await page.evaluate(
     () => window.workingNotesFixture.navigation().entry.target.route.params,
   );
-  expect(createdAddress.view).toBe("note");
+  expect(createdAddress.view).toBe("page");
   await page.goBack();
   await expect(
-    page.getByRole("button", { name: "New note", exact: true }),
+    page.getByRole("button", { name: "New page", exact: true }),
   ).toBeVisible();
   await page.goForward();
   await expect(savedBody).toHaveText("A fresh thought");
   await page
-    .getByRole("button", { name: "Back to notes", exact: true })
+    .getByRole("button", { name: "Back to pages", exact: true })
     .click();
-  await page.getByRole("button", { name: "New note", exact: true }).click();
+  await page.getByRole("button", { name: "New page", exact: true }).click();
   await page
-    .getByRole("article", { name: "New note", exact: true })
-    .getByRole("button", { name: "Share note", exact: true })
+    .getByRole("article", { name: "New page", exact: true })
+    .getByRole("button", { name: "Share page", exact: true })
     .click();
   const explicitShare = page.getByRole("dialog", {
     name: "Share access",
@@ -1410,8 +1410,8 @@ test("auto-saves the editor without losing focus and animates manual Save into t
     .click();
   await expect(
     page
-      .getByRole("article", { name: "Untitled note", exact: true })
-      .getByRole("textbox", { name: "Document body", exact: true }),
+      .getByRole("article", { name: "Untitled page", exact: true })
+      .getByRole("textbox", { name: "Page body", exact: true }),
   ).toHaveText("");
   expect(errors.unexplained()).toEqual([]);
 });
@@ -1421,33 +1421,33 @@ test("reader access hides editing while preserving history", async ({
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/working-notes.html");
-  await expect(page.getByRole("button", { name: "New note" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New page" })).toBeVisible();
   await page.evaluate(() =>
     window.workingNotesFixture.makeReader(window.workingNotesFixture.plan),
   );
   await page
-    .getByRole("link", { name: "Connected notes plan", exact: true })
+    .getByRole("link", { name: "Connected pages plan", exact: true })
     .click();
-  const document = page.getByRole("article", { name: "Connected notes plan" });
+  const document = page.getByRole("article", { name: "Connected pages plan" });
   await expect(document.getByText("You have read access.")).toBeVisible();
   await expect(
-    document.getByRole("combobox", { name: "Document mode", exact: true }),
+    document.getByRole("combobox", { name: "Page mode", exact: true }),
   ).toHaveCount(0);
   await expect(
-    document.getByRole("textbox", { name: "Document body", exact: true }),
+    document.getByRole("textbox", { name: "Page body", exact: true }),
   ).toHaveCount(0);
   await expect(
-    document.getByRole("group", { name: "Document formatting", exact: true }),
+    document.getByRole("group", { name: "Page formatting", exact: true }),
   ).toHaveCount(0);
-  await document.getByRole("button", { name: "Note actions" }).click();
+  await document.getByRole("button", { name: "Page actions" }).click();
   await page.getByRole("menuitem", { name: "Revision history" }).click();
   await page
     .getByRole("menu", { name: "Revision history" })
-    .getByRole("menuitem", { name: /Connected notes plan/ })
+    .getByRole("menuitem", { name: /Connected pages plan/ })
     .click();
   await expect(
     page.getByRole("dialog", { name: "Revision preview" }),
-  ).toContainText("Connected notes plan");
+  ).toContainText("Connected pages plan");
   await expect(
     page.getByRole("button", { name: "Restore this version" }),
   ).toHaveCount(0);
@@ -1455,13 +1455,13 @@ test("reader access hides editing while preserving history", async ({
   await page.evaluate(() =>
     window.workingNotesFixture.revoke(window.workingNotesFixture.plan),
   );
-  await document.getByRole("button", { name: "Refresh note" }).click();
+  await document.getByRole("button", { name: "Refresh page" }).click();
   await expect(
-    page.getByRole("article", { name: "Working note" }).getByRole("alert"),
+    page.getByRole("article", { name: "Working page" }).getByRole("alert"),
   ).toBeVisible();
   await expect(
     page
-      .getByRole("article", { name: "Working note" })
+      .getByRole("article", { name: "Working page" })
       .getByText("A working plan for people and their agents."),
   ).toHaveCount(0);
   expect(errors.unexplained()).toEqual([]);

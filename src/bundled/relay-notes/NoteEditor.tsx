@@ -121,7 +121,7 @@ export function NoteEditor({
         createPortal(
           <fieldset
             className={styles.editorToolbar}
-            aria-label="Document formatting"
+            aria-label="Page formatting"
           >
             <ComposerFormattingTools
               persistent
@@ -135,7 +135,7 @@ export function NoteEditor({
           </fieldset>,
           toolbarTarget,
         )}
-      <section className={styles.editorBody} aria-label="Document content">
+      <section className={styles.editorBody} aria-label="Page content">
         <div hidden={!editing}>
           {source ? (
             <Textarea
@@ -165,8 +165,8 @@ export function NoteEditor({
                 draft={draft}
                 value={draft.text}
                 disabled={disabled || !editing}
-                placeholder="Write your document…"
-                aria-label="Document body"
+                placeholder="Write your page…"
+                aria-label="Page body"
                 maxLength={MAX_NOTE_BYTES}
                 decorationsFor={noDecorations}
                 onDraftChange={(next) => {

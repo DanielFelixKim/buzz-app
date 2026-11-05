@@ -12,6 +12,7 @@ import {
   noteTag,
   noteAddress,
   noteUrl,
+  parseNoteUrl,
   readNote,
   readNoteHistory,
   saveNote,
@@ -19,6 +20,7 @@ import {
   type NoteRead,
 } from "./model";
 import { readNotesPage, type NotesWorkspace } from "./workspace";
+import agentGuide from "./agent-guide.md?raw";
 
 const str = { type: "string" };
 const addressFields = { id: str, channel: str };
@@ -44,17 +46,17 @@ const format = (note: Note, community: string) =>
 /** Reads and content writes always use the caller's custody/relay connection.
  * The owner's coordinator allocates new storage and admits only the verified creating agent. */
 export function noteTools(
-  current: () => NotesWorkspace | undefined,
+  current: (client: BuzzClient) => NotesWorkspace | undefined,
 ): AddedTool[] {
   function workspace(client: BuzzClient) {
-    const value = current();
+    const value = current(client);
     if (
       !value ||
       value.session.viewer !== client.owner ||
       value.session.relayAuthor !== client.relayAuthor
     )
       throw new Error(
-        "Working notes require this agent’s owning community to be connected.",
+        "Working pages require this agent’s owning community to be connected.",
       );
     return value;
   }
@@ -64,7 +66,7 @@ export function noteTools(
     const value = workspace(client);
     if (!value.session.configArtifactWriter)
       throw new Error(
-        "This connection does not advertise working-note revision support.",
+        "This connection does not advertise working-page revision support.",
       );
     return value;
   };
@@ -89,10 +91,19 @@ export function noteTools(
   }
   return [
     tool(
-      "note_get",
-      "Read a connected working note by id and channel, or list accessible notes. Includes its revision for safe saving. Existing NIP-23 shared notes still use notes_get. Listing is paged; pass the returned cursor.",
+      "page_help",
+      "Learn to use Pages. Start here for buzz://page or legacy buzz://note links, reading and updating shared pages, revision conflicts, permissions, or missing tools. Use page_* tools for these pages; Canvas and published notes_* tools read different content.",
+      {},
+      [],
+      async () => agentGuide,
+    ),
+    tool(
+      "page_get",
+      "Read a working page from its buzz://page or legacy buzz://note URL, or id and channel. Search accessible pages by title with q, or omit arguments to list. Search/listing are paged; keep q and pass the returned cursor. Results include links and revisions for page_set. For guidance use page_help. Published agent notes still use notes_get.",
       {
         ...addressFields,
+        url: str,
+        q: str,
         cursor: {
           type: "object",
           properties: { until: { type: "integer" }, before_id: str },
@@ -102,13 +113,39 @@ export function noteTools(
       },
       [],
       async (client, _context, args) => {
-        if (args.id !== undefined || args.channel !== undefined) {
-          const address = noteAddress(args);
-          return format(
-            await readNote(asReader(client), address),
-            community(client),
-          );
+        const origin = community(client);
+        if (
+          args.url !== undefined ||
+          args.id !== undefined ||
+          args.channel !== undefined
+        ) {
+          if (args.q !== undefined || args.cursor !== undefined)
+            throw new Error(
+              "Read a page address or search/list pages, not both.",
+            );
+          const linked =
+            args.url === undefined
+              ? undefined
+              : parseNoteUrl(string(args, "url"));
+          if (
+            args.url !== undefined &&
+            (!linked || args.id !== undefined || args.channel !== undefined)
+          )
+            throw new Error("Provide one valid page URL, or id and channel.");
+          if (linked && linked.community !== origin)
+            throw new Error(
+              `This page belongs to ${linked.community}; this agent is connected to ${origin}. Ask from the page’s community.`,
+            );
+          const address = linked ?? noteAddress(args);
+          return format(await readNote(asReader(client), address), origin);
         }
+        if (
+          args.q !== undefined &&
+          (typeof args.q !== "string" || args.q.length > 512)
+        )
+          throw new Error("Use a title query of at most 512 characters.");
+        const query =
+          typeof args.q === "string" ? args.q.trim().toLowerCase() : "";
         const page = await readNotesPage(
           asReader(client),
           client.pubkey,
@@ -116,21 +153,24 @@ export function noteTools(
           args.cursor as Parameters<typeof readNotesPage>[3],
         );
         return JSON.stringify({
-          notes: page.notes.map((note) => ({
-            id: note.id,
-            channel: note.channel,
-            revision: note.revision,
-            title: note.title,
-            deleted: note.deleted,
-          })),
+          pages: page.notes
+            .filter((note) => note.title.toLowerCase().includes(query))
+            .map((note) => ({
+              id: note.id,
+              channel: note.channel,
+              revision: note.revision,
+              title: note.title,
+              deleted: note.deleted,
+              link: noteUrl(note, origin),
+            })),
           more: page.more,
           ...(page.more ? { cursor: page.cursor } : {}),
         });
       },
     ),
     tool(
-      "note_set",
-      "Create or edit a connected Markdown working note. For creation omit channel/revision, supply a new UUID id, and reuse it on retries; only the owner and creating agent receive access. Invite others explicitly with note_share or the Share dialog. For editing, supply channel and the revision from note_get; stale saves fail and preserve your text. Pass text or a local UTF-8 path.",
+      "page_set",
+      "Create or edit a connected Markdown working page. For creation omit channel/revision, supply a new UUID id, and reuse it on retries; only the owner and creating agent receive access. Invite others explicitly with page_share or the Share dialog. For editing, supply channel and the revision from page_get; stale saves fail and preserve your text. Pass text or a local UTF-8 path.",
       { ...addressFields, revision: str, title: str, text: str, path: str },
       ["id", "title"],
       async (client, _context, args) => {
@@ -170,8 +210,8 @@ export function noteTools(
       },
     ),
     tool(
-      "note_history",
-      "Read retained revisions of a connected note. Access is the same as the current note; offset pages are 100 revisions. To restore an older version, read it, then note_set its contents against the current revision.",
+      "page_history",
+      "Read retained revisions of a connected page. Access is the same as the current page; offset pages are 100 revisions. To restore an older version, read it, then page_set its contents against the current revision.",
       {
         ...addressFields,
         offset: { type: "integer", minimum: 0, maximum: 10000 },
@@ -187,8 +227,8 @@ export function noteTools(
         ),
     ),
     tool(
-      "note_delete",
-      "Soft-delete or restore a connected note using its current revision. Restoring requires a title and Markdown text. The backing channel and sharing are retained.",
+      "page_delete",
+      "Soft-delete or restore a connected page using its current revision. Restoring requires a title and Markdown text. The backing channel and sharing are retained.",
       {
         ...addressFields,
         revision: str,
@@ -220,8 +260,8 @@ export function noteTools(
       },
     ),
     tool(
-      "note_share",
-      "Explicitly give a person/agent read or edit access to a connected note, or remove them. Requires the calling agent’s channel administration permission; never borrows the owner’s authority. Readers receive retained history too.",
+      "page_share",
+      "Explicitly give a person/agent read or edit access to a connected page, or remove them. Requires the calling agent’s channel administration permission; never borrows the owner’s authority. Readers receive retained history too.",
       {
         ...addressFields,
         pubkey: str,
@@ -257,9 +297,7 @@ export function noteTools(
               noteTag(event, "d") === address.channel,
           );
           if (!independentNoteStorage(address, metadata))
-            throw new Error(
-              "This document does not use independent note sharing.",
-            );
+            throw new Error("This page does not use independent page sharing.");
           return {
             metadata,
             authority: memberAuthority(
@@ -276,7 +314,7 @@ export function noteTools(
           pubkey === client.pubkey ||
           before.authority.roles[pubkey] === "owner"
         )
-          throw new Error("This agent cannot administer the note’s sharing.");
+          throw new Error("This agent cannot administer the page’s sharing.");
         const heads = await client.query([
           {
             kinds: [NOTE_KIND],
@@ -291,7 +329,7 @@ export function noteTools(
           noteTag(heads[0], "d") !== address.id
         )
           throw new Error(
-            "This storage contains other documents. Create a separate working copy before sharing this note.",
+            "This storage contains other pages. Create a separate working copy before sharing this page.",
           );
         const role = access === "read" ? "guest" : "member";
         await client.publish({
@@ -314,7 +352,7 @@ export function noteTools(
           throw new Error(
             "Sharing was not confirmed. Read access before retrying.",
           );
-        return "Note access updated.";
+        return "Page access updated.";
       },
     ),
   ];

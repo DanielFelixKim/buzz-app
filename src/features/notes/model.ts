@@ -77,7 +77,7 @@ export function noteAddress(value: unknown): NoteAddress {
     typeof address.channel !== "string" ||
     !UUID.test(address.channel)
   )
-    throw new Error("Invalid note address.");
+    throw new Error("Invalid page address.");
   return { id: address.id, channel: address.channel };
 }
 /** Storage convention only; callers establish signed membership independently. */
@@ -143,7 +143,7 @@ export function parseNote(event: NoteEvent): Note | undefined {
     id,
     channel,
     revision: event.id,
-    title: deleted ? "Deleted note" : (title ?? ""),
+    title: deleted ? "Deleted page" : (title ?? ""),
     markdown: event.content,
     deleted,
     editable:
@@ -155,9 +155,9 @@ export function parseNote(event: NoteEvent): Note | undefined {
 }
 export function validateDraft(draft: NoteDraft) {
   if (!draft.title.trim() || bytes(draft.title) > 512)
-    throw new Error("Give the note a title of at most 512 bytes.");
+    throw new Error("Give the page a title of at most 512 bytes.");
   if (bytes(draft.markdown) > MAX_NOTE_BYTES)
-    throw new Error("Keep this note under 32 KiB of Markdown.");
+    throw new Error("Keep this page under 32 KiB of Markdown.");
 }
 export function noteTemplate(
   address: NoteAddress,
@@ -174,9 +174,9 @@ export function noteTemplate(
     (previous &&
       (previous.id !== address.id || previous.channel !== address.channel))
   )
-    throw new Error("The note revision does not match this document.");
+    throw new Error("The page revision does not match this page.");
   if (previous && !previous.editable)
-    throw new Error("This note uses an unsupported document format.");
+    throw new Error("This page uses an unsupported page format.");
   const source = draft.restoreFrom;
   if (
     source &&
@@ -186,7 +186,7 @@ export function noteTemplate(
       !source.editable ||
       source.deleted)
   )
-    throw new Error("Choose a supported revision of this note to restore.");
+    throw new Error("Choose a supported revision of this page to restore.");
   const extra =
     operation === "delete"
       ? []
@@ -215,7 +215,7 @@ export function noteTemplate(
     tags,
   };
   if (tags.length > 250 || bytes(JSON.stringify(template)) > 60_000)
-    throw new Error("This note and its metadata exceed the save limit.");
+    throw new Error("This page and its metadata exceed the save limit.");
   return template;
 }
 
@@ -242,16 +242,16 @@ export async function readNote(
   signal?.throwIfAborted();
   const [event] = events;
   if (events.length !== 1 || !event)
-    throw new Error("This note is unavailable or you no longer have access.");
+    throw new Error("This page is unavailable or you no longer have access.");
   const note = parseNote(event);
   if (!note || note.id !== address.id || note.channel !== address.channel)
-    throw new Error("The relay returned an unsupported note.");
+    throw new Error("The relay returned an unsupported page.");
   return note;
 }
 export class NoteConflict extends Error {
   constructor(readonly current: Note) {
     super(
-      "This note changed since you opened it. Your draft is kept; compare it with the latest revision before saving again.",
+      "This page changed since you opened it. Your draft is kept; compare it with the latest revision before saving again.",
     );
   }
 }
@@ -269,7 +269,7 @@ export async function saveNote(
     (operation === "update" && base.deleted) ||
     (operation === "restore" && !base.deleted)
   )
-    throw new Error("Refresh the note before changing its deletion state.");
+    throw new Error("Refresh the page before changing its deletion state.");
   let saved: NoteEvent;
   try {
     saved = await publish(noteTemplate(base, draft, base, operation), signal);
@@ -286,7 +286,7 @@ export async function saveNote(
 }
 export function noteUrl(address: NoteAddress, community: string) {
   noteAddress(address);
-  const url = new URL("buzz://note");
+  const url = new URL("buzz://page");
   url.searchParams.set("community", relayOrigin(community));
   url.searchParams.set("channel", address.channel);
   url.searchParams.set("id", address.id);
@@ -298,12 +298,12 @@ export function parseNoteUrl(
   try {
     const url = new URL(value);
     if (
-      !/^buzz:\/\/note\/?\?/i.test(value) ||
+      !/^buzz:\/\/(?:page|document|note)\/?\?/i.test(value) ||
       url.username ||
       url.password ||
       url.port ||
       url.protocol !== "buzz:" ||
-      url.hostname !== "note" ||
+      !["page", "document", "note"].includes(url.hostname) ||
       (url.pathname && url.pathname !== "/") ||
       url.hash ||
       [...url.searchParams.keys()].sort().join() !== "channel,community,id"

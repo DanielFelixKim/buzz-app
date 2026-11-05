@@ -270,17 +270,17 @@ it("accepts a remote revision while clean and editing, then preserves a dirty dr
   });
   expect(f.title).toHaveValue("My newer draft");
   expect(
-    screen.getByRole("dialog", { name: "This note has a newer revision" }),
+    screen.getByRole("dialog", { name: "This page has a newer revision" }),
   ).toBeVisible();
   await advance(15_000);
   expect(f.save).not.toHaveBeenCalled();
 });
 
-it("persists Disable auto-save per note and account, cancels the timer, and keeps manual Save in action order", async () => {
+it("persists Disable auto-save per page and account, cancels the timer, and keeps manual Save in action order", async () => {
   const f = await fixture();
   f.change("Manual plan");
   await advance(1000);
-  fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+  fireEvent.click(screen.getByRole("button", { name: "Page actions" }));
   await advance(0);
   expect(
     screen.queryByRole("menuitem", { name: "Disable auto-save" }),
@@ -292,8 +292,8 @@ it("persists Disable auto-save per note and account, cancels the timer, and keep
   expect(f.save).not.toHaveBeenCalled();
   expect(readView(f.session.scope, f.preference, true)).toBe(false);
   const manual = screen.getByRole("button", { name: /^Save$/ });
-  const mode = screen.getByRole("combobox", { name: "Document mode" });
-  const refresh = screen.getByRole("button", { name: "Refresh note" });
+  const mode = screen.getByRole("combobox", { name: "Page mode" });
+  const refresh = screen.getByRole("button", { name: "Refresh page" });
   expect(
     mode.compareDocumentPosition(manual) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
@@ -306,15 +306,15 @@ it("persists Disable auto-save per note and account, cancels the timer, and keep
   f.view.unmount();
   vi.useRealTimers();
   f.mount();
-  await screen.findByRole("button", { name: "Note actions" });
-  fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+  await screen.findByRole("button", { name: "Page actions" });
+  fireEvent.click(screen.getByRole("button", { name: "Page actions" }));
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Revision history" }),
   );
   expect(
     await screen.findByRole("menuitem", { name: "Enable auto-save" }),
   ).toBeVisible();
-  const other = f.seed("Other note", "Body");
+  const other = f.seed("Other page", "Body");
   expect(
     readView(f.session.scope, `note-auto-save:${noteKey(other)}`, true),
   ).toBe(true);
@@ -331,7 +331,7 @@ it("preserves a concurrent draft and does not overwrite until the user resolves 
   await advance(1500);
   await saved(f.save).catch(() => {});
   expect(
-    screen.getByRole("dialog", { name: "This note has a newer revision" }),
+    screen.getByRole("dialog", { name: "This page has a newer revision" }),
   ).toBeVisible();
   expect(f.title).toHaveValue("My draft");
   await advance(30_000);
@@ -365,13 +365,13 @@ async function historyFixture(automatic = false, deleted = false) {
     { title: "New plan", markdown: deleted ? "" : "New body" },
     deleted ? "delete" : "update",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Refresh note" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh page" }));
   if (deleted) await screen.findByRole("button", { name: "Restore" });
   else await waitFor(() => expect(f.title).toHaveValue("New plan"));
   return { ...f, current };
 }
 async function previewOriginal() {
-  fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+  fireEvent.click(screen.getByRole("button", { name: "Page actions" }));
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Revision history" }),
   );
@@ -495,11 +495,11 @@ it("preserves a draft when another author wins before restore", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "Replace and restore" }),
   );
-  await screen.findByRole("dialog", { name: "This note has a newer revision" });
+  await screen.findByRole("dialog", { name: "This page has a newer revision" });
   expect(f.title).toHaveValue("My pending draft");
   expect((await f.workspace.open(f.note)).title).toBe("Remote winner");
 });
-it("restores a deleted note directly from a retained version", async () => {
+it("restores a deleted page directly from a retained version", async () => {
   const f = await historyFixture(false, true);
   const preview = await previewOriginal();
   fireEvent.click(
@@ -513,7 +513,7 @@ it("restores a deleted note directly from a retained version", async () => {
   expect(f.save.mock.calls[0]?.[1].restoreFrom?.revision).toBe(f.note.revision);
 });
 
-it("previews the last content of a deleted note and restores it in one click after a failed write", async () => {
+it("previews the last content of a deleted page and restores it in one click after a failed write", async () => {
   const f = await historyFixture(false, true);
   await screen.findByText("Original body");
   expect(screen.getByRole("status")).toHaveTextContent("Deleted");

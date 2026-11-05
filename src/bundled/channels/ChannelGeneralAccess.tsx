@@ -346,8 +346,8 @@ function ChannelGeneralAccessEditor({
             description={[
               subject === "note" && choice.visibility !== base.visibility
                 ? choice.visibility === "public"
-                  ? "Everyone in this community will be able to read this note and all retained revisions."
-                  : "Only people added to this note will have access."
+                  ? "Everyone in this community will be able to read this page and all retained revisions."
+                  : "Only people added to this page will have access."
                 : solo && choice.visibility === "public"
                 ? SOLO_ACCESS_DISCLOSURE
                 : choice.visibility !== base.visibility

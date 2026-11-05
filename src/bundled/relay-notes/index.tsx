@@ -36,8 +36,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       workspaces.clear();
     };
   });
-  for (const tool of noteTools(() => {
-    const connection = relay.snapshot();
+  for (const tool of noteTools((client) => {
+    const connection =
+      ctx.agents.relay(client.key)?.snapshot() ?? relay.snapshot();
     return connection.status === "ready"
       ? getWorkspace(connection.session)
       : undefined;
@@ -45,7 +46,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.agents.addTool(tool);
   ctx.panels.register({
     id: "note",
-    title: "Note",
+    title: "Page",
     keepOpen: true,
     channelPlacement: "tab",
     matches: (target) => !!parseNoteUrl(target),
@@ -61,7 +62,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   ctx.pages.register({
     id: "notes",
-    title: "Notes",
+    title: "Pages",
     layout: "workspace",
     primary: true,
     placement: "topbar",

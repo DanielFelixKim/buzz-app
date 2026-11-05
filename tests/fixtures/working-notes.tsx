@@ -36,10 +36,10 @@ import "../../src/shared/styles/globals.css";
 const f = await notesFixture();
 const research = f.seed(
   "Storage research",
-  "# Findings\n\nEach working note has its own private system channel.\n\n- Stable document identity\n- Retained revisions\n- Explicit sharing",
+  "# Findings\n\nEach working page has its own private system channel.\n\n- Stable page identity\n- Retained revisions\n- Explicit sharing",
 );
 const plan = f.seed(
-  "Connected notes plan",
+  "Connected pages plan",
   `# Connected notes\n\nA working plan for people and their agents.\n\n1. Create and edit the same document.\n2. Follow supporting research.\n3. Share the note deliberately.\n\n## Supporting research\n\n${noteMarkdownLink(research, f.origin)}`,
 );
 const legacy = signed(f.carl, {
@@ -54,7 +54,7 @@ f.accepted.push(legacy);
 const general = "00000001-1111-4111-8111-111111111111";
 f.channels.set(general, {
   id: general,
-  name: "notes-design",
+  name: "pages-design",
   creator: f.viewer.pubkey,
   labels: [],
   type: "stream",
@@ -100,6 +100,7 @@ const pages = new PagesService(ctx),
 ctx.provide("relay", relay);
 const tools = new Map<string, AddedTool>();
 ctx.provide("agents", {
+  relay: () => relay,
   addTool: (tool: AddedTool) => tools.set(tool.name, tool),
   snapshot: () => ({
     status: "unavailable",
@@ -154,14 +155,14 @@ Object.assign(window, {
     },
     async agentEdit(address: NoteAddress, markdown: string) {
       const event = f.heads.get(address.id);
-      if (!event) throw new Error("Missing note");
+      if (!event) throw new Error("Missing page");
       const note = parseNote(event);
-      if (!note) throw new Error("Unsupported note");
+      if (!note) throw new Error("Unsupported page");
       return f.edit(f.carl, note, { title: note.title, markdown });
     },
     async agentCreate(title: string, text: string) {
       return JSON.parse(
-        (await tool("note_set").call(
+        (await tool("page_set").call(
           f.client(),
           {},
           { id: crypto.randomUUID(), title, text },
@@ -170,7 +171,7 @@ Object.assign(window, {
     },
     async agentRead(address: NoteAddress) {
       return JSON.parse(
-        (await tool("note_get").call(
+        (await tool("page_get").call(
           f.client(),
           {},
           { id: address.id, channel: address.channel },

@@ -16,8 +16,8 @@ afterEach(() => {
 async function fixture() {
   const f = await notesFixture();
   dispose.push(f.dispose);
-  const first = f.seed("First note", "Earlier findings");
-  const latest = f.seed("Latest note", "Searchable body");
+  const first = f.seed("First page", "Earlier findings");
+  const latest = f.seed("Latest page", "Searchable body");
   const props: NotesPageProps = {
     community: f.origin,
     entries: [first, latest],
@@ -41,16 +41,16 @@ async function fixture() {
   return { f, first, latest, props };
 }
 
-it("shows only title links in revision order and opens the selected channel-backed document", async () => {
+it("shows only title links in revision order and opens the selected channel-backed page", async () => {
   const { first, latest, props } = await fixture();
   const user = userEvent.setup();
   const view = render(<NotesPage {...props} />);
-  const list = screen.getByRole("list", { name: "Notes" });
+  const list = screen.getByRole("list", { name: "Pages" });
   expect(
     within(list)
       .getAllByRole("link")
       .map((link) => link.getAttribute("aria-label")),
-  ).toEqual(["Latest note", "First note"]);
+  ).toEqual(["Latest page", "First page"]);
   expect(list).not.toHaveTextContent("Searchable body");
   expect(
     within(list)
@@ -60,15 +60,15 @@ it("shows only title links in revision order and opens the selected channel-back
           row.querySelector("a")?.getAttribute("aria-label") ??
           row.textContent?.trim(),
       ),
-  ).toEqual(["Latest note", "First note", "New note"]);
+  ).toEqual(["Latest page", "First page", "New page"]);
   expect(
-    within(list).getByRole("button", { name: "New note" }),
+    within(list).getByRole("button", { name: "New page" }),
   ).toHaveAttribute("data-variant", "text");
-  expect(screen.getByRole("link", { name: "Latest note" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Latest page" })).toHaveAttribute(
     "href",
     noteUrl(latest, props.community),
   );
-  await user.click(screen.getByRole("link", { name: "Latest note" }));
+  await user.click(screen.getByRole("link", { name: "Latest page" }));
   expect(props.open).toHaveBeenCalledWith(latest);
   const updated = {
     ...first,
@@ -79,7 +79,7 @@ it("shows only title links in revision order and opens the selected channel-back
     within(list)
       .getAllByRole("link")
       .map((link) => link.getAttribute("aria-label")),
-  ).toEqual(["First note", "Latest note"]);
+  ).toEqual(["First page", "Latest page"]);
   expect(
     within(list)
       .getAllByRole("listitem")
@@ -88,7 +88,7 @@ it("shows only title links in revision order and opens the selected channel-back
           row.querySelector("a")?.getAttribute("aria-label") ??
           row.textContent?.trim(),
       ),
-  ).toEqual(["First note", "Latest note", "New note"]);
+  ).toEqual(["First page", "Latest page", "New page"]);
 });
 
 it("retains mounted editor state across Back and focuses the full-view Back button", async () => {
@@ -118,20 +118,20 @@ it("retains mounted editor state across Back and focuses the full-view Back butt
     );
   }
   render(<Host />);
-  await user.click(screen.getByRole("link", { name: "First note" }));
-  expect(screen.getByRole("button", { name: "Back to notes" })).toHaveFocus();
+  await user.click(screen.getByRole("link", { name: "First page" }));
+  expect(screen.getByRole("button", { name: "Back to pages" })).toHaveFocus();
   await user.type(
-    screen.getByRole("textbox", { name: "First note draft" }),
+    screen.getByRole("textbox", { name: "First page draft" }),
     "Unsaved work",
   );
-  await user.click(screen.getByRole("button", { name: "Back to notes" }));
-  await user.click(screen.getByRole("link", { name: "Latest note" }));
+  await user.click(screen.getByRole("button", { name: "Back to pages" }));
+  await user.click(screen.getByRole("link", { name: "Latest page" }));
   expect(
-    screen.queryByRole("textbox", { name: "First note draft" }),
+    screen.queryByRole("textbox", { name: "First page draft" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Back to notes" }));
-  await user.click(screen.getByRole("link", { name: "First note" }));
-  expect(screen.getByRole("textbox", { name: "First note draft" })).toHaveValue(
+  await user.click(screen.getByRole("button", { name: "Back to pages" }));
+  await user.click(screen.getByRole("link", { name: "First page" }));
+  expect(screen.getByRole("textbox", { name: "First page draft" })).toHaveValue(
     "Unsaved work",
   );
 });
@@ -140,20 +140,20 @@ it("keeps loading and failed reads distinct from empty and retains useful conten
   const { props } = await fixture();
   const user = userEvent.setup();
   const view = render(<NotesPage {...props} entries={[]} loading />);
-  expect(screen.getByRole("button", { name: "Refresh notes" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Refresh pages" })).toHaveAttribute(
     "aria-busy",
     "true",
   );
-  expect(screen.queryByText("No notes yet")).not.toBeInTheDocument();
-  view.rerender(<NotesPage {...props} error="Cannot read notes" />);
-  expect(screen.getByRole("alert")).toHaveTextContent("Cannot read notes");
-  expect(screen.getByRole("link", { name: "Latest note" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Refresh notes" }));
+  expect(screen.queryByText("No pages yet")).not.toBeInTheDocument();
+  view.rerender(<NotesPage {...props} error="Cannot read pages" />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Cannot read pages");
+  expect(screen.getByRole("link", { name: "Latest page" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Refresh pages" }));
   expect(props.refresh).toHaveBeenCalledOnce();
   view.rerender(<NotesPage {...props} entries={[]} canFilter={false} />);
-  expect(screen.getByText("No notes yet")).toBeVisible();
-  expect(screen.getByRole("button", { name: "New note" })).toBeVisible();
-  const filter = screen.getByRole("button", { name: "Filter notes" });
+  expect(screen.getByText("No pages yet")).toBeVisible();
+  expect(screen.getByRole("button", { name: "New page" })).toBeVisible();
+  const filter = screen.getByRole("button", { name: "Filter pages" });
   expect(filter).toBeDisabled();
   await user.click(filter);
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
@@ -161,25 +161,25 @@ it("keeps loading and failed reads distinct from empty and retains useful conten
   expect(filter).toBeEnabled();
   await user.click(filter);
   await user.click(
-    await screen.findByRole("menuitemcheckbox", { name: "Show deleted notes" }),
+    await screen.findByRole("menuitemcheckbox", { name: "Show deleted pages" }),
   );
   expect(props.showDeleted).toHaveBeenCalledWith(false, expect.anything());
 });
 
-it("searches loaded documents and delegates filters, creation and pagination to the workspace", async () => {
+it("searches loaded pages and delegates filters, creation and pagination to the workspace", async () => {
   const { props } = await fixture();
   const user = userEvent.setup();
   const view = render(<NotesPage {...props} query="searchable" more />);
   expect(
     screen.getAllByRole("link").map((link) => link.getAttribute("aria-label")),
-  ).toEqual(["Latest note"]);
-  const filter = screen.getByRole("button", { name: "Filter notes" });
+  ).toEqual(["Latest page"]);
+  const filter = screen.getByRole("button", { name: "Filter pages" });
   expect(
-    screen.queryByRole("checkbox", { name: "Show deleted notes" }),
+    screen.queryByRole("checkbox", { name: "Show deleted pages" }),
   ).not.toBeInTheDocument();
   await user.click(filter);
   const deleted = await screen.findByRole("menuitemcheckbox", {
-    name: "Show deleted notes",
+    name: "Show deleted pages",
   });
   expect(deleted).not.toBeChecked();
   await user.click(deleted);
@@ -187,19 +187,19 @@ it("searches loaded documents and delegates filters, creation and pagination to 
   view.rerender(<NotesPage {...props} query="searchable" more trash />);
   await user.click(filter);
   expect(
-    await screen.findByRole("menuitemcheckbox", { name: "Show deleted notes" }),
+    await screen.findByRole("menuitemcheckbox", { name: "Show deleted pages" }),
   ).toBeChecked();
   await user.keyboard("{Escape}");
   expect(filter).toHaveFocus();
-  await user.click(screen.getByRole("button", { name: "New note" }));
+  await user.click(screen.getByRole("button", { name: "New page" }));
   expect(props.create).toHaveBeenCalledOnce();
-  await user.click(screen.getByRole("button", { name: "Load more notes" }));
+  await user.click(screen.getByRole("button", { name: "Load more pages" }));
   expect(props.loadMore).toHaveBeenCalledOnce();
-  await user.click(screen.getByRole("searchbox", { name: "Search notes" }));
+  await user.click(screen.getByRole("searchbox", { name: "Search pages" }));
   await user.keyboard("{Enter}");
   expect(props.search).toHaveBeenCalledWith("searchable", true);
   view.rerender(<NotesPage {...props} query="no results" />);
-  expect(screen.getByText("No matching notes.")).toBeVisible();
+  expect(screen.getByText("No matching pages.")).toBeVisible();
   expect(screen.queryAllByRole("link")).toHaveLength(0);
 });
 
@@ -207,7 +207,7 @@ it("explains sharing and retained history with standard popup focus return", asy
   const { props } = await fixture();
   const user = userEvent.setup();
   render(<NotesPage {...props} />);
-  const about = screen.getByRole("button", { name: "About notes" });
+  const about = screen.getByRole("button", { name: "About pages" });
   await user.click(about);
   expect(
     await screen.findByText(/Access includes retained revisions/),

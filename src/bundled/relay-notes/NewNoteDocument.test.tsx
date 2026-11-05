@@ -88,10 +88,8 @@ it("opens a fresh editor without allocating storage, then auto-saves after idle"
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   await advance(16);
   expect(f.title).toHaveFocus();
-  expect(screen.getByRole("textbox", { name: "Document body" })).toBeVisible();
-  expect(
-    screen.getByRole("group", { name: "Document formatting" }),
-  ).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Page body" })).toBeVisible();
+  expect(screen.getByRole("group", { name: "Page formatting" })).toBeVisible();
   await advance(15_000);
   expect(f.create).not.toHaveBeenCalled();
   fireEvent.change(f.title, { target: { value: "New plan" } });
@@ -115,9 +113,9 @@ it("opens a fresh editor without allocating storage, then auto-saves after idle"
   );
 });
 
-it("saves body-only notes with an untitled fallback and honors manual saving", async () => {
+it("saves body-only pages with an untitled fallback and honors manual saving", async () => {
   const f = await fixture({ markdown: "First thought" });
-  fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+  fireEvent.click(screen.getByRole("button", { name: "Page actions" }));
   await advance(0);
   expect(
     screen.queryByRole("menuitem", { name: "Disable auto-save" }),
@@ -136,7 +134,7 @@ it("saves body-only notes with an untitled fallback and honors manual saving", a
     await f.create.mock.results[0]?.value;
   });
   expect(f.create.mock.calls[0]?.[0]).toMatchObject({
-    title: "Untitled note",
+    title: "Untitled page",
     markdown: "First thought",
   });
   const note = f.onCreated.mock.calls[0]?.[0];
@@ -231,10 +229,10 @@ it("defers hidden drafts and saves by the maximum interval during continuous typ
   expect(f.create.mock.calls[0]?.[0].title).toBe("Plan 9");
 });
 
-it("creates a private empty note when Share is explicitly requested", async () => {
+it("creates a private empty page when Share is explicitly requested", async () => {
   const f = await fixture();
   f.unavailableInventory();
-  fireEvent.click(screen.getByRole("button", { name: "Share note" }));
+  fireEvent.click(screen.getByRole("button", { name: "Share page" }));
   await act(async () => {
     await f.create.mock.results[0]?.value;
   });
@@ -244,7 +242,7 @@ it("creates a private empty note when Share is explicitly requested", async () =
     [f.viewer.pubkey]: "owner",
   });
   expect(f.create.mock.calls[0]?.[0]).toMatchObject({
-    title: "Untitled note",
+    title: "Untitled page",
     markdown: "",
   });
 });

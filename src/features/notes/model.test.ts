@@ -31,9 +31,9 @@ async function fixture() {
   return { ...f, workspace };
 }
 
-describe("connected note revisions", () => {
+describe("connected page revisions", () => {
   it.each([false, true])(
-    "preserves the conversation anchor through the note lifecycle (anchored=%s)",
+    "preserves the conversation anchor through the page lifecycle (anchored=%s)",
     async (anchored) => {
       const f = await fixture();
       let original = f.seed("Plan", "Original");
@@ -51,7 +51,7 @@ describe("connected note revisions", () => {
           tags: [...original.event.tags.map((tag) => [...tag]), ["root", root]],
         });
         const note = parseNote(event);
-        if (!note) throw new Error("Expected anchored note");
+        if (!note) throw new Error("Expected anchored page");
         original = note;
         f.heads.set(note.id, event);
         f.revisions.splice(0, 1, event);
@@ -167,7 +167,7 @@ describe("connected note revisions", () => {
       ),
     ).toEqual(["Accepted later", "Original"]);
   });
-  it("preserves unfamiliar annotations and refuses unknown document versions", async () => {
+  it("preserves unfamiliar annotations and refuses unknown page versions", async () => {
     const f = await fixture(),
       note = f.seed("Plan", "Original");
     const annotated = {
@@ -206,7 +206,7 @@ describe("connected note revisions", () => {
       ),
     });
     expect(future?.editable).toBe(false);
-    if (!future) throw new Error("Expected readable future note");
+    if (!future) throw new Error("Expected readable future page");
     expect(() =>
       noteTemplate(future, { title: "Plan", markdown: "Edit" }, future),
     ).toThrow(/unsupported/);
@@ -301,16 +301,16 @@ describe("channel orchestration", () => {
     delete channel.roles[f.ned.pubkey];
     channel.updated++;
     const get = noteTools(() => f.workspace).find(
-      (tool) => tool.name === "note_get",
+      (tool) => tool.name === "page_get",
     );
-    if (!get) throw new Error("Missing note_get");
+    if (!get) throw new Error("Missing page_get");
     await expect(get.call(f.client(f.ned), {}, note)).rejects.toThrow(
       /unavailable/,
     );
     expect(channel.roles[f.ned.pubkey]).toBeUndefined();
     expect(f.accepted.filter((event) => event.kind === 9000)).toEqual([]);
   });
-  it("refuses sharing a channel that also contains another document’s deletion head", async () => {
+  it("refuses sharing a channel that also contains another page’s deletion head", async () => {
     const f = await fixture(),
       note = f.seed("Plan", "Private", false),
       other = f.seed("Other", "Unrelated", false);
@@ -331,25 +331,25 @@ describe("channel orchestration", () => {
     f.heads.set(other.id, tombstone);
     await expect(
       f.workspace.setMember(note, f.sam.pubkey, "read"),
-    ).rejects.toThrow(/other documents/);
+    ).rejects.toThrow(/other pages/);
     const channel = f.channels.get(note.channel);
     if (!channel) throw new Error("Missing channel");
     channel.roles[f.carl.pubkey] = "admin";
     channel.updated++;
     const share = noteTools(() => f.workspace).find(
-      (tool) => tool.name === "note_share",
+      (tool) => tool.name === "page_share",
     );
-    if (!share) throw new Error("Missing note_share");
+    if (!share) throw new Error("Missing page_share");
     await expect(
       share.call(
         f.client(),
         {},
         { ...note, pubkey: f.sam.pubkey, access: "read" },
       ),
-    ).rejects.toThrow(/other documents/);
+    ).rejects.toThrow(/other pages/);
     expect(channel.roles[f.sam.pubkey]).toBeUndefined();
   });
-  it("refuses creation recovery in storage already containing another note", async () => {
+  it("refuses creation recovery in storage already containing another page", async () => {
     const f = await fixture(),
       note = f.seed("Existing", "Private", false),
       id = crypto.randomUUID();
@@ -364,7 +364,7 @@ describe("channel orchestration", () => {
         markdown: "Draft",
         agent: f.carl.pubkey,
       }),
-    ).rejects.toThrow(/another document/);
+    ).rejects.toThrow(/another page/);
     expect(channel.roles[f.carl.pubkey]).toBeUndefined();
     expect(f.accepted.filter((event) => event.kind === 9000)).toEqual([]);
   });
@@ -426,7 +426,7 @@ describe("channel orchestration", () => {
     ).toContainEqual(["visibility", "private"]);
     expect(channel?.labels).not.toContain("buzz.notes.agents");
   });
-  it("creates a human note without requiring the agent inventory", async () => {
+  it("creates a human page without requiring the agent inventory", async () => {
     const f = await fixture();
     f.unavailableInventory();
     const note = await f.workspace.create({
@@ -439,7 +439,7 @@ describe("channel orchestration", () => {
     });
     expect(f.accepted.filter((event) => event.kind === 9000)).toEqual([]);
   });
-  it("recovers a refused first revision in the same channel using the same note ID", async () => {
+  it("recovers a refused first revision in the same channel using the same page ID", async () => {
     const f = await fixture(),
       draft = {
         id: crypto.randomUUID(),
@@ -447,7 +447,7 @@ describe("channel orchestration", () => {
         markdown: "Work",
       };
     f.failNextArtifact();
-    await expect(f.workspace.create(draft)).rejects.toThrow(/Reuse note ID/);
+    await expect(f.workspace.create(draft)).rejects.toThrow(/Reuse page ID/);
     expect(f.channels.size).toBe(1);
     const note = await f.workspace.create(draft);
     expect(note.id).toBe(draft.id);
@@ -504,11 +504,11 @@ describe("channel orchestration", () => {
       "buzz.notes.agents",
     );
   });
-  it("keeps note access administration unavailable to an editor", async () => {
+  it("keeps page access administration unavailable to an editor", async () => {
     const f = await fixture(),
       note = f.seed("Plan", "Work", false);
     const channel = f.channels.get(note.channel);
-    if (!channel) throw new Error("Missing note channel");
+    if (!channel) throw new Error("Missing page channel");
     channel.roles[f.viewer.pubkey] = "member";
     channel.updated++;
     await expect(
@@ -520,9 +520,9 @@ describe("channel orchestration", () => {
     const f = await fixture(),
       restricted = f.seed("Restricted", "Only owner", false);
     const get = noteTools(() => f.workspace).find(
-      (tool) => tool.name === "note_get",
+      (tool) => tool.name === "page_get",
     );
-    if (!get) throw new Error("Missing note_get");
+    if (!get) throw new Error("Missing page_get");
     await expect(get.call(f.client(), {}, restricted)).rejects.toThrow(
       /unavailable/,
     );
@@ -549,9 +549,9 @@ describe("channel orchestration", () => {
 it("runs the human–agent editing loop on the same records with caller-authored writes", async () => {
   const f = await fixture();
   const tools = noteTools(() => f.workspace);
-  const set = tools.find((tool) => tool.name === "note_set"),
-    get = tools.find((tool) => tool.name === "note_get");
-  if (!set || !get) throw new Error("Missing note tools");
+  const set = tools.find((tool) => tool.name === "page_set"),
+    get = tools.find((tool) => tool.name === "page_get");
+  if (!set || !get) throw new Error("Missing page tools");
   const first = JSON.parse(
     (await set.call(
       f.client(),
@@ -592,11 +592,96 @@ it("runs the human–agent editing loop on the same records with caller-authored
   expect(f.revisions).toHaveLength(3);
 });
 
+it("offers the connected-page guide without a connected workspace or relay calls", async () => {
+  const f = await fixture();
+  const help = noteTools(() => undefined).find(
+    (tool) => tool.name === "page_help",
+  );
+  if (!help) throw new Error("Missing page_help");
+  const client = f.client();
+  const query = vi.spyOn(client, "query");
+  const publish = vi.spyOn(client, "publish");
+  const guide = await help.call(client, {}, {});
+  expect(guide).toContain("buzz://note");
+  expect(guide).toContain("page_get");
+  expect(guide).toContain("page_set");
+  expect(guide).toContain("revision");
+  expect(query).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it.each(["page", "note"])(
+  "reads %s links as the caller and saves the page found by title",
+  async (scheme) => {
+    const f = await fixture();
+    const original = f.seed("Shared plan", "Original content");
+    f.seed("Other page", "Unrelated content");
+    f.seed("Shared private plan", "Not shared with this agent", false);
+    const tools = noteTools(() => f.workspace);
+    const get = tools.find((tool) => tool.name === "page_get");
+    const set = tools.find((tool) => tool.name === "page_set");
+    if (!get || !set) throw new Error("Missing page tools");
+    const client = f.client();
+    const found = JSON.parse(
+      (await get.call(client, {}, { q: "SHARED" })) as string,
+    );
+    expect(found.pages).toHaveLength(1);
+    expect(found.pages[0]).toMatchObject({
+      id: original.id,
+      title: "Shared plan",
+    });
+    const url = found.pages[0].link.replace("buzz://page", `buzz://${scheme}`);
+    const current = JSON.parse((await get.call(client, {}, { url })) as string);
+    expect(current.markdown).toBe("Original content");
+    await set.call(
+      client,
+      {},
+      {
+        id: current.id,
+        channel: current.channel,
+        revision: current.revision,
+        title: current.title,
+        text: "Updated through the discovered page",
+      },
+    );
+    const saved = JSON.parse((await get.call(client, {}, { url })) as string);
+    expect(saved.markdown).toBe("Updated through the discovered page");
+    expect(saved.revision).not.toBe(current.revision);
+    expect(f.heads.get(original.id)?.pubkey).toBe(client.pubkey);
+  },
+);
+
+it("rejects foreign-community and malformed page links before querying", async () => {
+  const f = await fixture();
+  const original = f.seed("Plan", "Content");
+  const get = noteTools(() => f.workspace).find(
+    (tool) => tool.name === "page_get",
+  );
+  if (!get) throw new Error("Missing page_get");
+  const client = f.client();
+  const query = vi.spyOn(client, "query");
+  for (const args of [
+    { url: noteUrl(original, "https://other.example.test") },
+    { url: "buzz://page?id=bad" },
+    { url: noteUrl(original, f.origin), id: original.id },
+    { url: noteUrl(original, f.origin), q: "Plan" },
+    { q: "x".repeat(513) },
+  ])
+    await expect(get.call(client, {}, args)).rejects.toThrow();
+  expect(query).not.toHaveBeenCalled();
+  const channel = f.channels.get(original.channel);
+  if (!channel) throw new Error("Missing channel");
+  delete channel.roles[client.pubkey];
+  await expect(
+    get.call(client, {}, { url: noteUrl(original, f.origin) }),
+  ).rejects.toThrow(/unavailable/);
+});
+
 it("does not call the owner’s writer when an unauthorized agent asks to share", async () => {
   const f = await fixture(),
     note = f.seed("Plan", "Work");
   const share = noteTools(() => f.workspace).find(
-    (tool) => tool.name === "note_share",
+    (tool) => tool.name === "page_share",
   );
   if (!share) throw new Error("Missing share tool");
   const spy = vi.spyOn(f.workspace, "setMember");
@@ -616,20 +701,20 @@ it("confirms explicit agent invitations using the relay's participating role", a
     note = f.seed("Plan", "Work", false);
   await f.workspace.setMember(note, f.carl.pubkey, "admin");
   const share = noteTools(() => f.workspace).find(
-    (tool) => tool.name === "note_share",
+    (tool) => tool.name === "page_share",
   );
-  if (!share) throw new Error("Missing note_share");
+  if (!share) throw new Error("Missing page_share");
   await expect(
     share.call(
       f.client(),
       {},
       { ...note, pubkey: f.ned.pubkey, access: "edit" },
     ),
-  ).resolves.toBe("Note access updated.");
+  ).resolves.toBe("Page access updated.");
   expect(f.channels.get(note.channel)?.roles[f.ned.pubkey]).toBe("bot");
 });
 
-it("uses stable, community-bound note links across Markdown, chat and OS ingress", async () => {
+it("uses stable, community-bound page links across Markdown, chat and OS ingress", async () => {
   const f = await fixture(),
     note = f.seed("Plan [new]", "Work");
   const url = noteUrl(note, "wss://notes.example.test");
@@ -668,7 +753,7 @@ it("uses stable, community-bound note links across Markdown, chat and OS ingress
   ).toMatchObject({ more: false });
 });
 
-it("lists community view-only notes for nonmembers, retains editor access, and rejects reader-agent writes", async () => {
+it("lists community view-only pages for nonmembers, retains editor access, and rejects reader-agent writes", async () => {
   const f = await fixture();
   const note = f.seed("Community plan", "Public history", false);
   const access = f.workspace.generalAccess(note);
@@ -683,8 +768,8 @@ it("lists community view-only notes for nonmembers, retains editor access, and r
   expect(page.notes.map((entry) => entry.id)).toContain(note.id);
   expect(f.channels.get(note.channel)?.roles[f.carl.pubkey]).toBeUndefined();
   const tools = noteTools(() => f.workspace);
-  const set = tools.find((tool) => tool.name === "note_set");
-  if (!set) throw new Error("Missing note_set");
+  const set = tools.find((tool) => tool.name === "page_set");
+  if (!set) throw new Error("Missing page_set");
   await expect(
     set.call(
       reader,

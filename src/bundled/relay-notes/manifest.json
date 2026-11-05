@@ -1,8 +1,8 @@
 {
   "id": "buzz.relay-notes",
-  "name": "Connected notes",
+  "name": "Pages",
   "apiVersion": 1,
-  "description": "Create, edit, connect and share working notes with people and agents. Open linked notes beside a conversation, with history and Markdown export.",
+  "description": "Create, edit, connect and share working pages with people and agents. Open linked pages beside a conversation, with history and Markdown export.",
   "discovery": {
     "category": "agent-tools",
     "tags": ["coding-agents"]

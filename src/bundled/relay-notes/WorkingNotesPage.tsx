@@ -26,7 +26,7 @@ import type { PanelProps } from "../../features/panels/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { ArrowLeftIcon, NoteIcon } from "../../shared/design-system/icons";
+import { ArrowLeftIcon, FileIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import {
@@ -46,7 +46,7 @@ import {
 
 export type NotesOwner = (session: RelaySession) => NotesWorkspace;
 const errorText = (error: unknown) =>
-  error instanceof Error ? error.message : "Notes could not be read.";
+  error instanceof Error ? error.message : "Pages could not be read.";
 
 export function WorkingNotesPage({
   relay,
@@ -89,14 +89,14 @@ export function WorkingNotesPage({
       <Panel>
         <PanelHeader
           title={
-            <PanelHeaderLabel title="Notes" icon={<NoteIcon size={16} />} />
+            <PanelHeaderLabel title="Pages" icon={<FileIcon size={16} />} />
           }
         />
         <div className={styles.browser}>
           <p role="status">
             {connection.status === "connecting"
-              ? "Connecting to working notes…"
-              : "Connect to your community to open notes."}
+              ? "Connecting to working pages…"
+              : "Connect to your community to open pages."}
           </p>
           {connection.status === "error" && (
             <>
@@ -136,7 +136,7 @@ export function WorkingNotesCommunity({
     request?.target.kind === "page" ? request.target.route?.params : undefined;
   const destination = useMemo(() => workingRoute(route), [route]);
   const initial = useMemo(
-    () => (destination?.view === "note" ? noteAddress(destination) : undefined),
+    () => (destination?.view === "page" ? noteAddress(destination) : undefined),
     [destination],
   );
   const searchRef = useRef<HTMLElement>(null);
@@ -234,7 +234,7 @@ export function WorkingNotesCommunity({
     reveal(address);
     visit(
       {
-        view: "note",
+        view: "page",
         ...noteAddress(address),
         ...(dialog ? { dialog } : {}),
         query,
@@ -265,7 +265,7 @@ export function WorkingNotesCommunity({
         if (created) {
           reveal(created);
           const { draft: _draft, ...rest } = destination;
-          visit({ ...rest, view: "note", ...created }, true);
+          visit({ ...rest, view: "page", ...created }, true);
         } else {
           if (!drafts.current.has(destination.draft))
             drafts.current.set(destination.draft, {
@@ -341,7 +341,7 @@ export function WorkingNotesCommunity({
               id: key,
               label:
                 collection.notes.find((note) => noteKey(note) === key)?.title ??
-                "Note",
+                "Page",
               content: (
                 <NoteDocument
                   address={address}
@@ -352,7 +352,7 @@ export function WorkingNotesCommunity({
                   partial={collection.more}
                   active={selected === key}
                   view={
-                    selected === key && destination?.view === "note"
+                    selected === key && destination?.view === "page"
                       ? destination
                       : undefined
                   }
@@ -360,7 +360,7 @@ export function WorkingNotesCommunity({
                     selected === key
                       ? (view) =>
                           visit({
-                            view: "note",
+                            view: "page",
                             ...noteAddress(address),
                             query,
                             trash,
@@ -384,7 +384,7 @@ export function WorkingNotesCommunity({
           }),
           ...[...drafts.current.values()].map((draft) => ({
             id: `new:${draft.id}`,
-            label: "New note",
+            label: "New page",
             content: (
               <NewNoteDocument
                 workspace={workspace}
@@ -431,7 +431,7 @@ export function WorkingNotePanel({
   )
     return (
       <div className={styles.browser}>
-        <p role="status">Connect to this note’s community to open it.</p>
+        <p role="status">Connect to this page’s community to open it.</p>
       </div>
     );
   return (
@@ -475,7 +475,7 @@ function NotePanelContents({
   const [error, setError] = useState("");
   const title =
     catalogue.notes.find((note) => noteKey(note) === noteKey(initial))?.title ??
-    "Note";
+    "Page";
   usePanelTabTitle(title);
   useEffect(() => {
     const controller = new AbortController();
@@ -517,7 +517,7 @@ function NotePanelContents({
       pluginId: "buzz.relay-notes",
       pageId: "notes",
       scope: { viewer: workspace.session.viewer ?? "", communityOrigin },
-      route: { version: 1, params: { view: "note", ...noteAddress(address) } },
+      route: { version: 1, params: { view: "page", ...noteAddress(address) } },
     });
   };
   return (
@@ -531,7 +531,7 @@ function NotePanelContents({
       )}
       {error && (
         <p role="status" className="text-caption text-subtle">
-          Related notes could not be loaded. {error}
+          Related pages could not be loaded. {error}
         </p>
       )}
       {[initial].map((address) => (

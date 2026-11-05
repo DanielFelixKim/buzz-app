@@ -105,11 +105,11 @@ export function ComposerLinkDialog({
             }}
           >
             <Combobox.Control
-              label="Note"
-              triggerLabel="Browse notes"
-              placeholder="Search loaded notes…"
+              label="Page"
+              triggerLabel="Browse pages"
+              placeholder="Search loaded pages…"
             />
-            <Combobox.Popup empty="No accessible notes match.">
+            <Combobox.Popup empty="No accessible pages match.">
               <Combobox.List>
                 {(item) => (
                   <Combobox.Item key={item.href} value={item}>

@@ -16,9 +16,9 @@ const target = {
 it("round-trips browser, editor, dialog, revision and new-draft addresses without content", () => {
   for (const value of [
     { view: "browse", query: "Research", trash: true },
-    { view: "note", id, channel, edit: true, dialog: "link" },
+    { view: "page", id, channel, edit: true, dialog: "link" },
     {
-      view: "note",
+      view: "page",
       id,
       channel,
       dialog: "history",
@@ -34,23 +34,28 @@ it("round-trips browser, editor, dialog, revision and new-draft addresses withou
       route: { params: value },
     });
   }
-  expect(workingRoute({ id, channel })).toEqual({ view: "note", id, channel });
+  expect(workingRoute({ id, channel })).toEqual({ view: "page", id, channel });
+  expect(workingRoute({ view: "note", id, channel })).toEqual({
+    view: "page",
+    id,
+    channel,
+  });
 });
 it.each([
   { author: "b".repeat(64), note: `30023:${"b".repeat(64)}:note` },
   { view: "browse", author: "b".repeat(64) },
   { view: "shared", shared: `30023:${"b".repeat(64)}:note` },
   { view: "profile", profile: "b".repeat(64) },
-  { view: "note", id, channel, markdown: "private draft" },
-  { view: "note", id, channel, revision: "a".repeat(64) },
-  { view: "note", id, channel, dialog: "share", offset: 100 },
+  { view: "page", id, channel, markdown: "private draft" },
+  { view: "page", id, channel, revision: "a".repeat(64) },
+  { view: "page", id, channel, dialog: "share", offset: 100 },
   { view: "new", draft: "bad" },
   { view: "browse", edit: true },
   { view: "browse", query: "x".repeat(513) },
   { view: "shared", shared: "" },
   { view: "shared", shared: `30023:${"b".repeat(64)}:note`, edit: true },
   { view: "profile", profile: "bad" },
-  { view: "note", id, channel, shared: `30023:${"b".repeat(64)}:note` },
+  { view: "page", id, channel, shared: `30023:${"b".repeat(64)}:note` },
 ])("rejects malformed or content-bearing presentation: %o", (value) => {
   expect(workingRoute(value)).toBeUndefined();
 });

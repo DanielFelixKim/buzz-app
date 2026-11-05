@@ -8,7 +8,7 @@ import { notePageRoute } from "../../features/notes/target";
 
 export type DocumentView = Omit<NoteDestination, "id" | "channel">;
 export type WorkingRoute = DocumentView & {
-  view: "browse" | "note" | "new";
+  view: "browse" | "page" | "new";
   id?: string;
   channel?: string;
   draft?: string;
@@ -34,17 +34,18 @@ export function workingRoute(
 ): WorkingRoute | undefined {
   if (value === undefined) return { view: "browse" };
   const old = notePageRoute(value);
-  if (old) return { view: "note", ...old };
+  if (old) return { view: "page", ...old };
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
-  const row = value as Record<string, JsonValue>;
+  const row = { ...value } as Record<string, JsonValue>;
+  if (row.view === "note" || row.view === "document") row.view = "page";
   if (
     Object.keys(row).some((key) => !keys.has(key)) ||
     typeof row.view !== "string" ||
-    !["browse", "note", "new"].includes(row.view)
+    !["browse", "page", "new"].includes(row.view)
   )
     return;
   if (
-    row.view === "note"
+    row.view === "page"
       ? typeof row.id !== "string" ||
         !UUID.test(row.id) ||
         typeof row.channel !== "string" ||
@@ -71,12 +72,12 @@ export function workingRoute(
     return;
   if (
     row.dialog !== undefined &&
-    (row.view !== "note" ||
+    (row.view !== "page" ||
       typeof row.dialog !== "string" ||
       !["share", "history", "link", "delete"].includes(row.dialog))
   )
     return;
-  if (row.edit !== undefined && row.view !== "note") return;
+  if (row.edit !== undefined && row.view !== "page") return;
   if (
     row.revision !== undefined &&
     (row.dialog !== "history" ||
