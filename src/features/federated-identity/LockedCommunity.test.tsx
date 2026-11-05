@@ -63,6 +63,43 @@ it("asks native which communities are the organization's, and ends offline readi
   expect(gate.admits()).toBe(false);
 });
 
+it("ends offline reading on time while native is still rechecking the session", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(Date.parse("2026-11-05T12:00:00Z"));
+  ipc.invoke.mockResolvedValue(true);
+  const { service, publish } = federatedFixture();
+  publish({
+    status: "unavailable",
+    failure: "network-timeout",
+    expiresAt: "2026-11-05T12:30:00Z",
+  });
+  const gate = relayGates(service)("wss://relay.example");
+  if (!gate) throw new Error("Native gate expected");
+  expect(await gate.protects).toBe(true);
+  const listener = vi.fn();
+  const unsubscribe = gate.subscribe(listener);
+  try {
+    expect(gate.admits()).toBe(true);
+    vi.advanceTimersByTime(30 * 60_000 - 1_000);
+    publish({ status: "restoring", failure: null });
+    listener.mockClear();
+    vi.advanceTimersByTime(999);
+    expect(gate.admits()).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(gate.admits()).toBe(false);
+    expect(listener).toHaveBeenCalledOnce();
+
+    publish({ status: "unavailable", failure: "network-timeout" });
+    expect(gate.admits()).toBe(false);
+    publish({ status: "signed-in", expiresAt: "2026-11-05T13:00:00Z" });
+    expect(gate.admits()).toBe(true);
+  } finally {
+    unsubscribe();
+  }
+});
+
 it("protects nothing without native identity", () => {
   const { service } = federatedFixture();
   expect(

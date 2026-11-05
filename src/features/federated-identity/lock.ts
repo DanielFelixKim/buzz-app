@@ -28,13 +28,13 @@ export function relayGates(
 ): (origin: string) => RelayGate | undefined {
   if (!identity.apiAvailable) return () => undefined;
   // A re-check (native passes through `restoring` whenever it verifies the
-  // saved session again) keeps the last verdict, so a community open offline
-  // doesn't lock and reload on every reconnect attempt.
-  let verdict = admits(identity.snapshot());
+  // saved session again) keeps the last settled state, so a community open
+  // offline doesn't reload on every reconnect or outlive its saved expiry.
+  let settled = identity.snapshot();
   const current = () => {
     const state = identity.snapshot();
-    if (state.status !== "restoring") verdict = admits(state);
-    return verdict;
+    if (state.status !== "restoring") settled = state;
+    return settled;
   };
   return (origin) => ({
     // Native also refuses an unsigned organization connection, so an IPC
@@ -45,13 +45,13 @@ export function relayGates(
       (protects) => protects === true,
       () => false,
     ),
-    admits: current,
+    admits: () => admits(current()),
     subscribe(listener) {
       // Offline reading ends with the saved session, even with no event.
       let timer: ReturnType<typeof setTimeout> | undefined;
       const arm = () => {
         clearTimeout(timer);
-        const state = identity.snapshot();
+        const state = current();
         if (state.status !== "unavailable" || !state.expiresAt) return;
         const left = Date.parse(state.expiresAt) - Date.now();
         // Timers cap near 24.8 days: a long wait wakes early and re-arms.
