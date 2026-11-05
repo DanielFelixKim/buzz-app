@@ -1323,20 +1323,21 @@ mod tests {
             .unwrap()
             .unwrap()
             .unwrap();
-        let heard = heard.lock().unwrap();
-        assert_eq!(heard.len(), 20, "all missed pulls must run");
-        assert!(
-            heard.iter().all(|(at, _)| *at == resumed_at),
-            "missed pulls must complete before future ticks"
-        );
-        let tail = &heard.last().unwrap().1;
-        let rms =
-            (tail.iter().map(|sample| sample * sample).sum::<f32>() / tail.len() as f32).sqrt();
-        assert!(
-            rms > 0.02,
-            "catch-up concealed asynchronously available speech: tail RMS {rms}"
-        );
-        drop(heard);
+        {
+            let heard = heard.lock().unwrap();
+            assert_eq!(heard.len(), 20, "all missed pulls must run");
+            assert!(
+                heard.iter().all(|(at, _)| *at == resumed_at),
+                "missed pulls must complete before future ticks"
+            );
+            let tail = &heard.last().unwrap().1;
+            let rms =
+                (tail.iter().map(|sample| sample * sample).sum::<f32>() / tail.len() as f32).sqrt();
+            assert!(
+                rms > 0.02,
+                "catch-up concealed asynchronously available speech: tail RMS {rms}"
+            );
+        }
         writer.await.unwrap();
     }
 
