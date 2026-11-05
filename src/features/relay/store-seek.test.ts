@@ -614,42 +614,49 @@ it.each(["older", "newer"])(
   },
 );
 
-it("preserves a slid segment beyond reconnect catch-up coverage", async () => {
-  const h = setup({ count: 200, maxHistoryRows: 40 });
-  await h.open();
-  h.live.state({ status: "connected", routes: [] });
-  h.live.established("c");
-  await vi.waitFor(() =>
-    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
-      channelId: "c",
-      state: "verified",
-    }),
-  );
-  for (let step = 0; h.window().hasMore && step < 100; step++) {
-    h.channels.loadOlder("c");
-    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false), {
-      interval: 1,
-    });
-  }
-  expect(h.window().hasMore).toBe(false);
-  const retained = h.window().rows.map((row) => row.id);
-  h.live.state({ status: "connected", routes: [] });
-  h.live.state({ status: "retrying", routes: [] });
-  expect(h.window().freshness).toBe("cached");
-  h.live.state({ status: "connected", routes: [] });
-  h.live.established("c");
-  await vi.waitFor(() =>
-    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
-      channelId: "c",
-      state: "deferred",
-    }),
-  );
-  expect(h.window().freshness).toBe("cached");
-  expect(h.window().rows.map((row) => row.id)).toEqual(retained);
-  h.channels.attach?.("c");
-  await vi.waitFor(() => expect(h.window().hasNewer).toBeFalsy());
-  expect(h.window().rows.at(-1)?.id).toBe(h.history.at(-1)?.id);
-});
+it.each([false, true])(
+  "preserves a slid segment beyond reconnect catch-up coverage after forward paging: %s",
+  async (forward) => {
+    const h = setup({ count: 200, spacing: 2 * HOUR, maxHistoryRows: 40 });
+    await h.open();
+    h.live.state({ status: "connected", routes: [] });
+    h.live.established("c");
+    await vi.waitFor(() =>
+      expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+        channelId: "c",
+        state: "verified",
+      }),
+    );
+    for (let step = 0; h.window().hasMore && step < 100; step++) {
+      h.channels.loadOlder("c");
+      await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false), {
+        interval: 1,
+      });
+    }
+    expect(h.window().hasMore).toBe(false);
+    if (forward) {
+      h.channels.loadNewer?.("c");
+      await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    }
+    const retained = h.window().rows.map((row) => row.id);
+    h.live.state({ status: "connected", routes: [] });
+    h.live.state({ status: "retrying", routes: [] });
+    expect(h.window().freshness).toBe("cached");
+    h.live.state({ status: "connected", routes: [] });
+    h.live.established("c");
+    await vi.waitFor(() =>
+      expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+        channelId: "c",
+        state: "deferred",
+      }),
+    );
+    expect(h.window().freshness).toBe("cached");
+    expect(h.window().rows.map((row) => row.id)).toEqual(retained);
+    h.channels.attach?.("c");
+    await vi.waitFor(() => expect(h.window().hasNewer).toBeFalsy());
+    expect(h.window().rows.at(-1)?.id).toBe(h.history.at(-1)?.id);
+  },
+);
 
 it("traverses omitted dense-second pages when a newer page fits the allowance", async () => {
   const h = setup({ count: 1000, spacing: 0, maxHistoryRows: 600 });

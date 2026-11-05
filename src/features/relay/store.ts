@@ -64,6 +64,8 @@ type WindowState = {
   ceiling?: number | undefined;
   /** An inclusive row boundary when paging older trims within one second. */
   ceilingId?: string | undefined;
+  /** Paging detachment survives reconnect; explicit timestamp seeks return to the head. */
+  sliding?: boolean;
   /** Live rows above the ceiling that arrived while a newer page loads: the
    * page that reaches the head may predate them. */
   above?: Map<string, RelayEvent> | undefined;
@@ -444,6 +446,7 @@ export function createChannelStore(
   /** A head read replaces a detached segment: its rows and floor go with it.
    * Live rows that arrived above it during the read join the head. */
   function attached(state: WindowState) {
+    state.sliding = false;
     if (state.ceiling === undefined) return;
     state.ceiling = undefined;
     state.ceilingId = undefined;
@@ -723,7 +726,7 @@ export function createChannelStore(
    * or head read. */
   async function fillNotices(state: WindowState, head: boolean) {
     // Explicit seeks omit notices; a sliding reader continues their descent.
-    if (state.ceiling !== undefined && state.ceilingId === undefined) return;
+    if (state.ceiling !== undefined && !state.sliding) return;
     if (head) state.noticeHead = true;
     const reading = state.noticeRead;
     if (
@@ -1140,6 +1143,7 @@ export function createChannelStore(
     state.generation++;
     state.events = page.events;
     state.atHead = ceiling === null;
+    state.sliding = false;
     state.ceiling = ceiling ?? undefined;
     state.ceilingId = undefined;
     state.floor = undefined;
@@ -1221,6 +1225,7 @@ export function createChannelStore(
         eventId: boundary.id,
       });
     } else if (boundary) {
+      state.sliding = true;
       state.ceiling = boundary.created_at;
       state.ceilingId = boundary.id;
     }
@@ -3664,6 +3669,7 @@ export function createChannelStore(
             : partial
               ? advancing.at(-1)
               : undefined;
+          state.sliding = !head;
           state.ceiling =
             boundary?.created_at ??
             (head || located.kind !== "segment"
@@ -4152,7 +4158,7 @@ export function createChannelStore(
       if (!retained) return false;
       // A detached segment is not what the head reaches: return to the head,
       // keeping the segment until the head lands.
-      if (retained.ceiling !== undefined && retained.ceilingId === undefined) {
+      if (retained.ceiling !== undefined && !retained.sliding) {
         await reattach(retained);
         return retained.ceiling === undefined;
       }
@@ -4177,7 +4183,7 @@ export function createChannelStore(
       const settle = (last: Page) => {
         // A sliding reader is a separate bounded segment; head continuity
         // cannot invalidate it when the catch-up budget stops above it.
-        if (retained.ceilingId !== undefined) return;
+        if (retained.sliding) return;
         // An older read in flight continues from the cursor this replaces;
         // its rows would merge below the hole and move the floor past it.
         if (retained.snapshot.loadingOlder) retained.controller?.abort();
@@ -4234,7 +4240,7 @@ export function createChannelStore(
         // Live replay covers minutes; notices from a longer drop come by read.
         void fillNotices(retained, true);
         // A discarded head gap is settled; a preserved sliding segment still waits.
-        const complete = contiguous || retained.ceilingId === undefined;
+        const complete = contiguous || !retained.sliding;
         // A drop mid-fill has marked the window cached; the stream is retrying.
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: page.hasMore } : {}),
