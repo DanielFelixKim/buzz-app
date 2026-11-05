@@ -20,6 +20,7 @@ import {
   RobotIcon,
 } from "../../shared/design-system/icons";
 import { useProfileOwner } from "../profiles/useProfileOwner";
+import { RemoteAgentHint, RemoteWorkIcon } from "./RemoteAgentHint";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import { profileMentionParts } from "./profile-mentions";
 import { addressedMessage } from "./audience-address";
@@ -349,7 +350,7 @@ function MessageRowContent({
     session,
     agentAuthor && !stackPrevious ? row.authorId : undefined,
   );
-  // The viewer's own agents carry only the agent mark.
+  // The viewer's own agents do not need an owner attribution.
   const ownerLabel =
     owner &&
     owner.id !== viewer &&
@@ -1106,6 +1107,13 @@ function MessageRowContent({
                     )}
                   </span>
                 )}
+                {agentAuthor && !stackPrevious && (
+                  <RemoteAgentHint
+                    session={session}
+                    viewer={viewer}
+                    pubkey={row.authorId}
+                  />
+                )}
                 {ownerLabel && (
                   <span className={styles.authorOwner}>
                     <span aria-hidden="true">· </span>
@@ -1678,6 +1686,14 @@ function AgentsMessageRow(props: MessageRowProps) {
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`}
             >
               {!bubble && avatar(author)}
+              {!open && (
+                <RemoteWorkIcon
+                  session={session}
+                  viewer={props.viewer ?? session?.viewer}
+                  pubkey={row.authorId}
+                  active={active}
+                />
+              )}
               {open && bubble && "Collapse"}
               {!open && (
                 <span className={styles.audiencePreviewText}>
@@ -1705,6 +1721,13 @@ function AgentsMessageRow(props: MessageRowProps) {
       {props.day && <DayDivider createdAt={row.createdAt} />}
       <AgentResponsePreview
         name={author.name}
+        bylineHint={
+          <RemoteAgentHint
+            session={session}
+            viewer={props.viewer ?? session?.viewer}
+            pubkey={author.pubkey}
+          />
+        }
         participants={[
           {
             id: author.pubkey,

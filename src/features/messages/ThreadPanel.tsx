@@ -1032,6 +1032,9 @@ function ThreadMessages({
       const previousFollow = follow.current;
       const previousPosition = resizePosition.current;
       const previewIntent = ++readingIntent.current;
+      const previewReplies = new Set(
+        view.snapshot().replies.map((reply) => reply.id),
+      );
       follow.current = false;
       const previous = currentReplyParent.current;
       const next = previous === id ? undefined : id;
@@ -1044,7 +1047,14 @@ function ThreadMessages({
             setReplyFocus((value) => value + 1);
         },
         cancel() {
-          if (readingIntent.current === previewIntent) {
+          // Keep the selected prose anchored if this loaded window gained rows.
+          // This also covers strict threads whose older pages remain unloaded.
+          if (
+            readingIntent.current === previewIntent &&
+            view
+              .snapshot()
+              .replies.every((reply) => previewReplies.has(reply.id))
+          ) {
             follow.current = previousFollow;
             resizePosition.current = previousPosition;
           }
@@ -1052,7 +1062,7 @@ function ThreadMessages({
         },
       };
     },
-    [captureResizePosition],
+    [captureResizePosition, view],
   );
   useEffect(() => {
     if (replyRequest) focusReply();

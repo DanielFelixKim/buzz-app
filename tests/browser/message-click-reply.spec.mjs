@@ -1,5 +1,13 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle, anchor, expectAnchor, wheel } from "./timeline.mjs";
+import {
+  open,
+  settle,
+  anchor,
+  expectAnchor,
+  wheel,
+  virtuaIdle,
+} from "./timeline.mjs";
+import { openThreadLink } from "./message-actions.mjs";
 
 test.use({ historyCounts: { alpha: 30, beta: 1 }, developmentReact: true });
 
@@ -102,20 +110,39 @@ test("holding to reply near the bottom preserves the reading position and Escape
 
 // Native selection and scroll-follow ownership require real layout in both hosts.
 test.describe("provisional reply cancellation", () => {
-  test.use({ productionBroker: true, readState: true, threadUnread: true });
-  for (const surface of ["channel", "thread"]) {
-    for (const cancellation of ["selection", "scroll"]) {
+  const pagedChannel = "22222222-2222-4222-8222-222222222222";
+  test.use({
+    productionBroker: true,
+    readState: true,
+    threadUnread: true,
+    inboxThreadWindow: true,
+    channelIds: ["alpha", "beta", pagedChannel],
+    channelNames: { [pagedChannel]: "Window room" },
+  });
+  for (const surface of ["channel", "thread", "paged thread"]) {
+    for (const cancellation of [
+      "selection",
+      "selection with pending arrivals",
+      "scroll",
+    ]) {
+      if (
+        surface === "paged thread" &&
+        cancellation !== "selection with pending arrivals"
+      )
+        continue;
       test(`${surface}: ${cancellation} cancels the preview and preserves reading intent on arrival`, async ({
         page,
         app,
       }) => {
         await open(page, app);
         const root =
-          surface === "thread"
-            ? app.histories
-                .get("primary/alpha")
-                .find((row) => row.content === "Thread root 1")
-            : app.histories.get("primary/alpha").at(-1);
+          surface === "paged thread"
+            ? app.inboxWindow.root
+            : surface === "thread"
+              ? app.histories
+                  .get("primary/alpha")
+                  .find((row) => row.content === "Thread root 1")
+              : app.histories.get("primary/alpha").at(-1);
         let history = page.getByRole("region", {
           name: "Channel message history",
           exact: true,
@@ -124,6 +151,31 @@ test.describe("provisional reply cancellation", () => {
           .getByRole("article", { name: "Conversation", exact: true })
           .getByRole("textbox");
         let last = root;
+        if (surface === "paged thread") {
+          // More than the newest strict page; older history must remain unloaded.
+          app.histories.set(`primary/${pagedChannel}`, [root]);
+          app.inboxWindow.replies.length = 0;
+          for (let index = 0; index < 60; index++) {
+            app.inboxWindow.replies.push(
+              app.append(
+                "primary",
+                pagedChannel,
+                `Peer message ${index} with selectable prose.\n\nSecond paragraph fills the newest page.\n\nThird paragraph keeps older history out of view.`,
+                false,
+                false,
+                root.id,
+                undefined,
+                [],
+                root.created_at + 100 + index,
+              ),
+            );
+          }
+          last = app.inboxWindow.replies.at(-3);
+          await page
+            .locator(`button[data-channel-id="${pagedChannel}"]`)
+            .click();
+          await openThreadLink(page, app, root.id, pagedChannel);
+        }
         if (surface === "thread") {
           // Enough rows for real upward scrolling; no pagination or scale claim.
           for (let index = 0; index < 24; index++) {
@@ -134,6 +186,8 @@ test.describe("provisional reply cancellation", () => {
             .locator(`[data-message-id="${root.id}"]`)
             .getByRole("button", { name: /^View thread:/ })
             .click();
+        }
+        if (surface !== "channel") {
           history = page.getByRole("region", {
             name: "Thread messages",
             exact: true,
@@ -143,12 +197,22 @@ test.describe("provisional reply cancellation", () => {
             .getByRole("textbox");
           await expect(history).toHaveAttribute("aria-busy", "false");
         }
+        if (surface === "paged thread") {
+          expect(
+            app.pending.filter(({ filter }) => filter.thread_window),
+          ).toHaveLength(0);
+          await expect(
+            history.locator(
+              `[data-message-id="${app.inboxWindow.replies[0].id}"]`,
+            ),
+          ).toHaveCount(0);
+        }
         await input.fill("Keep this draft");
         const prose = history
           .locator(`[data-message-id="${last.id}"] p`)
           .first();
         await expect(prose).toBeInViewport();
-        await settle(page, history);
+        await virtuaIdle(page, history);
         const bottomGap = () =>
           history.evaluate(
             (element) =>
@@ -171,6 +235,22 @@ test.describe("provisional reply cancellation", () => {
           };
           return { start: point(1), end: point(12) };
         });
+        const selecting = cancellation.startsWith("selection");
+        const pendingArrivals =
+          cancellation === "selection with pending arrivals";
+        const proseY = await prose.evaluate(
+          (element) => element.getBoundingClientRect().top,
+        );
+        const append = (index) =>
+          surface !== "channel"
+            ? app.reply(root.id)
+            : app.append(
+                "primary",
+                "alpha",
+                `Peer arrival ${index}`,
+                true,
+                false,
+              );
         await page.mouse.move(points.start.x, points.start.y);
         await page.mouse.down();
         try {
@@ -178,13 +258,28 @@ test.describe("provisional reply cancellation", () => {
             page.getByRole("button", { name: "Cancel reply target" }),
           ).toBeVisible();
           await expect(input).not.toBeFocused();
-          if (cancellation === "selection")
+          if (pendingArrivals) {
+            let arrival;
+            for (let index = 0; index < 3; index++) arrival = append(index);
+            await expect(
+              history.locator(`[data-message-id="${arrival.id}"]`),
+            ).toBeAttached();
+            await settle(page, history);
+          }
+          if (selecting)
             await page.mouse.move(points.end.x, points.end.y, { steps: 8 });
-          else await wheel(page, -350, history);
+          else {
+            // A preview's reflow scrollend must not stand in for wheel completion.
+            await settle(page, history);
+            await expect(
+              page.getByRole("button", { name: "Cancel reply target" }),
+            ).toBeVisible();
+            await wheel(page, -350, history);
+          }
         } finally {
           await page.mouse.up();
         }
-        if (cancellation === "selection") {
+        if (selecting) {
           await expect
             .poll(() =>
               prose.evaluate((element) => {
@@ -206,6 +301,16 @@ test.describe("provisional reply cancellation", () => {
         await expect(input).toHaveText("Keep this draft");
         await expect(input).not.toBeFocused();
         await settle(page, history);
+        if (pendingArrivals) {
+          expect(
+            Math.abs(
+              (await prose.evaluate(
+                (element) => element.getBoundingClientRect().top,
+              )) - proseY,
+            ),
+            "native selection keeps the held prose in place",
+          ).toBeLessThan(4);
+        }
         const before = await history.evaluate((element) => {
           const top = element.getBoundingClientRect().top;
           const row = [...element.querySelectorAll("[data-message-id]")].find(
@@ -217,19 +322,9 @@ test.describe("provisional reply cancellation", () => {
           };
         });
         let latest;
-        for (let index = 0; index < 3; index++)
-          latest =
-            surface === "thread"
-              ? app.reply(root.id)
-              : app.append(
-                  "primary",
-                  "alpha",
-                  `Arrival after cancel ${index}`,
-                  true,
-                  false,
-                );
+        for (let index = 0; index < 3; index++) latest = append(index + 3);
         const arrival = history.locator(`[data-message-id="${latest.id}"]`);
-        if (cancellation === "selection") {
+        if (selecting && !pendingArrivals) {
           await expect(arrival).toBeInViewport();
           await settle(page, history);
           await expect.poll(bottomGap).toBeLessThan(4);
@@ -237,9 +332,19 @@ test.describe("provisional reply cancellation", () => {
             page.getByRole("button", { name: /^\d+ new messages?$/ }),
           ).toHaveCount(0);
         } else {
-          // The arrival badge is the completion barrier before checking no jump.
+          // A rendered arrival closes delivery before checking no jump. Strict
+          // windows retain their existing uncounted Jump to latest control.
+          await expect(arrival).toBeAttached();
           await expect(
-            page.getByRole("button", { name: "3 new messages", exact: true }),
+            page.getByRole("button", {
+              name:
+                surface === "paged thread"
+                  ? "Jump to latest"
+                  : pendingArrivals
+                    ? "6 new messages"
+                    : "3 new messages",
+              exact: true,
+            }),
           ).toBeVisible();
           await settle(page, history);
           await expect(arrival).not.toBeInViewport();
