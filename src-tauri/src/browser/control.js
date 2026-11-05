@@ -382,8 +382,17 @@
     return { ok: true };
   };
 
+  // Waiting is for an element to become usable, so it never fails as not_interactable.
+  const waitFor = ({ for: condition }) => {
+    const element = resolve(condition.ref);
+    if (!element)
+      return fail("stale_ref", "The page changed after that ref was issued.");
+    return { met: shown(element) && !disabled(element) };
+  };
+
   if (request.action === "observe") return observe(request.scope);
   if (request.action === "click") return click(request);
   if (request.action === "fill") return fill(request);
+  if (request.action === "wait") return waitFor(request);
   return fail("invalid_request", `Unknown action ${request.action}.`);
 };

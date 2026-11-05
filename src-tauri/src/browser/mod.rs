@@ -106,6 +106,28 @@ struct BrowserSession {
     control_revision: std::cell::Cell<u64>,
     #[cfg(target_os = "macos")]
     document_revision: Rc<std::cell::Cell<u64>>,
+    /// Set while an agent action runs, so a second one fails with `busy`.
+    #[cfg(target_os = "macos")]
+    control_busy: std::cell::Cell<bool>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+enum RevokeReason {
+    Hide,
+    Resize,
+    Command,
+}
+
+#[cfg(target_os = "macos")]
+impl RevokeReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Hide => "hide",
+            Self::Resize => "resize",
+            Self::Command => "command",
+        }
+    }
 }
 
 impl BrowserSession {
@@ -116,10 +138,31 @@ impl BrowserSession {
         self.document_revision.get()
     }
 
+    /// The first 8 characters of the session ID, enough to tell log lines apart.
     #[cfg(target_os = "macos")]
-    fn revoke_control(&self) {
+    fn log_prefix(&self) -> &str {
+        self.instance.get(..8).unwrap_or(&self.instance)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn revoke_control(&self, reason: RevokeReason) {
         if self.control.borrow_mut().take().is_some() {
             self.control_revision.set(self.control_revision.get() + 1);
+            eprintln!(
+                "browser_control revoke reason={} session={}",
+                reason.as_str(),
+                self.log_prefix()
+            );
+        }
+    }
+
+    /// The person's toolbar and agent control share one history path.
+    fn history(&self, action: BrowserAction) -> Result<(), String> {
+        self.snapshot.borrow_mut().error = None;
+        match action {
+            BrowserAction::Reload => self.guest.reload().map_err(|error| error.to_string()),
+            BrowserAction::Back => platform::back(&self.guest),
+            BrowserAction::Forward => platform::forward(&self.guest),
         }
     }
 
@@ -160,7 +203,7 @@ impl BrowserSession {
         self.visible.set(false);
         if !visible {
             #[cfg(target_os = "macos")]
-            self.revoke_control();
+            self.revoke_control(RevokeReason::Hide);
             return Ok(());
         }
         let shown = platform::resize_guest(&self.guest, &self.host, bounds).and_then(|()| {
@@ -170,7 +213,7 @@ impl BrowserSession {
         });
         #[cfg(target_os = "macos")]
         if shown.is_err() {
-            self.revoke_control();
+            self.revoke_control(RevokeReason::Hide);
         }
         shown?;
         self.visible.set(true);
@@ -234,7 +277,7 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 for browser in browsers.borrow().iter() {
                     browser.visible.set(false);
                     #[cfg(target_os = "macos")]
-                    browser.revoke_control();
+                    browser.revoke_control(RevokeReason::Resize);
                     if let Err(error) = browser.guest.set_visible(false) {
                         browser.snapshot.borrow_mut().error = Some(error.to_string());
                     }
@@ -340,6 +383,8 @@ fn build_contents(
         control_revision: std::cell::Cell::new(0),
         #[cfg(target_os = "macos")]
         document_revision,
+        #[cfg(target_os = "macos")]
+        control_busy: std::cell::Cell::new(false),
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
     if !defer_navigation {
@@ -461,14 +506,7 @@ pub async fn browser_action(
     action: BrowserAction,
 ) -> Result<(), String> {
     on_main_thread(&app, move || {
-        with_browser(&session_id, |browser| {
-            browser.snapshot.borrow_mut().error = None;
-            match action {
-                BrowserAction::Reload => browser.guest.reload().map_err(|error| error.to_string()),
-                BrowserAction::Back => platform::back(&browser.guest),
-                BrowserAction::Forward => platform::forward(&browser.guest),
-            }
-        })
+        with_browser(&session_id, |browser| browser.history(action))
     })
     .await
 }

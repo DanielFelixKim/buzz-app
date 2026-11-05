@@ -91,7 +91,11 @@ export type BrowserControlRequest =
   | { action: "observe"; scope?: "page" | "viewport" }
   | { action: "navigate"; url: string }
   | { action: "click"; ref: string }
-  | { action: "fill"; ref: string; text: string };
+  | { action: "fill"; ref: string; text: string }
+  | { action: "back" }
+  | { action: "forward" }
+  | { action: "reload" }
+  | { action: "wait"; for: "load" | { ref: string }; timeout_ms?: number };
 
 export type BrowserControlGrant = Readonly<{ token: string; revision: number }>;
 

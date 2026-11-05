@@ -125,6 +125,8 @@ The [Browser plugin](https://github.com/squareup/buzz-plugin-browser) owns the a
 | `click` | `ref` |
 | `fill` | `ref`, `text` |
 | `navigate` | `url` |
+| `back`, `forward`, `reload` | none |
+| `wait` | `for`: `"load"` or `{ref}`, and `timeout_ms`, optional: an integer from 0 to 10,000 (default 5,000) |
 
 Native code rejects unknown actions and fields. A `ref` matches `^r[1-9][0-9]{0,9}e[1-9][0-9]{0,5}$`, `text` is at most 8,192 UTF-8 bytes, and `url` must pass the URL policy above.
 
@@ -142,6 +144,22 @@ A ref is `r<revision>e<n>`. It names one element until the guest commits a new d
 Page script builds `text` and `elements`, so native code parses that part into fixed types and checks every limit again. A reply that breaks a limit fails with `unavailable`. Every reply, `stale_ref` messages included, is at most 128 KiB.
 
 `click` and `fill` check, in order: visibility, disabled state (`:disabled` or an `aria-disabled="true"` ancestor), element kind, and read-only state. A hidden element fails with `not_interactable` before its kind is checked. `fill` takes text, search, email, URL, telephone and number inputs and textareas. It fails with `unsupported_input` on passwords, file inputs, contenteditable elements, other input types, and fields that change the text, such as letters in a number input. `click` fails with `unsupported_input` on a file input and with `not_interactable` on an option.
+
+### Settle, history and wait
+
+Every action except `observe` and `wait` ends with a settle step before its Snapshot. Native code polls the guest every 50 ms. When a new document committed, it waits until loading ends. When the document did not change, it stops once the guest has been idle for 300 ms. It stops 1 s before the deadline and returns the Snapshot with the current `loading`. So `navigate` and `back` return the page they led to, and each page-changing action takes at least 300 ms when the document stays the same.
+
+`back`, `forward` and `reload` run the same native history as the toolbar's Back, Forward and Reload, so the person and the agent move one history. With no history entry, `back` and `forward` change nothing and return the current Snapshot.
+
+`wait` with `for: "load"` polls `loading` every 50 ms until it is false. `wait` with `for: {ref}` checks the element every 100 ms until it is visible and enabled, and it never fails with `not_interactable`. `timeout_ms` bounds the condition, and `timeout_ms: 0` tests it once. The Snapshot after a met condition gets 1 s more, so a `wait` call can take up to 11 s. This departs from the 10 s `wait` limit in the product requirements, because a 10 s cap on the whole call would leave a `timeout_ms` of 10,000 no time for the Snapshot. Every other call has one 5 s deadline for the action, the settle step and the Snapshot.
+
+Each poll checks the grant and visibility again, so a revoke or a detach ends a wait within one poll with `not_visible`.
+
+One action runs at a time on a page. A second call fails with `busy` until the first one ends, on any outcome, a timeout included. `wait` and the settle step count as running.
+
+### Logging
+
+Native code writes one stderr line per call, `browser_control execute action=<action> outcome=<ok|code> ms=<n> session=<first 8 characters of the session ID>`. It also writes one line per grant, and one per revoke of a live grant with `reason=hide|resize|command`. The lines never hold page text, values, URLs, refs or tokens. They show only when Buzz runs from a terminal.
 
 ### Error codes
 

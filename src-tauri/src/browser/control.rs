@@ -1,8 +1,23 @@
 //! Opt-in control of a website guest, never of Buzz's trusted main document.
 use super::*;
+use serde::de::DeserializeOwned;
 use serde_json::{json, value::RawValue, Value};
+use std::time::Duration;
+use tokio::time::Instant;
 
-const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+/// One deadline for the action, its settle step, and its Snapshot.
+const CALL_DEADLINE: Duration = Duration::from_secs(5);
+const SETTLE_POLL: Duration = Duration::from_millis(50);
+/// How long an unchanged, idle document must stay so before settle stops.
+const SETTLE_QUIET: Duration = Duration::from_millis(300);
+/// Settle stops this long before the deadline, which leaves time for the Snapshot.
+const SETTLE_RESERVE: Duration = Duration::from_secs(1);
+/// Each ref check is a script evaluation, so it polls less often than `loading`.
+const REF_WAIT_POLL: Duration = Duration::from_millis(100);
+/// The Snapshot after a met `wait` condition gets this long past `timeout_ms`.
+const WAIT_SNAPSHOT_BUDGET: Duration = Duration::from_secs(1);
+const WAIT_DEFAULT_MS: u64 = 5000;
+const WAIT_MAX_MS: u64 = 10_000;
 const TOKEN_LENGTH: usize = 36;
 const TEXT_BYTES: usize = 8192;
 const REF_REVISION_DIGITS: usize = 10;
@@ -92,13 +107,80 @@ pub enum Request {
     Navigate {
         url: String,
     },
+    Back {},
+    Forward {},
+    Reload {},
+    Wait {
+        #[serde(rename = "for")]
+        condition: Condition,
+        #[serde(default = "default_wait_ms")]
+        timeout_ms: u64,
+    },
+}
+
+/// What `wait` waits for: `"load"`, or `{ref}` until that element is visible and enabled.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum Condition {
+    Load(Load),
+    Ref(RefCondition),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Load {
+    Load,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefCondition {
+    #[serde(rename = "ref")]
+    reference: String,
+}
+
+fn default_wait_ms() -> u64 {
+    WAIT_DEFAULT_MS
 }
 
 impl Request {
+    fn action(&self) -> &'static str {
+        match self {
+            Self::Observe { .. } => "observe",
+            Self::Click { .. } => "click",
+            Self::Fill { .. } => "fill",
+            Self::Navigate { .. } => "navigate",
+            Self::Back {} => "back",
+            Self::Forward {} => "forward",
+            Self::Reload {} => "reload",
+            Self::Wait { .. } => "wait",
+        }
+    }
+
     fn reference(&self) -> Option<&str> {
         match self {
-            Self::Click { reference } | Self::Fill { reference, .. } => Some(reference),
-            Self::Observe { .. } | Self::Navigate { .. } => None,
+            Self::Click { reference }
+            | Self::Fill { reference, .. }
+            | Self::Wait {
+                condition: Condition::Ref(RefCondition { reference }),
+                ..
+            } => Some(reference),
+            Self::Observe { .. }
+            | Self::Navigate { .. }
+            | Self::Back {}
+            | Self::Forward {}
+            | Self::Reload {}
+            | Self::Wait { .. } => None,
+        }
+    }
+
+    /// `wait` bounds its condition by `timeout_ms` and then gets time for the Snapshot.
+    fn limit(&self) -> Duration {
+        match self {
+            Self::Wait { timeout_ms, .. } => {
+                Duration::from_millis(*timeout_ms) + WAIT_SNAPSHOT_BUDGET
+            }
+            _ => CALL_DEADLINE,
         }
     }
 
@@ -116,6 +198,14 @@ impl Request {
                 return Err(failure(
                     Code::InvalidRequest,
                     format!("text must be at most {TEXT_BYTES} bytes."),
+                ));
+            }
+        }
+        if let Self::Wait { timeout_ms, .. } = self {
+            if *timeout_ms > WAIT_MAX_MS {
+                return Err(failure(
+                    Code::InvalidRequest,
+                    format!("timeout_ms must be an integer from 0 to {WAIT_MAX_MS}."),
                 ));
             }
         }
@@ -193,6 +283,7 @@ pub async fn browser_control_grant(app: AppHandle, session_id: String) -> Result
             *browser.control.borrow_mut() = Some(token.clone());
             let revision = browser.control_revision.get() + 1;
             browser.control_revision.set(revision);
+            eprintln!("browser_control grant session={}", browser.log_prefix());
             Ok(Grant { token, revision })
         })
     })
@@ -203,7 +294,7 @@ pub async fn browser_control_grant(app: AppHandle, session_id: String) -> Result
 pub async fn browser_control_revoke(app: AppHandle, session_id: String) -> Result<(), String> {
     on_main_thread(&app, move || {
         with_browser(&session_id, |browser| {
-            browser.revoke_control();
+            browser.revoke_control(RevokeReason::Command);
             Ok(())
         })
     })
@@ -218,8 +309,34 @@ pub async fn browser_control_execute(
     token: String,
     request: Value,
 ) -> Result<Box<RawValue>, String> {
-    let request: Request = serde_json::from_value(request)
-        .map_err(|error| failure(Code::InvalidRequest, format!("{error}.")))?;
+    let started = Instant::now();
+    let mut session = None;
+    let request: Result<Request, String> = serde_json::from_value(request)
+        .map_err(|error| failure(Code::InvalidRequest, format!("{error}.")));
+    let action = request.as_ref().map_or("unknown", Request::action);
+    let outcome = match request {
+        Ok(request) => control(&app, &token, request, &mut session).await,
+        Err(message) => Err(message),
+    };
+    // Never page text, values, URLs, refs, or tokens.
+    eprintln!(
+        "browser_control execute action={action} outcome={} ms={} session={}",
+        match &outcome {
+            Ok(_) => "ok",
+            Err(message) => message.split_once(": ").map_or("unknown", |(code, _)| code),
+        },
+        started.elapsed().as_millis(),
+        session.as_deref().unwrap_or("none"),
+    );
+    outcome
+}
+
+async fn control(
+    app: &AppHandle,
+    token: &str,
+    request: Request,
+    session: &mut Option<String>,
+) -> Result<Box<RawValue>, String> {
     request.validate()?;
     if token.len() != TOKEN_LENGTH {
         return Err(failure(
@@ -227,15 +344,58 @@ pub async fn browser_control_execute(
             "The page is no longer shared with you.",
         ));
     }
-    let reply = tokio::time::timeout(CALL_DEADLINE, run(&app, &token, request))
+    let deadline = Instant::now() + request.limit();
+    let in_flight = InFlight::begin(app, token).await?;
+    *session = Some(in_flight.log_prefix.clone());
+    let reply = tokio::time::timeout_at(deadline, run(app, token, request, deadline))
         .await
         .map_err(|_| {
             failure(
                 Code::Timeout,
-                "The page did not finish within 5 s, and the action may have run, so observe before you retry.",
+                "The page did not finish in time, and the action may have run, so observe before you retry.",
             )
         })??;
     RawValue::from_string(reply).map_err(|error| failure(Code::Unavailable, error))
+}
+
+/// Holds a guest's in-flight flag. Dropping it clears the flag on the UI
+/// thread, so every exit, a timeout included, frees the page.
+struct InFlight {
+    app: AppHandle,
+    session: String,
+    log_prefix: String,
+}
+
+impl InFlight {
+    async fn begin(app: &AppHandle, token: &str) -> Result<Self, String> {
+        let (session, log_prefix) = hop(app, token, |browser| {
+            if browser.control_busy.replace(true) {
+                return Err(failure(
+                    Code::Busy,
+                    "Another action is still running on this page, so wait for it to finish.",
+                ));
+            }
+            Ok((browser.instance.clone(), browser.log_prefix().to_owned()))
+        })
+        .await?;
+        Ok(Self {
+            app: app.clone(),
+            session,
+            log_prefix,
+        })
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let session = std::mem::take(&mut self.session);
+        let _ = self.app.run_on_main_thread(move || {
+            let _ = with_browser(&session, |browser| {
+                browser.control_busy.set(false);
+                Ok(())
+            });
+        });
+    }
 }
 
 enum Failure {
@@ -249,37 +409,93 @@ impl From<String> for Failure {
     }
 }
 
-async fn run(app: &AppHandle, token: &str, request: Request) -> Result<String, String> {
-    match perform(app, token, &request).await {
+async fn run(
+    app: &AppHandle,
+    token: &str,
+    request: Request,
+    deadline: Instant,
+) -> Result<String, String> {
+    match perform(app, token, &request, deadline).await {
         Ok(reply) => Ok(reply),
         Err(Failure::Coded(message)) => Err(message),
         Err(Failure::StaleRef) => Err(stale_ref_message(&snapshot(app, token, None).await?)?),
     }
 }
 
-async fn perform(app: &AppHandle, token: &str, request: &Request) -> Result<String, Failure> {
+async fn perform(
+    app: &AppHandle,
+    token: &str,
+    request: &Request,
+    deadline: Instant,
+) -> Result<String, Failure> {
     match request {
         Request::Observe { scope } => Ok(snapshot(app, token, *scope).await?),
-        Request::Navigate { url } => {
-            let url = url.clone();
-            hop(app, token, move |browser| {
-                browser
-                    .navigate(&url, false)
-                    .map_err(|error| failure(Code::InvalidUrl, error))
-            })
-            .await?;
-            Ok(json!({"navigating": true}).to_string())
+        Request::Wait {
+            condition,
+            timeout_ms,
+        } => {
+            wait(app, token, condition, *timeout_ms).await?;
+            Ok(snapshot(app, token, None).await?)
         }
-        Request::Click { .. } | Request::Fill { .. } => {
-            act(app, token, request).await?;
+        _ => {
+            let start_revision = change_page(app, token, request).await?;
+            settle_page(app, token, start_revision, deadline).await?;
             Ok(snapshot(app, token, None).await?)
         }
     }
 }
 
-/// Runs one action script. Native code rejects a ref from an older revision
+/// Runs an action that can change the page and returns the revision it started from.
+async fn change_page(app: &AppHandle, token: &str, request: &Request) -> Result<u64, Failure> {
+    let history = match request {
+        Request::Navigate { url } => {
+            let url = url.clone();
+            return Ok(hop(app, token, move |browser| {
+                let revision = browser.document_revision();
+                browser
+                    .navigate(&url, false)
+                    .map_err(|error| failure(Code::InvalidUrl, error))?;
+                Ok(revision)
+            })
+            .await?);
+        }
+        Request::Back {} => BrowserAction::Back,
+        Request::Forward {} => BrowserAction::Forward,
+        Request::Reload {} => BrowserAction::Reload,
+        _ => return act(app, token, request).await,
+    };
+    Ok(hop(app, token, move |browser| {
+        let revision = browser.document_revision();
+        browser
+            .history(history)
+            .map_err(|error| failure(Code::Unavailable, error))?;
+        Ok(revision)
+    })
+    .await?)
+}
+
+/// Runs one action script and returns the revision it ran in.
+async fn act(app: &AppHandle, token: &str, request: &Request) -> Result<u64, Failure> {
+    let revision = current_ref_revision(app, token, request).await?;
+    let reply = evaluate(
+        app.clone(),
+        token.to_owned(),
+        json!({"revision": revision, "request": request}),
+    )
+    .await?;
+    if !page_reply::<Done>(&reply)?.ok {
+        return Err(malformed_reply());
+    }
+    Ok(revision)
+}
+
+/// The current revision. Native code rejects a ref from an older revision
 /// before the page sees it.
-async fn act(app: &AppHandle, token: &str, request: &Request) -> Result<(), Failure> {
+async fn current_ref_revision(
+    app: &AppHandle,
+    token: &str,
+    request: &Request,
+) -> Result<u64, Failure> {
     let revision = hop(app, token, |browser| Ok(browser.document_revision())).await?;
     if request
         .reference()
@@ -287,13 +503,92 @@ async fn act(app: &AppHandle, token: &str, request: &Request) -> Result<(), Fail
     {
         return Err(Failure::StaleRef);
     }
+    Ok(revision)
+}
+
+/// Polls native state until `settle` stops, so the Snapshot after a
+/// page-changing action shows the page it led to.
+async fn settle_page(
+    app: &AppHandle,
+    token: &str,
+    start_revision: u64,
+    deadline: Instant,
+) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        let (revision, loading) = hop(app, token, |browser| {
+            Ok((
+                browser.document_revision(),
+                platform::loading(&browser.guest),
+            ))
+        })
+        .await?;
+        let now = Instant::now();
+        let decision = settle(
+            now - started,
+            deadline.saturating_duration_since(now),
+            start_revision,
+            revision,
+            loading,
+        );
+        if decision == Settle::Stop {
+            return Ok(());
+        }
+        tokio::time::sleep(SETTLE_POLL).await;
+    }
+}
+
+/// Tests the condition until it holds or `timeout_ms` passes. Each test
+/// checks the token and visibility, so a revoke ends the wait within one poll.
+async fn wait(
+    app: &AppHandle,
+    token: &str,
+    condition: &Condition,
+    timeout_ms: u64,
+) -> Result<(), Failure> {
+    let until = Instant::now() + Duration::from_millis(timeout_ms);
+    let poll = match condition {
+        Condition::Load(_) => SETTLE_POLL,
+        Condition::Ref(_) => REF_WAIT_POLL,
+    };
+    loop {
+        if condition_holds(app, token, condition).await? {
+            return Ok(());
+        }
+        let now = Instant::now();
+        if now >= until {
+            return Err(Failure::Coded(failure(
+                Code::Timeout,
+                format!("The condition did not hold within {timeout_ms} ms."),
+            )));
+        }
+        tokio::time::sleep(poll.min(until - now)).await;
+    }
+}
+
+async fn condition_holds(
+    app: &AppHandle,
+    token: &str,
+    condition: &Condition,
+) -> Result<bool, Failure> {
+    let reference = match condition {
+        Condition::Load(_) => {
+            return Ok(hop(app, token, |browser| Ok(!platform::loading(&browser.guest))).await?)
+        }
+        Condition::Ref(RefCondition { reference }) => reference,
+    };
+    let request = Request::Wait {
+        condition: condition.clone(),
+        timeout_ms: 0,
+    };
+    let revision = current_ref_revision(app, token, &request).await?;
     let reply = evaluate(
         app.clone(),
         token.to_owned(),
-        json!({"revision": revision, "request": request}),
+        json!({"revision": revision, "request": {"action": "wait", "for": {"ref": reference}}}),
     )
     .await?;
-    action_outcome(&reply)
+    Ok(page_reply::<Met>(&reply)?.met)
 }
 
 #[derive(Deserialize)]
@@ -316,25 +611,36 @@ struct Done {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Met {
+    met: bool,
+}
+
+#[derive(Deserialize)]
 #[serde(untagged)]
-enum ActionReply {
-    Done(Done),
+enum PageReply<T> {
+    Value(T),
     Error(PageError),
 }
 
-fn action_outcome(reply: &str) -> Result<(), Failure> {
+fn malformed_reply() -> Failure {
+    Failure::Coded(failure(
+        Code::Unavailable,
+        "The page sent a malformed reply.",
+    ))
+}
+
+/// Parses a `control.js` reply that is `T` or one of the page's four error codes.
+fn page_reply<T: DeserializeOwned>(reply: &str) -> Result<T, Failure> {
     match serde_json::from_str(reply) {
-        Ok(ActionReply::Done(Done { ok: true })) => Ok(()),
-        Ok(ActionReply::Error(PageError { error })) if error.code == Code::StaleRef => {
+        Ok(PageReply::Value(value)) => Ok(value),
+        Ok(PageReply::Error(PageError { error })) if error.code == Code::StaleRef => {
             Err(Failure::StaleRef)
         }
-        Ok(ActionReply::Error(PageError { error })) if error.code.page_may_send() => {
+        Ok(PageReply::Error(PageError { error })) if error.code.page_may_send() => {
             Err(Failure::Coded(failure(error.code, error.message)))
         }
-        _ => Err(Failure::Coded(failure(
-            Code::Unavailable,
-            "The page sent a malformed reply.",
-        ))),
+        _ => Err(malformed_reply()),
     }
 }
 
@@ -417,7 +723,10 @@ pub(crate) async fn evaluate(
     input: Value,
 ) -> Result<String, String> {
     let reply = hop(&app, &token, move |browser| start_script(browser, &input)).await?;
-    receive(reply).await
+    let reply = receive(reply).await?;
+    // A reply arriving after a revoke or a closed guest must not count.
+    hop(&app, &token, |_| Ok(())).await?;
+    Ok(reply)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -549,6 +858,35 @@ fn stale_ref_message(snapshot: &str) -> Result<String, String> {
     Ok(message)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Settle {
+    Continue,
+    Stop,
+}
+
+/// One settle poll. A new document counts once it has loaded, and the same
+/// document counts once it has stayed idle for `SETTLE_QUIET`.
+fn settle(
+    elapsed: Duration,
+    remaining: Duration,
+    start_revision: u64,
+    current_revision: u64,
+    loading: bool,
+) -> Settle {
+    let done = if remaining <= SETTLE_RESERVE {
+        true
+    } else if current_revision != start_revision {
+        !loading
+    } else {
+        !loading && elapsed >= SETTLE_QUIET
+    };
+    if done {
+        Settle::Stop
+    } else {
+        Settle::Continue
+    }
+}
+
 pub fn handle(request: tauri::ipc::Invoke<tauri::Wry>) -> bool {
     let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
         browser_control_grant,
@@ -562,6 +900,7 @@ pub fn handle(request: tauri::ipc::Invoke<tauri::Wry>) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::Duration;
 
     /// The parse and validation that `browser_control_execute` applies to a raw request.
     fn checked(request: &str) -> Result<Request, String> {
@@ -787,5 +1126,127 @@ mod tests {
         assert_eq!(snapshot["url"], "https://example.com/old");
         assert_eq!(snapshot["title"], "Old");
         assert_eq!(snapshot["loading"], true);
+    }
+
+    #[test]
+    fn settle_stops_on_a_quiet_page_a_loaded_new_document_or_the_deadline_reserve() {
+        let ms = Duration::from_millis;
+        let rows = [
+            (
+                "same document, idle for 250 ms",
+                ms(250),
+                ms(4_000),
+                7,
+                7,
+                false,
+                Settle::Continue,
+            ),
+            (
+                "same document, idle for 300 ms",
+                ms(300),
+                ms(4_000),
+                7,
+                7,
+                false,
+                Settle::Stop,
+            ),
+            (
+                "same document, loading at 300 ms",
+                ms(300),
+                ms(4_000),
+                7,
+                7,
+                true,
+                Settle::Continue,
+            ),
+            (
+                "new document, loading",
+                ms(100),
+                ms(4_000),
+                7,
+                8,
+                true,
+                Settle::Continue,
+            ),
+            (
+                "new document, loaded",
+                ms(100),
+                ms(4_000),
+                7,
+                8,
+                false,
+                Settle::Stop,
+            ),
+            (
+                "1050 ms before the deadline",
+                ms(3_000),
+                ms(1_050),
+                7,
+                8,
+                true,
+                Settle::Continue,
+            ),
+            (
+                "1 s before the deadline",
+                ms(3_000),
+                ms(1_000),
+                7,
+                8,
+                true,
+                Settle::Stop,
+            ),
+        ];
+        let mismatches: Vec<String> = rows
+            .into_iter()
+            .filter_map(
+                |(name, elapsed, remaining, start, current, loading, expected)| {
+                    let outcome = settle(elapsed, remaining, start, current, loading);
+                    (outcome != expected)
+                        .then(|| format!("{name}: expected {expected:?}, got {outcome:?}"))
+                },
+            )
+            .collect();
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    #[test]
+    fn wait_accepts_integer_timeouts_from_0_to_10000_ms() {
+        let mismatches = validation_mismatches(vec![
+            (
+                "0 ms",
+                r#"{"action":"wait","for":"load","timeout_ms":0}"#.into(),
+                Ok(()),
+            ),
+            (
+                "10000 ms",
+                r#"{"action":"wait","for":"load","timeout_ms":10000}"#.into(),
+                Ok(()),
+            ),
+            (
+                "10001 ms",
+                r#"{"action":"wait","for":"load","timeout_ms":10001}"#.into(),
+                Err(""),
+            ),
+            (
+                "negative",
+                r#"{"action":"wait","for":"load","timeout_ms":-1}"#.into(),
+                Err(""),
+            ),
+            (
+                "fraction",
+                r#"{"action":"wait","for":"load","timeout_ms":1.5}"#.into(),
+                Err(""),
+            ),
+        ]);
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    #[test]
+    fn wait_without_timeout_ms_waits_5000_ms() {
+        let request = checked(r#"{"action":"wait","for":"load"}"#).expect("valid wait");
+
+        let sent = serde_json::to_value(&request).expect("the request serializes");
+
+        assert_eq!(sent["timeout_ms"], 5000);
     }
 }
