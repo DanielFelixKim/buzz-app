@@ -48,11 +48,16 @@ export class BrowserService extends Service implements Browser {
     };
     const access = control && new BrowserAccess(control, eligible);
     const sessions = new BrowserSessions(this.platform);
+    const onControlEnded =
+      access &&
+      ((sessionId: string, revision?: number) =>
+        access.ended(sessionId, revision));
     this.View = (props) =>
       createElement(BrowserHostView, {
         ...props,
         platform: this.platform,
         sessions,
+        onControlEnded,
       });
     this.control =
       control && access

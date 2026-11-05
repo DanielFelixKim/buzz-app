@@ -106,10 +106,15 @@ export function BrowserHostView({
   pollInterval = 300,
   toolbar: Toolbar,
   sessionKey,
+  onControlEnded,
 }: BrowserViewProps & {
   platform: BrowserPlatform;
   sessions: BrowserSessions;
   pollInterval?: number;
+  /** Told that agent control of a session ended because its page stopped
+   * being shown, before the toolbar sees it. `revision` is the status
+   * revision that showed it, absent when the view lets go of the session. */
+  onControlEnded?: ((sessionId: string, revision?: number) => void) | undefined;
 }) {
   const storage = builderlab?.storage ?? requestedStorage;
   const viewport = useRef<HTMLDivElement>(null);
@@ -134,6 +139,11 @@ export function BrowserHostView({
   useEffect(() => {
     if (!editing.current && status.url) setDraft(status.url);
   }, [status.url]);
+
+  const controlEnded = useEffectEvent(
+    (...report: [sessionId: string, revision?: number]) =>
+      onControlEnded?.(...report),
+  );
 
   // macOS mouse back/forward, sent here while this page has focus.
   const historyAction = useEffectEvent((event: Event, value: BrowserAction) => {
@@ -198,6 +208,7 @@ export function BrowserHostView({
         // shown.
         if (!nextVisible) return;
         setLocalError(null);
+        controlEnded(sessionId);
         session.current = undefined;
         setControlSession(undefined);
         delete element.dataset.browserSession;
@@ -288,6 +299,11 @@ export function BrowserHostView({
           )
             resumeUrl.current = next.url;
           sessions.rememberTitle(titleKey, next.title);
+          if (
+            next.control_granted === false &&
+            next.control_revision !== undefined
+          )
+            controlEnded(sessionId, next.control_revision);
           setStatus(next);
         }
       } catch (error) {
@@ -415,8 +431,10 @@ export function BrowserHostView({
       session.current = undefined;
       setControlSession(undefined);
       // Revoke before a persistent guest is parked for reuse.
-      if (sessionId)
+      if (sessionId) {
+        controlEnded(sessionId);
         void platform.control?.revoke(sessionId).catch(() => undefined);
+      }
       delete element.dataset.browserSession;
       // A guest with kept storage waits a while for this page to come back,
       // say from another channel, so work in progress there survives.

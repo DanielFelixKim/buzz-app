@@ -111,7 +111,7 @@ Check address entry, Back/Forward/Reload, resizing, opening an account menu, clo
 
 ## Plugin browser control
 
-Normal macOS builds provide a native capability that lets an agent read and operate a website guest. The guest keeps its existing IPC isolation. Native grants are revocable, and actions require a visible guest. Hiding, covering, resizing or closing the guest revokes access. Arbitrary agent-supplied JavaScript is not accepted.
+Normal macOS builds provide a native capability that lets an agent read and operate a website guest. The guest keeps its existing IPC isolation. Native grants are revocable, and actions require a visible guest. Hiding, covering, resizing or closing the guest revokes access. The agent's later calls then fail with `not_visible`, which tells it to open the page again, until a page is shared with it again. A Share of that page with another agent makes them fail with `unavailable` instead. Arbitrary agent-supplied JavaScript is not accepted.
 
 The [Browser plugin](https://github.com/squareup/buzz-plugin-browser) owns the agent tool, the sharing toolbar, recipient selection and the page-opening workflow. It contributes a toolbar to `ctx.browser.View`, and ordinary views have no sharing controls. The host provides the active session and status, a native presentation barrier, shared UI primitives, and authenticated grant, execute and revoke operations. It does not open agent pages or choose recipients. Installing the native capability registers no agent tool and gives no access to any page.
 

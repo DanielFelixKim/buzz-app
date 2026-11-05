@@ -388,3 +388,79 @@ describe("one grant per recipient", () => {
     });
   });
 });
+
+describe("a grant that ended because the page stopped being shown", () => {
+  const observe = (access: BrowserAccess, agent = "agent") =>
+    access.execute(
+      agent,
+      { channel: "chat", root: "thread" },
+      { action: "observe" },
+    );
+
+  it("answers not_visible after the toolbar cleans up a hidden page's grant", async () => {
+    const f = fixture();
+    await f.control.grant("view");
+    f.access.ended("view", 2);
+    await f.control.revoke("view");
+    await expect(observe(f.access)).rejects.toThrow(/^not_visible: /);
+    expect(f.native.execute).not.toHaveBeenCalled();
+  });
+
+  it("answers not_visible after the page closed", async () => {
+    const f = fixture();
+    await f.control.grant("view");
+    f.access.ended("view");
+    await f.control.revoke("view");
+    await expect(observe(f.access)).rejects.toThrow(/^not_visible: /);
+  });
+
+  it("ignores an ended report from before the grant", async () => {
+    const f = fixture();
+    vi.mocked(f.native.grant).mockResolvedValue({
+      token: "internal-only",
+      revision: 3,
+    });
+    await f.control.grant("view");
+    f.access.ended("view", 2);
+    await expect(observe(f.access)).resolves.toEqual({ text: "Page" });
+  });
+
+  it("gives the old agent unavailable once the person shares the page with another agent", async () => {
+    const f = fixture();
+    await f.control.grant("view");
+    f.access.ended("view", 2);
+    await f.control.revoke("view");
+    await f.access
+      .forRecipient({ ...f.recipient, agent: "other" })
+      .grant("view");
+    await expect(observe(f.access)).rejects.toThrow(/^unavailable: /);
+    await expect(observe(f.access, "other")).resolves.toEqual({
+      text: "Page",
+    });
+  });
+
+  it("uses a newer grant on another page and forgets the ended one", async () => {
+    const f = fixture();
+    vi.mocked(f.native.grant).mockImplementation(async (session) => ({
+      token: `token-${session}`,
+      revision: 1,
+    }));
+    await f.control.grant("A");
+    f.access.ended("A", 2);
+    await f.control.grant("B");
+    await expect(observe(f.access)).resolves.toEqual({ text: "Page" });
+    expect(f.native.execute).toHaveBeenLastCalledWith("token-B", {
+      action: "observe",
+    });
+    await f.control.revoke("B");
+    await expect(observe(f.access)).rejects.toThrow(/^unavailable: /);
+  });
+
+  it("gives unavailable once the agent is no longer eligible", async () => {
+    const f = fixture();
+    await f.control.grant("view");
+    f.access.ended("view", 2);
+    f.stop();
+    await expect(observe(f.access)).rejects.toThrow(/^unavailable: /);
+  });
+});

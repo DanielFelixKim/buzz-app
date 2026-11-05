@@ -36,6 +36,10 @@ export class BrowserAccess {
     {
       recipient: BrowserRecipient;
       token?: string | undefined;
+      revision?: number | undefined;
+      /** The page stopped being shown, so the grant ended without the
+       * person taking control. */
+      ended?: true;
     }
   >();
 
@@ -50,7 +54,11 @@ export class BrowserAccess {
       grant: async (session) => {
         if (!this.eligible(recipient))
           throw new Error("Choose an agent running in this Buzz conversation.");
-        const entry = { recipient, token: undefined as string | undefined };
+        const entry = {
+          recipient,
+          token: undefined as string | undefined,
+          revision: undefined as number | undefined,
+        };
         // No await between the removal and the add, so two concurrent grants
         // for one recipient cannot both survive.
         this.revokeRecipient(recipient, session);
@@ -68,6 +76,7 @@ export class BrowserAccess {
               throw new Error("Browser access was revoked.");
             }
             entry.token = grant.token;
+            entry.revision = grant.revision;
             return { revision: grant.revision };
           });
         } catch (error) {
@@ -79,7 +88,7 @@ export class BrowserAccess {
         const current = this.grants.get(session);
         if (current && current.recipient !== recipient)
           return Promise.resolve();
-        this.grants.delete(session);
+        if (!current?.ended) this.grants.delete(session);
         return this.ordered(session, () => this.native.revoke(session));
       },
     };
@@ -89,18 +98,36 @@ export class BrowserAccess {
   private revokeRecipient(recipient: BrowserRecipient, keep: string): void {
     for (const [session, entry] of this.grants) {
       if (
-        session !== keep &&
-        entry.recipient.agent === recipient.agent &&
-        entry.recipient.scope === recipient.scope &&
-        entry.recipient.channel === recipient.channel &&
-        entry.recipient.root === recipient.root
+        session === keep ||
+        entry.recipient.agent !== recipient.agent ||
+        entry.recipient.scope !== recipient.scope ||
+        entry.recipient.channel !== recipient.channel ||
+        entry.recipient.root !== recipient.root
       )
-        // A failed native revoke leaves a token that execute can no longer
-        // reach, because the entry is already gone.
-        void this.forRecipient(entry.recipient)
-          .revoke(session)
-          .catch(() => undefined);
+        continue;
+      if (entry.ended) {
+        this.grants.delete(session);
+        continue;
+      }
+      // A failed native revoke leaves a token that execute can no longer
+      // reach, because the entry is already gone.
+      void this.forRecipient(entry.recipient)
+        .revoke(session)
+        .catch(() => undefined);
     }
+  }
+
+  /** Native code ended the grant on `session` because its page stopped being
+   * shown. Its agent then gets `not_visible`, which tells it to open the page
+   * again, until the page is shared again. A `revision` older than the grant
+   * comes from a status read before the grant and changes nothing. */
+  ended(session: string, revision?: number): void {
+    const entry = this.grants.get(session);
+    if (
+      entry?.token &&
+      (revision === undefined || revision >= (entry.revision ?? 0))
+    )
+      this.grants.set(session, { recipient: entry.recipient, ended: true });
   }
 
   async execute(
@@ -109,15 +136,19 @@ export class BrowserAccess {
     request: BrowserControlRequest,
   ) {
     const root = context.topLevel ? undefined : context.root;
-    const matches = [...this.grants.values()].filter(
-      ({ recipient, token }) =>
-        token &&
+    const caller = [...this.grants.values()].filter(
+      ({ recipient }) =>
         recipient.agent === agent &&
         recipient.channel === context.channel &&
         recipient.root === root &&
         this.eligible(recipient),
     );
+    const matches = caller.filter(({ token }) => token);
     const entry = matches[0];
+    if (!entry?.token && caller.some(({ ended }) => ended))
+      throw new Error(
+        "not_visible: The page is no longer shown, so open it again.",
+      );
     if (matches.length !== 1 || !entry?.token)
       throw new Error(
         matches.length

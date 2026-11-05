@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PanelWorkspace } from "../panels/PanelWorkspace";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -1172,4 +1173,132 @@ it("keeps the full URL editable after a rejected navigation without refocusing",
     false,
   );
   expect(input).toHaveValue("https://good.example/");
+});
+
+it("reports a native revoke of its grant before its toolbar sees the status", async () => {
+  const platform = fakePlatform();
+  vi.mocked(platform.status).mockResolvedValue({
+    url: "https://example.com/",
+    title: "Example",
+    loading: false,
+    error: null,
+    control_granted: false,
+    control_revision: 2,
+  });
+  const onControlEnded = vi.fn();
+  const reportsSeen: number[] = [];
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      onControlEnded={onControlEnded}
+      toolbar={({ status }) => {
+        if (status.control_revision === 2)
+          reportsSeen.push(onControlEnded.mock.calls.length);
+        return null;
+      }}
+    />,
+  );
+  await waitFor(() => expect(reportsSeen).not.toHaveLength(0));
+  expect(reportsSeen[0]).toBe(1);
+  expect(onControlEnded).toHaveBeenCalledWith("session-1", 2);
+});
+
+it("reports no ended grant while the status shows control granted or no control", async () => {
+  const platform = fakePlatform();
+  vi.mocked(platform.status)
+    .mockResolvedValueOnce({
+      url: "https://example.com/",
+      title: "Example",
+      loading: false,
+      error: null,
+    })
+    .mockResolvedValue({
+      url: "https://example.com/",
+      title: "Example",
+      loading: false,
+      error: null,
+      control_granted: true,
+      control_revision: 1,
+    });
+  const onControlEnded = vi.fn();
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={1}
+      onControlEnded={onControlEnded}
+    />,
+  );
+  await waitFor(() =>
+    expect(vi.mocked(platform.status).mock.calls.length).toBeGreaterThan(2),
+  );
+  expect(onControlEnded).not.toHaveBeenCalled();
+});
+
+it("reports its grant ended when the view closes, before its toolbar cleans up", async () => {
+  const platform = fakePlatform();
+  const onControlEnded = vi.fn();
+  const order: string[] = [];
+  function Toolbar() {
+    useEffect(
+      () => () => {
+        order.push(`toolbar cleanup after ${onControlEnded.mock.calls.length}`);
+      },
+      [],
+    );
+    return null;
+  }
+  const view = render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      onControlEnded={onControlEnded}
+      toolbar={Toolbar}
+    />,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  view.unmount();
+  expect(onControlEnded).toHaveBeenCalledExactlyOnceWith("session-1");
+  expect(order).toEqual(["toolbar cleanup after 1"]);
+});
+
+it("reports its grant ended when its evicted guest is shown again, before its toolbar cleans up", async () => {
+  const platform = fakePlatform();
+  const sessions = new BrowserSessions(platform);
+  const onControlEnded = vi.fn();
+  const order: string[] = [];
+  function Toolbar() {
+    useEffect(
+      () => () => {
+        order.push(`toolbar cleanup after ${onControlEnded.mock.calls.length}`);
+      },
+      [],
+    );
+    return null;
+  }
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={sessions}
+      onControlEnded={onControlEnded}
+      toolbar={Toolbar}
+    />,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  vi.mocked(platform.attach).mockResolvedValue("session-2");
+  const owns = sessions.owns.bind(sessions);
+  vi.spyOn(sessions, "owns").mockImplementation(
+    (sessionId) => sessionId !== "session-1" && owns(sessionId),
+  );
+  act(() => {
+    for (const callback of TestResizeObserver.callbacks) callback();
+  });
+  await waitFor(() => expect(order).not.toHaveLength(0));
+  expect(onControlEnded).toHaveBeenCalledExactlyOnceWith("session-1");
+  expect(order[0]).toBe("toolbar cleanup after 1");
 });
