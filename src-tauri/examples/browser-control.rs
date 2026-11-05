@@ -346,7 +346,9 @@ addEventListener('scroll', show);
             execute(self.app.clone(), token.to_string(), request).await
         }
 
-        /// Observes until `accept` holds, for page changes the agent did not start.
+        /// Observes until `accept` holds and no load is in progress, for page
+        /// changes the agent did not start. WKWebView reports a history load's
+        /// URL before the load commits, and an agent action sent then races it.
         async fn observe_until(
             &self,
             page: &Page,
@@ -356,7 +358,7 @@ addEventListener('scroll', show);
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {
                 let snapshot = self.call(&page.token, json!({"action": "observe"})).await?;
-                if accept(&snapshot) {
+                if snapshot["loading"] == false && accept(&snapshot) {
                     return Ok(snapshot);
                 }
                 if Instant::now() > deadline {
