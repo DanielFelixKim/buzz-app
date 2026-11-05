@@ -850,7 +850,7 @@ export function PluginImport({
   );
   const updateActions = (
     <>
-      {!savedSource && !preview && addButton}
+      {!savedSource && !preview && !updateAvailable && addButton}
       {savedSource && "repository" in savedSource && (
         <Button
           ref={checkAgain}

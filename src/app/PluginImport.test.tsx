@@ -3246,6 +3246,9 @@ it.each([false, true])(
     expect(checks.snapshot()[rememberedManifest.id]?.revision).toBe(
       multiple ? "alternate" : "new",
     );
+    expect(
+      screen.getAllByRole("button", { name: /^Update(?: Remembered)?$/ }),
+    ).toHaveLength(1);
     expect(manager.installImport).not.toHaveBeenCalled();
   },
 );
