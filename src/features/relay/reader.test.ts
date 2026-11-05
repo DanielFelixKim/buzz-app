@@ -338,16 +338,12 @@ it("admits an unread repair batch of up to 128 content filters, and nothing shap
   ];
   const result = read(batch);
   expect(next().filters).toHaveLength(128);
-  const window = (f: ReadFilter) => f.since !== undefined;
+  // The shapes are unread-window-batch.test.ts's; the reader hands a batch
+  // over four filters to that rule, not to its length alone: a second
+  // authored page within 128 filters is refused as 129 filters are.
   for (const invalid of [
     [...batch, { ...batch[1], "#h": [channel(300)] }],
-    batch.map((f) => ({ ...f, kinds: [9] })),
-    batch.map(({ include_aux: _aux, ...f }) => f),
-    batch.map(({ since: _since, ...f }) => f),
-    batch.map((f) => (window(f) ? { ...f, "#h": [channel(1)] } : f)),
-    batch.map((f) => (window(f) ? { ...f, until: 2000 } : f)),
-    [...batch.slice(1), batch[0], batch[0]],
-    batch.map((f) => (f.ids ? { ...f, limit: 2 } : f)),
+    [...batch.slice(0, 127), batch[0]],
   ] as ReadFilter[][])
     await expect(read(invalid)).rejects.toThrow("1–4 filters");
   expect(pending).toHaveLength(0);

@@ -469,7 +469,11 @@ export function policyRelay({
               expect(filter.limit).toBe(500);
             } else if (filter.authors) expect(filter.limit).toBe(100);
             else {
-              expect(filter.limit).toBeGreaterThanOrEqual(20);
+              // A window is sized to at least 20; only a lone window whose
+              // page came back oversized is read again with its limit halved.
+              expect(filter.limit).toBeGreaterThanOrEqual(
+                filters.length === 1 ? 1 : 20,
+              );
               expect(filter.limit).toBeLessThanOrEqual(100);
             }
             report.queries.push({ community, filter, at: performance.now() });
