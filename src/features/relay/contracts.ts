@@ -353,7 +353,8 @@ export interface ChannelQueries {
   subscribeWindow(channelId: string, listener: () => void): () => void;
   ensureList(): void;
   ensure(channelId: string): void;
-  loadOlder(channelId: string): void;
+  /** Preserve this rendered row when a bounded page displaces its opposite edge. */
+  loadOlder(channelId: string, anchorId?: string): void;
   /** Detach the window to history at `from` (unix seconds; 0 is the channel
    * start). Resolves the first message at or after `from`, else the newest. */
   seek?(
@@ -362,7 +363,7 @@ export interface ChannelQueries {
     signal: AbortSignal,
   ): Promise<string | undefined>;
   /** Read the rows above a detached window; reattaches on reaching the head. */
-  loadNewer?(channelId: string): void;
+  loadNewer?(channelId: string, anchorId?: string): void;
   /** Return a detached window to the newest messages. */
   attach?(channelId: string): void;
   /** Explicit same-scope head revalidation; replaces the bounded head, not a realtime tail. */

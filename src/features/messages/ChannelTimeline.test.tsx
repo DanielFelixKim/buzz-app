@@ -631,7 +631,7 @@ it("loads older rows at the current DOM threshold despite a stale far-away virtu
   const h = setup({ hasMore: true });
   h.handle.scrollOffset = 3300;
   h.scroll();
-  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel", undefined);
   h.unmount();
 });
 it("does not load older rows when only the old virtualizer position is inside the threshold", () => {
@@ -953,7 +953,7 @@ it("a user gesture at a restored top pages without needing a DOM scroll event", 
   h.element.scrollTop = 0;
   expect(h.loadOlder).not.toHaveBeenCalled();
   h.gesture();
-  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel", undefined);
   h.unmount();
 });
 
@@ -1904,7 +1904,7 @@ it("pages Solo chat history on scroll without an initial button and keeps error 
   const h = setup({ hasMore: true, historyControl: "scroll" });
   expect(h.hasHistoryButton()).toBe(false);
   h.scroll();
-  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel", undefined);
   h.unmount();
   const failed = setup({
     hasMore: true,
@@ -1913,6 +1913,9 @@ it("pages Solo chat history on scroll without an initial button and keeps error 
   });
   expect(failed.hasHistoryButton()).toBe(true);
   failed.retry();
-  expect(failed.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  expect(failed.loadOlder).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    undefined,
+  );
   failed.unmount();
 });

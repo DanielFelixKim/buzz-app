@@ -740,3 +740,43 @@ it("does not resurrect a joining message deleted and evicted during an older rea
     h.window().rows.find((row) => row.id === joining.id)?.content,
   ).not.toBe(joining.content);
 });
+
+it("retains a rendered anchor across shared-second older trimming", async () => {
+  const h = setup({ count: 60, maxHistoryRows: 40, spacing: 0 });
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const anchor = h.window().rows[0]?.id;
+  assert.exists(anchor);
+  h.channels.loadOlder("c", anchor);
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.map((row) => row.id)).toContain(anchor);
+  const nextAnchor = h.window().rows.at(-1)?.id;
+  assert.exists(nextAnchor);
+  h.channels.loadOlder("c", nextAnchor);
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.map((row) => row.id)).toContain(nextAnchor);
+  expect(h.window().hasMore).toBe(false);
+});
+
+it("retains a rendered anchor across shared-second newer trimming", async () => {
+  const h = setup({ count: 60, maxHistoryRows: 40, spacing: 0 });
+  await h.open();
+  for (let step = 0; h.window().hasMore && step < 5; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const anchor = h.window().rows.at(-1)?.id;
+  assert.exists(anchor);
+  h.channels.loadNewer?.("c", anchor);
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  expect(h.window().rows.map((row) => row.id)).toContain(anchor);
+  const nextAnchor = h.window().rows[0]?.id;
+  assert.exists(nextAnchor);
+  for (let step = 0; h.window().hasNewer && step < 4; step++) {
+    h.channels.loadNewer?.("c", nextAnchor);
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    expect(h.window().rows.map((row) => row.id)).toContain(nextAnchor);
+  }
+  expect(h.window().hasNewer).toBeFalsy();
+});

@@ -979,7 +979,11 @@ export function createChannelStore(
     if (intent === channelId) prepareMedia(channelId);
     return head;
   }
-  async function loadPage(state: WindowState, cursor: WindowCursor | null) {
+  async function loadPage(
+    state: WindowState,
+    cursor: WindowCursor | null,
+    anchorId?: string,
+  ) {
     if (!transport || !canReadRemote(state.channelId)) return;
     const generation = state.generation;
     const joining = cursor
@@ -1010,7 +1014,7 @@ export function createChannelStore(
       );
       for (const event of page.events) combined.set(event.id, event);
       const retained = cursor
-        ? trimWindow(state, [...combined.values()], "oldest")
+        ? trimWindow(state, [...combined.values()], "oldest", anchorId)
         : [...combined.values()];
       const rows = Object.freeze(
         foldChannelMessages(state.channelId, transport.relayAuthor, retained),
@@ -1029,13 +1033,28 @@ export function createChannelStore(
       state.events = retained;
       state.atHead = !cursor;
       if (!cursor) attached(state);
-      moveCursor(state, page.cursor);
+      const retainedIds = new Set(retained.map((event) => event.id));
+      const clipped = page.events.some(
+        (event) => channelRowKind(event.kind) && !retainedIds.has(event.id),
+      );
+      const oldest = clipped
+        ? retained
+            .filter((event) => channelRowKind(event.kind))
+            .sort(newestFirst)
+            .at(-1)
+        : undefined;
+      moveCursor(
+        state,
+        oldest
+          ? { createdAt: oldest.created_at, eventId: oldest.id }
+          : page.cursor,
+      );
       state.restored = false;
       if (dropped && !cursor) state.kept = rowIds(state);
       setWindow(state, {
         status: "ready",
         rows,
-        hasMore: page.hasMore && page.cursor !== null,
+        hasMore: clipped || (page.hasMore && page.cursor !== null),
         loadingOlder: false,
         historyLimited: false,
         error: undefined,
@@ -1170,6 +1189,7 @@ export function createChannelStore(
     state: WindowState,
     events: readonly RelayEvent[],
     end: "oldest" | "newest",
+    anchorId?: string,
   ) {
     const rows = events
       .filter((event) => channelRowKind(event.kind))
@@ -1180,11 +1200,17 @@ export function createChannelStore(
     )
       return events;
     if (end === "oldest") rows.reverse();
-    let kept = rows.slice(0, maxHistoryRows);
+    const anchor = rows.findIndex((event) => event.id === anchorId);
+    const slice = (count: number) =>
+      rows.slice(
+        Math.max(0, anchor - count + 1),
+        Math.max(0, anchor - count + 1) + count,
+      );
+    let kept = slice(maxHistoryRows);
     const retain = (ids: ReadonlySet<string>) => relatedEvents(events, ids);
     let retained = retain(new Set(kept.map((event) => event.id)));
     while (kept.length > 1 && listByteSize(retained) > maxHistoryBytes) {
-      kept = kept.slice(0, -Math.max(1, Math.ceil(kept.length / 4)));
+      kept = slice(kept.length - Math.max(1, Math.ceil(kept.length / 4)));
       retained = retain(new Set(kept.map((event) => event.id)));
     }
     const boundary = kept.at(-1);
@@ -3486,7 +3512,7 @@ export function createChannelStore(
         setWindow(state, { status: "loading", error: undefined });
       void loadPage(state, null);
     },
-    loadOlder(channelId: string) {
+    loadOlder(channelId: string, anchorId?: string) {
       if (disposed || !transport) return;
       if (!canReadRemote(channelId)) {
         revalidateCached(channelId);
@@ -3502,7 +3528,7 @@ export function createChannelStore(
       )
         return;
       setWindow(state, { loadingOlder: true, error: undefined });
-      void loadPage(state, state.cursor);
+      void loadPage(state, state.cursor, anchorId);
     },
     async seek(channelId: string, from: number, signal: AbortSignal) {
       const state = windows.get(channelId);
@@ -3549,7 +3575,7 @@ export function createChannelStore(
         controllers.delete(controller);
       }
     },
-    loadNewer(channelId: string) {
+    loadNewer(channelId: string, anchorId?: string) {
       const state = windows.get(channelId);
       const from = state?.ceiling;
       if (
@@ -3614,16 +3640,30 @@ export function createChannelStore(
           }
           const partial = advancing.length < newer.length;
           for (const event of incoming) merged.set(event.id, event);
-          const head =
+          let head =
             !partial &&
             (located.kind !== "segment" || located.ceiling === null);
           if (head)
             for (const event of state.above?.values() ?? [])
               merged.set(event.id, event);
-          const trimmed = trimWindow(state, [...merged.values()], "newest");
+          const trimmed = trimWindow(
+            state,
+            [...merged.values()],
+            "newest",
+            anchorId,
+          );
+          const retainedIds = new Set(trimmed.map((event) => event.id));
+          const clipped = advancing.some((event) => !retainedIds.has(event.id));
+          head &&= !clipped;
           const dropped = trimmed.length < merged.size;
           state.events = trimmed;
-          const boundary = partial ? advancing.at(-1) : undefined;
+          const boundary = clipped
+            ? trimmed
+                .filter((event) => channelRowKind(event.kind))
+                .sort(newestFirst)[0]
+            : partial
+              ? advancing.at(-1)
+              : undefined;
           state.ceiling =
             boundary?.created_at ??
             (head || located.kind !== "segment"

@@ -17,8 +17,9 @@ declare global {
   interface Window {
     prependHistory(): void;
     loadSlidingOlder(): void;
-    holdSlidingPage(): void;
-    releaseSlidingPage(): void;
+    slidingHeldReads: number;
+    holdSlidingPage(before?: number): void;
+    releaseSlidingPage(holdNext?: boolean, before?: number): void;
   }
 }
 const viewer = keypair(),
@@ -80,20 +81,25 @@ const owner = createRelaySession({
 });
 // A small real session budget makes both sliding edges observable without a scale fixture.
 const sliding = new URLSearchParams(location.search).has("sliding");
+const compact = new URLSearchParams(location.search).has("compact");
 const slidingEvents = Array.from({ length: 140 }, (_, i) =>
   message(
     viewer,
     "images",
-    `Message ${i}. ${"History remains readable. ".repeat(8)}`,
+    `Message ${i}. ${"History remains readable. ".repeat(compact ? 0 : 8)}`,
     1700000000 + i,
   ),
 ).reverse();
 let heldPage: Promise<void> | undefined;
+let heldBefore: number | undefined;
 let receiveSliding = (_events: typeof slidingEvents) => {};
-window.holdSlidingPage = () => {
+window.holdSlidingPage = (before) => {
+  heldBefore = before;
+  window.slidingHeldReads = 0;
   heldPage = new Promise((resolve) => {
-    window.releaseSlidingPage = () => {
+    window.releaseSlidingPage = (holdNext = false, before) => {
       heldPage = undefined;
+      if (holdNext) window.holdSlidingPage(before);
       resolve();
     };
   });
@@ -105,7 +111,18 @@ const slidingOwner = sliding
         relayAuthor: relay.pubkey,
         media: (url) => url,
         query: async (filters) => {
-          if (filters.some((filter) => filter.top_level)) await heldPage;
+          if (
+            heldPage &&
+            filters.some(
+              (filter) =>
+                filter.top_level &&
+                (heldBefore === undefined ||
+                  (filter.until !== undefined && filter.until <= heldBefore)),
+            )
+          ) {
+            window.slidingHeldReads++;
+            await heldPage;
+          }
           return filters.flatMap((filter) => {
             if (filter.kinds?.includes(39002))
               return [roster(relay, "images", [viewer.pubkey])];

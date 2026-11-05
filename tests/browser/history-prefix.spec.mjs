@@ -126,3 +126,89 @@ test("a bounded history window reloads newer rows without skipping the reader", 
     await page.evaluate(() => window.releaseSlidingPage());
   }
 });
+
+test("older sliding pages preserve the visible paragraph while evicting the tail", async ({
+  page,
+}) => {
+  await page.goto(
+    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/history-prefix.html?sliding`,
+  );
+  const snapshot = page.locator("[data-oldest]");
+  const history = page.getByRole("region", { name: "Channel message history" });
+  await expect(snapshot).toHaveAttribute("data-newest", "1700000139");
+  for (let step = 0; step < 2; step++) {
+    await page.evaluate(() => window.loadSlidingOlder());
+    await expect(snapshot).toHaveAttribute("data-loading", "false");
+  }
+  await expect(snapshot).toHaveAttribute("data-count", "60");
+  await page.evaluate(() => window.holdSlidingPage());
+  try {
+    await history.hover();
+    await wheel(page, -300);
+    await history.evaluate((element) => {
+      element.scrollTop = 100;
+    });
+    await settle(page);
+    await page.evaluate(() => window.loadSlidingOlder());
+    await expect(snapshot).toHaveAttribute("data-loading", "true");
+    const reading = await anchor(page);
+    const paragraph = page
+      .locator(`[data-message-id="${reading.id}"] p`)
+      .first();
+    const paragraphY = (await paragraph.boundingBox()).y;
+    for (const oldest of [60, 40]) {
+      await page.evaluate(() => window.releaseSlidingPage(true));
+      await expect(snapshot).toHaveAttribute(
+        "data-oldest",
+        String(1700000000 + oldest),
+      );
+      await expectAnchor(page, reading);
+      await expect
+        .poll(async () =>
+          Math.abs((await paragraph.boundingBox()).y - paragraphY),
+        )
+        .toBeLessThan(4);
+      await page.evaluate(() => window.loadSlidingOlder());
+      await expect(snapshot).toHaveAttribute("data-loading", "true");
+    }
+  } finally {
+    await page.evaluate(() => window.releaseSlidingPage());
+  }
+});
+
+test("newer-page scroll correction does not request an older page", async ({
+  page,
+}) => {
+  await page.goto(
+    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/history-prefix.html?sliding&compact`,
+  );
+  const snapshot = page.locator("[data-oldest]");
+  const history = page.getByRole("region", { name: "Channel message history" });
+  await expect(snapshot).toHaveAttribute("data-newest", "1700000139");
+  for (let step = 0; step < 6; step++) {
+    await page.evaluate(() => window.loadSlidingOlder());
+    await expect(snapshot).toHaveAttribute("data-loading", "false");
+  }
+  await expect(snapshot).toHaveAttribute("data-oldest", "1700000000");
+  await history.hover();
+  await wheel(page, -100);
+  await history.evaluate((el) => {
+    el.scrollTop = el.scrollHeight - el.clientHeight - 1000;
+  });
+  await settle(page);
+  await page.evaluate(() => window.holdSlidingPage());
+  try {
+    await history.hover();
+    await wheel(page, 600);
+    await expect(snapshot).toHaveAttribute("data-loading", "true");
+    await page.evaluate(() => window.releaseSlidingPage(true, 1700000059));
+    await expect
+      .poll(async () => Number(await snapshot.getAttribute("data-oldest")))
+      .toBeGreaterThan(1700000000);
+    await settle(page);
+    await expect(snapshot).toHaveAttribute("data-loading", "false");
+    expect(await page.evaluate(() => window.slidingHeldReads)).toBe(0);
+  } finally {
+    await page.evaluate(() => window.releaseSlidingPage());
+  }
+});
