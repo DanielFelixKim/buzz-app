@@ -1411,7 +1411,6 @@ it.each(["peer", "own"] as const)(
               "Send to channel",
               "Copy link",
               "Delete message",
-              "Pin message",
               "Follow thread",
               "Report",
             ]
@@ -1419,7 +1418,6 @@ it.each(["peer", "own"] as const)(
               "Mark unread",
               "Copy message",
               "Copy link",
-              "Pin message",
               "Follow thread",
               "Report",
             ],
@@ -2292,46 +2290,6 @@ it("never mounts an audio player for a native lookalike", () => {
   );
   expect(html).not.toContain("<audio");
   expect(html).toContain("File unavailable");
-});
-
-it("marks a pinned message with its earliest pinner", () => {
-  const pinner = "c".repeat(64);
-  try {
-    renderDom(
-      <MessageRow
-        row={{
-          ...row,
-          pinnedBy: [
-            { id: "pin", messageId: row.id, pinnedBy: pinner, pinnedAt: 2 },
-            { id: "later", messageId: row.id, pinnedBy: "author", pinnedAt: 3 },
-          ],
-        }}
-        profile={undefined}
-        media={() => undefined}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-      />,
-    );
-    expect(screen.getByText(`Pinned by ${pinner.slice(0, 10)}…`)).toBeVisible();
-  } finally {
-    cleanup();
-  }
-  try {
-    renderDom(
-      <MessageRow
-        row={row}
-        profile={undefined}
-        media={() => undefined}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-      />,
-    );
-    expect(screen.queryByText(/Pinned by/)).toBeNull();
-  } finally {
-    cleanup();
-  }
 });
 
 it("opens the exact source thread from a shared message", () => {

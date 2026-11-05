@@ -2924,8 +2924,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   }
 }
 
-.sentFromThread,
-.pinnedMarker {
+.sentFromThread {
   padding-inline-start: var(--space-4);
   font-size: var(--text-caption);
   color: var(--text-secondary);
@@ -3219,8 +3218,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   padding-inline: 0 var(--space-4);
   text-align: end;
 }
-.message[data-viewer-message] > .messageBody > .messageContent .sentFromThread,
-.message[data-viewer-message] > .messageBody > .messageContent .pinnedMarker {
+.message[data-viewer-message] > .messageBody > .messageContent .sentFromThread {
   padding-inline: 0 var(--space-4);
   text-align: end;
 }
