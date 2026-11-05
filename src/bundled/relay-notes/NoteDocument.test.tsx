@@ -516,6 +516,8 @@ it("restores a deleted note directly from a retained version", async () => {
 it("previews the last content of a deleted note and restores it in one click after a failed write", async () => {
   const f = await historyFixture(false, true);
   await screen.findByText("Original body");
+  expect(screen.getByRole("status")).toHaveTextContent("Deleted");
+  expect(screen.getByRole("status")).not.toHaveTextContent("Saved");
   const restore = await screen.findByRole("button", {
     name: "Restore",
   });

@@ -20,11 +20,12 @@ export function NoteByline({
     <p className={`${styles.byline} text-caption text-secondary`}>
       <NoteAuthor name={author} picture={picture} isAgent={isAgent} /> ·
       <span role={status ? "status" : undefined}>
-        {status && status !== "Saved" ? (
+        {status && status !== "Saved" && status !== "Deleted" ? (
           status
         ) : (
           <>
-            Saved <NoteTime note={note} />
+            {status === "Deleted" ? "Deleted" : "Saved"}{" "}
+            <NoteTime note={note} />
           </>
         )}
       </span>

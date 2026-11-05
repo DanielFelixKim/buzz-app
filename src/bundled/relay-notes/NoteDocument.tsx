@@ -640,15 +640,17 @@ export function NoteDocument({
           <NoteByline
             note={note.event}
             status={
-              canEdit && !note.deleted
-                ? saving || (dirty && autoSave && !saveError && !conflict)
-                  ? "Saving…"
-                  : saveError
-                    ? "Save paused"
-                    : dirty
-                      ? "Unsaved changes"
-                      : status || "Saved"
-                : undefined
+              note.deleted
+                ? "Deleted"
+                : canEdit
+                  ? saving || (dirty && autoSave && !saveError && !conflict)
+                    ? "Saving…"
+                    : saveError
+                      ? "Save paused"
+                      : dirty
+                        ? "Unsaved changes"
+                        : status || "Saved"
+                  : undefined
             }
             isAgent={!!profile?.isAgent}
             author={authorName}
