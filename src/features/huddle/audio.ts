@@ -180,7 +180,8 @@ export const openHuddleAudio: OpenHuddleAudio = async (send, ended, signal) => {
         }
         // Bound latency after a suspended device or a burst; never queue old speech.
         if (entry.next > context.currentTime + 0.2) return;
-        entry.next = Math.max(entry.next, context.currentTime + 0.02);
+        if (entry.next < context.currentTime)
+          entry.next = context.currentTime + 0.02;
         const buffer = context.createBuffer(1, samples.length, 48000);
         buffer.copyToChannel(Float32Array.from(samples), 0);
         const node = context.createBufferSource();

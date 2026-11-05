@@ -367,7 +367,7 @@ pub(super) async fn run(
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut playout = tokio::time::interval(Duration::from_millis(10));
-    playout.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    playout.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
     let mut last_received = tokio::time::Instant::now();
     authorization_guard(expires_at, &authorization_cancellation, async {
         loop {
@@ -378,14 +378,13 @@ pub(super) async fn run(
                 biased;
                 _ = stop.changed() => break,
                 // Cleanup must not be starved by a continuously ready audio stream.
+                // Admit the finite real-time packet backlog before catch-up pulls.
+                // Stop/heartbeat still preempt; socket input already precedes mic input.
                 _ = heartbeat.tick() => {
                     super::check_cancelled(&stop, touched)?;
                     if let Some(seat) = &seat { seat.admission.dispatch()?; }
                     if last_received.elapsed() > Duration::from_secs(30) { return Err("Huddle connection timed out. You can join again.".into()); }
                     tokio::time::timeout(Duration::from_secs(2), socket.send(Message::Ping(now().to_be_bytes().to_vec().into()))).await.map_err(|_| "Huddle connection stalled")?.map_err(|_| "Huddle disconnected")?;
-                }
-                _ = playout.tick() => {
-                    codec.play(&peers, |peer, samples| updates.send(Update::Audio { peer, samples }).map_err(|_| "Huddle view closed".into()))?;
                 }
                 packet = socket.next() => {
                     last_received = tokio::time::Instant::now();
@@ -420,6 +419,15 @@ pub(super) async fn run(
                         }
                         Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return Err("Huddle disconnected. You can join again.".into()),
                         _ => {},
+                    }
+                }
+                scheduled = playout.tick() => {
+                    codec.play(&peers, |peer, samples| updates.send(Update::Audio { peer, samples }).map_err(|_| "Huddle view closed".into()))?;
+                    // Let socket I/O progress between overdue pulls before polling input again.
+                    if tokio::time::Instant::now().saturating_duration_since(scheduled)
+                        >= Duration::from_millis(10)
+                    {
+                        tokio::task::yield_now().await;
                     }
                 }
                 samples = pcm.recv() => {
@@ -1183,6 +1191,153 @@ mod tests {
             codec.encoder.encode(&vec![0.1; FRAME_SAMPLES]).unwrap(),
         ]
         .concat()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn catch_up_allows_async_opus_input_between_missed_pulls() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Mutex,
+        };
+        use tokio_tungstenite::{tungstenite::protocol::Role, MaybeTlsStream, WebSocketStream};
+
+        // A peer writer becomes runnable after the first recovery pull. This proves
+        // catch-up fairness through actual socket I/O, not arrival of every TLS
+        // record before recovery or a guarantee that yielding always drives I/O.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (client, relay) = tokio::join!(
+            tokio::net::TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let socket = WebSocketStream::from_raw_socket(
+            MaybeTlsStream::Plain(client.unwrap()),
+            Role::Client,
+            None,
+        )
+        .await;
+        let mut relay =
+            WebSocketStream::from_raw_socket(relay.unwrap().0, Role::Server, None).await;
+        let mut encoder = Codec::new(None).unwrap();
+        let mut sample_index = 0;
+        let mut frame = move || {
+            let samples: Vec<_> = (0..FRAME_SAMPLES)
+                .map(|_| {
+                    let sample =
+                        (sample_index as f32 * 440.0 * std::f32::consts::TAU / 48000.0).sin() * 0.2;
+                    sample_index += 1;
+                    sample
+                })
+                .collect();
+            [vec![1], encoder.encoder.encode(&samples).unwrap()].concat()
+        };
+        for _ in 0..4 {
+            relay.feed(Message::Binary(frame().into())).await.unwrap();
+        }
+        relay.flush().await.unwrap();
+        let (write, writing) = oneshot::channel();
+        let writer = tokio::spawn(async move {
+            writing.await.unwrap();
+            for _ in 0..10 {
+                relay.feed(Message::Binary(frame().into())).await.unwrap();
+            }
+            relay.flush().await.unwrap();
+            while let Some(Ok(message)) = relay.next().await {
+                if matches!(message, Message::Close(_)) {
+                    break;
+                }
+            }
+        });
+
+        let connection = Connection {
+            socket: Some(socket),
+            peers: BTreeMap::from([(1, "a".repeat(64))]),
+            expires_at: None,
+            cancellation: CancellationToken::new(),
+            seat: None,
+        };
+        let (_pcm, pcm) = mpsc::channel(1);
+        let (stop, stopped) = watch::channel(false);
+        let started = Arc::new(AtomicBool::new(false));
+        let recovering = Arc::new(AtomicBool::new(false));
+        let heard = Arc::new(Mutex::new(Vec::<(Instant, Vec<f32>)>::new()));
+        let updates = Channel::new({
+            let started = started.clone();
+            let recovering = recovering.clone();
+            let heard = heard.clone();
+            let write = Mutex::new(Some(write));
+            move |body| {
+                let tauri::ipc::InvokeResponseBody::Json(json) = body else {
+                    panic!("updates are JSON")
+                };
+                let update: Value = serde_json::from_str(&json).unwrap();
+                if update["type"] == "audio" {
+                    started.store(true, Ordering::SeqCst);
+                    if recovering.load(Ordering::SeqCst) {
+                        let mut heard = heard.lock().unwrap();
+                        heard.push((
+                            Instant::now(),
+                            serde_json::from_value(update["samples"].clone()).unwrap(),
+                        ));
+                        if let Some(write) = write.lock().unwrap().take() {
+                            write.send(()).unwrap();
+                        }
+                        if heard.len() == 20 {
+                            stop.send(true).unwrap();
+                        }
+                    }
+                }
+                Ok(())
+            }
+        });
+        let (paused, pausing) = oneshot::channel();
+        let (resume, resuming) = oneshot::channel();
+        let owner = tokio::spawn(async move {
+            let touched = std::sync::atomic::AtomicU64::new(super::super::lease_time());
+            let running = run(connection, pcm, stopped, &updates, &touched);
+            tokio::pin!(running);
+            // Suspend at an observable startup boundary without exposing a new
+            // production pause hook. Network input has not been pre-peeked.
+            std::future::poll_fn(|cx| {
+                assert!(
+                    running.as_mut().poll(cx).is_pending(),
+                    "owner ended during startup"
+                );
+                if started.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            paused.send(()).unwrap();
+            resuming.await.unwrap();
+            running.await
+        });
+        pausing.await.unwrap();
+        tokio::time::advance(Duration::from_millis(200)).await;
+        let resumed_at = Instant::now();
+        recovering.store(true, Ordering::SeqCst);
+        resume.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let heard = heard.lock().unwrap();
+        assert_eq!(heard.len(), 20, "all missed pulls must run");
+        assert!(
+            heard.iter().all(|(at, _)| *at == resumed_at),
+            "missed pulls must complete before future ticks"
+        );
+        let tail = &heard.last().unwrap().1;
+        let rms =
+            (tail.iter().map(|sample| sample * sample).sum::<f32>() / tail.len() as f32).sqrt();
+        assert!(
+            rms > 0.02,
+            "catch-up concealed asynchronously available speech: tail RMS {rms}"
+        );
+        drop(heard);
+        writer.await.unwrap();
     }
 
     #[test]
