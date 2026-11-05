@@ -438,7 +438,8 @@ it("promotes mentions, broadcasts and participating-thread replies without promo
   const ordinary = message(h.alice, "room", "ordinary", 11);
   h.emit([root, ordinary]);
   expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
-  expect(h.snapshot()).not.toHaveProperty("mentionCount");
+  expect(h.snapshot()).not.toHaveProperty("attentionItems");
+  expect(h.snapshot()).not.toHaveProperty("mentionItems");
 
   const mentioned = message(h.alice, "room", "mentioned", 12, [
     ["p", h.viewer.pubkey],
@@ -464,7 +465,9 @@ it("promotes mentions, broadcasts and participating-thread replies without promo
   expect(h.snapshot()).toMatchObject({
     observedCount: 5,
     attentionCount: 4,
-    mentionCount: 1,
+    // Both replies to `root` are one thread; the missing root is another.
+    attentionItems: 3,
+    mentionItems: 1,
   });
   expect(h.session.unread.activity("room").items).toHaveLength(1);
   expect(

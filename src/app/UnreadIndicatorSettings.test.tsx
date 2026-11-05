@@ -45,7 +45,7 @@ it("requests permission only through the explicit Settings button and updates st
   expect(h.permission.mock.calls).toEqual([[false]]);
   expect(
     screen.getByText(
-      /Counts unread direct messages, mentions and thread replies/,
+      /Counts unread direct messages, mentions and threads with new replies/,
     ),
   ).toBeInTheDocument();
   let resolve!: (permission: IndicatorPermission) => void;

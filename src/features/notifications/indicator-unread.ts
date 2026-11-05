@@ -12,8 +12,9 @@ export type IndicatorGates = Readonly<{
 
 /**
  * A host projection of existing evidence, never a new read owner. The count
- * is observed attention (DMs, mentions, relevant replies); muted
- * channels contribute only their mentions. It is not an exact relay total.
+ * is observed attention (DMs, mentions, relevant replies), with each thread
+ * counted once; muted channels contribute only their mentions. It is not an
+ * exact relay total.
  */
 export function bindUnreadIndicator(
   communities: Communities,
@@ -81,10 +82,10 @@ export function bindUnreadIndicator(
       for (const channelId of channels.keys()) {
         const snapshot = owned.unread.snapshot({ kind: "channel", channelId });
         if (muted.has(channelId)) {
-          count += snapshot.mentionCount ?? 0;
+          count += snapshot.mentionItems ?? 0;
           continue;
         }
-        count += snapshot.attentionCount ?? 0;
+        count += snapshot.attentionItems ?? 0;
         unread ||=
           snapshot.manual !== "none" || (snapshot.observedCount ?? 0) > 0;
       }

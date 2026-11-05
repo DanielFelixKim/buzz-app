@@ -282,7 +282,7 @@ it("removes muted channel activity from the Dock indicator without marking it re
   expect(h.project).toHaveBeenLastCalledWith(DOT);
 });
 
-it("counts DMs, mentions and relevant replies, with a dot for other unread", async () => {
+it("counts DMs, mentions and each thread with relevant replies, with a dot for other unread", async () => {
   const h = setup();
   h.bind();
   h.grant();
@@ -297,6 +297,16 @@ it("counts DMs, mentions and relevant replies, with a dot for other unread", asy
   expect(h.project).toHaveBeenLastCalledWith(counted(2));
   await h.session.unread.markThrough(target, mention.id);
   expect(h.project).toHaveBeenLastCalledWith(counted(1));
+  const root = message(h.viewer, "room", "my thread", 14);
+  h.emit([
+    root,
+    message(h.peer, "room", "first reply", 15, [["e", root.id, "", "reply"]]),
+  ]);
+  expect(h.project).toHaveBeenLastCalledWith(counted(2));
+  h.emit([
+    message(h.peer, "room", "second reply", 16, [["e", root.id, "", "reply"]]),
+  ]);
+  expect(h.project).toHaveBeenLastCalledWith(counted(2));
   expect(h.query).not.toHaveBeenCalled();
 });
 
