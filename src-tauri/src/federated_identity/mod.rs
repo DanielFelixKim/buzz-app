@@ -485,6 +485,12 @@ impl FederatedIdentity {
             }
         }
     }
+    pub(crate) fn protects(&self, relay: &str) -> bool {
+        self.0
+            .config
+            .as_ref()
+            .is_some_and(|config| config.matches_relay(relay).unwrap_or(false))
+    }
     pub(crate) async fn restore(&self) -> Snapshot {
         let attempt = {
             let state = self.state();
@@ -539,6 +545,9 @@ impl FederatedIdentity {
             }
         }
         self.change_current(&revision, Status::Restoring, None);
+        // A saved session that can't be checked still says when it would end,
+        // so the app can keep offline reading no longer than the session.
+        let mut unchecked_expiry = None;
         let result = async {
             let (raw, refusal) = self.storage(|store| store.load()).await?;
             let Some(raw) = raw else {
@@ -584,7 +593,10 @@ impl FederatedIdentity {
                     self.remove(session).await?;
                     Err(failure)
                 }
-                Err(failure) => Err(failure),
+                Err(failure) => {
+                    unchecked_expiry = Some(session.record.expires_at.clone());
+                    Err(failure)
+                }
             }
         }
         .await;
@@ -626,6 +638,9 @@ impl FederatedIdentity {
                     Status::Unavailable
                 };
                 state.snapshot.failure = Some(failure.code);
+                if !failure.session_denied {
+                    state.snapshot.expires_at = unchecked_expiry;
+                }
                 // A failed read or check is not permission to overwrite unknown state.
                 state.restored = failure.session_denied;
             }
@@ -987,6 +1002,15 @@ pub(crate) async fn federated_identity_snapshot(
     host: tauri::State<'_, FederatedIdentity>,
 ) -> Result<Snapshot, String> {
     Ok(host.restore().await)
+}
+/// Whether `relay` is one of this build's organization communities, from the
+/// descriptor alone, so the app can decide before any network answers.
+#[tauri::command]
+pub(crate) fn federated_identity_protects(
+    host: tauri::State<'_, FederatedIdentity>,
+    relay: String,
+) -> bool {
+    host.protects(&relay)
 }
 #[tauri::command]
 pub(crate) async fn federated_identity_sign_in<R: tauri::Runtime>(

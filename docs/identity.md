@@ -1024,7 +1024,25 @@ is exchanged; Cancel or a failure leaves it in place, and a different account
 retires derived agent grants as any account change does. At expiry, native ends
 the session itself rather than waiting for the next relay assertion or 401, and
 the screen above takes over.
-On-demand builds are unchanged.
+On-demand builds keep the warning to at-launch builds.
+
+### Organization community history
+
+In every build with an organization descriptor, a community on one of its
+`communityHosts` (native `federated_identity_protects`) shows its saved
+history only while the organization session admits it: signed in, or offline
+(`network-unavailable`/`network-timeout` while checking the saved session)
+before that saved session's `expiresAt`. The decision comes from the
+descriptor, before the relay answers, so a cold start never puts a locked
+community's cache in memory. Otherwise the relay service drops that
+community's in-memory session (timeline, threads, previews, unread counts,
+search) and publishes `locked`, keeping its disk cache. The community's pages
+show **Sign in to continue**; selecting it opens the browser sign-in once
+(`LOCKED_SIGN_IN` in `features/federated-identity/lock.ts`), and a cancel or
+failure leaves the button. When the session admits it again, the community
+reconnects and its history returns from disk. Other communities are
+unaffected. A relay socket closed for authorization locks the community once
+native learns the session was refused (its next assertion or 401 recheck).
 
 The Node development host retains its supported broker flow.
 

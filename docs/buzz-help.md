@@ -73,6 +73,11 @@ the interface unless an available tool actually supports that action.
   offline reading. Sign-in, sign-out and when the current
   sign-in ends also live under
   **Settings → Buzz → Identity → Organization sign-in**.
+- In organization builds, an organization community's conversations stay
+  hidden while your organization sign-in has ended, including after a restart.
+  Its pages show **Sign in to continue**, and selecting it opens the browser
+  sign-in. Offline, saved conversations stay readable until the sign-in would
+  have ended. Other communities are not affected.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community.

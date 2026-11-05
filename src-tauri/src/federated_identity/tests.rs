@@ -908,3 +908,33 @@ async fn a_renewal_whose_session_ends_while_saving_is_refused_even_if_rollback_f
     assert!(restarted.restore().await.status == Status::SignedOut);
     assert!(store.raw.lock().unwrap().is_none());
 }
+
+#[tokio::test]
+async fn an_unchecked_saved_session_still_says_when_it_ends() {
+    let store = Arc::new(Memory::default());
+    *store.raw.lock().unwrap() = Some(record().raw.clone());
+    // Nothing listens on port 1: the check fails on the network.
+    let owner = at_adapter(store, "http://127.0.0.1:1/".into());
+    let snapshot = owner.restore().await;
+    assert!(snapshot.status == Status::Unavailable);
+    assert!(matches!(
+        snapshot.failure,
+        Some("network-unavailable" | "network-timeout")
+    ));
+    assert_eq!(snapshot.expires_at.as_deref(), Some("2099-01-01T00:00:00Z"));
+}
+
+#[test]
+fn only_the_descriptors_community_hosts_are_protected() {
+    let owner = host(Arc::new(Memory::default()));
+    assert!(owner.protects("wss://relay.example"));
+    assert!(!owner.protects("wss://other.example"));
+    assert!(!owner.protects("not a relay"));
+    let unconfigured = FederatedIdentity::with_store(
+        None,
+        "fingerprint".into(),
+        "account".into(),
+        Arc::new(Memory::default()),
+    );
+    assert!(!unconfigured.protects("wss://relay.example"));
+}

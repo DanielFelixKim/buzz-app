@@ -35,7 +35,20 @@ export type RelaySnapshot = Readonly<{
   retrying?: true;
   /** The community refused this account; not a connection problem. */
   denied?: true;
+  /** The organization session doesn't admit this community now: its saved
+   * history stays on disk but out of memory until sign-in. */
+  locked?: true;
 }>;
+/** An organization community's access to its saved history. */
+export type RelayGate = {
+  /** Whether this community needs the organization session at all. */
+  protects: Promise<boolean>;
+  /** Whether the organization session admits its saved history now. */
+  admits(): boolean;
+  subscribe(listener: () => void): () => void;
+};
+/** The error a locked community carries; CommunitySignIn offers Sign in. */
+const LOCKED = "Federated sign-in is required";
 export type RelayData = {
   snapshot(): RelaySnapshot;
   subscribe(listener: () => void): () => void;
@@ -59,8 +72,11 @@ export function provideRelay(
   agentChoices?: LocalAgents,
   resume?: { viewer: string; scope: string },
   localAgents?: LocalAgentSource,
+  gate?: RelayGate,
 ) {
   let disposed = false;
+  /** The gate's answer to `protects`, once known. */
+  let guarded = false;
   let generation = 0;
   let controller: AbortController | undefined;
   let connecting = false;
@@ -108,12 +124,31 @@ export function provideRelay(
     store.dispose();
     store = createRelaySession(null, { identityNames });
   };
+  const shut = () => guarded && !!gate && !gate.admits();
+  /** Drops everything this community holds in memory, keeping the disk. */
+  const lock = () => {
+    reset();
+    transientFailure = false;
+    publish({
+      status: "error",
+      generation,
+      session: store.session,
+      error: LOCKED,
+      locked: true,
+    });
+  };
   async function restoreLocal(current: number, signal: AbortSignal) {
     if (!resume) return;
     const persistence = createHeadPersistence(resume.viewer, resume.scope);
     let cached: ReturnType<typeof createRelaySession> | undefined;
     let handedOff = false;
     try {
+      // Decide before anything reaches memory: a locked organization
+      // community's history stays on disk.
+      if (gate) {
+        guarded = await gate.protects;
+        if (shut()) return;
+      }
       const saved = (await persistence.readStartup?.())?.discovery;
       if (
         !saved ||
@@ -199,6 +234,10 @@ export function provideRelay(
     },
     retry() {
       if (disposed || !connect || connecting || clearing) return;
+      if (shut()) {
+        if (!snapshot.locked) lock();
+        return;
+      }
       const retained = snapshot.cached;
       if (!retained) reset();
       connecting = true;
@@ -274,6 +313,22 @@ export function provideRelay(
             signal !== controller?.signal
           ) {
             successor.dispose();
+            return;
+          }
+          // Without a resume, restoreLocal never asked the gate.
+          if (gate) guarded = await gate.protects;
+          if (
+            disposed ||
+            signal.aborted ||
+            current !== generation ||
+            signal !== controller?.signal
+          ) {
+            successor.dispose();
+            return;
+          }
+          if (shut()) {
+            successor.dispose();
+            lock();
             return;
           }
           // Materialize retained readers before publishing so React never sees
@@ -388,6 +443,19 @@ export function provideRelay(
     },
   };
   ctx.provide("relay", service);
+  if (gate) {
+    const check = () => {
+      if (disposed || !guarded) return;
+      if (shut()) {
+        if (!snapshot.locked) lock();
+      } else if (snapshot.locked) service.retry();
+    };
+    void gate.protects.then((protects) => {
+      guarded = protects;
+      check();
+    });
+    ctx.effect(() => gate.subscribe(check));
+  }
   ctx.effect(() => {
     // Network, focus and wake are hints that the relay may answer again.
     // Failed background reads retry now; healthy sessions do no extra work.

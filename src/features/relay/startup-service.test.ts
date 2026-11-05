@@ -22,7 +22,13 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function setup({ saved = true } = {}) {
+function setup({
+  saved = true,
+  gate,
+}: {
+  saved?: boolean;
+  gate?: import("./service").RelayGate;
+} = {}) {
   const viewer = keypair(),
     relay = keypair();
   const events = [
@@ -91,6 +97,8 @@ function setup({ saved = true } = {}) {
     undefined,
     undefined,
     { viewer: viewer.pubkey, scope: "primary" },
+    undefined,
+    gate,
   );
   const restored = async () => {
     await vi.waitFor(() => expect(data.snapshot().cached).toBe(true));
@@ -267,4 +275,60 @@ it("disconnect during a coalesced cache clear does not reconnect", async () => {
   await cleared;
   expect(data.snapshot().status).toBe("disconnected");
   expect(connections).toHaveLength(1);
+});
+
+function organization(admitted: boolean, protects = true) {
+  const listeners = new Set<() => void>();
+  const gate = {
+    protects: Promise.resolve(protects),
+    admits: () => admitted,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const admit = (next: boolean) => {
+    admitted = next;
+    for (const listener of listeners) listener();
+  };
+  return { gate, admit };
+}
+it("keeps a locked organization community's history on disk and out of memory until sign-in", async () => {
+  const { gate, admit } = organization(false);
+  const { data, disk, connections, source, restored } = setup({ gate });
+  await vi.waitFor(() => expect(data.snapshot().locked).toBe(true));
+  expect(data.snapshot()).toMatchObject({ status: "error" });
+  expect(data.snapshot().cached).toBeUndefined();
+  expect(data.snapshot().session.channels.list().channels).toEqual([]);
+  expect(disk.clear).not.toHaveBeenCalled();
+  // The first attempt started before the gate answered; it can't unlock.
+  connections[0]?.resolve(source);
+  data.retry();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(data.snapshot().locked).toBe(true);
+  expect(connections).toHaveLength(1);
+
+  admit(true);
+  await restored();
+  expect(data.snapshot().locked).toBeUndefined();
+});
+it("locks an open organization community when its session ends, keeping the disk", async () => {
+  const { gate, admit } = organization(true);
+  const { data, disk, connections, source, restored } = setup({ gate });
+  await restored();
+  await vi.waitFor(() => expect(connections).toHaveLength(1));
+  connections[0]?.resolve(source);
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+
+  admit(false);
+  expect(data.snapshot()).toMatchObject({ status: "error", locked: true });
+  expect(data.snapshot().session.channels.list().channels).toEqual([]);
+  expect(disk.clear).not.toHaveBeenCalled();
+  expect(await disk.readStartup?.()).toBeDefined();
+});
+it("leaves a community outside the organization alone", async () => {
+  const { gate } = organization(false, false);
+  const { data, restored } = setup({ gate });
+  await restored();
+  expect(data.snapshot().locked).toBeUndefined();
 });
