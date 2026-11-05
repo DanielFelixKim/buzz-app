@@ -1283,7 +1283,21 @@ export function Settings({
             !pluginUpdateSource(plugins, plugin.manifest.id))
         )
           continue;
-        void updateChecks.check(plugin, authorizePluginGit, force);
+        const eligible = () => {
+          const { configuration } = plugins.snapshot();
+          if (configuration.status !== "ready") return false;
+          const live = configuration.catalog.plugins.find(
+            (item) => item.manifest.id === plugin.manifest.id,
+          );
+          return (
+            live?.revision === plugin.revision &&
+            JSON.stringify(live.updateSource) === JSON.stringify(source) &&
+            !managedBy(configuration.managed, plugin.manifest.id) &&
+            ("root" in source ||
+              !!pluginUpdateSource(plugins, plugin.manifest.id))
+          );
+        };
+        void updateChecks.check(plugin, authorizePluginGit, force, eligible);
       }
     },
     [

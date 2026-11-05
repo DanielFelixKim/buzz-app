@@ -203,3 +203,49 @@ it("does not retry a replaced source after its old read settles", async () => {
     "new",
   );
 });
+
+it("retires queued automatic reads when eligibility is revoked", async () => {
+  let finish!: (value: ReturnType<typeof preview>) => void;
+  let eligible = true;
+  const checkGit = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(preview("new"));
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  const first = checks.check(plugin(), undefined, true, () => eligible);
+  await Promise.resolve();
+  checks.observe(plugin())("newer");
+  const queued = checks.check(plugin(), undefined, true, () => eligible);
+  eligible = false;
+  finish(preview("old"));
+  await Promise.all([first, queued]);
+  expect(checkGit).toHaveBeenCalledOnce();
+});
+
+it("rechecks automatic eligibility after authorization resolves", async () => {
+  let finish!: (value: null) => void;
+  let eligible = true;
+  const authorize = vi.fn(
+    () =>
+      new Promise<null>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const checkGit = vi.fn(async () => preview("new"));
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  const checking = checks.check(plugin(), authorize, true, () => eligible);
+  expect(authorize).toHaveBeenCalledOnce();
+  eligible = false;
+  finish(null);
+  await checking;
+  expect(checkGit).not.toHaveBeenCalled();
+});

@@ -58,13 +58,15 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     plugin: PluginInfo,
     authorize?: Authorize,
     force = true,
+    eligible: () => boolean = () => true,
   ): Promise<void> {
     const source = plugin.updateSource;
-    if (!imports || plugin.source !== "external" || !source) return;
+    if (!imports || plugin.source !== "external" || !source || !eligible())
+      return;
     const id = plugin.manifest.id;
     const installed = installation(plugin);
     installations.set(id, installed);
-    const current = () => installations.get(id) === installed;
+    const current = () => installations.get(id) === installed && eligible();
     if (!force && pluginUpdateCheck(snapshot, plugin)) return;
     const key = JSON.stringify(
       "root" in source
@@ -79,13 +81,14 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
         (snapshot[id]?.sequence ?? 0) > request.sequence)
     ) {
       await request.promise.catch(() => {});
-      if (current()) return check(plugin, authorize);
+      if (current()) return check(plugin, authorize, true, eligible);
       return;
     }
     if (!request) {
       const promise = (async () => {
         if ("root" in source) return imports.checkFolder(id);
         const signed = await authorize?.(source.repository);
+        if (!current()) return null;
         return imports.checkGit(
           signed?.repository ?? source.repository,
           source.reference,

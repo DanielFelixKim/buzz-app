@@ -3137,3 +3137,41 @@ it("replays a forced focus refresh once management becomes idle", async () => {
   expect(checkGit).toHaveBeenCalledTimes(2);
 });
 
+it.each(["opt-out", "removal"])(
+  "retires a queued list check after %s",
+  async (change) => {
+    const fixture = reviewPluginFixture();
+    Object.assign(fixture.external, { updateSource: savedGitSource });
+    let finish!: (result: ReturnType<typeof gitCheckResult>) => void;
+    const checkGit = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue(gitCheckResult("new"));
+    Object.assign(fixture.manager, { imports: { checkGit } });
+    await act(async () => fixture.publish());
+    await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+    const catalog = fixture.manager.snapshot().configuration;
+    if (catalog.status !== "ready") throw new Error("fixture not ready");
+    catalog.catalog.plugins = catalog.catalog.plugins.map((item) =>
+      item.manifest.id === fixture.external.manifest.id
+        ? { ...item, revision: "replacement" }
+        : item,
+    );
+    await act(async () => fixture.publish());
+    catalog.catalog.plugins = catalog.catalog.plugins.flatMap((item) =>
+      item.manifest.id !== fixture.external.manifest.id
+        ? [item]
+        : change === "removal"
+          ? []
+          : [{ ...item, updateChecks: false }],
+    );
+    await act(async () => fixture.publish());
+    await act(async () => finish(gitCheckResult("old")));
+    expect(checkGit).toHaveBeenCalledOnce();
+  },
+);
