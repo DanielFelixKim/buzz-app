@@ -203,7 +203,7 @@ export type {
   AuthenticatedRequest,
 } from "../features/federated-identity/service";
 
-export type { AddedTool } from "../buzz-mcp/session-tools";
+export type { AddedSkill, AddedTool } from "../buzz-mcp/session-tools";
 export type {
   BuzzClient,
   Media,

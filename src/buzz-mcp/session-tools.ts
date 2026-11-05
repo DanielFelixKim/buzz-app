@@ -46,6 +46,37 @@ export type AddedTool = Readonly<{
 }>;
 type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
 
+/** Markdown a plugin adds for agents to read when its description applies.
+ * Sessions list each skill's description up front, as `plugin/name`, and
+ * read its body through `skill_get`, so every harness gets it the same way. */
+export type AddedSkill = Readonly<{
+  name: string;
+  description: string;
+  body: string;
+}>;
+export const SKILL_TOOL = "skill_get";
+
+/** The tool that reads the skills plugins add, keyed `plugin/name`. Its
+ * description lists them, so a changed list changes `addedKey`. */
+export const skillTool = (
+  skills: readonly (AddedSkill & { key: string })[],
+): AddedTool => ({
+  name: SKILL_TOOL,
+  description: `Read a skill a plugin adds, before work its description covers. Skills: ${skills
+    .map(({ key, description }) => `${key}: ${description}`)
+    .join("; ")}`,
+  inputSchema: {
+    type: "object",
+    properties: { name: { type: "string", description: "plugin/name" } },
+    required: ["name"],
+  },
+  call: async (_client, _context, { name }) => {
+    const skill = skills.find(({ key }) => key === name);
+    if (!skill) throw new Error(`No skill ${String(name)}`);
+    return skill.body;
+  },
+});
+
 /** The Buzz tools that post a message, and so take `final`. Each harness
  * strips its own prefix from a tool's name before asking. */
 export const MESSAGE_TOOLS = ["send", "reply_in_subthread"] as const;
@@ -102,7 +133,8 @@ export function sessionHint(added: readonly AddedTool[] = []) {
   const plugins = added.length
     ? ` and tools plugins add (${added.map((tool) => tool.name).join(", ")})`
     : "";
-  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), Nexus workers an owner lets you run (solo_worker_connections), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.`;
+  const skills = added.find((tool) => tool.name === SKILL_TOOL);
+  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), Nexus workers an owner lets you run (solo_worker_connections), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.${skills ? ` ${SKILL_TOOL}: ${skills.description}.` : ""}`;
 }
 
 /** Changes when the added tools change, so a session that keeps the list it

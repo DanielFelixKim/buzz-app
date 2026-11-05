@@ -190,7 +190,13 @@ import {
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
-import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import {
+  type AddedSkill,
+  type AddedTool,
+  BUZZ_SESSION,
+  SKILL_TOOL,
+  skillTool,
+} from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 import {
   clearDeletedDefaultAgent,
@@ -1130,7 +1136,11 @@ export type Agents = {
    * the tools there are when it starts, and one that cannot take a changed
    * list is replaced when it is next used. */
   addTool(tool: AddedTool): void;
-  /** The tools active plugins add now. A name is only ever one plugin's. */
+  /** Adds a skill to every agent session, read as `plugin/name` through
+   * `skill_get` while the plugin is on. */
+  addSkill(skill: AddedSkill): void;
+  /** The tools active plugins add now, with `skill_get` while any adds a
+   * skill. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
   /** The Buzz side of a turn for an agent type a plugin brings: where a
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
@@ -1663,6 +1673,7 @@ export class AgentsService extends Service implements Agents {
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
+  private readonly addedSkills;
   private readonly attentionSources;
   private readonly sourceTails = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
@@ -1783,6 +1794,7 @@ export class AgentsService extends Service implements Agents {
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
+    this.addedSkills = createContributions<AddedSkill & { id: string }>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
@@ -2325,6 +2337,7 @@ export class AgentsService extends Service implements Agents {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
       BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
+      tool.name === SKILL_TOOL ||
       !tool.description ||
       tool.inputSchema?.type !== "object" ||
       !serializable(tool.inputSchema) ||
@@ -2655,7 +2668,24 @@ export class AgentsService extends Service implements Agents {
       sources.stop();
     };
   }
-  tools = () => this.addedTools.snapshot();
+  addSkill(skill: AddedSkill) {
+    if (
+      !/^[a-z][a-z0-9-]{0,63}$/.test(skill.name ?? "") ||
+      typeof skill.description !== "string" ||
+      !skill.description.trim() ||
+      typeof skill.body !== "string" ||
+      !skill.body.trim()
+    )
+      throw new Error(
+        "Plugin skills need a lowercase name, a description and a body",
+      );
+    this.addedSkills.register(this.ctx, { ...skill, id: skill.name });
+  }
+  tools = () => {
+    const skills = this.addedSkills.snapshot();
+    const tools = this.addedTools.snapshot();
+    return skills.length ? [...tools, skillTool(skills)] : tools;
+  };
   readonly harness = harnessKit({
     relay: (key) => this.relay(key),
     core: (key) => this.core(key),

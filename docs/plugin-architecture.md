@@ -599,6 +599,13 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+`ctx.agents.addSkill({ name, description, body })` adds a Markdown skill to
+every agent session. Sessions list each skill up front as `plugin/name` with
+its description, and an agent reads the body with `skill_get` when the
+description applies. Skills reach Claude, Codex, Goose and Pi through the Buzz
+tools, so no harness skill folder is written, and they go with their plugin's
+scope like its tools.
+
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
 default) gives local agents three tools. `plugin_authoring_guide` returns
 [the authoring guide](plugin-authoring-guide.md), bundled with the app.

@@ -5,7 +5,7 @@ import { createAgentLibrary } from "./library";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
-import { callSessionTool } from "../../buzz-mcp/session-tools";
+import { callSessionTool, sessionHint } from "../../buzz-mcp/session-tools";
 import { callTool } from "../../buzz-mcp/tools";
 import {
   createLocalAgentActivity,
@@ -9712,6 +9712,53 @@ it("adds plugins' tools to every session, each name once", async () => {
     { name: "notes_add", pluginId: "example" },
     { name: "tasks_create", pluginId: "buzz.tasks" },
   ]);
+});
+
+it("lists plugins' skills up front and reads each through skill_get until its plugin goes", async () => {
+  const { service, ctx } = await setup();
+  const skill = {
+    name: "operator",
+    description: "Hand the owner their next request.",
+    body: "# Operator\nKeep the next two requests ready.",
+  };
+  const owner = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  const operator = owner("switchboard").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => plugin.agents.addSkill(skill),
+  });
+  await operator;
+  for (const bad of [
+    { ...skill, name: "Operator" },
+    { ...skill, description: "" },
+    { ...skill, body: "" },
+  ])
+    expect(() => owner("other").agents.addSkill(bad)).toThrow(
+      /Plugin skills need/,
+    );
+  expect(() =>
+    owner("other").agents.addTool({
+      name: "skill_get",
+      description: "Shadow it.",
+      inputSchema: { type: "object" },
+      call: async () => "",
+    }),
+  ).toThrow(/Agent tools need/);
+  const tools = service.tools();
+  const get = tools.find(({ name }) => name === "skill_get");
+  expect(get?.description).toContain(
+    "switchboard/operator: Hand the owner their next request.",
+  );
+  expect(sessionHint(tools)).toContain(
+    "switchboard/operator: Hand the owner their next request.",
+  );
+  const read = (name: unknown) => get?.call({} as never, {} as never, { name });
+  await expect(read("switchboard/operator")).resolves.toBe(skill.body);
+  await expect(read("switchboard/missing")).rejects.toThrow(
+    /No skill switchboard\/missing/,
+  );
+  await operator.dispose();
+  expect(service.tools()).toEqual([]);
 });
 
 it("reserves a tool name while its plugin is still starting", async () => {
