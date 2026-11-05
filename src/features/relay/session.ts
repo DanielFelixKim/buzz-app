@@ -66,6 +66,7 @@ import { createUnread } from "./unread";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
 
 import { createInboxFeed } from "./inbox-feed";
+import { createReactionFeed } from "./reaction-feed";
 import type {
   IncomingListener,
   IncomingMessage,
@@ -480,6 +481,7 @@ export function createRelaySession(
       commit();
       unread.purge();
       inboxFeed.purge();
+      reactionFeed.purge();
     } finally {
       if (--revoking === 0) {
         const pending = [...notifications];
@@ -1263,6 +1265,20 @@ export function createRelaySession(
       ),
     channels: channels.queries,
     viewer: transport?.viewer ?? "",
+    notify,
+  });
+  const reactionFeed = createReactionFeed({
+    // Reference visibility admits a reaction only after its target is cached,
+    // and these targets usually are not. The feed checks each target itself.
+    reader: {
+      read: (filters, settings) =>
+        finiteRead(filters, settings, (signal) =>
+          relayRead(filters, { ...settings, signal }),
+        ),
+    },
+    channels: channels.queries,
+    viewer: transport?.viewer ?? "",
+    signingAuthority: transport?.archiveAuthority,
     notify,
   });
   let traffic: LiveSubscription | undefined;
@@ -2610,6 +2626,7 @@ export function createRelaySession(
     agentLibrary: agentLibrary.queries,
     agentChoices,
     inboxFeed,
+    reactionFeed,
     workflows: workflows.capability,
     repositories,
     projectGit: transport?.projectGit
@@ -3396,6 +3413,15 @@ export function createRelaySession(
         liveSnapshot.status === "connected"
       )
         channelActivity.accept(visible);
+      // Raw, like typing: visibility drops reactions to uncached targets, and
+      // the feed verifies every target it admits.
+      if (
+        provenance &&
+        !closed &&
+        epoch === accessEpoch &&
+        generation === liveGeneration
+      )
+        reactionFeed.accept(events);
       const replay = provenance?.phase === "replay";
       if (
         (provenance?.phase === "live" || replay) &&
@@ -3488,6 +3514,7 @@ export function createRelaySession(
         for (const thread of threads) thread.stale();
         unread.stale();
         inboxFeed.stale();
+        reactionFeed.stale();
       }
       // Access-revoked CLOSED is a refresh hint, not signed archive/membership
       // authority. Aggregate snapshots repeat failures; only react to a new one.
@@ -3557,6 +3584,7 @@ export function createRelaySession(
               activityRosterKey = undefined;
               refreshChannelActivity();
               inboxFeed.reconnect();
+              reactionFeed.reconnect();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);
@@ -3669,6 +3697,7 @@ export function createRelaySession(
         recent.clear();
         unread.clear();
         inboxFeed.clear();
+        reactionFeed.clear();
         requests.invalidate();
         retireBackoffs();
         repositories.clearHomes();
@@ -3722,6 +3751,7 @@ export function createRelaySession(
       for (const dispose of [...views.keys()]) dispose();
       unread.dispose();
       inboxFeed.dispose();
+      reactionFeed.dispose();
       writes?.dispose();
       requests.dispose();
       channels.dispose();

@@ -106,6 +106,17 @@ pre-membership history without fresh shared admission. Inbox renders those share
 conversation rows directly; there is no second project/approval row merge or
 feed-owned reconciliation buffer and deletion-count abort.
 
+`session.reactionFeed` owns reactions to the viewer's own messages, which unread
+evidence excludes by design. It reads `kind:7` addressed to the viewer by NIP-25
+`p` tag (100 newest), fetches each target by id, and admits a reaction only when
+the fetched target is the viewer's chat message in a current, non-archived,
+non-Huddle member channel. Channel, thread root and authorship come from the
+target, never the reaction's own tags. Reactor (`kind:5`) and target deletions
+are read for retained ids on each refresh and applied live. Because session
+visibility admits a reaction only after its target is cached, the feed reads
+through the relay's verified answer and receives raw live events. It retains at
+most 1,000 notices or 2 MiB, dropping the oldest and marking itself stale.
+
 Channel-archived rooms are excluded from the shared Inbox projection in every
 activity view. Signed archive/unarchive metadata invalidates that projection even
 when membership and channel type stay unchanged. Archiving removes their rows and
