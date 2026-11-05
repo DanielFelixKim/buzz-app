@@ -1826,7 +1826,10 @@ views with a key including both scope and generation (for example,
 retained communities whose generation numbers may match; generation distinguishes
 reconnections within one scope. Persist drafts and view intent under scope alone,
 not generation. Reactive filtered reads use `session.observe`;
-writes use `session.outbox` or the `session.messages` convenience methods. Reads,
+writes use `session.outbox` or the `session.messages` convenience methods.
+`session.pins` serves channel pins: a stable snapshot with subscribe, a relay
+read, `canPin`/`ownPin`, and `pin`/`unpin` returning outbox operation ids (see
+[Pinned messages](channels.md#pinned-messages)). Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
 For kind 30177 publication, follow the

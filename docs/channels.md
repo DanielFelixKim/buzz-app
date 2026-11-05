@@ -451,21 +451,33 @@ the template and validation.
 - **Fold.** `foldMessages` attaches a message's live pins to
   `ChannelMessage.pinnedBy`, earliest first. A pin naming another channel, a
   malformed pin, and a pin its author deleted are ignored. Several members may
-  pin one message; the row shows "Pinned by" and the earliest pinner's name.
-  Live subscriptions, live window admission, thread overlays and auxiliary
-  visibility include 40004. History windows carry pins only once the relay adds
-  40004 to its window aux closure (`WINDOW_AUX_KINDS` in block/buzz); until
-  then, markers appear for pins seen live.
-- **Pin and unpin.** The message menu offers **Pin message** in a writable,
-  unarchived, non-DM channel. The member who pinned a message sees **Unpin
-  message**, which publishes kind 5 with `["k", "40004"]` for each of their pins.
-  Everyone else, owners and admins included, sees a disabled "Pinned by
-  <name>": the app has no kind 9005 admin removal path. A pin shows before the
-  relay confirms it and reverts when the relay refuses it.
-- **Recovery.** A failed or unconfirmed pin or unpin appears in the
-  conversation's delivery-status notice beside failed edits and deletions, with
-  Retry (the same event) and Discard or Dismiss. The menu item stays disabled
-  until that operation settles, so a second pin is never queued behind it.
+  pin one message. Live subscriptions, live window admission, thread overlays
+  and auxiliary visibility include 40004. History windows carry pins only once
+  the relay adds 40004 to its window aux closure (`WINDOW_AUX_KINDS` in
+  block/buzz); until then, only pins seen live are folded.
+- **Host API.** Core has no pin UI. The Pinned Messages catalog plugin supplies
+  the Pin and Unpin menu items, the "Pinned by" marker and the channel's pinned
+  list, through `session.pins` (`SessionPins` in `src/features/relay/pins.ts`),
+  which is absent when the session has no transport:
+  - `snapshot(channelId)` and `subscribe(channelId, listener)` give the live
+    pins of the channel's window rows, for `useSyncExternalStore`. The array
+    stays the same until the pins change, and `listener` fires only then.
+  - `read(channelId, signal?)` reads the channel's pins from the relay, newest
+    first, dropping a pin whose author deleted it or whose target is missing,
+    deleted, not pinnable or in another channel. It returns at most the newest
+    `PIN_READ_LIMIT` (200) pins.
+  - `canPin(message)` is true when the channel is writable, not archived and not
+    a DM, the row is not a huddle, the message is a kind 9 or 40002 that is not
+    deleted, the connection can publish kind 40004, and the viewer has no pin on
+    it. A pin only someone else made does not block it. There is no cap on pins
+    per message or channel.
+  - `ownPin(message)` returns the viewer's pin on the message.
+  - `pin(channelId, messageId)` queues a pin and `unpin(pinId)` queues kind 5
+    with `["k", "40004"]` for the viewer's own pin. Both return the outbox
+    operation id. A pin shows in `snapshot` before the relay confirms it and
+    leaves it if the relay refuses; the refused operation stays in
+    `session.outbox` as failed. Others' pins, owners' and admins' included,
+    cannot be removed: the app has no kind 9005 admin removal path.
 
 ## Channel lifecycle
 
