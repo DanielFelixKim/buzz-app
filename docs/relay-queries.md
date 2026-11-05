@@ -416,6 +416,12 @@ roster, applied through shared discovery. That makes the channel a sidebar
 member and enables the composer, which then receives focus. An accepted but
 unconfirmed join reports that it may have taken effect and stays retryable.
 
+Palette channel rows show member counts. Joined rows count the roster discovery
+already holds. The rest use the Channels tab's display-only
+`channels.readMemberCounts(ids)` once the row is on screen, so they share its
+cache, retry backoff and bounded `39002` reads. The rosters never reach
+discovery, so a counted roster grants no reading, membership or sidebar row.
+
 ### Finite read recovery
 
 A finite read that has no session recovery source retries transient failures
@@ -552,7 +558,10 @@ metadata/name read: a later name-fetch error does not discard membership evidenc
 Completeness cannot erase a newer signed roster received after that request began;
 metadata completion cannot replay the older membership snapshot.
 
-The session cancels all pending reads on revocation, because broad/ID/reference
+Own-author kind-30078 reads with only marker-topic or coordinate filters also finish
+across channel access changes: encrypted read state belongs to the viewer, not a
+channel. Cache clear, disconnect and session disposal still cancel those reads.
+The session cancels pending channel reads on revocation, because broad/ID/reference
 filters cannot establish event ownership before results arrive. Completion epochs
 also fence already-resolved requests. Directory browsing/searching retries one
 access-epoch invalidation through the same verified scheduler, without admitting
@@ -625,7 +634,8 @@ server-side. The opt-in dev broker accepts bounded Nostr kinds and event-ID read
 ## Current scope and validation
 
 Channels supports top-level text messages and direct thread replies, Enter to send ordinary prose,
-Shift+Enter for a newline. Inside a formatted list, Enter continues the list or exits an
+Shift+Enter for a newline (or, with **Send with ⌘ Enter** on, the reverse; see
+[the help guide](buzz-help.md)). Inside a formatted list, Enter continues the list or exits an
 empty item; the Send button sends while the caret is in the list. Channels also supports
 immediate rows and shared preview data (not currently rendered in the sidebar),
 delivery status, and retry. The dev broker
@@ -893,9 +903,13 @@ replacement wires within the relay's limit of 1,024 subscriptions. Omitted chann
 Joined versus preview classification travels with the interest snapshot.
 
 The 100,000-channel scale case uses 49 persistent channel wires. Replay uses a
-separate queue with at most 10 singleton filters per request. Each filter requests
-up to 500 recent events. At most four setup requests run at once. A busy channel
-cannot consume another channel's replay allowance. A failed replay is visible to
+separate queue, combining up to 256 channels in each 500-event filter. Full pages
+continue at their inclusive oldest timestamp, without channels that have received
+500 events; boundary-second events do not count twice. An undecodable frame still
+fills its page slot. A cutoff that cannot move below the last one, or extra live
+frames, makes that prefix uncertain, so replay falls back to at most 10
+singleton filters per request with the original resume point. At most four setup
+requests run at once. A busy channel cannot consume another channel's replay allowance. A failed replay is visible to
 recovery and Retry. A local failure does not stop other queued channels. Shared
 quota failures pause admission. Replay stays quiet; one later live copy can emit
 one incoming-message signal.

@@ -1,4 +1,5 @@
 import { useMessageEditScope } from "../messages/MessageEditScope";
+import { ActivityIndicatorPresentation } from "./typing-presentation";
 import {
   createContext,
   useCallback,
@@ -252,7 +253,11 @@ function Provider({
       onOpenMediaReview,
     ],
   );
-  return <Context.Provider value={value}>{children}</Context.Provider>;
+  return (
+    <Context.Provider value={value}>
+      <ActivityIndicatorPresentation>{children}</ActivityIndicatorPresentation>
+    </Context.Provider>
+  );
 }
 
 function ConversationMediaReview(props: MediaReview) {
@@ -325,7 +330,6 @@ export function ConversationComposer(props: Own<MessageComposerProps>) {
             label: withPeople
               ? "Message this conversation"
               : "Message your agents",
-            activityClickOpensPanel: true,
           }
         : {})}
       chatPresentation={shared.ownSoloConversation}
