@@ -1001,9 +1001,13 @@ sign-in as part of opening the app. After key setup, the launch mark stays up
 while the saved session is checked. A restored session opens the app directly.
 Otherwise a full-window screen titled "Signing you in to *organization*" opens
 the browser sign-in, and the app opens when it finishes. Cancel or a failed
-sign-in leaves **Sign in with *organization*** and **Not now**; neither reopens
-the browser by itself. Not now opens the app, where protected communities offer
-their usual sign-in recovery.
+sign-in leaves **Sign in with *organization***, which does not reopen the
+browser by itself. There is no way past the screen without a session, so the
+app's saved conversations stay hidden after a session ends, across restarts.
+Only a network failure while checking the saved session (`network-unavailable`
+or `network-timeout`) also offers **Not now**, which opens the app for offline
+reading until a check settles the session; a refused or ended session brings
+the screen back. A secure-storage failure offers Try again only.
 
 When the session ends during a run (expiry or the adapter refusing it), the same
 screen covers the app, above any dialog or menu it had open, and starts sign-in
