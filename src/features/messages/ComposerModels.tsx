@@ -11,6 +11,7 @@ import type { ProfileQueries } from "../relay/profile-directory";
 import {
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -91,6 +92,7 @@ export function ComposerModels({
 }) {
   const [open, setOpen] = useState(false);
   const [retry, setRetry] = useState(0);
+  const unavailableDescriptionId = useId();
   const mentioned = useMentionModels(pubkeys, retry);
   const choices = useMemo<readonly MentionModelChoice[]>(
     () =>
@@ -98,15 +100,21 @@ export function ComposerModels({
         const { session, ...catalog } = choice;
         const visible: MentionModelChoice =
           startsThread && session === "thread" ? catalog : choice;
+        const unavailablePick = unavailableSavedPick(
+          visible,
+          value[visible.pubkey] ?? {},
+          resettable,
+        );
         return visible.loading ||
           visible.failed ||
           visible.models.length > 1 ||
           visible.models.some((model) => model.efforts.length) ||
-          visible.session
+          visible.session ||
+          unavailablePick
           ? [visible]
           : [];
       }),
-    [mentioned, startsThread],
+    [mentioned, startsThread, resettable, value],
   );
   const profileKey = pubkeys.join(":");
   const selection = useMemo(
@@ -243,17 +251,31 @@ export function ComposerModels({
     const { model, effort } = value[choice.pubkey] ?? {};
     const runs = runModel(choice, model);
     const selected = choice.models.some((item) => item.id === model);
+    const unavailable = unavailableSavedPick(
+      choice,
+      value[choice.pubkey] ?? {},
+      resettable,
+    );
     const savedEffortApplies = !resettable || !model || selected;
     const supportedEffort = savedEffortApplies
       ? runs.efforts.find((item) => item.id === effort)
       : undefined;
-    const text = [
-      selected && runs.label,
-      effort !== undefined && supportedEffort?.label,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    const text =
+      unavailable ??
+      [selected && runs.label, effort !== undefined && supportedEffort?.label]
+        .filter(Boolean)
+        .join(" · ");
     return text ? [choices.length > 1 ? `${choice.name}: ${text}` : text] : [];
+  });
+  const unavailableDescription = choices.flatMap((choice) => {
+    const unavailable = unavailableSavedPick(
+      choice,
+      value[choice.pubkey] ?? {},
+      resettable,
+    );
+    return unavailable
+      ? [choices.length > 1 ? `${choice.name}: ${unavailable}` : unavailable]
+      : [];
   });
   const pick = (pubkey: string, next: RunPick) => {
     const { [pubkey]: _, ...rest } = value;
@@ -270,8 +292,14 @@ export function ComposerModels({
       ? "Model and effort for this chat"
       : "Model and effort for the next run";
   const target = resettable ? "this chat" : "next run";
+  const unavailableDescriptionText = unavailableDescription.join(" ");
   return (
     <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+      {unavailableDescriptionText && (
+        <span id={unavailableDescriptionId} className="sr-only">
+          {unavailableDescriptionText}
+        </span>
+      )}
       <Popover.Trigger
         disabled={disabled}
         render={
@@ -282,6 +310,9 @@ export function ComposerModels({
             disabled={disabled}
             data-selected={picked.length ? "" : undefined}
             aria-label={label}
+            aria-describedby={
+              unavailableDescriptionText ? unavailableDescriptionId : undefined
+            }
             title={
               picked.length
                 ? `${label}. ${target}: ${picked.join(", ")}`
@@ -306,6 +337,16 @@ export function ComposerModels({
             aria-label={label}
             initialFocus={thumb}
           >
+            <div
+              className={unavailableDescriptionText ? styles.status : "sr-only"}
+              role="status"
+              aria-label="Saved model and effort availability"
+              aria-atomic="true"
+            >
+              <span className={styles.statusCopy}>
+                {unavailableDescriptionText}
+              </span>
+            </div>
             {inventoryFailed && (
               <div className={`${styles.agent} floating-surface`}>
                 <PanelHeader
@@ -381,6 +422,39 @@ const runModel = (choice: MentionModelChoice, picked: string | undefined) =>
   choice.models.find((item) => item.id === picked) ??
   choice.models.find((item) => item.id === choice.current) ??
   choice.models[0] ?? { id: "", label: "", efforts: [] };
+
+function unavailableSavedPick(
+  choice: MentionModelChoice,
+  value: RunPick,
+  resettable: boolean,
+) {
+  if (!resettable || choice.loading || choice.failed) return undefined;
+  const selectedModel = choice.models.some((item) => item.id === value.model);
+  const runs = runModel(choice, value.model);
+  const unavailableModel = Boolean(value.model && !selectedModel);
+  const unavailableEffort = Boolean(
+    value.effort &&
+      (!value.model || selectedModel) &&
+      !runs.efforts.some((item) => item.id === value.effort),
+  );
+  if (!unavailableModel && !unavailableEffort) return undefined;
+  const defaultEffort = runs.efforts.find((item) => item.id === runs.effort);
+  const fallback = runs.id
+    ? `Using ${runs.label}${
+        defaultEffort
+          ? ` with its default effort (${defaultEffort.label})`
+          : runs.efforts.length
+            ? " with the provider's default effort"
+            : ""
+      }`
+    : "No supported model is listed in the loaded catalog";
+  const reason = unavailableModel
+    ? "Saved model is unavailable."
+    : runs.id
+      ? `Saved effort is unavailable for ${runs.label}.`
+      : "Saved effort is unavailable.";
+  return `${reason} ${fallback}. Your saved choice is retained until you reset it.`;
+}
 
 function AgentChoice({
   choice,
