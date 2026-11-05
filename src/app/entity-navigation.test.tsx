@@ -152,6 +152,7 @@ afterEach(async () => {
   inboxGate.value = undefined;
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   localStorage.clear();
+  sessionStorage.clear();
   window.history.replaceState(null, "", "/");
 });
 it("keeps an OS entity intent through real community selection and Retry in App", async () => {
@@ -855,6 +856,8 @@ it("keeps a link read while a code-less link switches communities", async () => 
 });
 
 it("lists active primary pages in their sidebar and header placements", async () => {
+  // Exercise the retained sidebar layout, not the development-only prototype default.
+  sessionStorage.setItem("buzz.dev.bestie-take", "current");
   vi.stubGlobal(
     "ResizeObserver",
     class {

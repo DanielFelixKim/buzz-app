@@ -5,97 +5,6 @@ selection is the private `main-agent` record shared with Solo's default-agent
 owner; this plugin adds presentation and a conversation destination, not another
 selection store.
 
-## Navigation prototypes (development only)
-
-The header's **Bestie prototype** switch compares **Current panel**, **Top nav**
-(the development default), and **Floating avatar**. It is a presentation choice
-saved only for this app session, not an account or agent preference. Release
-builds retain Current panel. Top nav places the saved Bestie's avatar beside
-Search in the same round 40px control and hover treatment as Search, with a
-smaller 24px circular portrait. Floating avatar places a prominent 80px circular
-portrait at the bottom right, bottom-aligned with the ordinary composer and
-inset 32px from the right edge, with a subtle outline and soft shadow. Circular
-agent portraits here are user-requested prototype exceptions, not a change to
-identity shapes elsewhere.
-Both remove the special sidebar pin and leave the canonical DM in the ordinary
-Direct messages list.
-
-In the two new variants, **Ask Bestie…** in a message's actions opens an anchored
-form with the author, source excerpt and link association. **Catch me up** and
-**Find the next step** fill editable questions; only **Send** submits. Sending
-closes the form and stays in the source conversation. The toast acknowledges
-queueing, not relay delivery or agent completion. No “Watch this” action is
-implemented: this prototype creates asks, not monitoring subscriptions.
-
-The avatar opens one shared Bestie home: **Chat with [Bestie]** opens the canonical
-DM through ordinary navigation; **Recent asks** lists at most 20 explicit asks
-from this app session, newest first. A small indicator reflects existing unread
-evidence, including the DM. Recent rows distinguish Starting, Queued, Sent,
-Check delivery and an actual reply. These are delivery/read states, not proof
-that an agent is running. Pending or failed creation remains inspectable and can
-be retried; only a definitively uncreated chat gets a fresh creation attempt.
-Message delivery recovery remains with the outbox, never a duplicate submission.
-
-Selecting an ask opens a bounded, expanded Popover with the ordinary timeline and
-follow-up composer. **Back** returns to the home, **View source** returns to the
-original message/thread, and **Open conversation** hands off to normal navigation.
-There are no local tabs or additional history visits. Escape/outside dismissal
-closes the popover; ordinary scoped drafts survive reopening. Accepted requests
-and live reply demand outlive the source row, popover and placement switch.
-
-The recent index is deliberately in memory: reload, a known account/community
-change or disabling Bestie clears it; the created Solo chats remain. Unknown
-account scope withholds source previews. Same-account reconnect retains the
-index internally but old async callbacks cannot publish through a new session.
-No polling, watch lifecycle, durable ask reconstruction or native/protocol change
-is added. Existing conversation, selection, archive, membership and signing
-owners retain their checks.
-
-The signed ephemeral fixture now mounts the real AppShell and sidebar.
-`tests/browser/bestie-catch-up.spec.mjs` checks both placements, canonical-DM
-handoff and ordinary inventory, a live reply while closed, focus/draft handoffs
-and viewport bounds in Chromium/WebKit. Mounted tests in
-`CatchUpWorkspace.test.tsx` own explicit submission, no duplicates, scope fences
-and refused-create recovery. These do not establish real native agent acceptance.
-
-## Contextual catch-up (test iteration)
-
-**Catch me up** in a message menu opens one Bestie exchange in the shell's
-right-hand split. For a thread, Channels moves its retained thread tab into the
-main pane, keeping its reply draft. The source reference stays fixed when the
-viewer browses another channel. **View thread/post** returns to that source.
-The excerpt wraps to two lines within a shrinkable panel; it is not a long
-single-line action. The panel header and return control use the agent's actual
-avatar through the existing shared artwork and protected-media paths.
-
-The panel and follow-up composer stay mounted while hidden. Hide/Escape only
-changes presentation; the top-bar Bestie catch-up button reopens the same exchange
-and uses the existing unread evidence to indicate a reply. Selecting the same
-source again reopens it without resubmitting. A different source replaces the
-one in-memory exchange; previous conversations remain ordinary Solo chats.
-
-Requests use the existing private Solo creation, membership and outbox path.
-They are submitted once per opening, after the create is confirmed. Hiding or
-changing channels never cancels an accepted request. Navigating to another
-community/account or disabling Bestie drops the presentation and prevents a
-not-yet-submitted request from sending. Reload does not reconstruct the panel.
-Source/channel access and all publication checks remain with the relay session.
-
-The companion is deliberately not an addressable content tab: opening/hiding it
-adds no navigation visit. Its source thread keeps the existing Back/Forward and
-explicit-close contract. Another shell companion takes presentation while the
-catch-up remains reopenable. Narrow windows use the shared pane overlay, not an
-additional modal or third column.
-
-This iteration supports message/post and thread entry points in non-Solo
-conversations. Channel-wide catch-up, Solo-thread placement, multiple active
-exchanges and reload recovery are not implemented. Fixture-based browser checks
-use `tests/fixtures/bestie-catch-up.html`; mounted lifecycle coverage lives in
-`CatchUpWorkspace.test.tsx`. `tests/browser/bestie-catch-up.spec.mjs` covers long
-source geometry and a signed reply delivered through the transport's live callback
-without a finite refresh, in both browser engines. Neither establishes native
-live-agent response quality.
-
 ## Getting started
 
 ### Pinned conversation
@@ -232,3 +141,96 @@ open Bestie to choose another.
 
 Builderlab no longer owns a separate Bestie setup, agent, Solo chat, or
 selection path.
+
+---
+
+## Navigation prototypes (development only)
+
+The header's **Bestie prototype** switch compares **Current panel**, **Top nav**
+(the development default), and **Floating avatar**. It is a presentation choice
+saved only for this app session, not an account or agent preference. Release
+builds retain Current panel. Top nav places the saved Bestie's avatar beside
+Search in the same round 40px control and hover treatment as Search, with a
+smaller 24px circular portrait. Floating avatar places a prominent 80px circular
+portrait at the bottom right, bottom-aligned with the ordinary composer and
+inset 32px from the right edge, with a subtle outline and soft shadow. Circular
+agent portraits here are user-requested prototype exceptions, not a change to
+identity shapes elsewhere.
+Both remove the special sidebar pin and leave the canonical DM in the ordinary
+Direct messages list.
+
+In the two new variants, **Ask Bestie…** in a message's actions opens an anchored
+form with the author, source excerpt and link association. **Catch me up** and
+**Find the next step** fill editable questions; only **Send** submits. Sending
+closes the form and stays in the source conversation. The toast acknowledges
+queueing, not relay delivery or agent completion. No “Watch this” action is
+implemented: this prototype creates asks, not monitoring subscriptions.
+
+The avatar opens one shared Bestie home: **Chat with [Bestie]** opens the canonical
+DM through ordinary navigation; **Recent asks** lists at most 20 explicit asks
+from this app session, newest first. A small indicator reflects existing unread
+evidence, including the DM. Recent rows distinguish Starting, Queued, Sent,
+Check delivery and an actual reply. These are delivery/read states, not proof
+that an agent is running. Pending or failed creation remains inspectable and can
+be retried; only a definitively uncreated chat gets a fresh creation attempt.
+Message delivery recovery remains with the outbox, never a duplicate submission.
+
+Selecting an ask opens a bounded, expanded Popover with the ordinary timeline and
+follow-up composer. **Back** returns to the home, **View source** returns to the
+original message/thread, and **Open conversation** hands off to normal navigation.
+There are no local tabs or additional history visits. Escape/outside dismissal
+closes the popover; ordinary scoped drafts survive reopening. Accepted requests
+and live reply demand outlive the source row, popover and placement switch.
+
+The recent index is deliberately in memory: reload, a known account/community
+change or disabling Bestie clears it; the created Solo chats remain. Unknown
+account scope withholds source previews. Same-account reconnect retains the
+index internally but old async callbacks cannot publish through a new session.
+No polling, watch lifecycle, durable ask reconstruction or native/protocol change
+is added. Existing conversation, selection, archive, membership and signing
+owners retain their checks.
+
+The signed ephemeral fixture now mounts the real AppShell and sidebar.
+`tests/browser/bestie-catch-up.spec.mjs` checks both placements, canonical-DM
+handoff and ordinary inventory, a live reply while closed, focus/draft handoffs
+and viewport bounds in Chromium/WebKit. Mounted tests in
+`CatchUpWorkspace.test.tsx` own explicit submission, no duplicates, scope fences
+and refused-create recovery. These do not establish real native agent acceptance.
+
+## Contextual catch-up (test iteration)
+
+**Catch me up** in a message menu opens one Bestie exchange in the shell's
+right-hand split. For a thread, Channels moves its retained thread tab into the
+main pane, keeping its reply draft. The source reference stays fixed when the
+viewer browses another channel. **View thread/post** returns to that source.
+The excerpt wraps to two lines within a shrinkable panel; it is not a long
+single-line action. The panel header and return control use the agent's actual
+avatar through the existing shared artwork and protected-media paths.
+
+The panel and follow-up composer stay mounted while hidden. Hide/Escape only
+changes presentation; the top-bar Bestie catch-up button reopens the same exchange
+and uses the existing unread evidence to indicate a reply. Selecting the same
+source again reopens it without resubmitting. A different source replaces the
+one in-memory exchange; previous conversations remain ordinary Solo chats.
+
+Requests use the existing private Solo creation, membership and outbox path.
+They are submitted once per opening, after the create is confirmed. Hiding or
+changing channels never cancels an accepted request. Navigating to another
+community/account or disabling Bestie drops the presentation and prevents a
+not-yet-submitted request from sending. Reload does not reconstruct the panel.
+Source/channel access and all publication checks remain with the relay session.
+
+The companion is deliberately not an addressable content tab: opening/hiding it
+adds no navigation visit. Its source thread keeps the existing Back/Forward and
+explicit-close contract. Another shell companion takes presentation while the
+catch-up remains reopenable. Narrow windows use the shared pane overlay, not an
+additional modal or third column.
+
+This iteration supports message/post and thread entry points in non-Solo
+conversations. Channel-wide catch-up, Solo-thread placement, multiple active
+exchanges and reload recovery are not implemented. Fixture-based browser checks
+use `tests/fixtures/bestie-catch-up.html`; mounted lifecycle coverage lives in
+`CatchUpWorkspace.test.tsx`. `tests/browser/bestie-catch-up.spec.mjs` covers long
+source geometry and a signed reply delivered through the transport's live callback
+without a finite refresh, in both browser engines. Neither establishes native
+live-agent response quality.
