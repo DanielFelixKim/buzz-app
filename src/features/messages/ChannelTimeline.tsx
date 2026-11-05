@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import type { ReplyHold } from "./use-message-reply-hold";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
@@ -194,7 +195,9 @@ export type ChannelTimelineProps = {
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
-  onReply?: ((row: ChannelMessage) => void) | undefined;
+  onReply?:
+    | ((row: ChannelMessage, deferFocus?: boolean) => ReplyHold | undefined)
+    | undefined;
   onOpenThread?(
     messageId: string,
     threadRootId: string,
@@ -1572,7 +1575,7 @@ function Timeline({
       loadNearTop(scroller.current);
   };
   const replyToMessage = useCallback(
-    (id: string) => {
+    (id: string, deferFocus?: boolean) => {
       const row = rowsById.get(id);
       if (!row || !onReply) return;
       const element = scroller.current;
@@ -1584,7 +1587,7 @@ function Timeline({
         savedPosition.current = position;
         restoredAnchor.current = position.anchor;
       }
-      onReply(row);
+      return onReply(row, deferFocus);
     },
     [onReply, rowsById],
   );

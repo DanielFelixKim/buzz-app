@@ -1,4 +1,4 @@
-import type { ChannelMessage } from "../../features/relay/contracts";
+import type { ChannelTimelineProps } from "../../features/messages/ChannelTimeline";
 import { memo, useEffect, useId, useLayoutEffect } from "react";
 import {
   ConversationTimeline,
@@ -24,7 +24,7 @@ export const ChannelBody = memo(function ChannelBody({
   navigation,
   onContentReady,
 }: {
-  onReply?: ((row: ChannelMessage) => void) | undefined;
+  onReply?: ChannelTimelineProps["onReply"];
   onContentReady?(channelId: string): void;
   cached: boolean;
   viewer?: string | undefined;

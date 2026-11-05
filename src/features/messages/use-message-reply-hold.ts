@@ -1,22 +1,16 @@
 import { useEffect, useRef, type PointerEvent } from "react";
 
-/** Holding prose selects a reply; selection, scrolling and embedded controls win. */
+/** A preview can be committed on release or withdrawn without taking focus. */
+export type ReplyHold = { commit(): void; cancel(): void };
+
+/** Holding prose previews a reply; selection, scrolling and embedded controls win. */
 export function useMessageReplyHold(
   id: string,
-  reply: (() => void) | undefined,
+  reply: ((deferFocus?: boolean) => ReplyHold | undefined) | undefined,
 ) {
   const latest = useRef(reply);
   latest.current = reply;
-  const hold = useRef<
-    | {
-        id: string;
-        x: number;
-        y: number;
-        pointerId: number;
-        cancel(): void;
-      }
-    | undefined
-  >(undefined);
+  const hold = useRef<{ id: string; cancel(): void } | undefined>(undefined);
   const cancel = () => hold.current?.cancel();
   const enabled = !!reply;
   useEffect(() => {
@@ -40,38 +34,51 @@ export function useMessageReplyHold(
         return;
       const doc = target.ownerDocument;
       const win = doc.defaultView;
+      const { clientX: x, clientY: y, pointerId } = event;
+      let preview: ReplyHold | undefined;
       const clear = () => {
         clearTimeout(timer);
-        doc.removeEventListener("scroll", clear, true);
-        win?.removeEventListener("blur", clear);
+        doc.removeEventListener("scroll", abort, true);
+        doc.removeEventListener("selectionchange", selectionChanged);
+        doc.removeEventListener("pointermove", move);
+        doc.removeEventListener("pointerup", release);
+        doc.removeEventListener("pointercancel", abort);
+        win?.removeEventListener("blur", abort);
         hold.current = undefined;
       };
-      const timer = setTimeout(() => {
+      const abort = () => {
         clear();
-        if (target.isConnected && doc.getSelection()?.isCollapsed)
-          latest.current?.();
-      }, 100);
-      hold.current = {
-        id,
-        x: event.clientX,
-        y: event.clientY,
-        pointerId: event.pointerId,
-        cancel: clear,
+        preview?.cancel();
       };
-      doc.addEventListener("scroll", clear, true);
-      win?.addEventListener("blur", clear);
+      const selectionChanged = () => {
+        if (!doc.getSelection()?.isCollapsed) abort();
+      };
+      const move = (next: globalThis.PointerEvent) => {
+        if (
+          next.pointerId === pointerId &&
+          Math.hypot(next.clientX - x, next.clientY - y) > 5
+        )
+          abort();
+      };
+      const release = (next: globalThis.PointerEvent) => {
+        if (next.pointerId !== pointerId) return;
+        clear();
+        if (doc.getSelection()?.isCollapsed) preview?.commit();
+        else preview?.cancel();
+      };
+      const timer = setTimeout(() => {
+        if (target.isConnected && doc.getSelection()?.isCollapsed)
+          preview = latest.current?.(true);
+        else abort();
+      }, 100);
+      hold.current = { id, cancel: abort };
+      doc.addEventListener("scroll", abort, true);
+      doc.addEventListener("selectionchange", selectionChanged);
+      doc.addEventListener("pointermove", move);
+      doc.addEventListener("pointerup", release);
+      doc.addEventListener("pointercancel", abort);
+      win?.addEventListener("blur", abort);
     },
-    onPointerMove(event: PointerEvent<HTMLDivElement>) {
-      const pending = hold.current;
-      if (
-        pending &&
-        event.pointerId === pending.pointerId &&
-        Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > 5
-      )
-        cancel();
-    },
-    onPointerUp: cancel,
-    onPointerCancel: cancel,
     onPointerLeave: cancel,
     onContextMenu: cancel,
   };

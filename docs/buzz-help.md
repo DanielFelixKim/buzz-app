@@ -276,8 +276,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   Canvas, with + marking lines only that version has and − marking current
   lines it lacks. Turn on **Show full content** to read a version as written.
 - **Reply to a message**: hold its text for 0.1 seconds to select it in the
-  reply preview inside the composer, then send to reply in its thread. This also
-  works in Solo chats, Inbox conversation previews, Bestie, and conversation tabs.
+  reply preview inside the composer. Release to focus the composer, or drag to
+  select text and dismiss the provisional preview. Send to reply in its thread.
+  This also works in Solo chats, Inbox conversation previews, Bestie, and conversation tabs.
   Selecting or canceling a reply preserves your current draft. The preview follows
   message edits; if the target becomes unavailable, cancel it before sending.
   Press **Escape** or use **Cancel reply target** to return to the normal composer.

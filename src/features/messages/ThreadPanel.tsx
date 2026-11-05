@@ -676,6 +676,8 @@ function ThreadMessages({
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
+  const currentReplyParent = useRef(replyParent);
+  currentReplyParent.current = replyParent;
   const resolveName = useChannelIdentityNames(session, channelId);
   const senderName = (row: ChannelMessage) => {
     const id = row.workflowOwnerId ?? row.authorId;
@@ -1022,11 +1024,23 @@ function ThreadMessages({
     setReplyFocus((value) => value + 1);
   }, []);
   const targetReply = useCallback(
-    (id: string) => {
+    (id: string, deferFocus = false) => {
       captureResizePosition();
       follow.current = false;
-      setReplyParent((current) => (current === id ? undefined : id));
-      setReplyFocus((value) => value + 1);
+      const previous = currentReplyParent.current;
+      const next = previous === id ? undefined : id;
+      currentReplyParent.current = next;
+      setReplyParent(next);
+      if (!deferFocus) setReplyFocus((value) => value + 1);
+      return {
+        commit() {
+          if (currentReplyParent.current === next)
+            setReplyFocus((value) => value + 1);
+        },
+        cancel() {
+          setReplyParent((current) => (current === next ? previous : current));
+        },
+      };
     },
     [captureResizePosition],
   );

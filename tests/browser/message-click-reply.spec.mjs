@@ -55,6 +55,7 @@ test("holding to reply near the bottom preserves the reading position and Escape
     page.getByRole("button", { name: "Cancel reply target" }),
   ).toBeVisible();
   await page.mouse.up();
+  await expect(page.getByRole("textbox")).toBeFocused();
   await expect(
     page.getByRole("button", { name: "Cancel reply target" }),
   ).toBeVisible();
@@ -97,4 +98,64 @@ test("holding to reply near the bottom preserves the reading position and Escape
     Math.max(...drift),
     "reading anchor stays still throughout the transition",
   ).toBeLessThan(4);
+});
+
+// Native selection must survive a hold that becomes a drag after the preview.
+test("dragging after the reply preview selects text without focusing the composer", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.fill("Keep this draft");
+  const history = page.getByRole("region", { name: "Channel message history" });
+  const last = app.histories.get("primary/alpha").at(-1);
+  const prose = history.locator(`[data-message-id="${last.id}"] p`).first();
+  await expect(prose).toBeInViewport();
+  await settle(page, history);
+  const points = await prose.evaluate((element) => {
+    const text = element.firstChild;
+    const point = (offset) => {
+      const range = document.createRange();
+      range.setStart(text, offset);
+      range.setEnd(text, offset + 1);
+      const box = range.getBoundingClientRect();
+      const result = { x: box.x + 1, y: box.y + box.height / 2 };
+      if (!element.contains(document.elementFromPoint(result.x, result.y)))
+        throw new Error("Selection starts on exposed message prose");
+      return result;
+    };
+    return { start: point(1), end: point(12) };
+  });
+  await page.mouse.move(points.start.x, points.start.y);
+  await page.mouse.down();
+  try {
+    await expect(
+      page.getByRole("button", { name: "Cancel reply target" }),
+    ).toBeVisible();
+    await expect(page.getByRole("textbox")).not.toBeFocused();
+    await page.mouse.move(points.end.x, points.end.y, { steps: 8 });
+  } finally {
+    await page.mouse.up();
+  }
+  await expect
+    .poll(() =>
+      prose.evaluate((element) => {
+        const selection = document.getSelection();
+        return (
+          !!selection?.toString() &&
+          element.contains(selection.anchorNode) &&
+          element.contains(selection.focusNode)
+        );
+      }),
+    )
+    .toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Cancel reply target" }),
+  ).toHaveCount(0);
+  await expect(input).toHaveText("Keep this draft");
+  await expect(input).not.toBeFocused();
 });

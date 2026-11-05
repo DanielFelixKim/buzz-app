@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot } from "../relay/threads";
@@ -36,6 +36,8 @@ export function useInlineReply(
   focusRequest = 0,
 ) {
   const [selected, setSelected] = useState<Selection>();
+  const currentSelection = useRef(selected);
+  currentSelection.current = selected;
   const [localFocus, setLocalFocus] = useState({
     external: focusRequest,
     sequence: 0,
@@ -64,15 +66,28 @@ export function useInlineReply(
     }));
   }, [focusRequest]);
   const select = useCallback(
-    (row: ChannelMessage) => {
-      setSelected({
+    (row: ChannelMessage, deferFocus = false) => {
+      const previous = currentSelection.current;
+      const selection: Selection = {
         session,
         channelId: row.channelId,
         id: row.id,
         rootId: row.threadRootId ?? row.id,
         preview: row,
-      });
-      requestFocus();
+      };
+      currentSelection.current = selection;
+      setSelected(selection);
+      if (!deferFocus) requestFocus();
+      return {
+        commit() {
+          if (currentSelection.current === selection) requestFocus();
+        },
+        cancel() {
+          setSelected((current) =>
+            current === selection ? previous : current,
+          );
+        },
+      };
     },
     [session, requestFocus],
   );

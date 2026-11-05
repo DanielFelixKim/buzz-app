@@ -1,4 +1,4 @@
-import { useMessageReplyHold } from "./use-message-reply-hold";
+import { useMessageReplyHold, type ReplyHold } from "./use-message-reply-hold";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
@@ -130,7 +130,9 @@ export type MessageRowProps = {
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
-  onReply?: ((messageId: string) => void) | undefined;
+  onReply?:
+    | ((messageId: string, deferFocus?: boolean) => ReplyHold | undefined)
+    | undefined;
   /** False: existing threads open, but the row offers none to start or reply in. */
   startsThreads?: boolean;
   quickControls?: ReactNode;
@@ -387,7 +389,7 @@ function MessageRowContent({
   const replyHold = useMessageReplyHold(
     row.id,
     onReply && !replyDisabled && !row.membership && !row.huddle
-      ? () => onReply(row.id)
+      ? (deferFocus) => onReply(row.id, deferFocus)
       : undefined,
   );
   const rowRef = useRef<HTMLDivElement>(null);
