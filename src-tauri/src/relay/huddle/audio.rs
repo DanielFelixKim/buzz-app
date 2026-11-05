@@ -1455,6 +1455,15 @@ mod tests {
         let (mut relay, socket) = stalled().await;
         let (mic, pcm) = mpsc::channel(1);
         let (stop, stopped) = watch::channel(false);
+        let (roster, mut rostered) = mpsc::unbounded_channel();
+        let updates = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                if json.contains(r#""type":"participants""#) {
+                    let _ = roster.send(());
+                }
+            }
+            Ok(())
+        });
         let running = tokio::spawn(async move {
             let touched = std::sync::atomic::AtomicU64::new(super::super::lease_time());
             let connection = Connection {
@@ -1464,55 +1473,64 @@ mod tests {
                 cancellation: CancellationToken::new(),
                 seat: None,
             };
-            run(
-                connection,
-                pcm,
-                stopped,
-                &Channel::new(|_| Ok(())),
-                &touched,
-            )
-            .await
+            run(connection, pcm, stopped, &updates, &touched).await
         });
-        // The first heartbeat Ping is now the send in flight. Mic frames 0-4
-        // fill the queue; 5-9 are encoded, so they spend sequence numbers, and
-        // dropped. The relay's Ping arrives while every slot is taken.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        for _ in 0..10 {
-            mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
-        }
-        relay
-            .send(Message::Ping(b"probe".to_vec().into()))
-            .await
-            .unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        // Release well inside the 2 s stall bound, then speak again.
-        let (mut seqs, mut ponged, mut fillers) = (Vec::new(), false, 0);
-        while seqs.len() < 5 || !ponged {
-            match relay.next().await.unwrap().unwrap() {
-                Message::Binary(frame) if frame.len() == 65536 => fillers += 1,
-                Message::Binary(frame) => {
-                    let (header, _) = FrameHeader::parse(&frame).unwrap();
-                    assert_eq!(header.ts_48k, header.seq as u32 * FRAME_SAMPLES as u32);
-                    seqs.push(header.seq);
+        let wire = |frame: &[u8]| {
+            let (header, _) = FrameHeader::parse(frame).unwrap();
+            assert_eq!(header.ts_48k, header.seq as u32 * FRAME_SAMPLES as u32);
+            header.seq
+        };
+        let mut seqs = Vec::new();
+        let recovered = async {
+            // The first heartbeat Ping is the send in flight and the relay reads
+            // nothing yet. Sending frame k+1 waits until the loop has taken frame
+            // k, so once frame 5 is sent, frames 0-4 fill all five slots. Frames
+            // 5-9 are encoded, spending sequence numbers, and dropped.
+            for _ in 0..10 {
+                mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
+            }
+            // The socket is read in order, so the roster update proves the probe
+            // was handled while the queue was still full: the explicit Pong was
+            // dropped, and any probe Pong on the wire is tungstenite's own.
+            relay
+                .feed(Message::Ping(b"probe".to_vec().into()))
+                .await
+                .unwrap();
+            relay
+                .feed(Message::Text(r#"{"type":"roster","peers":[]}"#.into()))
+                .await
+                .unwrap();
+            relay.flush().await.unwrap();
+            rostered.recv().await.unwrap();
+            let (mut ponged, mut fillers) = (false, 0);
+            while seqs.len() < 5 || !ponged {
+                match relay.next().await.unwrap().unwrap() {
+                    Message::Binary(frame) if frame.len() == 65536 => fillers += 1,
+                    Message::Binary(frame) => seqs.push(wire(&frame)),
+                    Message::Pong(payload) => ponged |= &payload[..] == b"probe",
+                    _ => {}
                 }
-                Message::Pong(payload) => ponged |= &payload[..] == b"probe",
-                _ => {}
             }
-        }
-        assert!(fillers > 0);
-        for _ in 0..3 {
-            mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
-        }
-        while seqs.len() < 8 {
-            if let Message::Binary(frame) = relay.next().await.unwrap().unwrap() {
-                seqs.push(FrameHeader::parse(&frame).unwrap().0.seq);
+            assert!(fillers > 0);
+            for _ in 0..3 {
+                mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
             }
-        }
+            while seqs.len() < 8 {
+                if let Message::Binary(frame) = relay.next().await.unwrap().unwrap() {
+                    seqs.push(wire(&frame));
+                }
+            }
+        };
+        // Recovery must finish well inside the 2 s stall bound.
+        tokio::time::timeout(Duration::from_millis(1500), recovered)
+            .await
+            .expect("outbound did not recover");
         assert_eq!(
             seqs,
             [0, 1, 2, 3, 4, 10, 11, 12],
             "accepted order, then the drop gap"
         );
+        // A clean stop, here with the queue already drained, closes in bound.
         stop.send(true).unwrap();
         let closed =
             async { while !matches!(relay.next().await, Some(Ok(Message::Close(_))) | None) {} };
