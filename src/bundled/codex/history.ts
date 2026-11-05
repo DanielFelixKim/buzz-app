@@ -1,3 +1,4 @@
+import { quotedContext } from "../../features/agent-harness/quoted-context";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { quoted, withNames } from "../../features/agent-harness/turn-records";
 import { attestedOwner } from "../../features/agents/owner-attestation";
@@ -112,5 +113,10 @@ export async function conversationHistory(
     note: "Recent context, not new requests. Previously supplied context may repeat. Up to 50 messages, 4000 characters each.",
     messages,
   });
-  return `<${section}>\n${text}\n</${section}>\n`;
+  const references = await quotedContext(
+    [event, ...earlier],
+    read,
+    signingAuthority,
+  );
+  return `${references}<${section}>\n${text}\n</${section}>\n`;
 }

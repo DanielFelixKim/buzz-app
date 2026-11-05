@@ -2266,6 +2266,27 @@ that visit lasts across threads of the same channel. The page holds no second
 message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
 
+`Thread` also accepts `sourceMessage?: { channelId, messageId }`. The host reads
+that exact message in its actual channel and shows it as context above the
+thread. The thread root is the first reply. Its IDs, reply destination, access
+rules, and composer seed stay intact. The source uses normal message actions
+in its own channel. It does not start a channel visit or enter task read receipts.
+An unavailable source shows a notice and Retry. This option supplies display
+context only. It does not supply agent input.
+
+A signed owner brief can use `["q", sourceMessageId]` to supply agent context.
+The current host resolves the source through the same community reader as agent
+history. The source keeps its real author. Its text is quoted context, not a new
+request. Relay and author hints do not select another community. Each turn reads
+at most four source messages and keeps up to 4,000 characters per source.
+References inside source messages do not cause more reads. Edits and deletions
+apply. Missing access, a deleted source, or a failed read stops the turn before
+it reaches the agent. The visible brief needs no source text or label.
+Quotes on the task root also supply context when a later turn reads its history.
+The reader uses the existing `ownerReads` policy on the device that runs the
+agent; the quote tag grants no access. A separate agent reader needs its own
+source access. The plugin must save the actual task root ID and source coordinates.
+
 `conversation.ui.Conversation({ session, scope, channelId, channelName?, threadId?, children })`
 gives a page's own `ui.Message` rows and `ui.Composer` for one channel the host
 behavior Channels rows have, without showing a thread or visiting the channel:

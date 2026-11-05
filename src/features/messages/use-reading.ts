@@ -20,6 +20,8 @@ type Reading = {
   restoring?: (() => boolean) | undefined;
   /** False: this list marks nothing read; its owner decides what was read. */
   enabled?: boolean | undefined;
+  /** Limit receipts to this conversation when the surface also shows context rows. */
+  messageIds?: ReadonlySet<string> | undefined;
 };
 /** `useReading` for an owner that renders its own `MessageEditScope`. */
 export function Reading(props: Reading) {
@@ -40,6 +42,7 @@ export function useReading({
   settled,
   restoring,
   enabled = true,
+  messageIds,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
   useEffect(() => {
@@ -112,6 +115,7 @@ export function useReading({
     function shown(row: HTMLElement, viewport: DOMRect) {
       const bounds = row.getBoundingClientRect();
       return (
+        (!messageIds || messageIds.has(row.dataset.messageId ?? "")) &&
         row.dataset.membershipRow === undefined &&
         row.dataset.huddleRow === undefined &&
         bounds.height > 0 &&
@@ -324,5 +328,6 @@ export function useReading({
     restoring,
     composer,
     enabled,
+    messageIds,
   ]);
 }

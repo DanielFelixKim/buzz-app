@@ -171,6 +171,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
+- A plugin can show an original channel message above a task thread. Replies
+  still go to the task thread. If the source is unavailable, use **Try again**.
+  A task brief can give an agent source context through a message reference.
+  The source keeps its author and needs current read access. It is context,
+  not a new request. A deleted or inaccessible source stops that agent turn.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders

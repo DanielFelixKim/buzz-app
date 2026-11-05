@@ -94,6 +94,8 @@ export type TurnInput = Readonly<{
   context: readonly EventData[];
   /** Messages the conversation has in all. */
   total: number;
+  /** Verified quoted messages, separate from the current request. */
+  references?: string;
   /** The chat's workspace Canvas section, for a Solo chat with one. */
   project?: string;
   /** A plugin's wake, whose turn has its section in place of the event's. */
@@ -162,6 +164,7 @@ export function turnPrompt(input: TurnInput) {
           `Channel: ${channelLabel}`,
         ];
   const parts: string[] = [];
+  if (input.references) parts.push(input.references.trim());
   // First, where the plugin looks for it.
   if (context.length)
     parts.push(

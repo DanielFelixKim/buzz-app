@@ -1,3 +1,4 @@
+import { quotedContext } from "../../features/agent-harness/quoted-context";
 // Turns Agents deliveries into Pi turns. Every Pi agent here runs in the one
 // Pi host (pi.ts), each with its own Pi durable storage, where each Buzz
 // conversation is one Pi conversation. A delivery becomes a prompt in the
@@ -1313,13 +1314,24 @@ export class PiRuntime {
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
     const signingAuthority = reads?.workflowAuthority();
-    const [names, project] = await Promise.all([
+    const [names, project, references] = await Promise.all([
       readAuthorNames(
         reads,
         [event, ...unseen.slice(-CONTEXT_LIMIT)],
         signingAuthority,
       ),
       reading.then((read) => read?.section),
+      quotedContext(
+        [event, ...earlier],
+        reads
+          ? (filters) =>
+              reads.read(
+                filters,
+                AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
+              )
+          : undefined,
+        signingAuthority,
+      ),
     ]);
     return {
       event,
@@ -1332,6 +1344,7 @@ export class PiRuntime {
       },
       ...(thread ? { thread } : {}),
       context: unseen,
+      references,
       total: earlier.length + 1,
       names,
       ...(signingAuthority ? { signingAuthority } : {}),

@@ -25,6 +25,7 @@ import type { MessageRowProps } from "../messages/MessageRow";
 import type { PanelProps, RegisteredPanel } from "../panels/service";
 import type { ChannelMessage } from "../relay/contracts";
 import type { OutgoingEvent } from "../relay/outbox";
+import type { ThreadSnapshot, ThreadView } from "../relay/threads";
 import type { RelaySession } from "../relay/session";
 
 // The real ThreadPanel and MessageManagement are composed; only leaf UI with
@@ -35,7 +36,8 @@ vi.mock("../relay/react", () => {
 });
 vi.mock("../messages/MessageRow", () => ({
   MessageRow: ({ row, onOpenLink, onOpenMediaReview }: MessageRowProps) => (
-    <article>
+    <article data-message-id={row.id} data-channel-id={row.channelId}>
+      <p>{row.content}</p>
       <button
         type="button"
         onClick={() => onOpenLink?.("fixture:one", { rootId: row.id })}
@@ -53,9 +55,17 @@ vi.mock("../messages/MessageRow", () => ({
   ),
 }));
 vi.mock("../messages/MessageComposer", () => ({
-  MessageComposer: ({ soloConversation }: MessageComposerProps) => (
+  MessageComposer: ({
+    soloConversation,
+    channelId,
+    threadRootId,
+    threadSeed,
+  }: MessageComposerProps) => (
     <section
       aria-label="Composer"
+      data-channel-id={channelId}
+      data-root-id={threadRootId}
+      data-seed-id={threadSeed?.id}
       data-solo-conversation={String(!!soloConversation)}
       data-deletion={String(!!useMessageDeletion())}
     />
@@ -460,4 +470,90 @@ it("an open channel reserves profile room for its roster and returns it when it 
   expect(reserve).toHaveBeenCalledTimes(3);
   view.unmount();
   expect(release).toHaveBeenCalledTimes(3);
+});
+
+it("shows the source above the task root and keeps the task destination and seed", () => {
+  const h = fixture();
+  const taskView = h.props.session.thread("c", h.props.messageId);
+  const root = taskView.snapshot().root;
+  if (!root) throw new Error("Fixture needs a task root");
+  const source = {
+    ...root,
+    id: "e".repeat(64),
+    channelId: "d",
+    authorId: "f".repeat(64),
+    content: "Original request",
+  };
+  const task = {
+    ...root,
+    authorId: h.props.session.viewer,
+    content: "Owner brief @agent",
+  };
+  let snapshot: ThreadSnapshot = {
+    ...taskView.snapshot(),
+    root: source,
+    target: source,
+    targetStatus: "ready",
+  };
+  const listeners = new Set<() => void>();
+  const sourceView: ThreadView = {
+    snapshot: () => snapshot,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    refresh: vi.fn(async () => {}),
+    loadMore: vi.fn(async () => {}),
+    retarget: vi.fn(async () => "selected" as const),
+    dispose: vi.fn(),
+  };
+  const taskSnapshot = { ...taskView.snapshot(), root: task };
+  const thread = vi
+    .spyOn(h.props.session, "thread")
+    .mockImplementation((channelId) =>
+      channelId === "d"
+        ? sourceView
+        : {
+            ...taskView,
+            snapshot: () => taskSnapshot,
+          },
+    );
+  const view = render(
+    <EmbeddedThread
+      {...h.props}
+      sourceMessage={{ channelId: "d", messageId: source.id }}
+    />,
+  );
+  const rows = screen.getAllByRole("article");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("Original request"),
+    expect.stringContaining("Owner brief @agent"),
+  ]);
+  expect(rows[0]?.closest("ol")).toBeNull();
+  expect(rows[1]?.closest("ol")).not.toBeNull();
+  expect(rows[0]).toHaveAttribute("data-channel-id", "d");
+  expect(thread).toHaveBeenCalledWith("d", source.id, { exact: true });
+  const composer = screen.getByLabelText("Composer");
+  expect(composer).toHaveAttribute("data-channel-id", "c");
+  expect(composer).toHaveAttribute("data-root-id", task.id);
+  expect(composer).toHaveAttribute("data-seed-id", task.id);
+  expect(h.unread.enterChannel).toHaveBeenCalledExactlyOnceWith("c");
+  // A source purge must remove its text without removing the task composer.
+  act(() => {
+    snapshot = {
+      ...snapshot,
+      root: undefined,
+      target: undefined,
+      targetStatus: "unavailable",
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(screen.queryByText("Original request")).not.toBeInTheDocument();
+  expect(screen.getByText("This message isn’t available.")).toBeVisible();
+  expect(screen.getByLabelText("Composer")).toBe(composer);
+  view.unmount();
+  expect(sourceView.dispose).toHaveBeenCalledOnce();
+  expect(listeners.size).toBe(0);
 });

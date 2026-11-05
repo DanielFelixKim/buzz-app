@@ -1,3 +1,4 @@
+import { quotedContext } from "../../features/agent-harness/quoted-context";
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation; a standalone turn, such as a watch's or a
@@ -892,13 +893,24 @@ export class ClaudeRuntime {
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
     const signingAuthority = reads?.workflowAuthority();
-    const [names, project] = await Promise.all([
+    const [names, project, references] = await Promise.all([
       readAuthorNames(
         reads,
         [event, ...unseen.slice(-CONTEXT_LIMIT)],
         signingAuthority,
       ),
       reading,
+      quotedContext(
+        [event, ...earlier],
+        reads
+          ? (filters) =>
+              reads.read(
+                filters,
+                AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
+              )
+          : undefined,
+        signingAuthority,
+      ),
     ]);
     // An unread Canvas keeps the folders the chat had, not restarting it.
     if (project?.directories.length)
@@ -916,6 +928,7 @@ export class ClaudeRuntime {
       },
       ...(thread ? { thread } : {}),
       context: unseen,
+      references,
       contextRoot,
       total: earlier.length + 1,
       names,

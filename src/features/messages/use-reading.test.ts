@@ -29,6 +29,7 @@ function setup({
   latestMessageId = undefined as string | undefined,
   rootId = undefined as string | undefined,
   enabled = true,
+  messageIds = undefined as ReadonlySet<string> | undefined,
   focus = "element" as "element" | "composer" | "parent" | "outside" | "header",
 } = {}) {
   vi.useFakeTimers();
@@ -118,6 +119,7 @@ function setup({
       latestMessageId,
       rootId,
       enabled,
+      messageIds,
     },
     reactStrictMode: strict,
     wrapper: ({ children }: { children: ReactNode }) =>
@@ -167,6 +169,7 @@ function setup({
         latestMessageId,
         rootId,
         enabled,
+        messageIds,
       }),
     unmount: view.unmount,
   };
@@ -650,3 +653,16 @@ it.each(["transitionend", "animationend"])(
     expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
   },
 );
+
+it("excludes context rows from this conversation's receipts", () => {
+  const h = setup({ messageIds: new Set(["visible"]) });
+  h.setRows([row("context", 10, 90), row("visible", 100, 200)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  expect(h.leases.at(-1)?.view).toHaveBeenLastCalledWith(
+    ["visible"],
+    expect.any(Function),
+  );
+});

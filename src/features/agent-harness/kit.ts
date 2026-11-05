@@ -1,3 +1,4 @@
+import { quotedContext } from "./quoted-context";
 // The Buzz side of an agent turn, for a harness a plugin brings: whether a
 // delivery is the harness's to act on and which conversation it goes to, the
 // prompts the bundled harnesses give, the agent's Buzz tools as an MCP
@@ -357,13 +358,24 @@ export function harnessKit(sources: Sources): HarnessKit {
       );
       const reads = ownerReads(sources.relay(agent.key), agent.pubkey);
       const signingAuthority = reads?.workflowAuthority();
-      const [names, project] = await Promise.all([
+      const [names, project, references] = await Promise.all([
         readAuthorNames(
           reads,
           [event, ...unseen.slice(-CONTEXT_LIMIT)],
           signingAuthority,
         ),
         reading.then((read) => read?.section),
+        quotedContext(
+          [event, ...earlier],
+          reads
+            ? (filters) =>
+                reads.read(
+                  filters,
+                  AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
+                )
+            : undefined,
+          signingAuthority,
+        ),
       ]);
       const text = turnPrompt({
         agent: agent.key,
@@ -374,6 +386,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         channel: { id: channelId, ...(name ? { name } : {}), dm },
         ...(thread ? { thread } : {}),
         context: unseen,
+        references,
         total: earlier.length + 1,
         names,
         ...(signingAuthority ? { signingAuthority } : {}),

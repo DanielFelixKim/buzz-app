@@ -1,3 +1,4 @@
+import { quotedContext } from "../../features/agent-harness/quoted-context";
 // Turns Agents deliveries into goose turns. Every agent of this type shares
 // one `goose-acp` process; a delivery becomes a prompt in the harness format,
 // sent to the agent's ACP session for its conversation; a watch or timer wake
@@ -766,13 +767,24 @@ export class GooseRuntime {
     );
     const reads = ownerReads(this.relay(agent.key), agent.pubkey);
     const signingAuthority = reads?.workflowAuthority();
-    const [names, project] = await Promise.all([
+    const [names, project, references] = await Promise.all([
       readAuthorNames(
         reads,
         [event, ...unseen.slice(-CONTEXT_LIMIT)],
         signingAuthority,
       ),
       reading.then((read) => read?.section),
+      quotedContext(
+        [event, ...earlier],
+        reads
+          ? (filters) =>
+              reads.read(
+                filters,
+                AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
+              )
+          : undefined,
+        signingAuthority,
+      ),
     ]);
     return {
       key,
@@ -786,6 +798,7 @@ export class GooseRuntime {
       },
       ...(thread ? { thread } : {}),
       context: unseen,
+      references,
       /** created_at of the newest event the turn is shown. A thread read in a
        * channel session stops at the event: the other threads were not read. */
       shown:

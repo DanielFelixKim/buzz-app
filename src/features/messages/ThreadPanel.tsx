@@ -97,6 +97,8 @@ export type ThreadPanelProps = {
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
   headerActions?: ReactNode | undefined;
+  /** A verified context row; the actual root remains the first reply. */
+  contextRoot?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: (() => void) | undefined;
@@ -422,6 +424,7 @@ function OwnedThreadPanel({
   revealSelected,
   requireReadyRoot,
   onDraftSaved,
+  contextRoot,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -494,6 +497,7 @@ function OwnedThreadPanel({
       revealSelected={revealSelected}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
+      contextRoot={contextRoot}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -527,7 +531,9 @@ function ThreadMessages({
   selectionFailure,
   onResolvedRoot,
   routePending,
+  contextRoot,
 }: {
+  contextRoot?: ReactNode | undefined;
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A route to this reader is on its way: until it lands, a reader not yet
    * shown stays hidden and unread rather than showing a place the route
@@ -695,6 +701,10 @@ function ThreadMessages({
     () =>
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
+  );
+  const readingIds = useMemo(
+    () => (contextRoot ? new Set(rows.map((row) => row.id)) : undefined),
+    [contextRoot, rows],
   );
   // Remembered agents follow the viewer's latest message here, not the root.
   // Undefined until the first page lands: the seeded root is not yet the thread.
@@ -1748,11 +1758,53 @@ function ThreadMessages({
       void view.loadMore();
     } else void view.refresh();
   };
+  const rootMessage = snapshot.root ? (
+    <MessageRow
+      viewer={session.viewer}
+      extensions={extensions}
+      session={session}
+      scope={scope}
+      onReply={soloConversation ? undefined : focusReply}
+      stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
+      row={snapshot.root}
+      representedAgents={stableActivity.agents(
+        snapshot.root.id,
+        rootPresentation.representedAgents.get(snapshot.root.id),
+      )}
+      repliedAgents={stableActivity.agents(
+        `replied:${snapshot.root.id}`,
+        rootReplies.repliedAgents.get(snapshot.root.id),
+      )}
+      recordedActivity={stableActivity.activity(
+        snapshot.root.id,
+        rootActivity,
+        "history",
+      )}
+      profile={profiles.get(snapshot.root.authorId)}
+      participantProfiles={profiles}
+      agentPubkeys={agentPubkeys}
+      media={session.media}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+      day={false}
+      layout="thread"
+      retry={session.messages.retry}
+      mediaMode="thread"
+      {...(mediaSeek
+        ? {
+            mediaSeekTo: mediaSeek.seconds,
+            mediaSeekRequest: mediaSeek.request,
+          }
+        : {})}
+      {...(onOpenMediaReview ? { onOpenMediaReview: openRootMedia } : {})}
+    />
+  ) : null;
   return (
     <MessageEditScope>
       <Reading
         session={session}
         channelId={channelId}
+        messageIds={readingIds}
         scroller={scroller}
         settled={readingSettled}
         rootId={snapshot.root?.id}
@@ -1856,49 +1908,9 @@ function ThreadMessages({
           data-activity-history-scope=""
           inert={positioning}
         >
-          {snapshot.root ? (
-            <MessageRow
-              viewer={session.viewer}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              onReply={soloConversation ? undefined : focusReply}
-              stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
-              row={snapshot.root}
-              representedAgents={stableActivity.agents(
-                snapshot.root.id,
-                rootPresentation.representedAgents.get(snapshot.root.id),
-              )}
-              repliedAgents={stableActivity.agents(
-                `replied:${snapshot.root.id}`,
-                rootReplies.repliedAgents.get(snapshot.root.id),
-              )}
-              recordedActivity={stableActivity.activity(
-                snapshot.root.id,
-                rootActivity,
-                "history",
-              )}
-              profile={profiles.get(snapshot.root.authorId)}
-              participantProfiles={profiles}
-              agentPubkeys={agentPubkeys}
-              media={session.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              day={false}
-              layout="thread"
-              retry={session.messages.retry}
-              mediaMode="thread"
-              {...(mediaSeek
-                ? {
-                    mediaSeekTo: mediaSeek.seconds,
-                    mediaSeekRequest: mediaSeek.request,
-                  }
-                : {})}
-              {...(onOpenMediaReview
-                ? { onOpenMediaReview: openRootMedia }
-                : {})}
-            />
-          ) : snapshot.status !== "loading" ? (
+          {contextRoot}
+          {!contextRoot && rootMessage}
+          {!snapshot.root && snapshot.status !== "loading" ? (
             targetUnavailable ? (
               // One notice, with its recovery beside it, when nothing loaded.
               <div className={styles.threadNotice}>
@@ -1914,6 +1926,9 @@ function ThreadMessages({
             )
           ) : null}
           <ol>
+            {contextRoot && snapshot.root && (
+              <li className={styles.replyItem}>{rootMessage}</li>
+            )}
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>
                 <p role="alert">{snapshot.error}</p>
