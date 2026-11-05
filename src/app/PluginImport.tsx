@@ -19,7 +19,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { FolderOpenIcon } from "../shared/design-system/icons/index";
-import { PluginAccessReview } from "./PluginAccessReview";
+import {
+  PluginAccessReview,
+  pluginAccessIncreases,
+} from "./PluginAccessReview";
 import {
   createPluginUpdateChecks,
   pluginUpdateCheck,
@@ -27,6 +30,11 @@ import {
 } from "../plugins/update-checks";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
+import {
+  pluginUpdateSource,
+  updateSourceKey,
+  type GitUpdateSource,
+} from "../plugins/updates";
 import type { GitPluginSource } from "../features/navigation/targets";
 
 // The native importer has one slot, shared by successive dialogs.
@@ -69,6 +77,7 @@ export function importRollbackWarning(
 
 export function PluginImport({
   initialGit,
+  updateAction,
   requestSignal,
   initialUpdateAvailable = false,
   updateChecks,
@@ -93,6 +102,7 @@ export function PluginImport({
   holdReview,
 }: {
   initialGit?: GitPluginSource | undefined;
+  updateAction?: { source: GitUpdateSource; apply: boolean } | undefined;
   requestSignal?: AbortSignal | undefined;
   initialUpdateAvailable?: boolean;
   updateChecks?: PluginUpdateChecks | undefined;
@@ -132,7 +142,7 @@ export function PluginImport({
   const currentPlugin = catalog.plugins.find(
     (item) => item.manifest.id === updateId,
   );
-  const savedSource = currentPlugin?.updateSource;
+  const savedSource = updateAction?.source ?? currentPlugin?.updateSource;
   const checks = useMemo(
     () => updateChecks ?? createPluginUpdateChecks(imports),
     [updateChecks, imports],
@@ -350,13 +360,14 @@ export function PluginImport({
               : "an unknown source"
         }; remove it first to install it from ${sourceLabel(preview.source, candidate.path)}.`
       : null;
-  const constraint = bound ? bound.source : initialGit;
+  const constraint =
+    updateAction?.source ?? (bound ? bound.source : initialGit);
   const linkConstrained = !bound && !!(constraint?.commit || constraint?.path);
   const pinned = bound
     ? requested
       ? bound.source.commit
       : undefined
-    : initialGit?.commit;
+    : constraint?.commit;
   const pinError =
     pinned && preview && preview.commit?.toLowerCase() !== pinned
       ? "This repository is not at the commit that was requested. Nothing was installed."
@@ -455,7 +466,6 @@ export function PluginImport({
     !busy &&
     !discarding &&
     !lifetime.current.installing;
-  if (!imports) return null;
 
   async function load(
     operation: () => Promise<ImportPreview | null>,
@@ -672,11 +682,144 @@ export function PluginImport({
         signed?.repository ?? source.repository,
         source.reference,
         signed?.token,
+        ...(updateAction?.source.commit ? [updateAction.source.commit] : []),
       );
     };
-    void load(acquire);
+    void load(acquire, !!updateAction);
   }
-
+  async function installCandidate() {
+    if (
+      !imports ||
+      !preview ||
+      !candidate ||
+      blocked ||
+      retired ||
+      pending.current ||
+      pinError
+    )
+      return;
+    if (updateAction && updateId) {
+      const source = pluginUpdateSource(plugins, updateId);
+      if (
+        !source ||
+        updateSourceKey(source) !== updateSourceKey(updateAction.source)
+      ) {
+        showError(
+          "The plugin source changed. Close this review and check again.",
+          installButton.current,
+        );
+        return;
+      }
+    }
+    const current = lifetime.current;
+    current.installing = true;
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    importOperations.set(imports, settled);
+    pending.current = true;
+    setLoading(true);
+    setError(null);
+    const requestId = bound?.id;
+    const unconfirm =
+      requestId === undefined ? undefined : onRequestConfirmed?.(requestId);
+    try {
+      const success = await plugins.installImport(
+        preview.token,
+        candidate.path,
+      );
+      if (!success) {
+        if (!current.active) return;
+        showError(
+          plugins.snapshot().error ??
+            "Plugin installation wasn’t confirmed. Check the preview and try again.",
+          installButton.current,
+        );
+        return;
+      }
+      // Native keeps the prepared preview after install.
+      current.token = "";
+      await imports.discard(preview.token).catch(() => {});
+      if (!existing && enableOnInstall)
+        await plugins.change("enable", candidate.manifest.id);
+      if (!current.active) {
+        if (requestId !== undefined)
+          settleRequest.current?.(
+            requestId,
+            existing ? "updated" : "installed",
+          );
+        onClosed?.();
+        return;
+      }
+      if (!updateId) setPreview(null);
+      else if (existing)
+        setExisting({
+          ...existing,
+          revision: candidate.revision,
+        });
+      releaseRequest(existing ? "updated" : "installed");
+      setOpen(false);
+      onClosed?.();
+    } finally {
+      unconfirm?.();
+      current.installing = false;
+      if (!current.active && current.token) {
+        await imports.discard(current.token).catch(() => {});
+        current.token = "";
+      }
+      release();
+      pending.current = false;
+      if (current.active) setLoading(false);
+    }
+  }
+  const automaticToken = useRef("");
+  const applyFreshUpdate = useEffectEvent(() => {
+    if (
+      !updateAction?.apply ||
+      !preview ||
+      !candidate ||
+      loading ||
+      error ||
+      upToDate ||
+      automaticToken.current === preview.token
+    )
+      return;
+    automaticToken.current = preview.token;
+    const snapshot = plugins.snapshot();
+    const live =
+      snapshot.configuration.status === "ready"
+        ? snapshot.configuration.catalog.plugins.find(
+            (item) => item.manifest.id === updateId,
+          )
+        : undefined;
+    if (
+      !live ||
+      pluginAccessIncreases(candidate.manifest, live.manifest) ||
+      (candidate.publisher ?? null) !== (live.publisher ?? null) ||
+      importRollbackWarning(candidate, live)
+    )
+      return;
+    void installCandidate();
+  });
+  useEffect(() => {
+    if (preview && !loading && !error && !upToDate) applyFreshUpdate();
+  }, [preview, loading, error, upToDate]);
+  const automaticUpdate =
+    !!updateAction?.apply &&
+    !error &&
+    !pinError &&
+    !conflict &&
+    !upToDate &&
+    (!preview ||
+      (!!candidate &&
+        !!currentPlugin &&
+        !pluginAccessIncreases(candidate.manifest, currentPlugin.manifest) &&
+        (candidate.publisher ?? null) === (currentPlugin.publisher ?? null) &&
+        !importRollbackWarning(candidate, currentPlugin) &&
+        (automaticToken.current !== preview.token ||
+          lifetime.current.installing)));
+  if (!imports) return null;
   const addButton = (
     <Button
       ref={trigger}
@@ -741,7 +884,7 @@ export function PluginImport({
     <>
       {!updateId &&
         (actionTarget ? createPortal(addButton, actionTarget) : addButton)}
-      {updateId && (
+      {updateId && !updateAction && (
         <section aria-label="Plugin updates" className="text-body-sm">
           <h3 className={`${styles.sourceHeading} text-caption`}>
             {savedSource && "repository" in savedSource
@@ -800,7 +943,9 @@ export function PluginImport({
           if (!next) void close();
         }}
         title={
-          showUnchanged ? (
+          automaticUpdate ? (
+            `Updating ${currentPlugin?.manifest.name ?? "plugin"}`
+          ) : showUnchanged ? (
             "Unchanged declarations"
           ) : error || !preview ? (
             updateId ? (
@@ -827,19 +972,25 @@ export function PluginImport({
           )
         }
         description={
-          error || showUnchanged
-            ? undefined
-            : preview
-              ? reviewing
-                ? updating
-                  ? undefined
-                  : "Only install code you trust."
-                : preview.candidates.length
-                  ? "Select a plugin to review before installing."
-                  : "Try another folder or repository."
-              : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
+          updateAction
+            ? "Save unfinished forms and stop active plugin workers before you update. Updating an enabled plugin reloads it immediately."
+            : error || showUnchanged
+              ? undefined
+              : preview
+                ? reviewing
+                  ? updating
+                    ? undefined
+                    : "Only install code you trust."
+                  : preview.candidates.length
+                    ? "Select a plugin to review before installing."
+                    : "Try another folder or repository."
+                : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
         }
-        size={error || (reviewing && updating) ? "compact" : "wide"}
+        size={
+          automaticUpdate || error || (reviewing && updating)
+            ? "compact"
+            : "wide"
+        }
         leadingActions={
           !error &&
           !showUnchanged &&
@@ -865,7 +1016,7 @@ export function PluginImport({
           ) : undefined
         }
         actions={
-          error ? (
+          automaticUpdate ? undefined : error ? (
             <Button
               ref={errorBack}
               type="button"
@@ -949,73 +1100,7 @@ export function PluginImport({
                     disabled={
                       blocked || retired || existing?.source === "bundled"
                     }
-                    onClick={async () => {
-                      if (blocked || retired || pending.current || pinError)
-                        return;
-                      const current = lifetime.current;
-                      current.installing = true;
-                      let release!: () => void;
-                      const settled = new Promise<void>((resolve) => {
-                        release = resolve;
-                      });
-                      importOperations.set(imports, settled);
-                      pending.current = true;
-                      setLoading(true);
-                      setError(null);
-                      const requestId = bound?.id;
-                      const unconfirm =
-                        requestId === undefined
-                          ? undefined
-                          : onRequestConfirmed?.(requestId);
-                      try {
-                        const success = await plugins.installImport(
-                          preview.token,
-                          candidate.path,
-                        );
-                        if (!success) {
-                          if (!current.active) return;
-                          showError(
-                            plugins.snapshot().error ??
-                              "Plugin installation wasn’t confirmed. Check the preview and try again.",
-                            installButton.current,
-                          );
-                          return;
-                        }
-                        // Native keeps the prepared preview after install.
-                        current.token = "";
-                        await imports.discard(preview.token).catch(() => {});
-                        if (!existing && enableOnInstall)
-                          await plugins.change("enable", candidate.manifest.id);
-                        if (!current.active) {
-                          if (requestId !== undefined)
-                            settleRequest.current?.(
-                              requestId,
-                              existing ? "updated" : "installed",
-                            );
-                          onClosed?.();
-                          return;
-                        }
-                        if (!updateId) setPreview(null);
-                        else if (existing)
-                          setExisting({
-                            ...existing,
-                            revision: candidate.revision,
-                          });
-                        releaseRequest(existing ? "updated" : "installed");
-                        setOpen(false);
-                        onClosed?.();
-                      } finally {
-                        unconfirm?.();
-                        current.installing = false;
-                        if (!current.active && current.token) {
-                          await imports.discard(current.token).catch(() => {});
-                          current.token = "";
-                        }
-                        release();
-                        pending.current = false;
-                        if (current.active) setLoading(false);
-                      }
-                    }}
+                    onClick={() => void installCandidate()}
                   >
                     {updating ? "Update" : "Install plugin"}
                   </Button>
@@ -1046,7 +1131,8 @@ export function PluginImport({
             unchangedOnly
           />
         )}
-        <div hidden={!!error || showUnchanged}>
+        {automaticUpdate && <p role="status">Updating plugin…</p>}
+        <div hidden={automaticUpdate || !!error || showUnchanged}>
           <div hidden={!!preview || (!!updateId && !!savedSource)}>
             {(!updateId || !savedSource) && (
               <div className={styles.columns}>
@@ -1257,6 +1343,16 @@ export function PluginImport({
                         ))}
                       </ul>
                     </section>
+                  )}
+                {reviewing &&
+                  candidate &&
+                  existing &&
+                  (candidate.publisher ?? null) !==
+                    (existing.publisher ?? null) && (
+                    <p className="m-0 break-all text-body-sm">
+                      Publisher: {candidate.publisher ?? "Unsigned"}. Previous
+                      publisher: {existing.publisher ?? "Unsigned"}.
+                    </p>
                   )}
                 {reviewing && updating && (
                   <section
