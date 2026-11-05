@@ -3,32 +3,7 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
-
-const fixtureImage = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#666"/></svg>`;
-
-function fixtureMediaPlugin(media = {}) {
-  return {
-    name: "messages-fixture-media",
-    configureServer(server) {
-      server.middlewares.use("/api/relay/media", (req, res, next) => {
-        if (req.method !== "GET") return next();
-        const url = new URL(req.url ?? "", "http://fixture.local");
-        const target = url.searchParams.get("url") ?? "";
-        if (!target.startsWith("https://fixture.test/media/")) return next();
-        if (media.missing?.(target)) {
-          res.writeHead(404);
-          res.end("missing");
-          return;
-        }
-        res.writeHead(200, {
-          "Content-Type": "image/svg+xml",
-          "Content-Length": Buffer.byteLength(fixtureImage),
-        });
-        res.end(fixtureImage);
-      });
-    },
-  };
-}
+import { fixtureMediaPlugin } from "./fixture-media.mjs";
 
 function createMessagesServer(media) {
   return createServer({
