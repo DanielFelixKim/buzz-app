@@ -287,6 +287,13 @@ function MessageRowContent({
           `${row.workflowOwnerId.slice(0, 10)}…`,
       )
     : undefined;
+  const firstPin = row.pinnedBy?.[0]?.pinnedBy;
+  const pinner = firstPin
+    ? resolveName(
+        firstPin,
+        directory.profiles.get(firstPin)?.name ?? `${firstPin.slice(0, 10)}…`,
+      )
+    : undefined;
   const picture = avatarMedia(profile?.picture, media);
   const target = profileTarget(row.authorId, {
     agent: !!(row.agentEnvelope || agentPubkeys?.has(row.authorId)),
@@ -1034,6 +1041,11 @@ function MessageRowContent({
                   )}
               </div>
             </div>
+            {pinner && (
+              <div className={styles.pinnedMarker} data-pinned-marker="">
+                Pinned by {pinner}
+              </div>
+            )}
             {row.sentFromThread && (
               <div className={styles.sentFromThread}>
                 Sent from{" "}

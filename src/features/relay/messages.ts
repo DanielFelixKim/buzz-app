@@ -6,7 +6,7 @@ import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { messageAuthor } from "./fold";
-import { PIN_KIND } from "./pins";
+import { PIN_KIND, PINNABLE_KINDS, pinTemplate } from "./pins";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
@@ -472,6 +472,17 @@ export function createMessages(
             : emojiTags(value)),
         ],
       });
+    },
+    /** Pin a channel message for every member; the viewer unpins with `remove`. */
+    pin(messageId: string) {
+      const original = find(messageId);
+      if (!original || !PINNABLE_KINDS.includes(original.kind))
+        throw new Error("Load the message before pinning it");
+      const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
+      if (!channelId) throw new Error("Message has no channel");
+      return writer(PIN_KIND, channelId).send(
+        pinTemplate(channelId, messageId),
+      );
     },
     remove,
     /** Undefined when this connection cannot publish reports. */

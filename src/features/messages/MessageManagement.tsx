@@ -4,6 +4,8 @@ import {
   EnvelopeIcon,
   EnvelopeOpenIcon,
   PencilSimpleIcon,
+  PinIcon,
+  PinnedOffIcon,
   TrashIcon,
 } from "../../shared/design-system/icons";
 import {
@@ -27,6 +29,9 @@ import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
+import { PIN_KIND } from "../relay/pins";
+import { useChannelIdentityNames } from "../identity-names/react";
+import { useReferenceDirectory } from "./ReferenceText";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useAfterMessageMenuClose } from "./MessageActionBar";
 import { lastEditableMessage } from "./useMessageEdit";
@@ -534,6 +539,15 @@ function ManagedMessageItems({
           Delete message
         </MenuItem>
       )}
+      {!dm && !archived && writable && !row.huddle && (
+        <PinMessageItem
+          row={row}
+          session={session}
+          operations={management.operations}
+          report={management.report}
+          act={act}
+        />
+      )}
       {!dm && (
         <MenuItem
           onClick={() => {
@@ -555,6 +569,90 @@ function ManagedMessageItems({
       )}
     </>
   );
+}
+
+/** The viewer unpins only their own pins (kind 5); anyone else's pin is
+ * shown, not removable, until the app has an admin removal path. */
+function PinMessageItem({
+  row,
+  session,
+  operations,
+  report,
+  act,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+  operations: readonly OutgoingEvent[];
+  report(error: string | undefined): void;
+  act(action: () => void): void;
+}) {
+  const resolveName = useChannelIdentityNames(session, row.channelId);
+  const directory = useReferenceDirectory(session);
+  const pins = row.pinnedBy ?? [];
+  const own = pins.filter((pin) => pin.pinnedBy === session.viewer);
+  // Once the relay accepts a pin it can be removed; only an unconfirmed send waits.
+  const pending = operations.some(
+    (item) =>
+      item.delivery === "sending" &&
+      (item.event.kind === PIN_KIND
+        ? item.event.tags.some(([name, id]) => name === "e" && id === row.id)
+        : item.event.kind === 5 &&
+          item.event.tags.some(
+            ([name, id]) => name === "e" && own.some((pin) => pin.id === id),
+          )),
+  );
+  const run = (action: () => unknown) =>
+    act(() => {
+      report(undefined);
+      try {
+        action();
+      } catch (cause) {
+        report(
+          cause instanceof Error ? cause.message : "Could not update the pin.",
+        );
+      }
+    });
+  if (own.length)
+    return session.outbox?.supports(5) ? (
+      <MenuItem
+        disabled={pending}
+        onClick={() =>
+          run(() => session.messages.remove(own.map((pin) => pin.id)))
+        }
+      >
+        <MenuIcon>
+          <PinnedOffIcon size={14} />
+        </MenuIcon>
+        Unpin message
+      </MenuItem>
+    ) : null;
+  const first = pins[0];
+  if (first) {
+    const name = resolveName(
+      first.pinnedBy,
+      directory.profiles.get(first.pinnedBy)?.name ??
+        `${first.pinnedBy.slice(0, 10)}…`,
+    );
+    return (
+      <MenuItem disabled>
+        <MenuIcon>
+          <PinIcon size={14} />
+        </MenuIcon>
+        Pinned by {name}
+      </MenuItem>
+    );
+  }
+  return session.outbox?.supports(PIN_KIND) ? (
+    <MenuItem
+      disabled={pending}
+      onClick={() => run(() => session.messages.pin(row.id))}
+    >
+      <MenuIcon>
+        <PinIcon size={14} />
+      </MenuIcon>
+      Pin message
+    </MenuItem>
+  ) : null;
 }
 
 function DeleteMessageDialog({

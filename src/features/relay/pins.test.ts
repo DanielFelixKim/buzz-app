@@ -3,9 +3,16 @@ import { foldMessages } from "./fold";
 import { CHANNEL_KINDS, type LiveCallbacks } from "./live";
 import { PIN_KIND, pinTemplate, validatePinTemplate } from "./pins";
 import { createMessages } from "./messages";
-import type { Outbox } from "./outbox";
+import { PublishRejected, type Outbox } from "./outbox";
 import { createRelaySession } from "./session";
-import { keypair, message, roster, scriptedTransport, signed } from "./testing";
+import {
+  flush,
+  keypair,
+  message,
+  roster,
+  scriptedTransport,
+  signed,
+} from "./testing";
 import type { RelayEvent } from "./events";
 
 const viewer = keypair(),
@@ -151,4 +158,41 @@ it("removes only the viewer's own pin, with its kind", () => {
       ],
     },
   ]);
+});
+
+it("a pin shows before the relay confirms it and reverts when refused", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  let refuse!: (error: Error) => void;
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      writer: {
+        sign: async (template) => signed(viewer, template),
+        publish: () =>
+          new Promise<never>((_, reject) => {
+            refuse = reject;
+          }),
+      },
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  );
+  owners.push(owner);
+  owner.session.channels.ensure("c");
+  live.receive([roster(relay, "c", [viewer.pubkey], 1), root]);
+  const id = owner.session.messages.pin(root.id);
+  expect(owner.session.channels.window("c").rows[0]?.pinnedBy).toMatchObject([
+    { id, messageId: root.id, pinnedBy: viewer.pubkey },
+  ]);
+  await flush();
+  await flush();
+  refuse(new PublishRejected("blocked: guests cannot pin"));
+  await flush();
+  await flush();
+  expect(owner.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
+  expect(owner.session.channels.window("c").rows[0]?.pinnedBy).toBeUndefined();
 });
