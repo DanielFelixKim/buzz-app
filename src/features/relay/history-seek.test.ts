@@ -1,3 +1,4 @@
+import { ReadBudgetError, ReadError } from "./errors";
 import { describe, expect, it } from "vitest";
 import type { RelayEvent } from "./events";
 import {
@@ -166,4 +167,42 @@ it("starts composite fallback at the dense second after an empty gap", async () 
     "f".repeat(64),
   );
   expect(rowsOf(located)).toContain(burst);
+});
+
+it.each([() => new ReadBudgetError(), () => "Relay response is too large"])(
+  "counts reduced page attempts within the seek budget",
+  async (failure) => {
+    const limits: number[] = [];
+    const read: SeekRead = async (_cursor, _full, limit = SEEK_PAGE) => {
+      limits.push(limit);
+      if (limit > 1) throw failure();
+      return {
+        events: [
+          {
+            kind: 9,
+            created_at: Number.MAX_SAFE_INTEGER,
+            id: "a".repeat(64),
+          } as RelayEvent,
+        ],
+        hasMore: true,
+        cursor: { createdAt: 1, eventId: "a".repeat(64) },
+      };
+    };
+    await expect(
+      locate(read, 0, Number.MAX_SAFE_INTEGER - 1, false),
+    ).rejects.toBeInstanceOf(SeekLimitError);
+    expect(limits.slice(0, 8)).toEqual([200, 100, 50, 25, 12, 6, 3, 1]);
+    expect(limits).toHaveLength(SEEK_READS);
+  },
+);
+
+it("does not retry malformed seek responses as oversized pages", async () => {
+  let calls = 0;
+  const error = new ReadError("invalid-response", "Invalid signed bounds");
+  const read: SeekRead = async () => {
+    calls++;
+    throw error;
+  };
+  await expect(locate(read, T0, T0 + DAY, true)).rejects.toBe(error);
+  expect(calls).toBe(1);
 });

@@ -243,4 +243,16 @@ test("byte-bounded same-second history keeps advancing after handing off its anc
   for (const id of (await ids()).split(",")) seen.add(id);
   await expect(snapshot).toHaveAttribute("data-has-more", "false");
   expect(seen.size).toBe(80);
+  for (
+    let step = 0;
+    (await snapshot.getAttribute("data-has-newer")) === "true" && step < 5;
+    step++
+  ) {
+    await page
+      .getByRole("button", { name: "Load newer messages", exact: true })
+      .click();
+    await expect(snapshot).toHaveAttribute("data-loading", "false");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  }
+  await expect(snapshot).toHaveAttribute("data-has-newer", "false");
 });

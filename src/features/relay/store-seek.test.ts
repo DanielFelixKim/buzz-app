@@ -826,4 +826,11 @@ it("hands off a rendered anchor when preserving it would repeat the older cursor
   }
   expect(h.window().hasMore).toBe(false);
   expect(seen.size).toBe(80);
+  for (let step = 0; h.window().hasNewer && step < 5; step++) {
+    h.channels.loadNewer?.("c", h.window().rows.at(-1)?.id);
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    expect(h.window().error).toBeUndefined();
+  }
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(h.window().rows.map((row) => row.id)).toContain(anchor.id);
 });

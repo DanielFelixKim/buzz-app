@@ -236,6 +236,7 @@ function SlidingTimeline({ session }: { session: typeof owner.session }) {
       data-count={snapshot.rows.length}
       data-ids={snapshot.rows.map((row) => row.id).join(",")}
       data-has-more={snapshot.hasMore}
+      data-has-newer={!!snapshot.hasNewer}
       data-anchor={
         dense
           ? "00ab65f8aff0e6bc80f47599a111f67cde3741b702d720b83a8805a8fd26db6c"

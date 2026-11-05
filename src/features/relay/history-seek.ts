@@ -1,3 +1,4 @@
+import { isReadBudgetError } from "./errors";
 import { WINDOW_KINDS, type WindowCursor, type WindowPage } from "./window";
 
 /** Rows per seek read: the relay's window maximum. */
@@ -22,6 +23,7 @@ export function ceilingCursor(seconds: number): WindowCursor {
 export type SeekRead = (
   cursor: WindowCursor | null,
   full: boolean,
+  limit?: number,
 ) => Promise<WindowPage>;
 
 export type Located =
@@ -62,9 +64,17 @@ export async function locate(
   fromId?: string,
 ): Promise<Located> {
   let reads = 0;
-  const get = (ceiling: number | null, full: boolean) => {
-    if (++reads > SEEK_READS) throw new SeekLimitError();
-    return read(ceiling === null ? null : ceilingCursor(ceiling), full);
+  let limit = SEEK_PAGE;
+  const get = async (cursor: WindowCursor | null, full: boolean) => {
+    for (;;) {
+      if (++reads > SEEK_READS) throw new SeekLimitError();
+      try {
+        return await read(cursor, full, limit);
+      } catch (error) {
+        if (!isReadBudgetError(error) || limit === 1) throw error;
+        limit = Math.max(1, Math.floor(limit / 2));
+      }
+    }
   };
   // No row is in [from, lo). `hi` overflows; null is the head.
   let lo = from;
@@ -72,7 +82,10 @@ export async function locate(
   let found: number | null | undefined;
   for (let span = DAY; found === undefined; span *= 2) {
     const ceiling = gallop && from + span < now ? from + span : null;
-    const outcome = classify(await get(ceiling, false), from);
+    const outcome = classify(
+      await get(ceiling === null ? null : ceilingCursor(ceiling), false),
+      from,
+    );
     if (outcome === "fits") found = ceiling;
     else if (outcome === "overflow") {
       hi = ceiling;
@@ -90,8 +103,7 @@ export async function locate(
       let cursor = ceilingCursor(top);
       let previous: WindowPage | undefined;
       for (;;) {
-        if (++reads > SEEK_READS) throw new SeekLimitError();
-        const page = await read(cursor, true);
+        const page = await get(cursor, true);
         const reached = page.events.some(
           (event) =>
             WINDOW_KINDS.includes(event.kind) &&
@@ -115,10 +127,14 @@ export async function locate(
       }
     }
     const mid = Math.floor((lo + top) / 2);
-    const outcome = classify(await get(mid, false), from);
+    const outcome = classify(await get(ceilingCursor(mid), false), from);
     if (outcome === "fits") found = mid;
     else if (outcome === "empty") lo = mid;
     else hi = mid;
   }
-  return { kind: "segment", page: await get(found, true), ceiling: found };
+  return {
+    kind: "segment",
+    page: await get(found === null ? null : ceilingCursor(found), true),
+    ceiling: found,
+  };
 }

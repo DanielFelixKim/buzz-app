@@ -1100,12 +1100,12 @@ export function createChannelStore(
   /** Seek reads: window pages of `SEEK_PAGE` rows, bare for probes. */
   const seekRead =
     (channelId: string, signal: AbortSignal): SeekRead =>
-    async (cursor, full) => {
+    async (cursor, full, limit = SEEK_PAGE) => {
       if (!transport) throw new Error("Relay is unavailable");
       const source = transport;
       const events = await retryRead(
         (attempt) =>
-          source.read([windowFilter(channelId, cursor, SEEK_PAGE, full)], {
+          source.read([windowFilter(channelId, cursor, limit, full)], {
             signal: attempt,
           }),
         signal,
