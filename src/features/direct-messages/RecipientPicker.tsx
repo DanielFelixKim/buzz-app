@@ -20,12 +20,18 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { XIcon } from "../../shared/design-system/icons/index";
 import { usePeople, type Recipient } from "./usePeople";
+import {
+  useVerifiedNames,
+  withVerifiedNames,
+  type VerifiedPerson,
+} from "../profiles/useVerifiedNames";
 import { peopleRelationships } from "../profiles/relationships";
 import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
 const noExclusions: readonly string[] = [];
+const noPageNames = new Map<string, never>();
 const personKey = (pubkey: string) => `person:${pubkey}`;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** At most 24 characters, cut between characters rather than inside one. */
@@ -75,6 +81,12 @@ export function RecipientPicker({
   const id = useId();
   const errorId = useId();
   const directory = usePeople(session, query);
+  // Searched people the community verified carry their verified names, as in
+  // Command-K; the read waits for the directory to settle.
+  const verified = useVerifiedNames(session, directory.people, {
+    key: query,
+    settled: !directory.loading,
+  });
   const agents = useAgentChoices(session, false);
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
@@ -90,7 +102,10 @@ export function RecipientPicker({
   });
   const channels = session.channels.list().channels;
   const profiles = session.profiles.snapshot();
-  const people = directory.people;
+  const people = useMemo(
+    () => withVerifiedNames(directory.people, verified, profiles),
+    [directory.people, verified, profiles],
+  );
   const viewer = session.viewer;
   const {
     controlled,
@@ -116,10 +131,36 @@ export function RecipientPicker({
           : [],
       ),
     );
-    const namesOf = (person: Recipient) => {
-      const own = agentName.get(person.pubkey);
-      return own && own !== person.name ? [person.name, own] : [person.name];
-    };
+    // The names a row shows: its label, a verified handle and full name, and
+    // an eligible agent's own name. Editable profile names stay hidden.
+    const namesOf = (person: VerifiedPerson<Recipient>) => [
+      ...new Set(
+        [
+          person.name,
+          agentName.get(person.pubkey),
+          ...(person.profileNames ? [person.username, person.fullName] : []),
+        ].filter((name): name is string => !!name),
+      ),
+    ];
+    // People the shared profiles verified by a matching name, which the
+    // directory's profile-name search cannot find, as Command-K finds them.
+    const byVerifiedName = query.trim()
+      ? withVerifiedNames(
+          [...profiles].flatMap(([pubkey, profile]): Recipient[] => {
+            const identity = profile.verified;
+            return identity &&
+              !profile.isAgent &&
+              !inDirectory.has(pubkey) &&
+              [identity.displayName, identity.username, identity.fullName].some(
+                (name) => !!name && matchPerson(name, query) !== undefined,
+              )
+              ? [{ ...profile, pubkey }]
+              : [];
+          }),
+          noPageNames,
+          profiles,
+        )
+      : [];
     const byAgentName = query.trim()
       ? agents.identities.flatMap((agent): Recipient[] => {
           if (
@@ -141,7 +182,11 @@ export function RecipientPicker({
           ];
         })
       : [];
-    const eligible = [...people, ...byAgentName].filter(
+    const eligible: VerifiedPerson<Recipient>[] = [
+      ...people,
+      ...byVerifiedName,
+      ...byAgentName,
+    ].filter(
       (person) =>
         person.pubkey !== viewer &&
         !excludedPubkeys.includes(person.pubkey) &&
@@ -156,7 +201,7 @@ export function RecipientPicker({
     // name, then the person chosen before for this text, then relationship,
     // then match quality lifted by how often you choose this person or visit
     // your DM with them. The directory's own order breaks ties.
-    const order = (person: Recipient) => {
+    const order = (person: VerifiedPerson<Recipient>) => {
       if (!needle) return 0;
       const key = personKey(person.pubkey);
       const dm = relationships.dm(person.pubkey);
@@ -222,6 +267,16 @@ export function RecipientPicker({
     excludedPubkeys,
   ]);
   const discriminator = (person: Recipient) => identities.get(person.pubkey);
+  // Only a community-verified identity supplies the detail beside the name.
+  const verifiedDetail = (person: VerifiedPerson<Recipient>) =>
+    person.profileNames
+      ? [
+          person.fullName !== person.name ? person.fullName : undefined,
+          person.username !== person.name ? `@${person.username}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined
+      : undefined;
   const label = (person: Recipient) =>
     [person.name, discriminator(person)].filter(Boolean).join(" ");
   const listed = open && !disabled && !atLimit;
@@ -238,10 +293,15 @@ export function RecipientPicker({
   // Space completes like an @ mention: only for one exact name, and only when
   // no longer name continues it ("Avery" waits while "Avery Chen" exists).
   // A search still running, failed, or with more pages could hold that longer
-  // name or a namesake, so Space waits for the full list.
+  // name or a namesake, so Space waits for the full list. A verified person
+  // found by an editable profile name is that name's namesake too.
   const exactRecipient = () =>
     listed && !directory.loading && !directory.error && !directory.tooShort
-      ? exactName(eligible, namesOf, query)
+      ? exactName(
+          eligible,
+          (person) => [...namesOf(person), ...(person.profileNames ?? [])],
+          query,
+        )
       : undefined;
   const loadingRows = useRef(10);
   useEffect(() => {
@@ -301,13 +361,14 @@ export function RecipientPicker({
       shape={person.isAgent ? "squircle" : "circle"}
     />
   );
-  const renderOption = (person: Recipient, index: number) => (
+  const renderOption = (person: VerifiedPerson<Recipient>, index: number) => (
     <RecipientOption
       key={person.pubkey}
       person={person}
       id={highlight.rowId(person.pubkey)}
       active={person.pubkey === highlight.active}
       discriminator={discriminator(person)}
+      verified={verifiedDetail(person)}
       query={needle}
       media={session.media}
       position={index + 1}
@@ -626,6 +687,7 @@ const RecipientOption = memo(function RecipientOption({
   id,
   active,
   discriminator,
+  verified,
   query,
   media,
   position,
@@ -635,6 +697,8 @@ const RecipientOption = memo(function RecipientOption({
   id: string;
   active: boolean;
   discriminator: string | undefined;
+  /** The verified full name and handle, never an editable profile name. */
+  verified: string | undefined;
   query: string;
   media: RelaySession["media"];
   position: number;
@@ -648,7 +712,7 @@ const RecipientOption = memo(function RecipientOption({
       role="option"
       aria-posinset={position}
       aria-setsize={count}
-      aria-label={`${[person.name, discriminator].filter(Boolean).join(" ")}${person.isAgent ? ", Agent" : ""}`}
+      aria-label={`${[person.name, discriminator].filter(Boolean).join(" ")}${verified ? `, ${verified}` : ""}${person.isAgent ? ", Agent" : ""}`}
       tabIndex={-1}
       selected={active}
       aria-selected={active}
@@ -663,12 +727,19 @@ const RecipientOption = memo(function RecipientOption({
         />
       }
       label={
-        <MatchedLabel
-          label={person.name}
-          positions={
-            query ? matchPerson(person.name, query)?.positions : undefined
-          }
-        />
+        // The verified detail sits below the name, as in mentions, so a long
+        // full name never squeezes the name it identifies.
+        <span className="flex flex-col whitespace-normal">
+          <span>
+            <MatchedLabel
+              label={person.name}
+              positions={
+                query ? matchPerson(person.name, query)?.positions : undefined
+              }
+            />
+          </span>
+          {verified && <small className={styles.agent}>{verified}</small>}
+        </span>
       }
       trailing={
         discriminator || person.isAgent ? (
