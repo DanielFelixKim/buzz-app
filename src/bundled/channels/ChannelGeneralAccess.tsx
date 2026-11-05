@@ -54,7 +54,11 @@ export function ChannelGeneralAccess({
   mayHaveGuestMembers?: boolean;
   subject?: "note";
 }) {
-  const place = channel?.channelType === "solo" ? "chat" : "channel";
+  const place = subject
+    ? "page"
+    : channel?.channelType === "solo"
+      ? "chat"
+      : "channel";
   const Icon =
     channel?.visibility === "public"
       ? channel.joinRole === "guest"
@@ -178,7 +182,7 @@ function ChannelGeneralAccessEditor({
   }, [load]);
   const locked = loading || pending || !!attempt || !base?.canEdit;
   const solo = soloLabels(base?.labels);
-  const place = subject ?? (solo ? "chat" : "channel");
+  const place = subject ? "page" : solo ? "chat" : "channel";
   const access = base ? generalAccessValue(base) : "";
   const Icon =
     access === "public"
@@ -191,7 +195,12 @@ function ChannelGeneralAccessEditor({
     const option = Object.values(generalAccessOptions).find(
       (option) => option.value === value,
     );
-    if (value === access || !option || ((solo || subject === "note") && value === "public")) return;
+    if (
+      value === access ||
+      !option ||
+      ((solo || subject === "note") && value === "public")
+    )
+      return;
     origin.current =
       section.current?.querySelector<HTMLElement>('[role="combobox"]') ?? null;
     setError("");
@@ -323,7 +332,11 @@ function ChannelGeneralAccessEditor({
                       ...generalAccessOptions["view-only"],
                       leading: <EyeIcon size={20} />,
                     },
-                  ].filter((option) => (!solo && subject !== "note") || option.value !== "public"),
+                  ].filter(
+                    (option) =>
+                      (!solo && subject !== "note") ||
+                      option.value !== "public",
+                  ),
                 },
                 {
                   label: "",
@@ -349,12 +362,12 @@ function ChannelGeneralAccessEditor({
                   ? "Everyone in this community will be able to read this page and all retained revisions."
                   : "Only people added to this page will have access."
                 : solo && choice.visibility === "public"
-                ? SOLO_ACCESS_DISCLOSURE
-                : choice.visibility !== base.visibility
-                  ? solo
-                    ? "Only chat members will have access."
-                    : privacyConsequence(choice.visibility)
-                  : "",
+                  ? SOLO_ACCESS_DISCLOSURE
+                  : choice.visibility !== base.visibility
+                    ? solo
+                      ? "Only chat members will have access."
+                      : privacyConsequence(choice.visibility)
+                    : "",
               solo && choice.visibility === "private"
                 ? soloRetainedAccessWarning(base, mayHaveGuestMembers)
                 : "",

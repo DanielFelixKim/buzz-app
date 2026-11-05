@@ -19,7 +19,7 @@ import {
   type MockInstance,
 } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
-import { noteKey } from "../../features/notes/model";
+import { noteKey, noteUrl } from "../../features/notes/model";
 import { eventDto } from "../../features/relay/events";
 import { notesFixture } from "../../features/notes/testing";
 import {
@@ -27,7 +27,7 @@ import {
   type NotesWorkspace,
 } from "../../features/notes/workspace";
 import { readView, writeView } from "../../shared/view-state";
-import { NoteDocument } from "./NoteDocument";
+import { NoteDocument, NoteMarkdown } from "./NoteDocument";
 
 const disposers: (() => void)[] = [];
 beforeEach(() => {
@@ -530,4 +530,36 @@ it("previews the last content of a deleted page and restores it in one click aft
   await screen.findByRole("textbox", { name: "Title" });
   expect((await f.workspace.open(f.note)).markdown).toBe("Original body");
   expect(f.save.mock.calls.at(-1)?.[2]).toBe("restore");
+});
+
+it("keeps formatted Buzz conversation links and Page navigation through the shared Markdown owner", async () => {
+  const f = await notesFixture();
+  const note = f.seed("Target", "Body");
+  const openPage = vi.fn();
+  const openLink = vi.fn(() => true);
+  const message = `buzz://message?channel=${note.channel}&id=${"a".repeat(64)}`;
+  const view = render(
+    <NoteMarkdown
+      text={`[the **thread**](${message}) and [target page](<${noteUrl(note, f.origin)}>) and [unsafe](javascript:alert(1))`}
+      community={f.origin}
+      session={f.session}
+      onOpen={openPage}
+      openLink={openLink}
+    />,
+  );
+  try {
+    fireEvent.click(screen.getByRole("link", { name: "the thread" }));
+    expect(openLink).toHaveBeenCalledWith(message);
+    fireEvent.click(screen.getByRole("link", { name: "target page" }));
+    expect(openPage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: note.id, channel: note.channel }),
+    );
+    expect(
+      screen.queryByRole("link", { name: "unsafe" }),
+    ).not.toBeInTheDocument();
+    expect(view.container.querySelector('a[href^="javascript:"]')).toBeNull();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
 });

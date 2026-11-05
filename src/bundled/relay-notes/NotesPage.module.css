@@ -70,10 +70,6 @@
 .markdown ol {
   list-style-type: decimal;
 }
-.markdown a {
-  color: var(--text-link);
-  text-decoration: underline;
-}
 
 .byline {
   display: flex;

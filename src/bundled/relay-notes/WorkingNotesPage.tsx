@@ -7,6 +7,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { Navigation } from "../../features/navigation/controller";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import { targetKey } from "../../features/navigation/targets";
 import {
   noteKey,
@@ -45,6 +46,20 @@ import {
 } from "./working-route";
 
 export type NotesOwner = (session: RelaySession) => NotesWorkspace;
+
+function openBuzzLink(
+  navigator: Navigation | undefined,
+  session: RelaySession,
+  url: string,
+) {
+  const target = buzzLinkTarget(url, {
+    viewer: session.viewer ?? "",
+    communityOrigin: session.scope.replace(/:[0-9a-f]{64}$/, ""),
+  });
+  if (!navigator || !target) return false;
+  void navigator.open(target);
+  return true;
+}
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Pages could not be read.";
 
@@ -369,6 +384,9 @@ export function WorkingNotesCommunity({
                       : undefined
                   }
                   onOpen={open}
+                  onOpenLink={(url) =>
+                    openBuzzLink(navigator, workspace.session, url)
+                  }
                   onUnavailable={(missing) =>
                     setCollection((old) => ({
                       ...old,
@@ -560,6 +578,9 @@ function NotePanelContents({
               }))
             }
             onOpen={open}
+            onOpenLink={(url) =>
+              openBuzzLink(navigator, workspace.session, url)
+            }
           />
         </div>
       ))}

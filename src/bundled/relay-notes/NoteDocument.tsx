@@ -7,8 +7,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { SafeMarkdown } from "../../features/messages/SafeMarkdown";
+import type { RelaySession } from "../../features/relay/session";
 import {
   NoteConflict,
   noteKey,
@@ -26,7 +26,6 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 import { readView, subscribeView, writeView } from "../../shared/view-state";
 import {
   MAX_MARKDOWN_LENGTH,
-  safeLinkUrl,
   scanMarkdown,
 } from "../../features/relay/message-content";
 import {
@@ -75,6 +74,7 @@ export function NoteDocument({
   catalogue = [],
   partial = false,
   onOpen,
+  onOpenLink,
   onChange = nothing,
   onDirty = nothing,
   onUnavailable = nothing,
@@ -89,6 +89,7 @@ export function NoteDocument({
   catalogue?: readonly Note[];
   partial?: boolean;
   onOpen(address: NoteAddress): void;
+  onOpenLink?: ((url: string) => boolean) | undefined;
   onChange?(note: Note): void;
   onDirty?(dirty: boolean): void;
   onUnavailable?(address: NoteAddress): void;
@@ -870,6 +871,8 @@ export function NoteDocument({
                   }
                   community={community}
                   onOpen={onOpen}
+                  session={workspace.session}
+                  openLink={onOpenLink}
                 />
               </NoteEditor>
             </div>
@@ -989,10 +992,14 @@ export function NoteMarkdown({
   text,
   community,
   onOpen,
+  session,
+  openLink,
 }: {
   text: string;
   community: string;
   onOpen(address: NoteAddress): void;
+  session?: RelaySession | undefined;
+  openLink?: ((url: string) => boolean) | undefined;
 }) {
   const scanned = useMemo(
     () => (text.length <= MAX_MARKDOWN_LENGTH ? scanMarkdown(text) : undefined),
@@ -1006,40 +1013,18 @@ export function NoteMarkdown({
     );
   return (
     <div className={readerStyles.markdown}>
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        urlTransform={(url) => (parseNoteUrl(url) ? url : safeLinkUrl(url))}
-        components={{
-          a: ({ href, children }) => {
-            const note = href ? parseNoteUrl(href) : undefined;
-            if (note)
-              return note.community === community ? (
-                <a
-                  href={href}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onOpen(note);
-                  }}
-                >
-                  {children}
-                </a>
-              ) : (
-                <span>{children} (another community)</span>
-              );
-            return href ? (
-              <a href={href} target="_blank" rel="noreferrer noopener">
-                {children}
-              </a>
-            ) : (
-              <span>{children}</span>
-            );
-          },
-          img: ({ alt }) => (alt ? <span>{alt}</span> : null),
+      <SafeMarkdown
+        content={text}
+        session={session}
+        openLink={(url) => {
+          const note = parseNoteUrl(url);
+          if (note?.community === community) {
+            onOpen(note);
+            return true;
+          }
+          return openLink?.(url) ?? false;
         }}
-      >
-        {text}
-      </Markdown>
+      />
     </div>
   );
 }
