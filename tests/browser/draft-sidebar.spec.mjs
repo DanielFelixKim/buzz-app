@@ -90,7 +90,18 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
     .click();
   const editor = inbox.getByRole("textbox", { name: "Reply to thread" });
   await expect(editor).toContainText("Team reply pending");
-  await editor.fill("");
+  // Saved text can render before the root is ready. Use the editor's keyboard
+  // selection so deletion observes its own selection state.
+  await expect(editor).toBeEditable();
+  await expect(editor).toBeFocused();
+  await editor.press("ControlOrMeta+A");
+  await expect
+    .poll(() =>
+      editor.evaluate((node) => [node.selectionStart, node.selectionEnd]),
+    )
+    .toEqual([0, "Team reply pending".length]);
+  await editor.press("Backspace");
+  await expect(editor).toHaveText("");
   await expect(drafts).toHaveText("Drafts1 draft");
   await expect(teamRow.locator("[data-draft-indicator]")).toHaveCount(0);
   await expect(teamRow).toHaveAccessibleDescription("");
