@@ -215,6 +215,15 @@ it("schedules native 480-sample owner frames for 10 ms", async () => {
   expect(f.source.start).toHaveBeenNthCalledWith(2, 0.03);
   await connection.close();
 });
+it("keeps owner frames contiguous while audio remains queued", async () => {
+  const f = fixture();
+  const connection = await f.open();
+  connection.input(Array(480).fill(0.2));
+  f.context.currentTime = 0.023;
+  connection.input(Array(480).fill(0.2));
+  expect(f.source.start.mock.calls[1]?.[0]).toBeCloseTo(0.03);
+  await connection.close();
+});
 it("rejects empty and oversized owner frames before allocating audio", async () => {
   const f = fixture();
   const connection = await f.open();

@@ -1,4 +1,5 @@
 import captureUrl from "../../features/huddle/capture.worklet.js?url&no-inline";
+import { createPlayout } from "../../features/huddle/playout";
 import type { AppServer } from "./rpc";
 
 /** Codex owns voice; this graph only carries the seat's 48 kHz mono PCM. */
@@ -20,10 +21,9 @@ export async function openVoice(
     throw error;
   }
   const destination = context.createMediaStreamDestination();
-  const sources = new Set<AudioBufferSourceNode>();
+  const playout = createPlayout(context, destination, 0.02);
   let capture: AudioWorkletNode | undefined;
   let remote: MediaStreamAudioSourceNode | undefined;
-  let next = 0;
   let closed = false;
   let closing: Promise<void> | undefined;
   let starting: Promise<unknown> | undefined;
@@ -50,10 +50,7 @@ export async function openVoice(
       capture.port.close();
       capture.disconnect();
     }
-    for (const source of sources) {
-      source.stop();
-      source.disconnect();
-    }
+    playout.close();
     for (const track of destination.stream.getTracks()) track.stop();
     destination.disconnect();
     closing = Promise.all([
@@ -143,26 +140,7 @@ export async function openVoice(
     return {
       close,
       input(samples: number[]) {
-        if (
-          closed ||
-          !samples.length ||
-          samples.length > 5760 ||
-          next > context.currentTime + 0.2
-        )
-          return;
-        const buffer = context.createBuffer(1, samples.length, 48000);
-        buffer.copyToChannel(Float32Array.from(samples), 0);
-        const source = context.createBufferSource();
-        source.buffer = buffer;
-        source.connect(destination);
-        sources.add(source);
-        source.onended = () => {
-          sources.delete(source);
-          source.disconnect();
-        };
-        next = Math.max(next, context.currentTime + 0.02);
-        source.start(next);
-        next += buffer.duration;
+        if (!closed) playout.play(samples);
       },
     };
   } catch (error) {
