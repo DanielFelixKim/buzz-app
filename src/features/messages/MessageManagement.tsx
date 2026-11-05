@@ -590,10 +590,10 @@ function PinMessageItem({
   const directory = useReferenceDirectory(session);
   const pins = row.pinnedBy ?? [];
   const own = pins.filter((pin) => pin.pinnedBy === session.viewer);
-  // Once the relay accepts a pin it can be removed; only an unconfirmed send waits.
+  // An unsettled pin or removal is recovered from the status notice, not resent here.
   const pending = operations.some(
     (item) =>
-      item.delivery === "sending" &&
+      ["sending", "failed", "unknown"].includes(item.delivery) &&
       (item.event.kind === PIN_KIND
         ? item.event.tags.some(([name, id]) => name === "e" && id === row.id)
         : item.event.kind === 5 &&
@@ -793,10 +793,12 @@ export function MessageManagementStatus() {
   const pending = operations.filter(
     (item) =>
       (item.event.kind === 40003 ||
+        item.event.kind === PIN_KIND ||
         (item.event.kind === 5 &&
           item.event.tags.some(
             ([name, kind]) =>
-              name === "k" && ["9", "40002"].includes(kind ?? ""),
+              name === "k" &&
+              ["9", "40002", String(PIN_KIND)].includes(kind ?? ""),
           ))) &&
       item.event.tags.some(([name, id]) => name === "h" && id === channelId) &&
       ["failed", "unknown"].includes(item.delivery),
@@ -810,7 +812,7 @@ export function MessageManagementStatus() {
           role="status"
         >
           <p>
-            {item.event.kind === 40003 ? "Message edit" : "Message deletion"}:{" "}
+            {operationLabel(item.event)}:{" "}
             {item.error ?? "Delivery could not be confirmed."}
           </p>
           {item.event.kind === 40003 && <p>{item.event.content}</p>}
@@ -844,6 +846,16 @@ export function MessageManagementStatus() {
       {error && <p role="alert">{error}</p>}
     </>
   );
+}
+
+function operationLabel(event: OutgoingEvent["event"]) {
+  if (event.kind === 40003) return "Message edit";
+  if (event.kind === PIN_KIND) return "Pin";
+  return event.tags.some(
+    ([name, kind]) => name === "k" && kind === String(PIN_KIND),
+  )
+    ? "Unpin"
+    : "Message deletion";
 }
 
 function RetryMessageUpdate({

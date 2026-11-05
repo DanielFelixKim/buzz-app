@@ -1624,3 +1624,70 @@ it("offers no pin action to a Guest", async () => {
   await screen.findByRole("menuitem", { name: /Mark (unread|read)/ });
   expect(screen.queryByRole("menuitem", { name: "Pin message" })).toBeNull();
 });
+
+it.each(["failed", "unknown"] as const)(
+  "recovers a %s pin from the status notice without resending it from the menu",
+  async (delivery) => {
+    const h = await fixture(false);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Pin message" }),
+    );
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    await act(async () =>
+      h
+        .publication(0)
+        .result.reject(
+          delivery === "failed"
+            ? new PublishRejected("Pin refused")
+            : new Error("Connection lost"),
+        ),
+    );
+    expect(
+      await screen.findByText(
+        delivery === "failed" ? "Pin: Pin refused" : "Pin: Connection lost",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+    const menuItem = await screen.findByRole("menuitem", {
+      name: /^(Pin|Unpin) message$/,
+    });
+    expect(menuItem).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(menuItem);
+    expect(h.publications).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retry message update" }),
+    );
+    await waitFor(() => expect(h.publications).toHaveLength(2));
+    expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
+    await act(async () => h.publication(1).result.resolve());
+    await waitFor(() =>
+      expect(screen.queryByText(/^Pin:/)).not.toBeInTheDocument(),
+    );
+  },
+);
+
+it("dismisses an unconfirmed unpin from the status notice", async () => {
+  const h = await fixture(false);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Pin message" }));
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  await act(async () => h.publication(0).result.resolve());
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Unpin message" }),
+  );
+  await waitFor(() => expect(h.publications).toHaveLength(2));
+  await act(async () =>
+    h.publication(1).result.reject(new Error("Connection lost")),
+  );
+  expect(await screen.findByText("Unpin: Connection lost")).toBeInTheDocument();
+  expect(
+    screen.getByText(/may already have reached the conversation/),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Dismiss unconfirmed update" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByText(/^Unpin:/)).not.toBeInTheDocument(),
+  );
+  expect(h.publications).toHaveLength(2);
+});
