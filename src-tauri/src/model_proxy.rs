@@ -32,6 +32,7 @@ pub(crate) enum CallbackCode {
     CallbackFailed,
     CallbackTimeout,
     InvalidBody,
+    OutputTooLarge,
 }
 #[derive(Deserialize)]
 pub(crate) struct CallbackFailure {
@@ -461,6 +462,7 @@ pub(crate) fn plugin_model_proxy_reply(
             let mut error = Failure::gateway(match failure.as_ref().map(|v| &v.code) {
                 Some(CallbackCode::CallbackTimeout) => "plugin_callback_timeout",
                 Some(CallbackCode::InvalidBody) => "plugin_invalid_body",
+                Some(CallbackCode::OutputTooLarge) => "plugin_output_too_large",
                 _ => "plugin_callback_failed",
             });
             error.plugin = failure.and_then(|v| v.plugin).filter(|id| {

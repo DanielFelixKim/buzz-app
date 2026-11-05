@@ -243,3 +243,108 @@ it("bypasses only the failed plugin and keeps other transforms and diagnostics p
     await root.fiber.dispose();
   }
 });
+
+it("discards all changes of a failed plugin and skips its remaining callbacks", async () => {
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) =>
+      key.endsWith(":b")
+        ? JSON.stringify({ retry: false, fallback: true })
+        : null,
+  });
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const registry = createModelProxies(root);
+  const remaining = vi.fn(() => "must not run");
+  for (const [id, transforms] of [
+    ["a", [({ body }: { body: string }) => `${body}a`]],
+    [
+      "b",
+      [
+        ({ body }: { body: string }) => `${body}partial`,
+        () => {
+          throw new Error("failed");
+        },
+        remaining,
+      ],
+    ],
+    ["c", [({ body }: { body: string }) => `${body}c`]],
+  ] as const) {
+    await root
+      .extend({
+        pluginOwner: { id, revision: "1", modelProxies: ["claude/type"] },
+      })
+      .plugin((ctx) =>
+        transforms.forEach((run, index) => {
+          registry.register(ctx, {
+            id: String(index),
+            harness: "claude/type",
+            run,
+          });
+        }),
+      )
+      .await();
+  }
+  try {
+    expect(
+      await registry.dispatch("claude/type", {
+        path: "/messages",
+        body: "original",
+      }),
+    ).toBe("originalac");
+    expect(remaining).not.toHaveBeenCalled();
+  } finally {
+    await root.fiber.dispose();
+  }
+});
+
+it.each([false, true])(
+  "recovers from oversized UTF-8 output with fallback %s",
+  async (fallback) => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => JSON.stringify({ retry: false, fallback }),
+    });
+    const root = new Context();
+    root.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const registry = createModelProxies(root);
+    const oversized = "é".repeat(32 * 1024 * 1024 + 1);
+    await root
+      .extend({
+        pluginOwner: {
+          id: "large",
+          revision: "1",
+          modelProxies: ["claude/type"],
+        },
+      })
+      .plugin((ctx) =>
+        registry.register(ctx, {
+          id: "large",
+          harness: "claude/type",
+          run: () => oversized,
+        }),
+      )
+      .await();
+    try {
+      const call = registry.dispatch("claude/type", {
+        path: "/messages",
+        body: "original",
+      });
+      const outcome = await call.then(
+        (body) => ({ original: body === "original" }),
+        (error) => ({ code: error.code, pluginId: error.pluginId }),
+      );
+      expect(outcome).toEqual(
+        fallback
+          ? { original: true }
+          : { code: "output_too_large", pluginId: "large" },
+      );
+    } finally {
+      await root.fiber.dispose();
+    }
+  },
+);
