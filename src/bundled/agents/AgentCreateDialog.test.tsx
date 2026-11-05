@@ -27,6 +27,7 @@ import type {
   RegisteredAgentType,
 } from "../../features/agents/service";
 import {
+  croppedAvatar,
   emojiAvatar,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
@@ -42,6 +43,7 @@ vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   uploadAvatar: vi.fn(),
   emojiAvatar: vi.fn(),
   paintEmojiAvatar: vi.fn(),
+  croppedAvatar: vi.fn(),
 }));
 
 // Exercise our selection callback without emoji-mart's browser-only observers.
@@ -537,6 +539,82 @@ it("moves the hidden-scrollbar avatar dock with a vertical mouse wheel", () => {
   slot.dispatchEvent(up);
   expect(up.defaultPrevented).toBe(false);
   expect(scrollBy).toHaveBeenCalledOnce();
+});
+
+it("pans and zooms an uploaded image, then saves the framed crop", async () => {
+  const cropped = new File(["crop"], "avatar.png", { type: "image/png" });
+  vi.mocked(croppedAvatar).mockResolvedValueOnce(cropped);
+  vi.mocked(uploadAvatar)
+    .mockResolvedValueOnce("https://images.example/original.png")
+    .mockResolvedValueOnce("https://images.example/cropped.png");
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["image"], "image.png", { type: "image/png" })],
+    },
+  });
+  const frame = await within(dialog).findByRole("application", {
+    name: "Image position",
+  });
+  fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
+    target: { value: "2" },
+  });
+  fireEvent.keyDown(frame, { key: "ArrowRight" });
+  fireEvent.keyDown(frame, { key: "ArrowUp" });
+  await user.click(createButton());
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        picture: "https://images.example/cropped.png",
+      }),
+    ),
+  );
+  expect(croppedAvatar).toHaveBeenCalledExactlyOnceWith(
+    within(frame).getByRole("img", { name: "Avatar preview" }),
+    { zoom: 2, x: 0.02, y: -0.02 },
+  );
+  expect(uploadAvatar).toHaveBeenLastCalledWith(
+    cropped,
+    "https://a.example",
+    expect.any(AbortSignal),
+  );
+});
+
+it.each([
+  ["an unadjusted image", "image/png", true],
+  ["a GIF, keeping its animation", "image/gif", false],
+])("saves %s as uploaded", async (_, type, croppable) => {
+  vi.mocked(croppedAvatar).mockClear();
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/original",
+  );
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: { files: [new File(["image"], "image", { type })] },
+  });
+  await within(dialog).findByRole(croppable ? "application" : "img", {
+    name: croppable ? "Image position" : "Selected avatar",
+  });
+  expect(!!within(dialog).queryByRole("slider", { name: "Zoom" })).toBe(
+    croppable,
+  );
+  await user.click(createButton());
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ picture: "https://images.example/original" }),
+    ),
+  );
+  expect(croppedAvatar).not.toHaveBeenCalled();
 });
 
 it("keeps every bundled avatar available after switching from an uploaded image", async () => {

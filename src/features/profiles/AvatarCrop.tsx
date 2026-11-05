@@ -1,0 +1,120 @@
+import { useRef, useState, type Ref } from "react";
+import { type AvatarCrop, avatarCropBox } from "./avatar-upload";
+import styles from "./AvatarCrop.module.css";
+
+const arrows: Record<string, [number, number]> = {
+  ArrowLeft: [-0.02, 0],
+  ArrowRight: [0.02, 0],
+  ArrowUp: [0, -0.02],
+  ArrowDown: [0, 0.02],
+};
+
+/** Drag or use the arrow keys to pan an image inside its avatar shape. The
+ * shape clips only the artwork, so the focus ring stays visible. */
+export function AvatarCropFrame({
+  src,
+  shape,
+  crop,
+  disabled,
+  imageRef,
+  onChange,
+}: {
+  src: string;
+  shape: "circle" | "squircle";
+  crop: AvatarCrop;
+  disabled?: boolean;
+  imageRef?: Ref<HTMLImageElement>;
+  onChange(crop: AvatarCrop): void;
+}) {
+  const [aspect, setAspect] = useState(1);
+  const box = avatarCropBox(aspect, crop);
+  const drag = useRef<{ x: number; y: number; crop: AvatarCrop } | null>(null);
+  const move = (x: number, y: number) =>
+    onChange(avatarCropBox(aspect, { ...crop, x, y }).crop);
+  return (
+    <div
+      // A 2D pan has no widget role; the description gives its keys.
+      role="application"
+      tabIndex={disabled ? -1 : 0}
+      aria-label="Image position"
+      aria-description="Drag or use the arrow keys to move the image"
+      aria-disabled={disabled || undefined}
+      className={styles.frame}
+      onPointerDown={(event) => {
+        if (disabled) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { x: event.clientX, y: event.clientY, crop: box.crop };
+      }}
+      onPointerMove={(event) => {
+        const start = drag.current;
+        if (!start) return;
+        const size = event.currentTarget.clientWidth;
+        move(
+          start.crop.x + (event.clientX - start.x) / size,
+          start.crop.y + (event.clientY - start.y) / size,
+        );
+      }}
+      onPointerUp={() => {
+        drag.current = null;
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+      }}
+      onKeyDown={(event) => {
+        const [dx, dy] = arrows[event.key] ?? [0, 0];
+        if (disabled || (!dx && !dy)) return;
+        event.preventDefault();
+        move(box.crop.x + dx, box.crop.y + dy);
+      }}
+    >
+      <div data-avatar-shape={shape} className={styles.artwork}>
+        <img
+          ref={imageRef}
+          src={src}
+          alt="Avatar preview"
+          draggable={false}
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            setAspect(image.naturalWidth / image.naturalHeight || 1);
+          }}
+          style={{
+            width: `${box.width * 100}%`,
+            height: `${box.height * 100}%`,
+            left: `${box.left * 100}%`,
+            top: `${box.top * 100}%`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+export function AvatarZoom({
+  className,
+  crop,
+  disabled,
+  onChange,
+}: {
+  className?: string | undefined;
+  crop: AvatarCrop;
+  disabled?: boolean;
+  onChange(crop: AvatarCrop): void;
+}) {
+  return (
+    <label className={`${styles.zoom} ${className ?? ""}`}>
+      <span className="text-label-sm">Zoom</span>
+      <input
+        type="range"
+        min={1}
+        max={3}
+        step={0.05}
+        value={crop.zoom}
+        aria-valuetext={`${Math.round(crop.zoom * 100)}%`}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange({ ...crop, zoom: Number(event.target.value) })
+        }
+      />
+    </label>
+  );
+}

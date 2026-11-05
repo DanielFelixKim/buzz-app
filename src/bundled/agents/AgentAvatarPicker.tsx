@@ -19,7 +19,13 @@ import {
 } from "../../features/agents/avatar-packs";
 import { AvatarEmojiPicker } from "../../features/profiles/AvatarEditor";
 import {
+  AvatarCropFrame,
+  AvatarZoom,
+} from "../../features/profiles/AvatarCrop";
+import {
+  croppedAvatar,
   emojiAvatar,
+  uncropped,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
@@ -107,9 +113,12 @@ export function AgentAvatarPicker({
   // The chosen file shows at once; it stays the artwork after its upload lands.
   const [local, setLocal] = useState<{
     url: string;
+    animated: boolean;
     picture?: string;
     progress?: number;
   } | null>(null);
+  const [crop, setCrop] = useState(uncropped);
+  const cropImage = useRef<HTMLImageElement>(null);
   const uploading = local && local.picture === undefined ? local : null;
   const busy = !!uploading;
   const localUrl = local?.url;
@@ -207,15 +216,25 @@ export function AgentAvatarPicker({
   }, []);
   const preview = useAvatarPreview(selected ? "" : picture, community, "small");
   useEffect(() => () => pending.current?.abort(), []);
+  const shown = local?.picture === picture ? local?.url : undefined;
+  // Painting would keep only a GIF's first frame, so GIFs upload as chosen.
+  const cropping = shown && !local?.animated ? shown : undefined;
   useImperativeHandle(avatarRef, () => ({
     async prepare() {
-      if (selection.kind !== "emoji") return selection.picture;
+      const image = cropImage.current;
+      const paint =
+        selection.kind === "emoji"
+          ? () => emojiAvatar(selection.emoji, selection.color)
+          : cropping && image && crop !== uncropped
+            ? () => croppedAvatar(image, crop)
+            : undefined;
+      if (!paint) return selection.kind === "emoji" ? "" : selection.picture;
       if (!community)
         throw new Error("Select a community to use an emoji avatar.");
       const request = new AbortController();
       pending.current = request;
       try {
-        const file = await emojiAvatar(selection.emoji, selection.color);
+        const file = await paint();
         request.signal.throwIfAborted();
         return await uploadAvatar(file, community, request.signal);
       } finally {
@@ -228,7 +247,9 @@ export function AgentAvatarPicker({
     const request = new AbortController();
     pending.current = request;
     const url = URL.createObjectURL(file);
-    setLocal({ url });
+    const animated = file.type === "image/gif";
+    setLocal({ url, animated });
+    setCrop(uncropped);
     onBusyChange(true);
     setError("");
     try {
@@ -238,11 +259,11 @@ export function AgentAvatarPicker({
         request.signal,
         (sent, total) => {
           if (!request.signal.aborted && total)
-            setLocal({ url, progress: sent / total });
+            setLocal({ url, animated, progress: sent / total });
         },
       );
       if (request.signal.aborted) return;
-      setLocal({ url, picture: value });
+      setLocal({ url, animated, picture: value });
       onChange({ kind: "image", picture: value });
     } catch (reason) {
       if (request.signal.aborted) return;
@@ -272,7 +293,6 @@ export function AgentAvatarPicker({
     }
     input.current?.click();
   };
-  const shown = local?.picture === picture ? local?.url : undefined;
   const locked = disabled || busy;
   return (
     <>
@@ -310,7 +330,7 @@ export function AgentAvatarPicker({
                     alt=""
                     fallback={lastAvatar.label}
                     size="fill"
-                    shape="circle"
+                    shape="squircle"
                   />
                 ),
               },
@@ -365,118 +385,142 @@ export function AgentAvatarPicker({
           }}
         />
         <div className={styles.avatarBrowser}>
-          <div ref={center} className={styles.avatarSelected}>
-            {uploading ? (
-              <div className={styles.avatarUploading}>
+          <div className={styles.avatarStage}>
+            <div ref={center} className={styles.avatarSelected}>
+              {uploading ? (
+                <div className={styles.avatarUploading}>
+                  <Avatar
+                    src={uploading.url}
+                    alt="Uploading avatar"
+                    fallback={name}
+                    size="fill"
+                    shape="squircle"
+                  />
+                  <span className={styles.uploadCancel}>
+                    <IconButton
+                      variant="glass"
+                      shape="round"
+                      size="large"
+                      aria-label="Cancel upload"
+                      icon={
+                        <span className={styles.uploadControl}>
+                          <svg
+                            viewBox="0 0 24 24"
+                            role="progressbar"
+                            aria-label="Uploading image"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={
+                              uploading.progress === undefined
+                                ? undefined
+                                : Math.round(uploading.progress * 100)
+                            }
+                            className={
+                              uploading.progress === undefined
+                                ? styles.uploadPreparing
+                                : undefined
+                            }
+                          >
+                            <circle
+                              cx="12"
+                              cy="12"
+                              r="9"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="3"
+                              opacity="0.5"
+                            />
+                            <circle
+                              className={styles.uploadArc}
+                              cx="12"
+                              cy="12"
+                              r="9"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="3"
+                              pathLength="100"
+                              strokeDasharray={`${uploading.progress === undefined ? 25 : uploading.progress * 100} 100`}
+                              transform="rotate(-90 12 12)"
+                            />
+                          </svg>
+                          <XIcon aria-hidden="true" />
+                        </span>
+                      }
+                      onClick={cancelUpload}
+                    />
+                  </span>
+                </div>
+              ) : mode === "emoji" ? (
+                <PopoverRoot open={emojiOpen} onOpenChange={setEmojiOpen}>
+                  <PopoverTrigger
+                    render={
+                      <SurfaceButton
+                        className={styles.emojiAvatarButton}
+                        aria-label="Choose emoji"
+                        disabled={locked}
+                      />
+                    }
+                  >
+                    <span
+                      data-avatar-shape="squircle"
+                      className={styles.emojiAvatarArtwork}
+                      style={{ backgroundColor: color }}
+                    >
+                      <EmojiSwap emoji={emoji} animate={animateEmoji} />
+                    </span>
+                  </PopoverTrigger>
+                  <PopoverPopup
+                    aria-label="Choose emoji"
+                    onKeyDownCapture={(event) => {
+                      // Emoji Mart consumes Escape in its shadow-root search.
+                      // Close this popup before the key reaches the widget.
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEmojiOpen(false);
+                      }
+                    }}
+                    side="bottom"
+                    align="start"
+                  >
+                    <AvatarEmojiPicker
+                      disabled={locked}
+                      onSelect={(value, animate) => {
+                        setAnimateEmoji(animate);
+                        lastEmoji.current = value;
+                        onChange({ kind: "emoji", emoji: value, color });
+                        setEmojiOpen(false);
+                      }}
+                    />
+                  </PopoverPopup>
+                </PopoverRoot>
+              ) : selected ? (
+                <PackedAgentAvatar avatar={selected} />
+              ) : cropping ? (
+                <AvatarCropFrame
+                  src={cropping}
+                  shape="squircle"
+                  crop={crop}
+                  disabled={locked}
+                  imageRef={cropImage}
+                  onChange={setCrop}
+                />
+              ) : (
                 <Avatar
-                  src={uploading.url}
-                  alt="Uploading avatar"
+                  src={shown ?? preview}
+                  alt="Selected avatar"
                   fallback={name}
                   size="fill"
-                  shape="circle"
+                  shape="squircle"
                 />
-                <span className={styles.uploadCancel}>
-                  <IconButton
-                    variant="glass"
-                    shape="round"
-                    size="large"
-                    aria-label="Cancel upload"
-                    icon={
-                      <span className={styles.uploadControl}>
-                        <svg
-                          viewBox="0 0 24 24"
-                          role="progressbar"
-                          aria-label="Uploading image"
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={
-                            uploading.progress === undefined
-                              ? undefined
-                              : Math.round(uploading.progress * 100)
-                          }
-                          className={
-                            uploading.progress === undefined
-                              ? styles.uploadPreparing
-                              : undefined
-                          }
-                        >
-                          <circle
-                            cx="12"
-                            cy="12"
-                            r="9"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="3"
-                            opacity="0.5"
-                          />
-                          <circle
-                            className={styles.uploadArc}
-                            cx="12"
-                            cy="12"
-                            r="9"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="3"
-                            pathLength="100"
-                            strokeDasharray={`${uploading.progress === undefined ? 25 : uploading.progress * 100} 100`}
-                            transform="rotate(-90 12 12)"
-                          />
-                        </svg>
-                        <XIcon aria-hidden="true" />
-                      </span>
-                    }
-                    onClick={cancelUpload}
-                  />
-                </span>
-              </div>
-            ) : mode === "emoji" ? (
-              <PopoverRoot open={emojiOpen} onOpenChange={setEmojiOpen}>
-                <PopoverTrigger
-                  render={
-                    <SurfaceButton
-                      className={styles.emojiAvatarButton}
-                      style={{ backgroundColor: color }}
-                      aria-label="Choose emoji"
-                      disabled={locked}
-                    />
-                  }
-                >
-                  <EmojiSwap emoji={emoji} animate={animateEmoji} />
-                </PopoverTrigger>
-                <PopoverPopup
-                  aria-label="Choose emoji"
-                  onKeyDownCapture={(event) => {
-                    // Emoji Mart consumes Escape in its shadow-root search.
-                    // Close this popup before the key reaches the widget.
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setEmojiOpen(false);
-                    }
-                  }}
-                  side="bottom"
-                  align="start"
-                >
-                  <AvatarEmojiPicker
-                    disabled={locked}
-                    onSelect={(value, animate) => {
-                      setAnimateEmoji(animate);
-                      lastEmoji.current = value;
-                      onChange({ kind: "emoji", emoji: value, color });
-                      setEmojiOpen(false);
-                    }}
-                  />
-                </PopoverPopup>
-              </PopoverRoot>
-            ) : selected ? (
-              <PackedAgentAvatar avatar={selected} />
-            ) : (
-              <Avatar
-                src={shown ?? preview}
-                alt="Selected avatar"
-                fallback={name}
-                size="fill"
-                shape="circle"
+              )}
+            </div>
+            {cropping && !selected && (
+              <AvatarZoom
+                className={styles.avatarZoom}
+                crop={crop}
+                disabled={locked}
+                onChange={setCrop}
               />
             )}
           </div>
