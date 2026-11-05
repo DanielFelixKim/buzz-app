@@ -13,7 +13,10 @@ import {
   searchOrder,
 } from "../search/usage";
 import { useSearchHighlight } from "../search/use-search-highlight";
-import { publicKeyLabels } from "../../shared/identity/public-key";
+import {
+  abbreviatedPublicKey,
+  publicKeyLabels,
+} from "../../shared/identity/public-key";
 import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -164,7 +167,18 @@ export function RecipientPicker({
           )
         ) {
           pageNames.set(pubkey, identity);
-          pool.push({ ...person, pubkey });
+          // A shared head replaced the profile name with the verified one:
+          // keep the profile seen here, or the key, for when it is withdrawn.
+          const { verified: _verified, username: _username, ...facts } = person;
+          pool.push(
+            person.verified
+              ? (known.current.get(pubkey) ?? {
+                  ...facts,
+                  pubkey,
+                  name: abbreviatedPublicKey(pubkey) ?? pubkey,
+                })
+              : { ...person, pubkey },
+          );
         }
       }
     const byVerifiedName = withVerifiedNames(pool, pageNames, profiles);

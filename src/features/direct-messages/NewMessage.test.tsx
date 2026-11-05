@@ -24,7 +24,10 @@ import {
   recordChoice,
   recordVisit,
 } from "../search/usage";
-import { publicKeyLabels } from "../../shared/identity/public-key";
+import {
+  abbreviatedPublicKey,
+  publicKeyLabels,
+} from "../../shared/identity/public-key";
 import type { RelaySession } from "../relay/session";
 import { NewMessage } from "./NewMessage";
 import { createAgentChoices } from "../agents/choices";
@@ -2139,4 +2142,102 @@ it("drops a chosen recipient's verified full name the community no longer holds"
     await screen.findByRole("option", { name: "Aleksandr, @aleksandr" }),
   ).toBeVisible();
   expect(screen.queryByText("Aleksandr Petrov")).not.toBeInTheDocument();
+});
+
+it.each([
+  ["a browse already found them", true],
+  ["only the shared profiles hold them", false],
+])(
+  "names a recipient chosen from the shared verified profiles by their current profile, or key, once verification is withdrawn (%s)",
+  async (_case, browsed) => {
+    const t = setup();
+    const pubkey = "a".repeat(64);
+    let shared = new Map<string, Profile>([
+      [
+        pubkey,
+        {
+          name: "Aleksandr",
+          username: "aleksandr",
+          verified: verifiedAs("Aleksandr", "aleksandr"),
+        },
+      ],
+    ]);
+    Object.assign(t.session.profiles, { snapshot: () => shared });
+    t.directMessages.people.mockResolvedValue({
+      people: browsed ? [{ pubkey, name: "jack" }] : [],
+      hasMore: false,
+    });
+    const { change } = changingCommunity(t, () => new Map());
+    t.mount();
+    await waitFor(() => expect(recipient()).toBeEnabled());
+    if (browsed)
+      await screen.findByRole("option", { name: "Aleksandr, @aleksandr" });
+    await t.user.type(recipient(), "aleks");
+    await t.user.click(
+      await screen.findByRole("option", { name: "Aleksandr, @aleksandr" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Remove Aleksandr" }),
+    ).toBeVisible();
+    // Withdrawn, with no profile left: the browsed name, else the key.
+    shared = new Map();
+    change(undefined);
+    const fallback = browsed ? "jack" : (abbreviatedPublicKey(pubkey) ?? "");
+    expect(
+      await screen.findByRole("button", { name: `Remove ${fallback}` }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("textbox", { name: `Message ${fallback}` }),
+    ).toBeVisible();
+    // The current editable profile, once cached again.
+    shared = new Map([[pubkey, { name: "Jack Editable" }]]);
+    change(undefined);
+    expect(
+      await screen.findByRole("button", { name: "Remove Jack Editable" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Aleksandr")).not.toBeInTheDocument();
+    await t.user.type(screen.getByRole("textbox"), "Hello");
+    await t.user.click(send());
+    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+    expect(t.directMessages.open).toHaveBeenCalledWith(
+      [pubkey],
+      expect.any(AbortSignal),
+    );
+  },
+);
+
+it("searches and labels people by their profile names on a relay without verified identity", async () => {
+  const t = setup();
+  const same = [
+    { pubkey: "a".repeat(64), name: "jack" },
+    { pubkey: "b".repeat(64), name: "jack", username: "aleksandr" },
+  ];
+  const labels = publicKeyLabels(same.map((person) => person.pubkey));
+  t.directMessages.people.mockResolvedValue({ people: same, hasMore: false });
+  // No verified-profile authority and no verified read on this relay.
+  expect(t.session.profiles.verifiedAuthority).toBeUndefined();
+  expect("verified" in t.directMessages).toBe(false);
+  t.mount();
+  await waitFor(() => expect(recipient()).toBeEnabled());
+  await t.user.type(recipient(), "jack");
+  for (const person of same)
+    expect(
+      await screen.findByRole("option", {
+        name: `jack ${labels.get(person.pubkey)}`,
+      }),
+    ).not.toHaveTextContent("@");
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  await t.user.click(
+    screen.getByRole("option", {
+      name: `jack ${labels.get(same[1]?.pubkey ?? "")}`,
+    }),
+  );
+  expect(screen.getByRole("textbox", { name: "Message jack" })).toBeVisible();
+  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.directMessages.open).toHaveBeenCalledWith(
+    [same[1]?.pubkey],
+    expect.any(AbortSignal),
+  );
 });

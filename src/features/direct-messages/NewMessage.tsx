@@ -158,11 +158,25 @@ export function NewMessage({
     savedRecipients(scope, session.viewer),
   );
   // Recipients keep the facts they were chosen with; their labels follow the
-  // current verification and fall back to those facts when it is withdrawn.
+  // current verification and otherwise the current profile name, falling back
+  // to those facts.
   const verified = useVerifiedNames(session, recipients);
-  const profiles = session.profiles.snapshot();
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+  );
   const named = useMemo(
-    () => withVerifiedNames(recipients, verified, profiles),
+    () =>
+      withVerifiedNames(
+        recipients.map((person) => {
+          const current = profiles.get(person.pubkey);
+          return current && !current.verified
+            ? { ...person, name: current.name }
+            : person;
+        }),
+        verified,
+        profiles,
+      ),
     [recipients, verified, profiles],
   );
   const recipientNames = named.map((person) => person.name).join(", ");
