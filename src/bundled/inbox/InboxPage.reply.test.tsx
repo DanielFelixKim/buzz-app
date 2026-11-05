@@ -7,7 +7,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -153,7 +152,6 @@ function fixture() {
     view: (
       <StrictMode>
         <InboxPage
-          host={host}
           tabs={(props) => <PageTabs {...props} host={host} />}
           relay={relay}
           navigator={navigator}
@@ -170,17 +168,7 @@ it("holding a message in an Inbox conversation targets a thread reply", async ()
   render(h.view);
   await screen.findByText("Please review this");
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Inbox filters" }));
-  await user.click(
-    within(
-      await screen.findByRole("menu", { name: "Inbox filters" }),
-    ).getByRole("menuitemradio", { name: "Mentions" }),
-  );
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("menu", { name: "Inbox filters" }),
-    ).not.toBeInTheDocument(),
-  );
+  await user.click(screen.getByRole("tab", { name: "Mentions" }));
   fireEvent.click(screen.getByRole("button", { name: "Open Alice in Design" }));
   const editor = await screen.findByRole("textbox", {
     name: "Message this conversation",
