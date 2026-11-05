@@ -3307,14 +3307,14 @@ describe("delegated Inbox reads", () => {
         media: () => undefined,
         readMainAgent: account,
         writeMainAgent: async () => {},
-        readState,
+        ...(readState ? { readState } : {}),
         subscribe(callbacks) {
           live = callbacks;
           return { update() {}, retry() {}, dispose() {} };
         },
       },
       {
-        maxDiscoveryBytes,
+        ...(maxDiscoveryBytes === undefined ? {} : { maxDiscoveryBytes }),
         readStateFloor: () => 0,
         readStateStorage: {
           async update(change) {
@@ -3411,7 +3411,7 @@ describe("delegated Inbox reads", () => {
     "rejects %s initial channel discovery, then returns the discovered notification",
     async (stage) => {
       const f = await inboxSetup(false);
-      const gate = runnerGate<readonly RelayEvent[]>();
+      const gate = runnerGate<RelayEvent[]>();
       const started = runnerGate();
       f.query.mockImplementation(async (filters) => {
         if (filters[0]?.kinds?.includes(39002)) {
@@ -3437,7 +3437,7 @@ describe("delegated Inbox reads", () => {
           ).toBe(false);
         } finally {
           f.query.mockImplementation(f.healthyQuery);
-          gate.resolve(await f.healthyQuery([{ kinds: [39002] }]));
+          gate.resolve(await f.healthyQuery([{ kinds: [39002], limit: 100 }]));
         }
         f.owner.session.channels.ensureList();
         await vi.waitFor(() => {
