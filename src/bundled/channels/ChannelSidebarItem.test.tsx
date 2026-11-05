@@ -16,6 +16,7 @@ import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
 import type { PresenceStatus } from "../../features/presence/presence";
+import { writeView, clearView } from "../../shared/view-state";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { UnreadBadge } from "./UnreadBadge";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
@@ -750,5 +751,23 @@ it("keeps cached mute from quieting unread but retains confirmed mute through re
     expect(row()).toHaveAttribute("data-ordinary");
   } finally {
     store.dispose();
+  }
+});
+
+it("describes saved drafts without changing the channel name, then clears the description", () => {
+  const { session } = owner();
+  render(<ChannelSidebarItem {...itemProps(session, false)} />);
+  const row = screen.getByRole("button", { name: "Alpha" });
+  try {
+    act(() => writeView(session.scope, "draft:alpha", "Keep this draft"));
+    expect(row).toHaveAccessibleName("Alpha");
+    expect(row).toHaveAccessibleDescription("1 draft");
+    expect(row.querySelector("[data-draft-indicator]")).toBeVisible();
+    act(() => clearView(session.scope, "draft:alpha"));
+    expect(row).toHaveAccessibleName("Alpha");
+    expect(row).not.toHaveAttribute("aria-describedby");
+    expect(row.querySelector("[data-draft-indicator]")).toBeNull();
+  } finally {
+    act(() => clearView(session.scope, "draft:alpha"));
   }
 });

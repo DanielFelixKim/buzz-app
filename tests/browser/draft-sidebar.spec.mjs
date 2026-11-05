@@ -37,11 +37,15 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
   await newChat(page);
   const soloRow = page.locator(`[data-solo-channel-id="${solo}"]`);
   const teamRow = page.locator(`button[data-channel-id="${team}"]`);
-  await expect(soloRow.getByRole("img", { name: "1 draft" })).toBeVisible();
-  await expect(teamRow.getByRole("img", { name: "1 draft" })).toBeVisible();
+  await expect(soloRow.locator("[data-draft-indicator]")).toBeVisible();
+  await expect(teamRow.locator("[data-draft-indicator]")).toBeVisible();
+  await expect(soloRow).toHaveAccessibleName("Alpha");
+  await expect(soloRow).toHaveAccessibleDescription("1 draft");
+  await expect(teamRow).toHaveAccessibleName("Beta");
+  await expect(teamRow).toHaveAccessibleDescription("1 draft");
   // Only real layout can establish a common row-edge anchor and hover stability.
-  const soloPencil = soloRow.getByRole("img", { name: "1 draft" });
-  const teamPencil = teamRow.getByRole("img", { name: "1 draft" });
+  const soloPencil = soloRow.locator("[data-draft-indicator]");
+  const teamPencil = teamRow.locator("[data-draft-indicator]");
   const right = (icon) =>
     icon.evaluate((node) => node.getBoundingClientRect().right);
   const expectAligned = async () => {
@@ -88,7 +92,8 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
   await expect(editor).toContainText("Team reply pending");
   await editor.fill("");
   await expect(drafts).toHaveText("Drafts1 draft");
-  await expect(teamRow.getByRole("img", { name: "1 draft" })).toHaveCount(0);
+  await expect(teamRow.locator("[data-draft-indicator]")).toHaveCount(0);
+  await expect(teamRow).toHaveAccessibleDescription("");
   await inbox
     .getByRole("button", { name: "Close detail", exact: true })
     .click();
@@ -105,6 +110,7 @@ test("Drafts below Inbox opens its draft filter and shares live counts with Solo
     .getByRole("button", { name: "Delete draft", exact: true })
     .click();
   await expect(drafts).toHaveText("Drafts");
-  await expect(soloRow.getByRole("img", { name: "1 draft" })).toHaveCount(0);
+  await expect(soloRow.locator("[data-draft-indicator]")).toHaveCount(0);
+  await expect(soloRow).toHaveAccessibleDescription("");
   await expect(inbox.getByText("No drafts", { exact: true })).toBeVisible();
 });

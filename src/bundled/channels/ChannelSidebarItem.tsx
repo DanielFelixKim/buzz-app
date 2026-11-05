@@ -1,5 +1,6 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import { DraftIndicator } from "../../features/messages/DraftIndicator";
+import { useDraftCount } from "../../features/messages/draft-presence";
 import { useIsPresent } from "motion/react";
 import {
   memo,
@@ -170,6 +171,7 @@ function ChannelSidebarItemCore({
   muted: boolean;
 }) {
   const present = useIsPresent();
+  const draftCount = useDraftCount(session, channel.id);
   const peer =
     channel.channelType === "dm" && channel.participants?.length === 1
       ? channel.participants[0]
@@ -255,8 +257,10 @@ function ChannelSidebarItemCore({
           {channel.ttlSeconds !== undefined && agents.length === 0 && (
             <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
           )}
-          {channel.channelType !== "dm" && (
-            <DraftIndicator session={session} channelId={channel.id} />
+          {channel.channelType !== "dm" && draftCount > 0 && (
+            <span aria-hidden="true">
+              <DraftIndicator session={session} channelId={channel.id} />
+            </span>
           )}
         </>
       }
@@ -305,7 +309,14 @@ function ChannelSidebarItemCore({
       }}
       selected={selected}
       presenceDescription={
-        presence === "unknown" ? undefined : `Presence: ${presence}`
+        [
+          presence === "unknown" ? undefined : `Presence: ${presence}`,
+          channel.channelType !== "dm" && draftCount
+            ? `${draftCount} ${draftCount === 1 ? "draft" : "drafts"}`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join(". ") || undefined
       }
       onPrepare={(id) => session.channels.prepare?.(id)}
       onSelect={onSelect}

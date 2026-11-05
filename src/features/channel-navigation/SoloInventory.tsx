@@ -1,7 +1,9 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
 import { DraftIndicator } from "../messages/DraftIndicator";
+import { useDraftCount } from "../messages/draft-presence";
 import { useSoloNavigation } from "./solo-navigation-react";
 import {
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
@@ -399,6 +401,8 @@ function SoloConversationRow({
     id,
     working,
   );
+  const draftCount = useDraftCount(session, id);
+  const draftDescriptionId = useId();
   // Describe only by a mark that renders, using the same Shared evidence.
   const owner = useSoloOwner(session, channel);
   const shared = useSharedWithPeople(session, channel) || !!owner;
@@ -418,7 +422,14 @@ function SoloConversationRow({
           selected={selected}
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
-          aria-describedby={shared ? soloSharedMarkId(id) : undefined}
+          aria-describedby={
+            [
+              shared ? soloSharedMarkId(id) : undefined,
+              draftCount ? draftDescriptionId : undefined,
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined
+          }
           {...activation}
           icon={
             Icon ? (
@@ -450,7 +461,14 @@ function SoloConversationRow({
                   waiting={waiting}
                 />
               </span>
-              <DraftIndicator session={session} channelId={id} />
+              {draftCount > 0 && (
+                <span aria-hidden="true">
+                  <DraftIndicator session={session} channelId={id} />
+                  <span className="sr-only" id={draftDescriptionId}>
+                    {draftCount} {draftCount === 1 ? "draft" : "drafts"}
+                  </span>
+                </span>
+              )}
             </span>
           }
         />
