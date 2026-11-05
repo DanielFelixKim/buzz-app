@@ -206,6 +206,17 @@ export function appClient(
       check();
       options.remembered?.();
     },
+    ...(agent.inbox
+      ? {
+          inbox: async () => {
+            check();
+            const result = await agent.inbox?.();
+            check();
+            if (!result) throw new Error("Inbox access is unavailable");
+            return result;
+          },
+        }
+      : {}),
     agentTypes: async () => {
       check();
       if (!agent.agentTypes)

@@ -15,7 +15,7 @@ import {
   startHostedRead,
 } from "./former";
 import { validateObject } from "../../features/agents/attention";
-import { checkinHourly, memory, withFeature } from "./features";
+import { checkinHourly, inbox, memory, withFeature } from "./features";
 
 afterEach(() => {
   cleanup();
@@ -430,7 +430,7 @@ it("asks before making a remote former Bestie your Bestie again, and Cancel chan
   await act(async () => {
     render(<Tab agent={remote} />);
   });
-  const again = screen.getByRole("button", { name: "Make my Bestie again" });
+  const again = screen.getByRole("button", { name: "Make your Bestie again" });
   expect(again).toBeEnabled();
   await user.click(again);
   const ask = await screen.findByRole("alertdialog", {
@@ -486,7 +486,7 @@ it("turns memory on and off as a marked section of the instructions", async () =
   const remembers = screen.getByRole("switch", { name: "Remembers you" });
   expect(remembers).not.toBeChecked();
   expect(
-    screen.getByText(/Nothing Bestie remembered is deleted/),
+    screen.getByText(/Turning this off removes the rules, not its memories/),
   ).toBeVisible();
 
   await user.click(remembers);
@@ -510,6 +510,45 @@ it("turns memory on and off as a marked section of the instructions", async () =
     config: { model: "m", instructions: "Be brief." },
     base,
   });
+});
+
+it("keeps Inbox consent in read access, separate from memory and channel membership", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents).component;
+  const instructions = withFeature("Be brief.", memory, true);
+  const agent = { ...ada, config: { instructions } } as Agent;
+  const { rerender } = render(<Tab agent={agent} />);
+  const access = screen.getByRole("region", {
+    name: "What your Bestie can read",
+  });
+  const readInbox = within(access).getByRole("switch", {
+    name: "Inbox",
+  });
+  expect(readInbox).not.toBeChecked();
+  expect(
+    within(access).queryByRole("switch", { name: "Remembers you" }),
+  ).toBeNull();
+  expect(
+    within(access).getByRole("heading", { name: "Private channels" }),
+  ).toBeVisible();
+  expect(access).toHaveTextContent(
+    "Adding it to a private channel here gives it read-only access.",
+  );
+  expect(readInbox).toHaveAccessibleDescription(
+    "Let Bestie help triage notifications in your Inbox, including those from private channels and DMs. This doesn’t add it to those conversations or let it reply there.",
+  );
+  await user.click(readInbox);
+  const on = withFeature(instructions, inbox, true);
+  expect(save).toHaveBeenLastCalledWith(ada.key, {
+    config: { instructions: on },
+  });
+  rerender(<Tab agent={{ ...agent, config: { instructions: on } }} />);
+  expect(readInbox).toBeChecked();
+  await user.click(readInbox);
+  expect(save).toHaveBeenLastCalledWith(ada.key, { config: { instructions } });
+  expect(screen.getByRole("switch", { name: "Remembers you" })).toBeChecked();
 });
 
 it("keeps memory on through the owner's edits, and offers Restore for edited markers", async () => {
@@ -550,7 +589,7 @@ it("keeps memory on through the owner's edits, and offers Restore for edited mar
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
   expect(screen.getByText(/Fix its start and end lines there/)).toBeVisible();
   // Check-ins wait on memory.
-  expect(screen.getByRole("switch", { name: "Every hour" })).toHaveAttribute(
+  expect(screen.getByRole("switch", { name: "Checks in" })).toHaveAttribute(
     "aria-disabled",
     "true",
   );
@@ -591,11 +630,12 @@ it("offers no switch while the agent's instructions can't be read here", () => {
       }
     />,
   );
-  expect(screen.queryByRole("switch", { name: "Remembers you" })).toBeNull();
-  // Each setting's row says why, check-ins too.
+  expect(screen.queryAllByRole("switch")).toEqual([]);
   expect(
-    screen.getAllByText("This agent's instructions could not be read"),
-  ).toHaveLength(2);
+    within(
+      screen.getByRole("region", { name: "What your Bestie can read" }),
+    ).getByText("This agent's instructions could not be read"),
+  ).toBeVisible();
   expect(save).not.toHaveBeenCalled();
 });
 
@@ -612,7 +652,12 @@ it("checks in every hour only while memory is on, with a timer in the owner's DM
     configBase: base,
   };
   const { rerender } = render(<Tab agent={off as Agent} />);
-  const hourly = () => screen.getByRole("switch", { name: "Every hour" });
+  const behavior = screen.getByRole("region", { name: "Behavior" });
+  expect(
+    within(behavior).getByRole("switch", { name: "Remembers you" }),
+  ).toBeVisible();
+  const hourly = () =>
+    within(behavior).getByRole("switch", { name: "Checks in" });
   // Memory is off, so check-ins can't be turned on.
   expect(hourly()).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByText("Turn on Remembers you first.")).toBeVisible();
@@ -704,7 +749,7 @@ it("checks in every hour only while memory is on, with a timer in the owner's DM
   expect(hourly()).not.toHaveAttribute("aria-disabled", "true");
 });
 
-/** Ada with memory on and check-ins off, ready to turn Every hour on. */
+/** Ada with memory on and check-ins off, ready to turn Checks in on. */
 function remembering(attentionEnabled = false) {
   return {
     ...ada,
@@ -721,7 +766,7 @@ it("undoes a failed check-in's timer, so none runs behind a switch that reads of
   const { agents, save } = host();
   const Tab = bestieTab(relay, agents).component;
   render(<Tab agent={remembering()} />);
-  const hourly = screen.getByRole("switch", { name: "Every hour" });
+  const hourly = screen.getByRole("switch", { name: "Checks in" });
   save
     .mockResolvedValueOnce()
     .mockRejectedValueOnce(new Error("Instructions changed elsewhere"));
@@ -743,6 +788,23 @@ it("undoes a failed check-in's timer, so none runs behind a switch that reads of
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
+it("leaves Attention on after a failed check-in when it was already on", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents).component;
+  render(<Tab agent={remembering(true)} />);
+  save
+    .mockResolvedValueOnce()
+    .mockRejectedValueOnce(new Error("Instructions changed elsewhere"));
+  await user.click(screen.getByRole("switch", { name: "Checks in" }));
+  await screen.findByRole("alert");
+  expect(save.mock.calls[2]).toEqual([
+    ada.key,
+    { attention: { [INTEREST]: null, [TIMER]: null } },
+  ]);
+});
+
 it("offers to remove a timer left without its section when undoing fails too", async () => {
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
@@ -753,7 +815,7 @@ it("offers to remove a timer left without its section when undoing fails too", a
     .mockResolvedValueOnce()
     .mockRejectedValueOnce(new Error("Instructions changed elsewhere"))
     .mockRejectedValueOnce(new Error("Offline"));
-  await user.click(screen.getByRole("switch", { name: "Every hour" }));
+  await user.click(screen.getByRole("switch", { name: "Checks in" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Instructions changed elsewhere Its timer may still be saved; remove it below.",
   );
@@ -770,12 +832,12 @@ it("offers to remove a timer left without its section when undoing fails too", a
     ),
   } as unknown as Agent;
   rerender(<Tab agent={left} />);
-  expect(screen.getByRole("switch", { name: "Every hour" })).not.toBeChecked();
+  expect(screen.getByRole("switch", { name: "Checks in" })).not.toBeChecked();
   save.mockClear();
   await user.click(
     screen.getByRole("button", {
       name: "Remove",
-      description: "Every hour's timer is still saved",
+      description: "Check-in timer is still saved",
     }),
   );
   expect(save.mock.calls[0]).toEqual([
@@ -804,12 +866,12 @@ it("says a check-in paused in Attention is paused, and how to restart it", async
     },
   } as unknown as Agent;
   render(<Tab agent={paused} />);
-  const hourly = screen.getByRole("switch", { name: "Every hour" });
+  const hourly = screen.getByRole("switch", { name: "Checks in" });
   // Still on, so Off still removes it.
   expect(hourly).toBeChecked();
   expect(
     screen.getByText(
-      "Paused in Attention. Turn Every hour off and on again to restart it.",
+      "Paused in Attention. Turn check-ins off and on again to restart.",
     ),
   ).toBeVisible();
   await user.click(hourly);
@@ -843,13 +905,15 @@ it("shows a Former Bestie tab while a former Bestie has a setting on, with a way
     screen.getByText("Ada is no longer your Bestie. These are still on."),
   ).toBeVisible();
   expect(screen.getByRole("switch", { name: "Remembers you" })).toBeChecked();
-  const hourly = screen.getByRole("switch", { name: "Every hour" });
+  const hourly = screen.getByRole("switch", { name: "Checks in" });
   expect(hourly).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByText("Only your Bestie checks in.")).toBeVisible();
-  expect(screen.getByText("Private channels Ada can read")).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Private channels" }),
+  ).toBeVisible();
 
   await user.click(
-    screen.getByRole("button", { name: "Make my Bestie again" }),
+    screen.getByRole("button", { name: "Make your Bestie again" }),
   );
   const confirmation = await screen.findByRole("alertdialog", {
     name: "Make Ada your bestie?",
@@ -1254,7 +1318,7 @@ it("lets a former Bestie's leftover check-in be turned off", async () => {
     },
   } as unknown as Agent;
   render(<Tab agent={checking} />);
-  const hourly = screen.getByRole("switch", { name: "Every hour" });
+  const hourly = screen.getByRole("switch", { name: "Checks in" });
   expect(hourly).toBeChecked();
   expect(hourly).not.toHaveAttribute("aria-disabled", "true");
   await user.click(hourly);

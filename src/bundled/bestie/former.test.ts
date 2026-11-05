@@ -5,7 +5,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { chooseDefaultAgent } from "../../features/solo/default-agent";
-import { checkinHourly, memory, withFeature } from "./features";
+import { checkinHourly, inbox, memory, withFeature } from "./features";
 import {
   formerWithSettings,
   rememberNewBestie,
@@ -299,20 +299,28 @@ it("starts no further save once stopped while a timer save is pending", async ()
   warn.mockRestore();
 });
 
-it("turns memory on for a local agent made Bestie here, unless it has it", async () => {
+it("turns default features on for a local agent made Bestie here", async () => {
   const { relay } = community();
   const { agents, save } = host([ada, bea]);
   await rememberNewBestie(relay, agents, ada.pubkey);
-  expect(save).not.toHaveBeenCalled();
+  expect(save).toHaveBeenCalledWith(ada.key, {
+    config: { instructions: withFeature(checkingIn, inbox, true) },
+  });
+  save.mockClear();
   await rememberNewBestie(relay, agents, bea.pubkey);
-  expect(save).toHaveBeenCalledWith(bea.key, {
+  expect(save).toHaveBeenNthCalledWith(1, bea.key, {
     config: { instructions: withFeature("", memory, true) },
+  });
+  expect(save).toHaveBeenNthCalledWith(2, bea.key, {
+    config: {
+      instructions: withFeature(withFeature("", memory, true), inbox, true),
+    },
   });
   // A remote agent, or one in another community, is left alone.
   save.mockClear();
   await rememberNewBestie(relay, agents, "9".repeat(64));
   expect(save).not.toHaveBeenCalled();
-  // Nor is one whose section was edited by hand: no second section.
+  // Nor is an edited feature replaced by a second section.
   const edited = host([
     {
       ...bea,
@@ -325,7 +333,9 @@ it("turns memory on for a local agent made Bestie here, unless it has it", async
     } as Agent,
   ]);
   await rememberNewBestie(relay, edited.agents, bea.pubkey);
-  expect(edited.save).not.toHaveBeenCalled();
+  expect(edited.save).toHaveBeenCalledWith(bea.key, {
+    config: { instructions: expect.stringContaining("buzz:bestie/inbox") },
+  });
 });
 
 it("turns memory on for no remote agent made Bestie, as its instructions aren't here", async () => {

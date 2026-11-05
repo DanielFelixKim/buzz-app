@@ -124,6 +124,7 @@ import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import type { InboxItem } from "../relay/inbox";
 import {
   parseSlug,
   type AttentionObject,
@@ -520,6 +521,8 @@ export type AgentHandle = Readonly<{
     body: string | null,
     after: number,
   ): Promise<RelayEvent>;
+  /** The owner's bounded Inbox only when it is delegated to this Bestie. */
+  inbox?(): Promise<Readonly<{ items: readonly InboxItem[] }>>;
   /** The owner's channel templates on this device, each with the agents it
    * adds that are the owner's agents in this agent's community. */
   templates(): readonly Readonly<{
@@ -2141,6 +2144,52 @@ export class AgentsService extends Service implements Agents {
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
+      inbox: async (agent) => {
+        const relay = this.relay(agent.key);
+        const snapshot = relay?.snapshot();
+        const session = snapshot?.session;
+        const current = () => this.agent(agent.key);
+        const enabled = (candidate: Agent | undefined) => {
+          const instructions = (candidate?.config as { instructions?: unknown })
+            ?.instructions;
+          return (
+            candidate?.pubkey === agent.pubkey &&
+            candidate.owner === agent.owner &&
+            typeof instructions === "string" &&
+            /<!-- buzz:bestie\/inbox v\d+ -->/.test(instructions)
+          );
+        };
+        if (
+          !relay ||
+          !snapshot ||
+          snapshot.status !== "ready" ||
+          snapshot.viewer !== agent.owner ||
+          !session?.mainAgent ||
+          !enabled(current())
+        )
+          throw new Error("Inbox access is unavailable");
+        // Account state is authoritative: an agent that ceased to be Bestie
+        // loses access immediately, even if its old instructions remain.
+        if (
+          (await session.mainAgent.read()) !== agent.pubkey ||
+          !enabled(current())
+        )
+          throw new Error(
+            "Your owner has not allowed Inbox access for this Bestie.",
+          );
+        await Promise.all([
+          session.unread.ensure(),
+          session.inboxFeed.ensure(),
+        ]);
+        if (
+          (await session.mainAgent.read()) !== agent.pubkey ||
+          !enabled(current())
+        )
+          throw new Error(
+            "Your owner has not allowed Inbox access for this Bestie.",
+          );
+        return { items: session.unread.inbox().items };
+      },
       resumeFollowUps: (agent, turns) => {
         const session = this.bindingOf(agent)?.session;
         if (session)

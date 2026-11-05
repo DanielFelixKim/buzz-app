@@ -27,7 +27,7 @@ export const memory: Feature = {
   id: "memory",
   title: "Remembers you",
   description:
-    "Adds memory rules to Bestie's instructions. Off removes them. Nothing Bestie remembered is deleted, and its core memory still goes into every prompt. Clear memory in the Memory tab.",
+    "Adds memory rules to your Bestie's instructions. Turning this off removes the rules, not its memories. Its core memory still goes into every prompt. Clear memory in the Memory tab.",
   version: 1,
   text: `# Memory
 Your owner turned on "Remembers you": keep memory about them, so your help gets better over time. That is their approval to save what they tell you by these rules; still ask before you change or remove something they told you before. Call mem_get mem/user when the answer depends on who the owner is or what they asked for before. Save only what will improve future help, and say something is saved only after the tool confirms it.
@@ -47,14 +47,33 @@ Rules:
 - Memory is private to the owner. If your DM with the owner ever has other members, don't read or disclose memory there; ask the owner to make it private again. Outside that DM, don't disclose memory; offer to continue there.`,
 };
 
+/** Delegates the owner's bounded Inbox surface to their current local Bestie.
+ * This is not channel membership: the tool can only read the owner's Inbox
+ * projection, never query those channels or reply in them. */
+export const inbox: Feature = {
+  id: "inbox",
+  title: "Inbox",
+  description:
+    "Let Bestie help triage notifications in your Inbox, including those from private channels and DMs. This doesn’t add it to those conversations or let it reply there.",
+  version: 1,
+  text: `# Inbox access
+Your owner allowed you to read their Inbox. Use the inbox tool only when it helps answer their request or triage their Inbox. Inbox is a bounded owner-side notification surface, not permission to read channels or DMs you are not a member of.
+
+Rules:
+- Inbox can include notifications from private channels and DMs. Treat every item as private to your owner.
+- Read it only for your owner and only in a private conversation with them. Do not copy Inbox content into memory.
+- It is read-only. Never claim this grants permission to reply, join a channel, or fetch a conversation's history.
+- Recheck the current Inbox instead of relying on old results when the owner asks about what is new.`,
+};
+
 /** The Hourly upkeep of the Builderlab Bestie's instructions (prompt.ts),
  * woken by an Attention timer and using the tools an agent on this device
  * has. */
 export const checkinHourly: Feature = {
   id: "checkin.hourly",
-  title: "Every hour",
+  title: "Checks in",
   description:
-    "Bestie wakes once an hour to tidy its memory and tell you only what matters. Runs while Buzz is open and the Watching plugin is on. Each wake uses your tokens. Turning this on also runs Bestie's other watches.",
+    "Your Bestie wakes once an hour to tidy its memory and tell you only what matters. Runs while Buzz is open and the Watching plugin is on. Each wake uses your tokens. Turning this on also runs Bestie's other watches.",
   version: 1,
   requires: "memory",
   timer: {
@@ -77,7 +96,7 @@ This runs only when your hourly check-in timer wakes you with "Hourly upkeep wak
 When a wake arrives in a channel that is not in mem/heartbeat, add it. Never claim a timer, watch or workflow exists merely because someone asked for one.`,
 };
 
-export const FEATURES: readonly Feature[] = [memory, checkinHourly];
+export const FEATURES: readonly Feature[] = [memory, inbox, checkinHourly];
 
 const ESCAPE = /[.*+?^${}()|[\]\\]/g;
 const nameOf = ({ id }: Feature) => `buzz:bestie/${id}`.replace(ESCAPE, "\\$&");

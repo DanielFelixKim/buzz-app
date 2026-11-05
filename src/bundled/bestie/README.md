@@ -45,7 +45,7 @@ The agent you made your Bestie (with **Make my bestie** in Agents) gets a
 **Bestie** tab on its agent page. **Change** picks
 another agent and asks before replacing your Bestie. A remote agent, hosted or
 on another device, can be your Bestie too. Change, **Make my bestie** and **Make
-my Bestie again** offer it, and say before saving that some bestie features
+your Bestie again** offer it, and say before saving that some bestie features
 aren't available with remote agents, as **Choosing a Bestie** does: one
 question, the replacement's, when it replaces your Bestie. A Bestie on another
 device shows no tab, as its instructions and timers aren't on this device; its
@@ -85,12 +85,30 @@ where it starts and ends; otherwise fix its markers in Instructions. Off
 deletes no memory, and the agent's core memory is still in every prompt;
 clear memory in the Memory tab.
 
-**Private channels Bestie can read** lists the private channels you share with
+**What your Bestie can read** introduces access to public channels and discussions,
+then groups the separate Inbox box and Private channels list. Private channels has
+no repeated description; the parent explains read-only additions and the channel
+owner/admin's Participating access control. Primary groups use Header; the nested
+list uses InlineHeader. This sits separately from the Behavior controls,
+Remembers you and Checks in. Changing one access path does not
+change the other.
+
+**Inbox** is on by default for a Bestie made on this
+device. It adds an instruction section and makes the read-only `inbox` tool
+available only while that exact agent remains the owner’s account-saved Bestie.
+The tool reads the owner’s bounded Inbox projection, which can include private
+DM and private-channel notifications; it does not add Bestie to any of those
+conversations, let it read their history, or let it reply. Turning the switch
+off removes the capability. Inbox content must not be copied to memory.
+
+**Private channels** lists the private channels you share with
 Bestie, each with **Remove**, which asks first, as the Members dialog does.
 **Add to a channel** (**Choose…**) and **Add to
-all my private channels** add it to the private channels you are in, most
-recently active first; each channel's members see that you added it. Bestie
-joins as a guest, so it reads the channel but can't post there. Each
+all your private channels** add it to the private channels you are in, most
+recently active first; each channel's members see that you added it. Add to all
+is a one-time action for currently eligible channels, not future channels. Bestie
+joins as a guest, so it reads the channel but can't post there. Existing
+participants keep their roles; these controls do not add it to DMs. Each
 action has a row of its own, so in a narrow panel its button wraps under it.
 Until your channel list has loaded in full, the section says so instead of
 saying Bestie is in none: a failed read offers **Retry**, the channels already
@@ -104,8 +122,9 @@ Public channels
 need nothing: agents read them already. Adding Bestie to new channels you
 create is not set up yet.
 
-**Check-ins → Every hour** needs Remembers you, and turning memory off turns it
-off too. On adds the `buzz:bestie/checkin.hourly` Hourly upkeep section to the
+**Behavior** groups Remembers you and **Checks in**, above the access controls.
+Checks in runs once an hour. It needs Remembers you, and turning memory off turns
+it off too. On adds the `buzz:bestie/checkin.hourly` Hourly upkeep section to the
 instructions and an hourly Attention timer, `watch/bestie-hourly-check-in`,
 that wakes Bestie in your DM with it. Each check-in reads what is new in
 that DM and in the private channels Bestie was added to, and reports only in
@@ -134,7 +153,7 @@ Remembers you on; a choice synced from elsewhere changes nothing, so memory
 turned off stays off. A former Bestie running here or hosted keeps a
 **Former Bestie** tab while it has a Bestie section, or, if this device saw it
 as Bestie, while it is in one of your private channels. The tab has the same switches, **Remove from all** for
-its channels, and **Make my Bestie again**.
+its channels, and **Make your Bestie again**.
 
 ### Choosing a Bestie
 

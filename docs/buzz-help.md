@@ -810,6 +810,21 @@ available rather than silently discarding it.
   Bestie whose provider holds its instructions (Builderlab does) shows a
   **Bestie** tab where **Remembers you** edits them through the provider;
   check-ins stay unavailable for hosted agents.
+- In your agent's **Bestie** tab, **Behavior** groups **Remembers you** and
+  **Checks in**. Check-ins need memory on and run once an hour while Buzz is open
+  and the Watching plugin is on. Each wake uses tokens.
+- In that tab, **What your Bestie can read** separates Inbox
+  access from private-channel membership. **Inbox** lets a local Bestie
+  help triage notifications, including those from private channels and DMs. It
+  does not join those conversations, grant their history, or allow replies there.
+  It starts on when you make a local agent Bestie on this device; an existing
+  Bestie's choice stays as it is. Private-channel rows let you remove Bestie,
+  add it to one channel, or add it to all your currently eligible private
+  channels—not future ones. Added here, it joins as a guest and cannot post;
+  existing participants keep their roles. A channel owner or admin can change
+  its access to **Participating** to let it post. This panel does not add it to DMs.
+  Changing Inbox access does not change membership,
+  and removing channel membership does not turn off Inbox access.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

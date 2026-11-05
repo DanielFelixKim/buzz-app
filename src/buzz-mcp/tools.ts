@@ -140,6 +140,13 @@ export const TOOLS: readonly Tool[] = [
     {},
   ),
   tool(
+    "inbox",
+    "Read your owner's current Inbox when they allowed their Bestie to do so. Read-only; it does not grant access to the conversations behind items.",
+    {},
+    [],
+    { readOnlyHint: true },
+  ),
+  tool(
     "agent_types",
     "List installed local agent types available for agent_create.",
     {},
@@ -475,6 +482,29 @@ export function callTool(
 const HANDLERS: Readonly<Record<string, Handler>> = {
   async buzz_help() {
     return buzzHelp.trim();
+  },
+  async inbox({ client }) {
+    if (!client.inbox)
+      throw new Error(
+        "Your owner has not allowed Inbox access for this Bestie.",
+      );
+    const { items } = await client.inbox();
+    return JSON.stringify(
+      items.map((item) => ({
+        id: item.id,
+        channel: item.channelId,
+        message: item.messageId,
+        ...(item.rootId ? { root: item.rootId } : {}),
+        author: item.authorId,
+        preview: item.preview,
+        created_at: item.createdAt,
+        mentioned: item.mentioned,
+        thread: item.thread,
+        unread_count: item.unreadCount,
+        ...(item.manual ? { manually_saved: true } : {}),
+        link: `buzz://message?channel=${item.channelId}&id=${item.messageId}`,
+      })),
+    );
   },
   async agent_types({ client }) {
     if (!client.agentTypes)
