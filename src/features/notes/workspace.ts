@@ -5,6 +5,7 @@ import {
   type MemberAuthority,
   type MemberChange,
 } from "../channel-members/administration-protocol";
+import type { ChannelDetailsCapability } from "../relay/channel-details";
 import type { RelaySession } from "../relay/session";
 import { hasEventProof, type RelayEvent } from "../relay/events";
 import { channelIdentity } from "../relay/channel-labels";
@@ -174,6 +175,40 @@ export function createNotesWorkspace(session: RelaySession) {
       throw new Error(
         "This storage contains other documents. Create a separate working copy before sharing this note.",
       );
+  }
+  function generalAccess(address: NoteAddress): ChannelDetailsCapability {
+    const details = session.channelDetails;
+    async function guard(channel: string, caller?: AbortSignal) {
+      if (channel !== address.channel) throw new Error("Invalid note channel.");
+      await resolve(address, caller);
+      if (!independent(address, await sharing(channel, caller)))
+        throw new Error(
+          "This note does not have independent sharing settings.",
+        );
+      await singleNote(address, caller);
+    }
+    return {
+      available: details.available,
+      subscribe: details.subscribe,
+      snapshot: details.snapshot,
+      async load(channel, caller) {
+        await guard(channel, caller);
+        return details.load(channel, caller);
+      },
+      async save(base, draft, caller, active) {
+        if (
+          draft.visibility !== "private" &&
+          !(draft.visibility === "public" && draft.joinRole === "guest")
+        )
+          throw new Error("Choose private or community view-only access.");
+        await guard(base.channelId, caller);
+        return details.save(base, draft, caller, active);
+      },
+      async check(channel, caller) {
+        await guard(channel, caller);
+        return details.check(channel, caller);
+      },
+    };
   }
   async function verifyCreatingAgent(key: string, caller?: AbortSignal) {
     if (!PUBKEY.test(key)) throw new Error("Choose a valid creating agent.");
@@ -408,6 +443,7 @@ export function createNotesWorkspace(session: RelaySession) {
     resolve,
     authority,
     sharing,
+    generalAccess,
     drafts,
     setMember,
     open: async (address: NoteAddress, caller?: AbortSignal) => {
@@ -452,12 +488,13 @@ export async function readNotesPage(
       !PUBKEY.test(cursor.before_id))
   )
     throw new Error("Invalid note-list cursor.");
-  const rosters = await read(
+  // One paged stream includes private memberships and community-readable notes.
+  // Explicit system opt-in keeps ordinary channel discovery unchanged.
+  const metadata = await read(
     [
       {
-        kinds: [39002],
+        kinds: [39000],
         authors: [relayAuthor],
-        "#p": [viewer],
         "#t": ["system"],
         limit: NOTE_PAGE,
         ...cursor,
@@ -465,7 +502,7 @@ export async function readNotesPage(
     ],
     caller,
   );
-  const ordered = [...rosters].sort(
+  const ordered = [...metadata].sort(
     (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
   );
   const last = ordered.at(-1);
@@ -478,73 +515,49 @@ export async function readNotesPage(
     )
   )
     throw new Error("The note list did not advance. Refresh to try again.");
-  const ids = rosters.flatMap((event) => {
-    const id = noteTag(event, "d");
-    return id &&
-      UUID.test(id) &&
-      event.tags.some(([key, value]) => key === "p" && value === viewer)
-      ? [id]
-      : [];
+  const addresses = metadata.flatMap((event) => {
+    const channel = noteTag(event, "d");
+    const label = event.tags.find(
+      ([key, value]) =>
+        key === "t" &&
+        value?.startsWith(`${NOTE_LABEL}.`) &&
+        value !== AGENTS_LABEL,
+    );
+    const id = label?.[1]?.slice(NOTE_LABEL.length + 1);
+    const address =
+      channel && UUID.test(channel) && id && UUID.test(id)
+        ? { id, channel }
+        : undefined;
+    return address && independentNoteStorage(address, event) ? [address] : [];
   });
   const notes: Note[] = [];
-  if (ids.length) {
-    const metadata = await read(
+  if (addresses.length) {
+    const events = await read(
       [
         {
-          kinds: [39000],
-          authors: [relayAuthor],
-          "#d": ids,
-          "#t": [NOTE_LABEL],
+          kinds: [NOTE_KIND],
+          "#h": addresses.map((item) => item.channel),
+          "#d": addresses.map((item) => item.id),
           limit: NOTE_PAGE,
+          consistency: "strong",
         },
       ],
       caller,
     );
-    const addresses = metadata.flatMap((event) => {
-      const channel = noteTag(event, "d");
-      const labels = event.tags.filter(
-        ([key, value]) =>
-          key === "t" &&
-          value?.startsWith(`${NOTE_LABEL}.`) &&
-          value !== AGENTS_LABEL,
-      );
-      const id =
-        labels.length === 1
-          ? labels[0]?.[1]?.slice(NOTE_LABEL.length + 1)
-          : undefined;
-      return channel && ids.includes(channel) && id && UUID.test(id)
-        ? [{ id, channel }]
-        : [];
-    });
-    if (addresses.length) {
-      // Named generic d queries return relay heads, including tombstones.
-      const events = await read(
-        [
-          {
-            kinds: [NOTE_KIND],
-            "#h": addresses.map((item) => item.channel),
-            "#d": addresses.map((item) => item.id),
-            limit: NOTE_PAGE,
-            consistency: "strong",
-          },
-        ],
-        caller,
-      );
-      for (const event of events) {
-        const note = parseNote(event);
-        if (
-          note &&
-          addresses.some(
-            (item) => item.id === note.id && item.channel === note.channel,
-          )
+    for (const event of events) {
+      const note = parseNote(event);
+      if (
+        note &&
+        addresses.some(
+          (item) => item.id === note.id && item.channel === note.channel,
         )
-          notes.push(note);
-      }
+      )
+        notes.push(note);
     }
   }
   return {
     notes,
-    more: rosters.length === NOTE_PAGE,
+    more: metadata.length === NOTE_PAGE,
     ...(last ? { cursor: { until: last.created_at, before_id: last.id } } : {}),
   };
 }

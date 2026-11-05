@@ -18,6 +18,7 @@ import {
   vi,
   type MockInstance,
 } from "vitest";
+import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { noteKey } from "../../features/notes/model";
 import { eventDto } from "../../features/relay/events";
 import { notesFixture } from "../../features/notes/testing";
@@ -40,6 +41,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
+composerDOMFixture();
 async function fixture(automatic = true) {
   const f = await notesFixture();
   const listeners = new Set<Parameters<typeof f.session.subscribeLive>[0]>();
@@ -364,7 +366,7 @@ async function historyFixture(automatic = false, deleted = false) {
     deleted ? "delete" : "update",
   );
   fireEvent.click(screen.getByRole("button", { name: "Refresh note" }));
-  if (deleted) await screen.findByText(/This note was deleted/);
+  if (deleted) await screen.findByRole("button", { name: "Restore" });
   else await waitFor(() => expect(f.title).toHaveValue("New plan"));
   return { ...f, current };
 }
@@ -515,7 +517,7 @@ it("previews the last content of a deleted note and restores it in one click aft
   const f = await historyFixture(false, true);
   await screen.findByText("Original body");
   const restore = await screen.findByRole("button", {
-    name: /^Restore note$/,
+    name: "Restore",
   });
   await waitFor(() => expect(restore).toBeEnabled());
   f.save.mockRejectedValueOnce(new Error("Offline"));

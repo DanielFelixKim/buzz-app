@@ -93,11 +93,16 @@ export function independentNoteStorage(
   const visibility = metadata.tags.filter(
     ([key]) => key === "public" || key === "private",
   );
+  const admissions = metadata.tags.filter(([key]) => key === "join_role");
   return (
     labels[0] === "system" &&
     visibility.length === 1 &&
     visibility[0]?.length === 1 &&
-    visibility[0]?.[0] === "private" &&
+    (visibility[0]?.[0] === "private" ||
+      (visibility[0]?.[0] === "public" &&
+        admissions.length === 1 &&
+        admissions[0]?.length === 2 &&
+        admissions[0]?.[1] === "guest")) &&
     labels.includes(NOTE_LABEL) &&
     labels.includes(`${NOTE_LABEL}.${address.id}`) &&
     labels.filter(

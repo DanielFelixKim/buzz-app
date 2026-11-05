@@ -72,6 +72,8 @@ export async function notesFixture() {
       labels: string[];
       type: string;
       roles: Record<string, string>;
+      visibility?: "public" | "private";
+      joinRole?: "guest" | "member";
       updated: number;
       created: number;
     }
@@ -98,7 +100,8 @@ export async function notesFixture() {
             ["P", channel.creator],
             ["created_at", String(channel.created)],
             ["name", channel.name],
-            ["private"],
+            [channel.visibility ?? "private"],
+            ["join_role", channel.joinRole ?? "member"],
             ...(channel.type === "system" ? [["hidden"]] : []),
           ],
         }),
@@ -148,7 +151,8 @@ export async function notesFixture() {
             event.kind >= 39000 && event.kind <= 39003 ? "d" : "h",
           ) ?? "",
         );
-        if (channel && !channel.roles[who]) return false;
+        if (channel && !channel.roles[who] && channel.visibility !== "public")
+          return false;
         if (
           channel?.type === "system" &&
           !(filter["#h"] || filter["#d"] || filter["#t"])
@@ -232,10 +236,18 @@ export async function notesFixture() {
       }
       if (event.kind === 9001) delete channel.roles[key];
       if (event.kind === 9002) {
-        channel.labels = event.tags
-          .filter(([key]) => key === "t")
-          .map(([, value]) => value ?? "");
+        if (event.tags.some(([key]) => key === "t"))
+          channel.labels = event.tags
+            .filter(([key]) => key === "t")
+            .map(([, value]) => value ?? "")
+            .filter(Boolean);
         channel.name = noteTag(event, "name") ?? channel.name;
+        const visibility = noteTag(event, "visibility");
+        if (visibility)
+          channel.visibility = visibility === "open" ? "public" : "private";
+        const joinRole = noteTag(event, "join_role");
+        if (joinRole === "guest" || joinRole === "member")
+          channel.joinRole = joinRole;
       }
       channel.updated = ++tick;
     } else if (event.kind === 45010) {
@@ -243,7 +255,11 @@ export async function notesFixture() {
         failArtifact = false;
         throw new PublishRejected("invalid: fixture refused this save");
       }
-      if (!role || role === "guest")
+      if (
+        role === "guest" ||
+        (!role &&
+          !(channel?.visibility === "public" && channel.joinRole !== "guest"))
+      )
         throw new PublishRejected("restricted: write denied");
       const d = noteTag(event, "d") ?? "",
         prior = heads.get(d);

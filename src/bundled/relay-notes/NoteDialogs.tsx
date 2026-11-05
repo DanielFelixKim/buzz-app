@@ -1,12 +1,15 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type RefObject,
   type ReactNode,
 } from "react";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { MemberChange } from "../../features/channel-members/administration-protocol";
+import { ChannelGeneralAccess } from "../channels/ChannelGeneralAccess";
 import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import { noteUrl, type Note } from "../../features/notes/model";
 import type { NotesWorkspace } from "../../features/notes/workspace";
@@ -40,11 +43,19 @@ export function NoteSharing({
   trigger: RefObject<HTMLElement | null>;
 }) {
   const [error, setError] = useState("");
+  const [accessChannel, setAccessChannel] = useState<ChannelSummary>();
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const lifetime = useRef<AbortController | undefined>(undefined);
   const session = workspace.session;
   const { id, channel } = note;
+  const access = useMemo(
+    () => workspace.generalAccess({ id, channel }),
+    [workspace, id, channel],
+  );
+  const accessAttempt = useSyncExternalStore(access.subscribe, () =>
+    access.snapshot(channel),
+  );
   const administration = useSyncExternalStore(
     session.memberAdministration.subscribe,
     () => session.memberAdministration.snapshot(note.channel),
@@ -56,11 +67,12 @@ export function NoteSharing({
       await workspace.resolve({ id, channel }, controller.signal);
       await workspace.sharing(channel, controller.signal);
       controller.signal.throwIfAborted();
+      setAccessChannel(session.channels.get?.(channel));
     })().catch((error: unknown) => {
       if (!controller.signal.aborted) setError(message(error));
     });
     return () => controller.abort();
-  }, [workspace, id, channel]);
+  }, [workspace, session, id, channel]);
   const run = async (
     work?: (signal: AbortSignal) => Promise<unknown>,
     caller?: AbortSignal,
@@ -110,7 +122,11 @@ export function NoteSharing({
       title="Share access"
       description="Access includes the current note and all retained revisions."
       shareLink={noteUrl(note, session.scope.replace(/:[0-9a-f]{64}$/, ""))}
-      memberActions={{ canAdd: !!roles?.canManage, pending: busy, change }}
+      memberActions={{
+        canAdd: !!roles?.canManage,
+        pending: busy || accessAttempt?.status === "saving",
+        change,
+      }}
       accessSettings={
         <div className={`${styles.stack} ${styles.sharingSettings}`}>
           {error && (
@@ -129,9 +145,16 @@ export function NoteSharing({
               </Button>
             </div>
           )}
+          <ChannelGeneralAccess
+            capability={access}
+            recovery={session.recovery}
+            channelId={channel}
+            subject="note"
+            {...(accessChannel ? { channel: accessChannel } : {})}
+          />
           <p className="text-caption text-subtle">
-            Private note. View-only members can read; participants can edit,
-            delete and restore. Owners and admins can also manage access.
+            View-only members can read; participants can edit, delete and
+            restore. Owners and admins can also manage access.
           </p>
         </div>
       }

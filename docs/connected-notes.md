@@ -21,7 +21,7 @@ Deletion publishes only the artifact envelope; history restoration preserves the
 chosen revision’s annotations. Titles are limited to 512 UTF-8 bytes and bodies
 to 32 KiB, with an additional complete-frame bound.
 
-Each independently shared note has one private **system** channel labelled
+Each independently shared note has one **system** channel, initially private, labelled
 `buzz.notes` and `buzz.notes.<note-uuid>`. A human-created note initially admits
 only its creator; an agent-created note admits the owner and that creating agent.
 Other people and agents are invited explicitly. Existing memberships remain;
@@ -34,9 +34,12 @@ Readers enter directly as `guest`; editors use `member` (owned agents may be
 does not promise that an editor cannot send invitations through another client.
 
 **Share note** uses the current `ChannelMembersDialog` search, filters, identity
-rows, role menus and confirmations. System channels have no public/general-access
-setting. Note-specific settings retain the history notice. Membership changes still pass through NotesWorkspace's private,
-independent-note and administration checks; a confirmation's expected role must
+rows, role menus and confirmations. Notes expose **General access → View only**
+through the shared channel-details owner. Anyone in the community can then read
+the note and all retained revisions; a confirmation states that consequence.
+Existing editors keep their access. **Private** restricts reading to explicit
+members again. Notes do not offer community participation. Membership and general
+access changes pass through NotesWorkspace's independent-note and administration checks; a confirmation's expected role must
 match a fresh roster before any write. The UI supports explicit admin access;
 the singular agent tool's read/edit/remove contract is unchanged. The dialog's
 Copy link action uses the note URL rather than opening its backing channel.
@@ -61,8 +64,9 @@ uses the HTTP query contract’s `artifact: history`; it must be a single filter
 and must not include `consistency`. History pages contain 100 revisions, through
 offset 10,000; reaching the bound is disclosed.
 
-Discovery pages the viewer’s signed system rosters, then metadata carrying the
-note labels, then named artifact heads. It does not subscribe to every document
+Discovery pages relay-signed system metadata readable by the viewer, filters the
+independent note labels and private or public+guest policy, then reads named artifact
+heads. Community-readable notes appear in nonmembers' Notes lists without joining. It does not subscribe to every document
 as a conversation. Search, link pickers and backlinks cover loaded notes only;
 the browser offers further pages. This avoids a silent first-page completeness
 claim, but is not a measured thousand-channel capacity guarantee.

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,7 +31,6 @@ import {
 } from "../../features/relay/message-content";
 import {
   ArrowsClockwiseIcon,
-  ArrowCounterClockwiseIcon,
   DotsThreeIcon,
   ShareIcon,
 } from "../../shared/design-system/icons";
@@ -107,7 +107,7 @@ export function NoteDocument({
   const titleInput = useRef<HTMLInputElement>(null);
   const pendingFocus = useRef(initialFocus);
   const needsFocus = useRef(true);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (active) needsFocus.current = true;
   }, [active]);
   const [canEdit, setCanEdit] = useState(false);
@@ -172,7 +172,7 @@ export function NoteDocument({
     "share" | "history" | "link" | "delete" | undefined
   >();
   const dialog = active ? (view ? view.dialog : localDialog) : undefined;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (dialog) {
       needsFocus.current = false;
       pendingFocus.current = undefined;
@@ -188,26 +188,27 @@ export function NoteDocument({
       !needsFocus.current
     )
       return;
+    const focus = pendingFocus.current;
+    if (!focus) {
+      needsFocus.current = false;
+      // Opening focus happens before interaction; preserve a selection already placed.
+      if (
+        !editor.current?.selection() &&
+        document.activeElement !== titleInput.current
+      )
+        editor.current?.focusEnd();
+      return;
+    }
+    // First-save handoff waits for the shared editor to adopt the saved draft.
     const frame = requestAnimationFrame(() => {
       needsFocus.current = false;
-      const focus = pendingFocus.current;
       pendingFocus.current = undefined;
-      // Opening focus must not move a selection the person has already placed.
-      if (
-        !focus &&
-        (editor.current?.selection() ||
-          document.activeElement === titleInput.current)
-      )
-        return;
-      if (focus?.target === "body") editor.current?.focusSelection(focus);
-      else if (focus?.target === "title") {
+      if (focus.target === "body") editor.current?.focusSelection(focus);
+      else {
         const field = titleInput.current;
         field?.focus();
-        field?.setSelectionRange(
-          focus?.start ?? field.value.length,
-          focus?.end ?? field.value.length,
-        );
-      } else editor.current?.focusEnd();
+        field?.setSelectionRange(focus.start, focus.end);
+      }
     });
     return () => cancelAnimationFrame(frame);
   }, [active, busy, unavailable, note, canEdit, editing, dialog]);
@@ -690,16 +691,15 @@ export function NoteDocument({
             {note?.deleted ? "Restore note" : saveError ? "Retry save" : "Save"}
           </NoteSaveAction>
           {note?.deleted && canEdit && !unavailable && (
-            <IconButton
-              aria-label="Restore note"
-              title="Restore note"
-              icon={<ArrowCounterClockwiseIcon size={16} />}
-              disabled={
-                busy || saving || !deletedPreview?.editable || !!conflict
-              }
-              aria-busy={saving}
+            <Button
+              variant="prominent"
+              size="sm"
+              disabled={busy || !!conflict || !deletedPreview?.editable}
+              loading={saving}
               onClick={() => void save(false, deletedPreview)}
-            />
+            >
+              Restore
+            </Button>
           )}
           <IconButton
             aria-label="Refresh note"
@@ -835,9 +835,6 @@ export function NoteDocument({
               ? "You have read access."
               : "This document format is read-only in this version of Buzz."}
           </p>
-        )}
-        {note?.deleted && !unavailable && !editing && (
-          <p className="text-caption text-subtle">This note was deleted.</p>
         )}
         {previewError && <p role="alert">{previewError} Refresh to retry.</p>}
         {note &&

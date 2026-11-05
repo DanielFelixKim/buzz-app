@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -148,9 +149,11 @@ it("uses the channel member picker while guarding a pending explicit invitation"
         name: "Share with my agents automatically",
       }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("combobox", { name: "General access" }),
-    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "General access" }),
+      ).toBeEnabled(),
+    );
     fireEvent.change(
       screen.getByRole("searchbox", { name: "Search people and agents" }),
       { target: { value: "Sam" } },
@@ -173,6 +176,62 @@ it("uses the channel member picker while guarding a pending explicit invitation"
     );
   } finally {
     release();
+    cleanup();
+    workspace.dispose();
+    fixture.dispose();
+  }
+});
+
+it("confirms community reading of all retained revisions and offers only private or view-only access", async () => {
+  const fixture = await notesFixture();
+  const workspace = createNotesWorkspace(fixture.session);
+  const note = fixture.seed("Plan", "Original");
+  try {
+    render(
+      <NoteSharing
+        note={note}
+        workspace={workspace}
+        onClose={vi.fn()}
+        trigger={{ current: null }}
+      />,
+    );
+    const control = await screen.findByRole("combobox", {
+      name: "General access",
+    });
+    await waitFor(() => expect(control).toBeEnabled());
+    await userEvent.click(control);
+    expect(
+      screen.queryByRole("option", { name: "Public" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      await screen.findByRole("option", { name: "View only" }),
+    );
+    const confirm = await screen.findByRole("alertdialog", {
+      name: "Change general access?",
+    });
+    expect(confirm).toHaveTextContent("all retained revisions");
+    await userEvent.click(
+      within(confirm).getByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+    expect(fixture.channels.get(note.channel)?.visibility).not.toBe("public");
+    await userEvent.click(control);
+    await userEvent.click(
+      await screen.findByRole("option", { name: "View only" }),
+    );
+    await userEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Change access",
+      }),
+    );
+    await waitFor(() =>
+      expect(fixture.channels.get(note.channel)?.visibility).toBe("public"),
+    );
+    expect(fixture.channels.get(note.channel)?.joinRole).toBe("guest");
+    await waitFor(() => expect(control).toHaveTextContent("View only"));
+  } finally {
     cleanup();
     workspace.dispose();
     fixture.dispose();

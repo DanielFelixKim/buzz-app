@@ -667,3 +667,52 @@ it("uses stable, community-bound note links across Markdown, chat and OS ingress
     await readNotesPage(f.workspace.read, f.viewer.pubkey, f.relay.pubkey),
   ).toMatchObject({ more: false });
 });
+
+it("lists community view-only notes for nonmembers, retains editor access, and rejects reader-agent writes", async () => {
+  const f = await fixture();
+  const note = f.seed("Community plan", "Public history", false);
+  const access = f.workspace.generalAccess(note);
+  const base = await access.load(note.channel);
+  await access.save(base, { ...base, visibility: "public", joinRole: "guest" });
+  const reader = f.client(f.carl);
+  const page = await readNotesPage(
+    (filters) => reader.query(filters),
+    reader.pubkey,
+    f.relay.pubkey,
+  );
+  expect(page.notes.map((entry) => entry.id)).toContain(note.id);
+  expect(f.channels.get(note.channel)?.roles[f.carl.pubkey]).toBeUndefined();
+  const tools = noteTools(() => f.workspace);
+  const set = tools.find((tool) => tool.name === "note_set");
+  if (!set) throw new Error("Missing note_set");
+  await expect(
+    set.call(
+      reader,
+      {},
+      { ...note, revision: note.revision, title: "Tampered", text: "Denied" },
+    ),
+  ).rejects.toThrow(/write denied/);
+  await f.workspace.save(note, {
+    title: note.title,
+    markdown: "Owner still edits",
+  });
+  expect((await f.workspace.open(note)).markdown).toBe("Owner still edits");
+  const latest = await access.load(note.channel);
+  await expect(
+    access.save(latest, {
+      ...latest,
+      visibility: "public",
+      joinRole: "member",
+    }),
+  ).rejects.toThrow(/view-only/);
+  await access.save(latest, { ...latest, visibility: "private" });
+  expect(
+    (
+      await readNotesPage(
+        (filters) => reader.query(filters),
+        reader.pubkey,
+        f.relay.pubkey,
+      )
+    ).notes,
+  ).toEqual([]);
+});

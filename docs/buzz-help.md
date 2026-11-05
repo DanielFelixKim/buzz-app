@@ -351,13 +351,16 @@ that agent in Buzz; they do not notify the external app through this connection.
   one to preview it, then **Restore this version** to save it immediately as a new
   latest revision, even with auto-save disabled. Pending edits require confirmation;
   all saved history is kept. Deleted notes show their last saved contents; the
-  **Restore note** icon beside Refresh restores them in one click. The empty
+  **Restore** button beside Refresh restores them in one click. The empty
   collection includes its own **New note** button.
   **Note actions → Linked notes** appears when loaded notes link to the current
   document and lists those notes. **Share note** opens the same searchable
   member picker used by channels. Owners and admins can add people or agents and
   use each person's menu to choose **Viewing only**, **Participating**, or **Admin**
-  access. Notes stay private; sharing includes retained history. Membership changes
+  access. New notes start private. **General access → View only** lets everyone in
+  the community read the note and all retained revisions, after confirmation;
+  existing editors keep editing. Community-readable notes appear in Notes lists.
+  Choose **Private** to restrict reading to explicit members again. Membership changes
   are explicit. Opening or reading a note never adds people or agents.
   Notes are readable by the relay operator. In a conversation, Back/Forward can
   revisit a note; closing its tab retires those visits. Collapsing the tab pane

@@ -808,6 +808,43 @@ test("human and agents edit, link, share and export the same working note", asyn
     });
   });
   await expect(sharing).toContainText("all retained revisions");
+  const generalAccess = sharing.getByRole("combobox", {
+    name: "General access",
+    exact: true,
+  });
+  await expect(generalAccess).toBeEnabled();
+  await generalAccess.click();
+  await expect(
+    page.getByRole("option", { name: "Public", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("option", { name: "View only", exact: true }).click();
+  const accessConfirmation = page.getByRole("alertdialog", {
+    name: "Change general access?",
+  });
+  await expect(accessConfirmation).toContainText("all retained revisions");
+  await accessConfirmation
+    .getByRole("button", { name: "Change access", exact: true })
+    .click();
+  await expect(generalAccess).toContainText("View only");
+  expect(
+    await page.evaluate(
+      (address) => window.workingNotesFixture.readAsSam(address),
+      created,
+    ),
+  ).toHaveLength(1);
+  await generalAccess.click();
+  await page.getByRole("option", { name: "Private", exact: true }).click();
+  await accessConfirmation
+    .getByRole("button", { name: "Change access", exact: true })
+    .click();
+  await expect(generalAccess).toContainText("Private");
+  expect(
+    await page.evaluate(
+      (address) => window.workingNotesFixture.readAsSam(address),
+      created,
+    ),
+  ).toHaveLength(0);
+
   await expect(
     sharing.getByRole("region", { name: "Member list", exact: true }),
   ).toHaveAttribute("data-refreshing", "false");
@@ -1043,15 +1080,15 @@ test("creates, deletes and restores a working note through the editor", async ({
     .click();
   const deletedNote = page.getByRole("article", { name: "Research draft" });
   await expect(
-    deletedNote.getByText("This note was deleted.", { exact: true }),
-  ).toBeVisible();
+    deletedNote.getByRole("button", { name: "Restore", exact: true }),
+  ).toBeEnabled();
   await expect(
     deletedNote
       .getByRole("paragraph")
       .filter({ hasText: /^A durable finding\.$/ }),
   ).toBeVisible();
   await deletedNote
-    .getByRole("button", { name: "Restore note", exact: true })
+    .getByRole("button", { name: "Restore", exact: true })
     .click();
   await expect(
     page
