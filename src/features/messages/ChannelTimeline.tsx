@@ -1579,6 +1579,12 @@ function Timeline({
       const row = rowsById.get(id);
       if (!row || !onReply) return;
       const element = scroller.current;
+      const previous = {
+        follow: follow.current,
+        position: savedPosition.current,
+        anchor: restoredAnchor.current,
+        layoutCorrection: layoutCorrection.current,
+      };
       if (element) {
         const position = { ...positionAt(element), bottom: false };
         intent.current++;
@@ -1587,9 +1593,25 @@ function Timeline({
         savedPosition.current = position;
         restoredAnchor.current = position.anchor;
       }
-      return onReply(row, deferFocus);
+      const previewIntent = intent.current;
+      const reply = onReply(row, deferFocus);
+      if (!deferFocus || !reply) return reply;
+      return {
+        commit: () => reply.commit(),
+        cancel() {
+          // Withdraw this preview's reading pause, never a newer scroll/reveal.
+          if (intent.current === previewIntent) {
+            follow.current = previous.follow;
+            savedPosition.current = previous.position;
+            restoredAnchor.current = previous.anchor;
+            layoutCorrection.current = previous.layoutCorrection;
+            savePosition();
+          }
+          reply.cancel();
+        },
+      };
     },
-    [onReply, rowsById],
+    [onReply, rowsById, savePosition],
   );
   return (
     <section

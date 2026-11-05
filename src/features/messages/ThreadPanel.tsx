@@ -723,6 +723,7 @@ function ThreadMessages({
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
+  const readingIntent = useRef(0);
   const resizePosition = useRef<
     | {
         width: number;
@@ -851,6 +852,7 @@ function ThreadMessages({
     navigation?.complete({ status: "opened" });
   }, [captureResizePosition, navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
+    readingIntent.current++;
     follow.current = false;
   }, []);
   // Each request reveals its ancestors once; a branch the reader then
@@ -1020,12 +1022,16 @@ function ThreadMessages({
     }
   }, [joining, channelAccess, active]);
   const focusReply = useCallback(() => {
+    readingIntent.current++;
     setReplyParent(undefined);
     setReplyFocus((value) => value + 1);
   }, []);
   const targetReply = useCallback(
     (id: string, deferFocus = false) => {
       captureResizePosition();
+      const previousFollow = follow.current;
+      const previousPosition = resizePosition.current;
+      const previewIntent = ++readingIntent.current;
       follow.current = false;
       const previous = currentReplyParent.current;
       const next = previous === id ? undefined : id;
@@ -1038,6 +1044,10 @@ function ThreadMessages({
             setReplyFocus((value) => value + 1);
         },
         cancel() {
+          if (readingIntent.current === previewIntent) {
+            follow.current = previousFollow;
+            resizePosition.current = previousPosition;
+          }
           setReplyParent((current) => (current === next ? previous : current));
         },
       };
@@ -1441,6 +1451,7 @@ function ThreadMessages({
     return () => observer.disconnect();
   }, [active, initialPositioned, captureResizePosition, selectedOffset]);
   const jumpToLatest = () => {
+    readingIntent.current++;
     const element = scroller.current;
     if (!element) return;
     targetAnchor.current = undefined;
@@ -1462,6 +1473,7 @@ function ThreadMessages({
     }, 1000);
   };
   const keepReadingPosition = () => {
+    readingIntent.current++;
     jumpingToLatest.current = false;
     if (jumpTimer.current !== undefined) {
       clearTimeout(jumpTimer.current);
@@ -2079,6 +2091,7 @@ function ThreadMessages({
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}
           onSend={(id) => {
+            readingIntent.current++;
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;
