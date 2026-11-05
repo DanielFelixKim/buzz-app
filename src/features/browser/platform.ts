@@ -88,10 +88,10 @@ export interface BrowserPlatform {
 }
 
 export type BrowserControlRequest =
-  | { action: "observe" }
+  | { action: "observe"; scope?: "page" | "viewport" }
   | { action: "navigate"; url: string }
-  | { action: "click"; selector: string }
-  | { action: "fill"; selector: string; text: string };
+  | { action: "click"; ref: string }
+  | { action: "fill"; ref: string; text: string };
 
 export type BrowserControlGrant = Readonly<{ token: string; revision: number }>;
 

@@ -1,6 +1,0 @@
-{
-  "id": "example.browser-control",
-  "name": "Browser control preview",
-  "apiVersion": 1,
-  "description": "Optional agent control of embedded browser pages on macOS"
-}

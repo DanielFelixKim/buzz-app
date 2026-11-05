@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BrowserAccess, type BrowserRecipient } from "./control-access";
 import type { BrowserControl } from "./platform";
 
@@ -138,14 +138,16 @@ it("suppresses results after takeover, even when native execution succeeds late"
 it("refuses an ambiguous conversation rather than choosing another browser", async () => {
   const f = fixture();
   await f.control.grant("first");
-  await f.control.grant("second");
+  await f.access
+    .forRecipient({ ...f.recipient, scope: "community:other" })
+    .grant("second");
   await expect(
     f.access.execute(
       "agent",
       { channel: "chat", root: "thread" },
       { action: "observe" },
     ),
-  ).rejects.toThrow("More than one");
+  ).rejects.toThrow(/^unavailable: More than one/);
   expect(f.native.execute).not.toHaveBeenCalled();
 });
 
@@ -179,4 +181,74 @@ it("orders replacement grants so a late old grant cannot revoke the new recipien
       { action: "observe" },
     ),
   ).resolves.toEqual({ text: "Page" });
+});
+
+describe("execute error codes", () => {
+  it("prefixes a caller with no shared browser with unavailable", async () => {
+    const f = fixture();
+    await expect(
+      f.access.execute(
+        "agent",
+        { channel: "chat", root: "thread" },
+        { action: "observe" },
+      ),
+    ).rejects.toThrow(/^unavailable: /);
+  });
+
+  it("prefixes a revoke during the native call with not_visible", async () => {
+    const f = fixture();
+    let finish!: (value: unknown) => void;
+    vi.mocked(f.native.execute).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await f.control.grant("view");
+    const reading = f.access.execute(
+      "agent",
+      { channel: "chat", root: "thread" },
+      { action: "observe" },
+    );
+    const rejected = expect(reading).rejects.toThrow(/^not_visible: /);
+    await f.control.revoke("view");
+    finish({ text: "secret page" });
+    await rejected;
+  });
+
+  it.each([
+    {
+      failure: "an ineligible recipient",
+      message: "Choose an agent running in this Buzz conversation.",
+      grant: (f: ReturnType<typeof fixture>) => {
+        f.stop();
+        return f.control.grant("view");
+      },
+    },
+    {
+      failure: "a revoke during the native grant",
+      message: "Browser access was revoked.",
+      grant: async (f: ReturnType<typeof fixture>) => {
+        let finish!: (grant: { token: string; revision: number }) => void;
+        vi.mocked(f.native.grant).mockReturnValue(
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+        );
+        const granting = f.control.grant("view");
+        await vi.waitFor(() => expect(f.native.grant).toHaveBeenCalled());
+        const revoking = f.control.revoke("view");
+        finish({ token: "late", revision: 1 });
+        await revoking;
+        return granting;
+      },
+    },
+  ])(
+    "keeps the person-facing grant message for $failure unprefixed",
+    async ({ message, grant }) => {
+      const f = fixture();
+      await expect(grant(f)).rejects.toThrow(
+        new RegExp(`^${message.replaceAll(".", "\\.")}$`),
+      );
+    },
+  );
 });

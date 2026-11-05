@@ -32,6 +32,11 @@ const MAX_GUESTS: usize = 8;
 
 static DOCUMENT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// One counter for every guest, so a ref from a closed or evicted guest never
+/// names an element in its replacement.
+#[cfg(target_os = "macos")]
+static DOCUMENT_REVISION: AtomicU64 = AtomicU64::new(0);
+
 fn reset_document<Session>(
     label: &str,
     event: tauri::webview::PageLoadEvent,
@@ -99,9 +104,18 @@ struct BrowserSession {
     control: RefCell<Option<String>>,
     #[cfg(target_os = "macos")]
     control_revision: std::cell::Cell<u64>,
+    #[cfg(target_os = "macos")]
+    document_revision: Rc<std::cell::Cell<u64>>,
 }
 
 impl BrowserSession {
+    /// The revision of the document the guest last committed. Wry reports a
+    /// commit as `PageLoadEvent::Started`, so a load in progress keeps the old one.
+    #[cfg(target_os = "macos")]
+    fn document_revision(&self) -> u64 {
+        self.document_revision.get()
+    }
+
     #[cfg(target_os = "macos")]
     fn revoke_control(&self) {
         if self.control.borrow_mut().take().is_some() {
@@ -272,6 +286,10 @@ fn build_contents(
     let title_snapshot = snapshot.clone();
     let load_snapshot = snapshot.clone();
     let download_snapshot = snapshot.clone();
+    #[cfg(target_os = "macos")]
+    let document_revision = Rc::new(std::cell::Cell::new(0));
+    #[cfg(target_os = "macos")]
+    let load_revision = document_revision.clone();
     // No URL is loaded until native permission handlers replace Wry's defaults.
     // In particular, this builder receives no IPC handler or host initialization scripts.
     let builder = platform::with_storage(WebViewBuilder::new(), storage)
@@ -290,6 +308,10 @@ fn build_contents(
             title_snapshot.borrow_mut().title = title;
         })
         .with_on_page_load_handler(move |event, url| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, PageLoadEvent::Started) {
+                load_revision.set(DOCUMENT_REVISION.fetch_add(1, Ordering::SeqCst) + 1);
+            }
             let mut snapshot = load_snapshot.borrow_mut();
             snapshot.url = url;
             snapshot.loading = matches!(event, PageLoadEvent::Started);
@@ -316,6 +338,8 @@ fn build_contents(
         control: RefCell::new(None),
         #[cfg(target_os = "macos")]
         control_revision: std::cell::Cell::new(0),
+        #[cfg(target_os = "macos")]
+        document_revision,
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
     if !defer_navigation {

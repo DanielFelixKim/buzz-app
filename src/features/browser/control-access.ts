@@ -113,15 +113,15 @@ export class BrowserAccess {
     if (matches.length !== 1 || !entry?.token)
       throw new Error(
         matches.length
-          ? "More than one browser is shared with this agent in this conversation."
-          : "No browser is shared with you in this conversation.",
+          ? "unavailable: More than one browser is shared with this agent in this conversation."
+          : "unavailable: No browser is shared with you in this conversation.",
       );
     const result = await this.native.execute(entry.token, request);
     if (
       !this.eligible(entry.recipient) ||
       ![...this.grants.values()].includes(entry)
     )
-      throw new Error("Browser access was revoked.");
+      throw new Error("not_visible: Browser access was revoked.");
     return result;
   }
 }

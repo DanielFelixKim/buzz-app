@@ -23,7 +23,7 @@ export function apply(ctx: Context) {
 }
 ```
 
-`browser.View` is a host-provided React component accepting `{ url: string; storage?: string }`. It owns the controls, website viewport and native session for its mounted lifetime. It needs a flex container with available height, as supplied by Buzz's panel card. Plugins do not import internal host modules or invoke native commands directly. This preview API is not a stable compatibility contract.
+`browser.View` is a host-provided React component accepting `{ url: string; storage?: string; label?: string; sessionKey?: string; toolbar?: ComponentType<BrowserToolbarProps>; builderlab?: BuilderlabViewerSession; canResumeUrl?: (url: string) => boolean }`. `label` names the tab until the website has a title. `sessionKey` keeps views with the same URL and storage apart. `toolbar` is a plugin contribution beside the address bar (see Plugin browser control below). `builderlab` and `canResumeUrl` serve Builderlab's bundled app panel. It owns the controls, website viewport and native session for its mounted lifetime. It needs a flex container with available height, as supplied by Buzz's panel card. Plugins do not import internal host modules or invoke native commands directly. This preview API is not a stable compatibility contract.
 
 `browser.available` is currently true only in the macOS desktop application. Web, Windows and Linux builds leave existing link handling unchanged. The Windows native positioning path is unverified; Linux needs a different embedding implementation. URLs must use HTTP(S), contain no credentials, and fit the 2,048-byte limit after URL normalization. Native validation also rejects Buzz's own application and development origins. Invalid addresses leave the existing page visible and show an error.
 
@@ -61,7 +61,7 @@ The mounted view reports its viewport bounds and visibility to native code. Nati
 
 This distinction is required by the locked Tauri implementation: its built-in channel-data fetch command bypasses ordinary command ACL checks. Empty Tauri capabilities alone would not establish a guest with no native IPC. The raw guest has no Tauri bridge to invoke that command.
 
-The generated app-command manifest makes native permissions explicit. Only the main webview receives attachment, positioning, navigation, action, status and detachment commands. Capabilities target its webview label, not the containing window; Tauri combines window and webview matches with OR. A sibling guest must not inherit the main webview's commands.
+The generated app-command manifest makes native permissions explicit. Only the main webview receives attachment, positioning, navigation, action, status and detachment commands, and the four agent-control commands `browser_control_available`, `browser_control_grant`, `browser_control_revoke` and `browser_control_execute`. Capabilities target its webview label, not the containing window; Tauri combines window and webview matches with OR. A sibling guest must not inherit the main webview's commands.
 
 URLs submitted through the API/address field and navigation requests surfaced by the native engine pass the URL policy. Back/Forward use native history. Popups and downloads are unsupported. Camera/microphone requests are denied natively; permission behavior requires native acceptance checks on each supported platform. This is not a claim that websites cannot make network requests or that trusted plugin JavaScript is sandboxed.
 
@@ -111,22 +111,53 @@ Check address entry, Back/Forward/Reload, resizing, opening an account menu, clo
 
 ## Plugin browser control
 
-Normal macOS builds provide a native capability for bounded observation, clicks,
-text entry and navigation of website guests. The guest keeps its existing IPC
-isolation. Native grants are revocable and actions require a visible guest;
-hiding, covering or closing the guest revokes access. Arbitrary agent-supplied
-JavaScript is not accepted.
+Normal macOS builds provide a native capability that lets an agent read and operate a website guest. The guest keeps its existing IPC isolation. Native grants are revocable, and actions require a visible guest. Hiding, covering, resizing or closing the guest revokes access. Arbitrary agent-supplied JavaScript is not accepted.
 
-The optional browser-control plugin owns its agent tool, sharing UI, recipient
-selection, and page-opening workflow. It contributes a toolbar to
-`ctx.browser.View`; ordinary views have no sharing controls. The host provides the
-active session and status, a native presentation barrier, shared UI primitives,
-and authenticated grant/execute/revoke operations. It does not open agent pages
-or choose recipients. Plugin interactions can be updated without rebuilding Buzz.
-Installing the native capability does not register an agent tool or enable access to any page.
-The plugin's `open` action creates a new page beside the current conversation and
-assigns it to the authenticated local agent, without an owner Share click.
-Existing user-opened pages still require Share. Take control revokes the page's
-access, and reopening that tab cannot renew it. See
-[Browser control preview](../examples/plugins/browser-control/README.md) for setup,
-automatic agent/conversation sharing, limitations, and disposable native acceptance.
+The [Browser plugin](https://github.com/squareup/buzz-plugin-browser) owns the agent tool, the sharing toolbar, recipient selection and the page-opening workflow. It contributes a toolbar to `ctx.browser.View`, and ordinary views have no sharing controls. The host provides the active session and status, a native presentation barrier, shared UI primitives, and authenticated grant, execute and revoke operations. It does not open agent pages or choose recipients. Installing the native capability registers no agent tool and gives no access to any page.
+
+### Requests and Snapshots
+
+`execute` takes one request and resolves to a Snapshot:
+
+| action | fields |
+|---|---|
+| `observe` | `scope`, optional: `page` (default) or `viewport` |
+| `click` | `ref` |
+| `fill` | `ref`, `text` |
+| `navigate` | `url` |
+
+Native code rejects unknown actions and fields. A `ref` matches `^r[1-9][0-9]{0,9}e[1-9][0-9]{0,5}$`, `text` is at most 8,192 UTF-8 bytes, and `url` must pass the URL policy above.
+
+A Snapshot is `{url, title, revision, loading, text, elements, truncated}`:
+
+- Native code sets `url` (at most 2,048 bytes), `title` (at most 200 characters), `revision` and `loading`. A hostile page cannot change them. A longer title or URL is cut and sets `truncated`.
+- `revision` counts documents. It changes each time a guest commits a new document, from one counter shared by every guest since app start.
+- `loading` is true while WebKit loads a page, and when a new document committed while native code built the Snapshot. The Snapshot can then be out of date.
+- `text` holds at most 20,000 characters of visible page text, on-screen text first. It leaves out input, textarea, select, script, style and contenteditable content.
+- `elements` lists at most 150 visible links, buttons, fields, selects, headings and elements with an explicit `role`, on-screen ones first. Each element is `{ref, role, name, inViewport, href?, checked?, disabled?}`. Each visible `<select>` also lists up to 30 of its options with role `option`. Names never read a field's value or editable content. `href` appears only for HTTP(S) links of at most 2,048 bytes.
+- `truncated` is true when the Snapshot left out or cut any content.
+
+A ref is `r<revision>e<n>`. It names one element until the guest commits a new document, and only listed elements get refs. A ref from an older revision, or one whose element left the document, fails with `stale_ref` before the action runs. The message then adds a newline and a fresh Snapshot.
+
+Page script builds `text` and `elements`, so native code parses that part into fixed types and checks every limit again. A reply that breaks a limit fails with `unavailable`. Every reply, `stale_ref` messages included, is at most 128 KiB.
+
+`click` and `fill` check, in order: visibility, disabled state (`:disabled` or an `aria-disabled="true"` ancestor), element kind, and read-only state. A hidden element fails with `not_interactable` before its kind is checked. `fill` takes text, search, email, URL, telephone and number inputs and textareas. It fails with `unsupported_input` on passwords, file inputs, contenteditable elements, other input types, and fields that change the text, such as letters in a number input. `click` fails with `unsupported_input` on a file input and with `not_interactable` on an option.
+
+### Error codes
+
+Every failure message is `<code>: <one sentence>`:
+
+| code | meaning |
+|---|---|
+| `invalid_request` | The request breaks the schema or a limit, or names no matching option. |
+| `invalid_url` | The URL fails the URL policy. |
+| `unavailable` | No page is shared with the caller here, or the reply was malformed or too large. |
+| `not_visible` | The page was hidden, covered, resized, closed, replaced or evicted, or its access was revoked. |
+| `revoked` | The person took control. The plugin raises it. |
+| `busy` | Another action runs on the page. |
+| `stale_ref` | The ref is from an older revision, or its element left the document. |
+| `not_interactable` | The element fails its action's precondition. |
+| `unsupported_input` | The action cannot operate this kind of element. |
+| `timeout` | The 5 s deadline passed, and the action may have run. |
+
+`BrowserAccess` grant errors keep their unprefixed sentences, because the toolbar shows them to the person.

@@ -2283,7 +2283,7 @@ The optional `browser.control` capability exposes availability, host-checked
 recipient eligibility, `forRecipient()` grant/revoke operations,
 `revokeRecipient()`, and `execute()` using authenticated tool caller context.
 It supplies no sharing component or agent-opening workflow. The
-[browser-control plugin](../examples/plugins/browser-control/README.md) packages
+[Browser plugin](https://github.com/squareup/buzz-plugin-browser) packages
 those behaviors as one independently updateable module.
 
 ## Decisions
