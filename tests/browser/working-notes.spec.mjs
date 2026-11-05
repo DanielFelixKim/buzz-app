@@ -160,15 +160,16 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   await page.keyboard.press("Escape");
   await document.getByRole("button", { name: "Note actions" }).click();
   await page.getByRole("menuitem", { name: "Revision history" }).click();
-  const history = page.getByRole("dialog", { name: "Revision history" });
-  await history.getByRole("button", { name: /Storage research/ }).click();
+  await page
+    .getByRole("menu", { name: "Revision history" })
+    .getByRole("menuitem", { name: /Storage research/ })
+    .click();
+  const history = page.getByRole("dialog", { name: "Revision preview" });
   await expect(
     history.getByRole("region", { name: "Selected revision" }),
   ).toBeVisible();
   await page.goBack();
-  await expect(
-    history.getByRole("region", { name: "Selected revision" }),
-  ).toHaveCount(0);
+  await expect(history).toHaveCount(0);
   await page.goForward();
   await expect(
     history.getByRole("region", { name: "Selected revision" }),
@@ -658,6 +659,39 @@ test("human and agents edit, link, share and export the same working note", asyn
     name: "Markdown",
     exact: true,
   });
+  // Native textarea geometry must follow the pane, including enlarged text.
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.evaluate((narrow) => {
+      document.documentElement.style.fontSize = narrow ? "20px" : "";
+    }, width === 390);
+    await expect
+      .poll(() =>
+        source.evaluate((field) => {
+          const bounds = field.getBoundingClientRect();
+          const pane = field.closest('[aria-label="Note contents"]');
+          const style = getComputedStyle(pane);
+          return Math.abs(
+            pane.getBoundingClientRect().bottom -
+              parseFloat(style.paddingBottom) -
+              bounds.bottom,
+          );
+        }),
+      )
+      .toBeLessThan(2);
+    expect(
+      await source.evaluate((field) =>
+        parseFloat(getComputedStyle(field).fontSize),
+      ),
+    ).toBe(width === 390 ? 17.5 : 14);
+    expect(
+      await source.evaluate((field) => field.scrollHeight > field.clientHeight),
+    ).toBe(false);
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+  });
+  await page.setViewportSize({ width: 1440, height: 950 });
   await source.evaluate((field) => field.setSelectionRange(0, 0));
   const sourcePageBounds = await scrollport.boundingBox();
   await scrollport.click({
@@ -974,14 +1008,16 @@ test("creates, deletes and restores a working note through the editor", async ({
     .getByRole("button", { name: "Delete note", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Choose a revision to restore" })
+    .getByRole("article", { name: "Deleted note" })
+    .getByRole("button", { name: "Note actions" })
     .click();
-  const history = page.getByRole("dialog", { name: "Revision history" });
-  await history.getByRole("button", { name: /Research draft/ }).click();
-  await history
-    .getByRole("button", { name: "Use this revision in editor" })
+  await page.getByRole("menuitem", { name: "Revision history" }).click();
+  await page
+    .getByRole("menu", { name: "Revision history" })
+    .getByRole("menuitem", { name: /Research draft/ })
     .click();
-  await page.getByRole("button", { name: "Restore note", exact: true }).click();
+  const history = page.getByRole("dialog", { name: "Revision preview" });
+  await history.getByRole("button", { name: "Restore this version" }).click();
   await expect(
     page
       .getByRole("article", { name: "Research draft" })
@@ -1322,11 +1358,15 @@ test("reader access hides editing while preserving history", async ({
   ).toHaveCount(0);
   await document.getByRole("button", { name: "Note actions" }).click();
   await page.getByRole("menuitem", { name: "Revision history" }).click();
+  await page
+    .getByRole("menu", { name: "Revision history" })
+    .getByRole("menuitem", { name: /Connected notes plan/ })
+    .click();
   await expect(
-    page.getByRole("dialog", { name: "Revision history" }),
+    page.getByRole("dialog", { name: "Revision preview" }),
   ).toContainText("Connected notes plan");
   await expect(
-    page.getByRole("button", { name: "Use this revision in editor" }),
+    page.getByRole("button", { name: "Restore this version" }),
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.evaluate(() =>

@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -12,7 +11,14 @@ import { noteUrl, type Note } from "../../features/notes/model";
 import type { NotesWorkspace } from "../../features/notes/workspace";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
+import {
+  MenuItem,
+  MenuNote,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
+} from "../../shared/design-system/ui/Menu";
 import styles from "./WorkingNotes.module.css";
 
 const message = (error: unknown) =>
@@ -131,132 +137,246 @@ export function NoteSharing({
   );
 }
 
+function useRevisions(
+  note: Note,
+  workspace: NotesWorkspace,
+  offset: number,
+  enabled = true,
+) {
+  const [page, setPage] = useState<{
+    revisions: Note[];
+    more: boolean;
+    limited: boolean;
+  }>();
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const [busy, setBusy] = useState(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly restarts the read when Retry is requested.
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    setBusy(true);
+    setError("");
+    void workspace
+      .history(note, offset, controller.signal)
+      .then((page) => {
+        controller.signal.throwIfAborted();
+        setPage(page);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setError(message(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setBusy(false);
+      });
+    return () => controller.abort();
+  }, [workspace, note, offset, enabled, attempt]);
+  return { page, error, busy, retry: () => setAttempt((value) => value + 1) };
+}
+
+export function NoteHistoryMenu({
+  note,
+  workspace,
+  disabled,
+  onSelect,
+}: {
+  note: Note;
+  workspace: NotesWorkspace;
+  disabled: boolean;
+  onSelect(revision: string, offset: number): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const { page, error, busy, retry } = useRevisions(
+    note,
+    workspace,
+    offset,
+    open,
+  );
+  return (
+    <MenuSubmenu
+      onOpenChange={(open) => {
+        setOpen(open);
+        if (!open) setOffset(0);
+      }}
+    >
+      <MenuSubmenuTrigger disabled={disabled}>
+        Revision history
+      </MenuSubmenuTrigger>
+      <MenuSubmenuPopup aria-label="Revision history">
+        {busy && <MenuNote role="status">Reading revisions…</MenuNote>}
+        {error && (
+          <>
+            <MenuNote role="alert">{error}</MenuNote>
+            <MenuItem closeOnClick={false} onClick={retry}>
+              Retry history
+            </MenuItem>
+          </>
+        )}
+        {page?.revisions.map((revision) => (
+          <MenuItem
+            key={revision.revision}
+            disabled={busy || !!error}
+            onClick={() => onSelect(revision.revision, offset)}
+          >
+            <span className={styles.revision}>
+              <span>{revision.deleted ? "Deleted" : revision.title}</span>
+              <span className="text-caption text-subtle">
+                {new Date(revision.event.created_at * 1000).toLocaleString()} ·{" "}
+                {revision.revision.slice(0, 8)}
+                {revision.revision === note.revision ? " · Current" : ""}
+              </span>
+            </span>
+          </MenuItem>
+        ))}
+        {!busy && page?.revisions.length === 0 && (
+          <MenuNote>No retained revisions.</MenuNote>
+        )}
+        {page?.more && (
+          <MenuItem
+            disabled={busy}
+            closeOnClick={false}
+            onClick={() => {
+              setOffset(offset + 100);
+            }}
+          >
+            Load older revisions
+          </MenuItem>
+        )}
+        {page?.limited && (
+          <MenuNote>
+            More retained history exceeds this app’s page limit.
+          </MenuNote>
+        )}
+        {offset > 0 && (
+          <MenuItem
+            disabled={busy}
+            closeOnClick={false}
+            onClick={() => {
+              setOffset(Math.max(0, offset - 100));
+            }}
+          >
+            Newer revisions
+          </MenuItem>
+        )}
+      </MenuSubmenuPopup>
+    </MenuSubmenu>
+  );
+}
+
 export function NoteHistory({
   note,
   workspace,
   canEdit,
-  onUse,
+  dirty,
+  pending,
+  error: saveError,
+  onRestore,
   onClose,
   selection,
-  onSelection,
-  onPage,
+  trigger,
 }: {
   note: Note;
   workspace: NotesWorkspace;
   canEdit: boolean;
-  onUse(revision: Note): void;
+  dirty: boolean;
+  pending: boolean;
+  error: string;
+  onRestore(revision: Note): void;
   onClose(): void;
-  selection?: { revision?: string; offset?: number } | undefined;
-  onSelection?(revision: string): void;
-  onPage?(offset: number): void;
+  selection: { revision?: string; offset?: number };
+  trigger: RefObject<HTMLElement | null>;
 }) {
-  const [revisions, setRevisions] = useState<Note[]>([]);
-  const [more, setMore] = useState(false);
-  const [limited, setLimited] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [localSelected, setSelected] = useState<Note>();
-  const [localOffset, setOffset] = useState(0);
-  const offset = selection ? (selection.offset ?? 0) : localOffset;
-  const selected = selection
-    ? revisions.find((revision) => revision.revision === selection.revision)
-    : localSelected;
-  const load = useCallback(
-    async (offset: number, signal?: AbortSignal) => {
-      setBusy(true);
-      setError("");
-      try {
-        const page = await workspace.history(note, offset, signal);
-        signal?.throwIfAborted();
-        setRevisions(page.revisions);
-        setMore(page.more);
-        setLimited(page.limited);
-      } catch (error) {
-        if (!signal?.aborted) setError(message(error));
-      } finally {
-        if (!signal?.aborted) setBusy(false);
-      }
-    },
-    [workspace, note],
+  const { page, error, busy, retry } = useRevisions(
+    note,
+    workspace,
+    selection.offset ?? 0,
   );
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(offset, controller.signal);
-    return () => controller.abort();
-  }, [load, offset]);
+  const selected = page?.revisions.find(
+    (revision) => revision.revision === selection.revision,
+  );
+  const [confirm, setConfirm] = useState(false);
+  const restoreButton = useRef<HTMLButtonElement>(null);
   return (
     <Dialog
       open
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title="Revision history"
+      title="Revision preview"
+      description="Restoring saves this version as a new latest revision. All history is kept."
       size="wide"
       height="stable"
+      preventClose={pending}
+      finalFocus={trigger}
+      actions={
+        canEdit &&
+        selected?.editable &&
+        !selected.deleted &&
+        (selected.revision !== note.revision || dirty) && (
+          <Button
+            ref={restoreButton}
+            disabled={pending || busy || !!error}
+            loading={pending}
+            onClick={() => {
+              if (dirty) setConfirm(true);
+              else onRestore(selected);
+            }}
+          >
+            Restore this version
+          </Button>
+        )
+      }
     >
-      <div className={styles.stack}>
-        {error && <p role="alert">{error}</p>}
-        {busy && <p role="status">Reading revisions…</p>}
-        <ul className={styles.history}>
-          {revisions.map((revision) => (
-            <li key={revision.revision}>
-              <SurfaceButton
-                className={styles.revision}
+      {error && (
+        <>
+          <p role="alert">{error}</p>
+          <Button onClick={retry}>Retry history</Button>
+        </>
+      )}
+      {saveError && <p role="alert">{saveError}</p>}
+      {busy && <p role="status">Reading revision…</p>}
+      {selected && (
+        <section aria-label="Selected revision" className={styles.stack}>
+          <h2 className="text-label">
+            {selected.deleted ? "Deleted" : selected.title}
+          </h2>
+          <p className="text-caption text-subtle">
+            {new Date(selected.event.created_at * 1000).toLocaleString()} ·{" "}
+            {selected.revision.slice(0, 8)}
+          </p>
+          <pre className={styles.source}>
+            {selected.markdown ||
+              (selected.deleted ? "The note was deleted." : "Empty revision")}
+          </pre>
+        </section>
+      )}
+      {!busy && !error && !selected && (
+        <p>Choose a version from Note actions → Revision history.</p>
+      )}
+      {confirm && selected && (
+        <AlertDialog
+          title="Replace unsaved changes?"
+          description="Restoring this version replaces your pending edits and saves immediately. All saved revisions are kept."
+          finalFocus={restoreButton}
+          onClose={() => setConfirm(false)}
+          actions={
+            <>
+              <Button variant="ghost" onClick={() => setConfirm(false)}>
+                Cancel
+              </Button>
+              <Button
                 onClick={() => {
-                  setSelected(revision);
-                  onSelection?.(revision.revision);
+                  setConfirm(false);
+                  onRestore(selected);
                 }}
               >
-                <span>{revision.deleted ? "Deleted" : revision.title}</span>
-                <span className="text-caption text-subtle">
-                  {new Date(revision.event.created_at * 1000).toLocaleString()}{" "}
-                  · {revision.revision.slice(0, 8)}
-                </span>
-              </SurfaceButton>
-            </li>
-          ))}
-        </ul>
-        {more && (
-          <Button
-            disabled={busy}
-            onClick={() => {
-              setOffset(offset + 100);
-              onPage?.(offset + 100);
-            }}
-          >
-            Load older revisions
-          </Button>
-        )}
-        {limited && (
-          <p role="status">
-            More retained history exceeds this app’s page limit.
-          </p>
-        )}
-        {offset > 0 && (
-          <Button
-            disabled={busy}
-            onClick={() => {
-              setOffset(Math.max(0, offset - 100));
-              onPage?.(Math.max(0, offset - 100));
-            }}
-          >
-            Newer revisions
-          </Button>
-        )}
-        {selected && (
-          <section aria-label="Selected revision" className={styles.stack}>
-            <h2 className="text-label">{selected.title}</h2>
-            <pre className={styles.source}>
-              {selected.markdown || "Empty revision"}
-            </pre>
-            {canEdit && selected.editable && !selected.deleted && (
-              <Button onClick={() => onUse(selected)}>
-                Use this revision in editor
+                Replace and restore
               </Button>
-            )}
-          </section>
-        )}
-      </div>
+            </>
+          }
+        />
+      )}
     </Dialog>
   );
 }

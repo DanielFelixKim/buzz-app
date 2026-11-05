@@ -49,7 +49,7 @@ import {
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { Select } from "../../shared/design-system/ui/Select";
-import { NoteHistory, NoteSharing } from "./NoteDialogs";
+import { NoteHistory, NoteHistoryMenu, NoteSharing } from "./NoteDialogs";
 import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { NoteSaveAction } from "./NoteSaveAction";
 import { NoteByline } from "./NoteMetadata";
@@ -139,6 +139,11 @@ export function NoteDocument({
     return subscribeView(workspace.session.scope, read);
   }, [workspace, autoSaveKey, initialAutoSave]);
   useEffect(() => () => saveRequest.current?.abort(), []);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
+  const [historySelection, setHistorySelection] = useState<{
+    revision: string;
+    offset: number;
+  }>();
   const shareTrigger = useRef<HTMLButtonElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const editor = useRef<NoteEditorHandle>(null);
@@ -371,7 +376,7 @@ export function NoteDocument({
     }
   };
   const save = useCallback(
-    async (automatic = false) => {
+    async (automatic = false, revision?: Note) => {
       const current = latest.current;
       const base = current.note;
       if (
@@ -381,32 +386,48 @@ export function NoteDocument({
         !current.canEdit ||
         current.unavailable ||
         current.conflict ||
-        (base.title === current.title &&
+        (!revision &&
+          base.title === current.title &&
           base.markdown === current.markdown &&
           !current.restoreFrom) ||
-        (base.deleted && !current.restoreFrom)
+        (base.deleted && !current.restoreFrom && !revision)
       )
         return;
       const request = new AbortController();
       saveRequest.current = request;
       changedAt.current = undefined;
+      const restoration = base.deleted
+        ? (revision ?? current.restoreFrom)
+        : undefined;
       setSaving(true);
+      if (revision) setBusy(true);
       setSaveError("");
       setStatus("");
       try {
         const next = await workspace.save(
           base,
           {
-            title: current.title,
-            markdown: current.markdown,
-            ...(current.restoreFrom
-              ? { restoreFrom: current.restoreFrom }
-              : {}),
+            title: revision?.title ?? current.title,
+            markdown: revision?.markdown ?? current.markdown,
+            ...(restoration ? { restoreFrom: restoration } : {}),
           },
           base.deleted ? "restore" : "update",
           request.signal,
         );
         request.signal.throwIfAborted();
+        if (revision) {
+          latest.current = {
+            ...latest.current,
+            note: next,
+            title: next.title,
+            markdown: next.markdown,
+            restoreFrom: undefined,
+          };
+          adopt(next);
+          setDialog(undefined);
+          setStatus("Saved");
+          return;
+        }
         const unchanged =
           latest.current.title === current.title &&
           latest.current.markdown === current.markdown;
@@ -429,6 +450,7 @@ export function NoteDocument({
         saveRequest.current = null;
         if (!request.signal.aborted) {
           setSaving(false);
+          if (revision) setBusy(false);
           if (refreshAfterSave.current) {
             refreshAfterSave.current = false;
             void refresh();
@@ -436,11 +458,12 @@ export function NoteDocument({
         }
       }
     },
-    [workspace, refresh, setEditing],
+    [workspace, refresh, setEditing, adopt, setDialog],
   );
   useEffect(() => {
     if (
       !autoSave ||
+      dialog === "history" ||
       !note ||
       (title === note.title && markdown === note.markdown) ||
       !canEdit ||
@@ -464,6 +487,7 @@ export function NoteDocument({
     return () => window.clearTimeout(timer);
   }, [
     autoSave,
+    dialog,
     canEdit,
     unavailable,
     note,
@@ -649,6 +673,7 @@ export function NoteDocument({
                 <MenuTrigger
                   render={
                     <IconButton
+                      ref={actionsTrigger}
                       aria-label="Note actions"
                       title="Note actions"
                       icon={<DotsThreeIcon size={16} />}
@@ -710,12 +735,21 @@ export function NoteDocument({
                       </MenuSubmenuPopup>
                     </MenuSubmenu>
                   )}
-                  <MenuItem
-                    disabled={saving}
-                    onClick={() => setDialog("history")}
-                  >
-                    Revision history
-                  </MenuItem>
+                  <NoteHistoryMenu
+                    note={note}
+                    workspace={workspace}
+                    disabled={busy || saving}
+                    onSelect={(revision, offset) => {
+                      setHistorySelection({ revision, offset });
+                      setLocalDialog("history");
+                      presentation.current.onViewChange?.({
+                        edit: editing,
+                        dialog: "history",
+                        revision,
+                        offset,
+                      });
+                    }}
+                  />
                   <MenuItem onClick={exportMarkdown}>Export Markdown</MenuItem>
                   {canEdit && !note.deleted && (
                     <MenuItem
@@ -751,14 +785,18 @@ export function NoteDocument({
               available.
             </p>
             {canEdit && (
-              <Button onClick={() => setDialog("history")}>
-                Choose a revision to restore
-              </Button>
+              <p>
+                Choose a version from Note actions → Revision history to restore
+                it.
+              </p>
             )}
           </div>
         )}
         {note && (editing || (!unavailable && !note.deleted)) && (
-          <div ref={body} className={styles.stack}>
+          <div
+            ref={body}
+            className={source && editing ? styles.sourceBody : styles.stack}
+          >
             <NoteEditor
               ref={editor}
               source={source}
@@ -794,28 +832,14 @@ export function NoteDocument({
           <NoteHistory
             note={note}
             workspace={workspace}
-            canEdit={canEdit && !saving}
-            selection={view}
-            onSelection={(revision) =>
-              presentation.current.onViewChange?.({
-                ...presentation.current.view,
-                revision,
-              })
-            }
-            onPage={(offset) => {
-              const { revision: _revision, ...rest } =
-                presentation.current.view ?? {};
-              presentation.current.onViewChange?.({ ...rest, offset });
-            }}
+            canEdit={canEdit && !conflict && !unavailable}
+            dirty={dirty || !!restoreFrom}
+            pending={busy || saving}
+            error={saveError}
+            trigger={actionsTrigger}
+            selection={view ?? historySelection ?? {}}
             onClose={() => setDialog(undefined)}
-            onUse={(revision) => {
-              setRestoreFrom(note.deleted ? revision : undefined);
-              setTitle(revision.title);
-              setMarkdown(revision.markdown);
-              setLocalEditing(true);
-              setLocalDialog(undefined);
-              presentation.current.onViewChange?.({ edit: true });
-            }}
+            onRestore={(revision) => void save(false, revision)}
           />
         )}
         {note && dialog === "delete" && (

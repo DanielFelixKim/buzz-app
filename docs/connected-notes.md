@@ -151,7 +151,12 @@ This is a local editing preference, not shared document metadata. When disabled,
 a small prominent Save action appears after Viewing/Editing and before Refresh
 while modified, using motion/react for its enter/exit with reduced-motion and
 keyboard transitions kept immediate. Clean documents show no Save action.
-Restoring a deleted note remains explicit.
+Revision history is a Note actions submenu with paged retained versions. Selecting a
+version opens its addressable preview. Restore this version saves immediately as
+a new latest revision, including with auto-save disabled; pending edits require
+confirmation. Queued auto-save pauses while a revision preview is open. Failed restoration
+keeps the prior draft and preview; CAS conflicts require comparison. Deleted notes
+use the same explicit action.
 `NoteEditor` reuses `EditableInput`, `ComposerFormattingTools`, `ComposerLinkDialog`
 and the composer's ProseMirror schema/commands. Enter inserts a newline. There are
 no chat send, recipient or attachment controls.
@@ -162,7 +167,8 @@ Markdown remains the persisted format. The note-owned importer restores supporte
 inline formatting, lists, quotes and code into the existing schema. Unsupported
 blocks, including headings and tables, remain editable Markdown source rather
 than being discarded. **Note actions → Markdown source** opens source editing;
-**Formatted text** in the same menu returns to the formatted editor. The
+**Formatted text** in the same menu returns to the formatted editor. Source mode
+fills the remaining document height and uses body-sized monospaced text. The
 formatting bar hides in source mode. An untouched editor does not normalize the
 original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.

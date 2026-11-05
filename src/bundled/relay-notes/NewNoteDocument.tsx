@@ -302,7 +302,7 @@ export function NewNoteDocument({
         {error && (
           <p role="alert">Auto-save is paused. Your draft is kept. {error}</p>
         )}
-        <div ref={body}>
+        <div ref={body} className={source ? styles.sourceBody : styles.stack}>
           <NoteEditor
             ref={editor}
             value={markdown}

@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import {
@@ -344,4 +345,160 @@ it("cancels idle saves on unmount while retaining the workspace draft", async ()
   expect(f.workspace.drafts.get(noteKey(f.note))?.title).toBe(
     "Keep this draft",
   );
+});
+
+async function historyFixture(automatic = false, deleted = false) {
+  const f = await fixture(automatic);
+  vi.useRealTimers();
+  const current = await f.realSave(
+    f.note,
+    { title: "New plan", markdown: deleted ? "" : "New body" },
+    deleted ? "delete" : "update",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh note" }));
+  if (deleted) await screen.findByText(/This note was deleted/);
+  else await waitFor(() => expect(f.title).toHaveValue("New plan"));
+  return { ...f, current };
+}
+async function previewOriginal() {
+  fireEvent.click(screen.getByRole("button", { name: "Note actions" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Revision history" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: /^Plan/ }));
+  const preview = await screen.findByRole("dialog", {
+    name: "Revision preview",
+  });
+  await within(preview).findByRole("button", { name: "Restore this version" });
+  return preview;
+}
+it.each([false, true])(
+  "restores immediately as a new head and keeps history (auto-save=%s)",
+  async (automatic) => {
+    const f = await historyFixture(automatic);
+    const preview = await previewOriginal();
+    fireEvent.click(
+      within(preview).getByRole("button", { name: "Restore this version" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(f.title).toHaveValue("Plan");
+    expect(f.save).toHaveBeenCalledOnce();
+    expect(f.save.mock.calls[0]?.[0].revision).toBe(f.current.revision);
+    expect(f.save.mock.calls[0]?.[2]).toBe("update");
+    const history = await f.workspace.history(f.note);
+    expect(history.revisions.map((note) => note.markdown)).toEqual([
+      "Original body",
+      "New body",
+      "Original body",
+    ]);
+    expect(history.revisions[0]?.revision).not.toBe(f.note.revision);
+    expect(f.workspace.drafts.size).toBe(0);
+  },
+);
+it("confirms pending edits, cancels without saving, and keeps the draft on restore failure", async () => {
+  const f = await historyFixture(true);
+  f.change("Keep my draft");
+  const preview = await previewOriginal();
+  vi.useFakeTimers();
+  await advance(15_000);
+  expect(f.save).not.toHaveBeenCalled();
+  vi.useRealTimers();
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "Restore this version" }),
+  );
+  const confirm = await screen.findByRole("alertdialog", {
+    name: "Replace unsaved changes?",
+  });
+  fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+  expect(f.title).toHaveValue("Keep my draft");
+  expect(f.save).not.toHaveBeenCalled();
+  f.failNextArtifact();
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "Restore this version" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Replace and restore" }),
+  );
+  await within(preview).findByRole("alert");
+  expect(f.title).toHaveValue("Keep my draft");
+  expect(f.workspace.drafts.get(noteKey(f.note))?.title).toBe("Keep my draft");
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "Restore this version" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Replace and restore" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(f.title).toHaveValue("Plan");
+});
+it("protects a pending restoration and reconciles its live echo", async () => {
+  const f = await historyFixture();
+  const pending = gate();
+  const accepted = gate();
+  f.save.mockImplementationOnce(async (...args) => {
+    const next = await f.realSave(...args);
+    accepted.release();
+    await pending.promise;
+    return next;
+  });
+  const preview = await previewOriginal();
+  try {
+    fireEvent.click(
+      within(preview).getByRole("button", { name: "Restore this version" }),
+    );
+    await act(async () => {
+      await accepted.promise;
+    });
+    expect(
+      within(preview).getByRole("button", { name: "Restore this version" }),
+    ).toBeDisabled();
+    expect(
+      within(preview).getByRole("button", { name: "Close" }),
+    ).toBeDisabled();
+    fireEvent.click(within(preview).getByRole("button", { name: "Close" }));
+    expect(preview).toBeInTheDocument();
+    act(() => f.echo(f.heads.get(f.note.id)));
+  } finally {
+    pending.release();
+  }
+  await saved(f.save);
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(f.title).toHaveValue("Plan");
+});
+it("preserves a draft when another author wins before restore", async () => {
+  const f = await historyFixture();
+  f.change("My pending draft");
+  const preview = await previewOriginal();
+  await f.edit(f.carl, f.current, {
+    title: "Remote winner",
+    markdown: "Keep remote",
+  });
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "Restore this version" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Replace and restore" }),
+  );
+  await screen.findByRole("dialog", { name: "This note has a newer revision" });
+  expect(f.title).toHaveValue("My pending draft");
+  expect((await f.workspace.open(f.note)).title).toBe("Remote winner");
+});
+it("restores a deleted note directly from a retained version", async () => {
+  const f = await historyFixture(false, true);
+  const preview = await previewOriginal();
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "Restore this version" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect((await f.workspace.open(f.note)).markdown).toBe("Original body");
+  expect(f.save.mock.calls[0]?.[2]).toBe("restore");
+  expect(f.save.mock.calls[0]?.[1].restoreFrom?.revision).toBe(f.note.revision);
 });

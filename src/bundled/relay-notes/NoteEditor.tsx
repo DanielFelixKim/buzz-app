@@ -112,7 +112,9 @@ export function NoteEditor({
     onLinkOpenChange(true);
   };
   return (
-    <div className={styles.stack}>
+    <div
+      className={`${styles.stack} ${editing && source ? styles.sourceEditor : ""}`}
+    >
       {editing &&
         !source &&
         toolbarTarget &&
@@ -140,7 +142,8 @@ export function NoteEditor({
               ref={sourceInput}
               aria-label="Markdown"
               value={value}
-              rows={18}
+              rows={4}
+              textSize="body"
               variant="code"
               disabled={disabled || !editing}
               onKeyDown={(event) => {

@@ -346,7 +346,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   revisions require comparison. Clicking the blank area below the body places the cursor at the end
   while editing. **Link** accepts a URL or a loaded note;
   linking grants no access. **Note actions → Markdown source** opens source
-  editing; **Formatted text** in that menu switches back.
+  editing in a taller, larger-text field; **Formatted text** in that menu switches back.
+  **Note actions → Revision history** lists retained versions in a submenu. Select
+  one to preview it, then **Restore this version** to save it immediately as a new
+  latest revision, even with auto-save disabled. Pending edits require confirmation;
+  all saved history is kept. Deleted notes can be restored the same way.
   **Note actions → Linked notes** appears when loaded notes link to the current
   document and lists those notes. **Share note** opens the same searchable
   member picker used by channels. Owners and admins can add people or agents and

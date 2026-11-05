@@ -7,10 +7,16 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { notesFixture } from "../../features/notes/testing";
 import { createNotesWorkspace } from "../../features/notes/workspace";
-import { NoteHistory, NoteSharing } from "./NoteDialogs";
+import { NoteHistoryMenu, NoteSharing } from "./NoteDialogs";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+} from "../../shared/design-system/ui/Menu";
 
 beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
@@ -19,7 +25,7 @@ afterEach(() => {
   cleanup();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
-it("restores the first history page when Back removes an explicit offset", async () => {
+it("pages history inside the submenu, keeps it open, and selects with the page offset", async () => {
   const fixture = await notesFixture();
   const workspace = createNotesWorkspace(fixture.session);
   const note = fixture.seed("Plan", "Original");
@@ -28,31 +34,90 @@ it("restores the first history page when Back removes an explicit offset", async
     .mockImplementation(async (_note, offset) => ({
       revisions: [{ ...note, title: offset ? "Older plan" : "Current plan" }],
       more: !offset,
-      limited: false,
+      limited: !!offset,
     }));
-  const onPage = vi.fn();
-  const props = {
-    note,
-    workspace,
-    canEdit: false,
-    onUse: vi.fn(),
-    onClose: vi.fn(),
-    onPage,
-  };
+  const onSelect = vi.fn();
   try {
-    const view = render(<NoteHistory {...props} selection={{}} />);
-    await screen.findByRole("button", { name: /Current plan/ });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Load older revisions" }),
+    render(
+      <MenuRoot>
+        <MenuTrigger>Actions</MenuTrigger>
+        <MenuPopup>
+          <NoteHistoryMenu
+            note={note}
+            workspace={workspace}
+            disabled={false}
+            onSelect={onSelect}
+          />
+        </MenuPopup>
+      </MenuRoot>,
     );
-    expect(onPage).toHaveBeenCalledWith(100);
-    view.rerender(<NoteHistory {...props} selection={{ offset: 100 }} />);
-    await screen.findByRole("button", { name: /Older plan/ });
-    view.rerender(<NoteHistory {...props} selection={{}} />);
-    await screen.findByRole("button", { name: /Current plan/ });
-    await waitFor(() => expect(history.mock.calls.at(-1)?.[1]).toBe(0));
-    view.unmount();
+    expect(history).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Actions" }));
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Revision history" }),
+    );
+    await screen.findByRole("menuitem", { name: /Current plan/ });
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Load older revisions" }),
+    );
+    await screen.findByRole("menuitem", { name: /Older plan/ });
+    expect(
+      screen.getByRole("menu", { name: "Revision history" }),
+    ).toHaveTextContent("page limit");
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Newer revisions" }),
+    );
+    await screen.findByRole("menuitem", { name: /Current plan/ });
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Load older revisions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Older plan/ }),
+    );
+    expect(onSelect).toHaveBeenCalledWith(note.revision, 100);
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
   } finally {
+    cleanup();
+    workspace.dispose();
+    fixture.dispose();
+  }
+});
+
+it("offers retry after a failed history read", async () => {
+  const fixture = await notesFixture();
+  const workspace = createNotesWorkspace(fixture.session);
+  const note = fixture.seed("Plan", "Original");
+  const history = vi
+    .spyOn(workspace, "history")
+    .mockRejectedValueOnce(new Error("Offline"));
+  try {
+    render(
+      <MenuRoot>
+        <MenuTrigger>Actions</MenuTrigger>
+        <MenuPopup>
+          <NoteHistoryMenu
+            note={note}
+            workspace={workspace}
+            disabled={false}
+            onSelect={vi.fn()}
+          />
+        </MenuPopup>
+      </MenuRoot>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Actions" }));
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Revision history" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Retry history" }),
+    );
+    await screen.findByRole("menuitem", { name: /Plan/ });
+    expect(history).toHaveBeenCalledTimes(2);
+  } finally {
+    cleanup();
     workspace.dispose();
     fixture.dispose();
   }
@@ -90,7 +155,7 @@ it("uses the channel member picker while guarding a pending explicit invitation"
       screen.getByRole("searchbox", { name: "Search people and agents" }),
       { target: { value: "Sam" } },
     );
-    fireEvent.click(
+    await userEvent.click(
       await screen.findByRole("button", { name: /^Add Sam \([^)]+\)$/ }),
     );
     await waitFor(() => expect(member).toHaveBeenCalledOnce());
@@ -98,7 +163,7 @@ it("uses the channel member picker while guarding a pending explicit invitation"
     view.rerender(<NoteSharing {...props} note={{ ...note }} />);
     try {
       expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
-      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      await userEvent.click(screen.getByRole("button", { name: "Close" }));
       expect(onClose).not.toHaveBeenCalled();
     } finally {
       release();
