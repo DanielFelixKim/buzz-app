@@ -169,7 +169,8 @@ outside those threads goes first while they hold at most a quarter of it,
 first, so replies kept from earlier repairs cannot crowd out channel evidence
 and a busy thread cannot empty a quiet one. The observation completes rather
 than resetting. Roots fetched only to group replies are bounded too, and those of
-remembered threads go last, so their replies stay grouped. A lazy addressed
+remembered threads go last, so their replies stay grouped; a thread no longer
+among the 1,000 remembered gives its root up like any other. A lazy addressed
 query returns up to 50 kind-9/40002 messages. For those exact IDs and
 unresolved failed targets, general `#e` queries page signed kind-40003 edits
 and kind-5/9005 deletions, then deletions of the edits; `include_aux` on an ordinary `#p` query is not a supported relay

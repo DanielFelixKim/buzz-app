@@ -484,6 +484,44 @@ it("a remembered thread's root outlasts 1,024 other structure fetches, and a roo
   );
 });
 
+it("as the viewer moves on to new threads, the structure cache keeps the 1,000 remembered threads' roots and 1,024 others, letting the oldest go", async () => {
+  const h = await setup({
+    channels: ["team"],
+    frontiers: { team: NOW },
+    sampled: false,
+  });
+  // One session, 42 repairs, each after the viewer replied in 50 new threads
+  // whose roots no window or sample returns: each repair reads them whole,
+  // fetching their roots by ID, so the cache sees 2,100 remembered roots.
+  const threads: { root: RelayEvent; answer: RelayEvent }[] = [];
+  for (let round = 0; round < 42; round++) {
+    // Only this round's history: earlier threads' replies are retained, and
+    // their reads would find nothing new.
+    h.store.length = 0;
+    for (let i = 0; i < 50; i++) {
+      const n = round * 50 + i;
+      const root = event("team", peer, NOW - 700_000 + n);
+      const mine = reply("team", viewer, NOW - 500_000 + n * 2, root);
+      const answer = reply("team", peer, mine.created_at + 1, root);
+      h.store.push(root, mine, answer);
+      threads.push({ root, answer });
+    }
+    await (round ? h.owner.capability.refresh() : h.owner.capability.ensure());
+  }
+  // A reply names its root while the cache holds it.
+  const held = threads.map(
+    ({ root, answer }) =>
+      h.owner.capability.attention("team", answer.id).rootId === root.id,
+  );
+  expect(held.filter(Boolean)).toHaveLength(1000 + 1024);
+  // The threads past the newest 1,000 are forgotten, here as on disk, and
+  // the oldest of their roots go first: the first round's, and some of the
+  // second's.
+  expect((await remembered(h.storage)).roots.size).toBe(1000);
+  expect(held.slice(0, 50)).not.toContain(true);
+  expect(held.slice(100)).not.toContain(false);
+});
+
 it("a full budget evicts the busiest channel's oldest ordinary evidence, never a quiet channel's only message or the viewer's thread", async () => {
   const h = await setup({
     channels: ["quiet", "lone", "busy"],

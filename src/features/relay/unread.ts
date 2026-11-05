@@ -444,8 +444,9 @@ export function createUnread({
   const rememberedRoot = (event: RelayEvent) =>
     !threadReference(event) && pinned(event);
   // How many remembered threads' roots the structure cache holds, counted
-  // for the remembered set as it was (which only grows in place), and
-  // counted again once it changes or structure is let go elsewhere.
+  // for the remembered set as it was (which grows in place), and counted
+  // again once it changes, a save forgets threads, or structure is let go
+  // elsewhere.
   let heldRoots:
     | { of: typeof remembered; size: number; count: number }
     | undefined;
@@ -1649,11 +1650,21 @@ export function createUnread({
   /** Fetched structure, 1,024 events besides the roots of remembered
    * threads it holds, which go last as their evidence does: a cold thread
    * does not fetch its root again for a reply it already holds. Each thread
-   * has one root, so the remembered set bounds them and the oldest other
-   * event goes first; a root passed over moves to the newest end, so the
-   * next eviction does not walk it again. A root let go releases its
-   * structure lookup (see `want`). */
+   * has one root, and each save forgets all but the newest 1,000 remembered
+   * threads, which bounds them; the oldest other event goes first, and a root
+   * passed over moves to the newest end, so the next eviction does not walk
+   * it again. */
   function keep(event: RelayEvent) {
+    // A stale count is counted again by `letGo`.
+    if (heldRoots && !lookupEvents.has(event.id) && rememberedRoot(event))
+      heldRoots.count++;
+    lookupEvents.delete(event.id);
+    lookupEvents.set(event.id, event);
+    letGo();
+  }
+  /** Lets go of structure past the bound, and says whether any went. A root
+   * let go releases its structure lookup (see `want`). */
+  function letGo() {
     const size = remembered?.size ?? 0;
     let roots = heldRoots;
     if (!roots || roots.of !== remembered || roots.size !== size) {
@@ -1662,9 +1673,7 @@ export function createUnread({
         if (rememberedRoot(held)) count++;
       roots = heldRoots = { of: remembered, size, count };
     }
-    if (!lookupEvents.has(event.id) && rememberedRoot(event)) roots.count++;
-    lookupEvents.delete(event.id);
-    lookupEvents.set(event.id, event);
+    let evicted = false;
     for (const [id, oldest] of lookupEvents) {
       if (lookupEvents.size - roots.count <= 1024) break;
       lookupEvents.delete(id);
@@ -1672,11 +1681,13 @@ export function createUnread({
         lookupEvents.set(id, oldest);
         continue;
       }
+      evicted = true;
       const lookup = lookups.get(
         `${conversationKey(channelOf(oldest) ?? "", id)}:structure`,
       );
       if (lookup) lookup.released = true;
     }
+    return evicted;
   }
   /** A root the participation pass fetched by ID is structure, as a
    * lookup's fetch is: it groups its thread's replies and counts only once a
@@ -2607,13 +2618,18 @@ export function createUnread({
       },
       /** The newest roots become the remembered threads, with the walk mark
        * advanced to the newest authored time when the walk reached its end;
-       * a walk cut short by a dropped page is taken up by the next repair. */
+       * a walk cut short by a dropped page is taken up by the next repair.
+       * The rest are forgotten in this session as on disk, so their roots
+       * are ordinary structure from then on, let go past its bound. */
       save() {
-        const nextRoots = new Map(
-          [...roots]
-            .sort(([, a], [, b]) => b.at - a.at)
-            .slice(0, THREAD_PARTICIPATION_LIMIT),
-        );
+        const ranked = [...roots].sort(([, a], [, b]) => b.at - a.at);
+        const nextRoots = new Map(ranked.slice(0, THREAD_PARTICIPATION_LIMIT));
+        if (ranked.length > nextRoots.size) {
+          for (const [key] of ranked.slice(nextRoots.size)) roots.delete(key);
+          heldRoots = undefined;
+          // Retained replies may name a root let go.
+          if (letGo()) indexed = false;
+        }
         const walk =
           walked && newestWalked !== undefined
             ? { since: newestWalked }

@@ -309,7 +309,8 @@ never asked twice at once. A session reset or access change during a lookup
 discards its answer; parents the reset kept are asked again.
 
 Lookup results are kept apart from counted evidence, in a store bounded to
-4,096 decided parents and 1,024 fetched events. Fetched parents and roots are
+4,096 decided parents and 1,024 fetched events, besides the roots of the at
+most 1,000 remembered threads. Fetched parents and roots are
 structure only: they give a reply its root for grouping and navigation, but
 they never count, never start another lookup (so a lookup cannot climb an old
 thread) and never fill the 4,096-event window. Whether the viewer wrote or
