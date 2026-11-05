@@ -79,6 +79,11 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
             left.id === right.id && left.authorId === right.authorId,
         ),
     ) &&
+    sameArray(
+      left.pinnedBy,
+      right.pinnedBy,
+      (a, b) => a.id === b.id && a.pinnedBy === b.pinnedBy,
+    ) &&
     left.threadRootId === right.threadRootId &&
     left.replyParentId === right.replyParentId &&
     left.sentFromThread?.rootId === right.sentFromThread?.rootId &&

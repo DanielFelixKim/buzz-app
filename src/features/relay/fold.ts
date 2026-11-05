@@ -4,6 +4,7 @@ import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { agentAudience } from "./audience";
 import { pluginRequestId } from "./plugin-request";
+import { messagePins } from "./pins";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { huddleRoom } from "../huddle/lifecycle";
@@ -405,6 +406,7 @@ export function foldMessages(
     for (const { url, name } of projected.names)
       if (!attachmentNames.has(url)) attachmentNames.set(url, name);
     const authorId = messageAuthor(event, signingAuthority);
+    const pins = messagePins(event, channelId, aux, deleted);
     const pluginRequest = pluginRequestId(event);
     const summary = parseSummary(summaries.get(event.id));
     const pending = includeReplies
@@ -499,6 +501,7 @@ export function foldMessages(
           aux.filter((item) => item.kind === 7),
           deleted,
         ),
+        ...(pins.length ? { pinnedBy: Object.freeze(pins) } : {}),
         replyCount: summary.replyCount + pending.length,
         // Pending repliers lead, returning ones included, so they stay within
         // the visible avatar stack.

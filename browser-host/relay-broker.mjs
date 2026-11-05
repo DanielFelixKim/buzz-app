@@ -578,7 +578,37 @@ export function validMessageDeletion(event) {
     new Set(targets.map(([, id]) => id)).size === targets.length &&
     kinds.length > 0 &&
     kinds.length <= 3 &&
-    kinds.every(([, kind]) => ["7", "9", "40002"].includes(kind))
+    kinds.every(([, kind]) => ["7", "9", "40002", "40004"].includes(kind))
+  );
+}
+
+/** Match `validatePinTemplate` in `src/features/relay/pins.ts`: one channel,
+ * one target message, no content. The relay decides membership. */
+export function validPin(event) {
+  if (
+    event?.kind !== 40004 ||
+    event.content !== "" ||
+    !Array.isArray(event.tags) ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((value) => typeof value === "string") &&
+        ["h", "e", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const named = (name) => event.tags.filter(([key]) => key === name);
+  const [channel] = named("h");
+  const [target] = named("e");
+  return (
+    named("h").length === 1 &&
+    named("e").length === 1 &&
+    named("client-id").length <= 1 &&
+    channel[1].length > 0 &&
+    channel[1].length <= 256 &&
+    /^[0-9a-f]{64}$/.test(target[1]) &&
+    named("client-id").every(([, id]) => id.length <= 128)
   );
 }
 
@@ -1576,6 +1606,7 @@ export function relayBrokerPlugin({
                 30177,
                 30178,
                 40100,
+                40004,
                 1984,
                 45010,
                 ...WORKFLOW_KINDS,
@@ -2935,6 +2966,12 @@ export function relayBrokerPlugin({
               if (!validCatalogEnvelope(filters))
                 return json(res, 400, {
                   error: "Malformed catalog publication",
+                  sent: false,
+                });
+            } else if (filters?.kind === 40004) {
+              if (!validPin(filters))
+                return json(res, 400, {
+                  error: "Malformed pin",
                   sent: false,
                 });
             } else if (filters?.kind === 45010) {

@@ -16,7 +16,7 @@ import { foldMessages } from "./fold";
 import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
 
-const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
+const AUX = new Set([5, 7, 9005, 40003, 40004, 39005, 39006]);
 const PAGE_SIZE = 50;
 const INITIAL_WINDOW_SIZE = 10;
 const MAX_PAGES = 10;
@@ -446,7 +446,7 @@ export function createThreadView({
     // incomplete selected fold. Existing displayed content remains untouched.
     if (!stage([event])) return "error";
     const overlays = await targetReader.read(
-      [{ kinds: [5, 7, 9005, 40003, 39005], "#e": [id], limit: 500 }],
+      [{ kinds: [5, 7, 9005, 40003, 40004, 39005], "#e": [id], limit: 500 }],
       { signal: owned.signal },
     );
     if (!active()) return "cancelled";

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   createUpstream,
   validFilters,
+  validMessageDeletion,
   validMessageTemplate,
+  validPin,
 } from "./relay-broker.mjs";
 
 test("read broker accepts non-channel finite reads without relaxing filter budgets", () => {
@@ -229,4 +231,83 @@ test("workflow list batches alone may exceed four filters, with 128 unique chann
     [...batch.slice(0, 5), null],
   ])
     assert.equal(validFilters(invalid), false);
+});
+
+test("broker signs only the pin shape and its author's removal", () => {
+  const target = "a".repeat(64);
+  const pin = (tags, content = "") => ({
+    kind: 40004,
+    content,
+    created_at: 1788810000,
+    tags,
+  });
+  assert.equal(
+    validPin(
+      pin([
+        ["h", "room"],
+        ["e", target],
+        ["client-id", "intent"],
+      ]),
+    ),
+    true,
+  );
+  for (const rejected of [
+    pin(
+      [
+        ["h", "room"],
+        ["e", target],
+      ],
+      "note",
+    ),
+    pin([["e", target]]),
+    pin([["h", "room"]]),
+    pin([
+      ["h", ""],
+      ["e", target],
+    ]),
+    pin([
+      ["h", "room"],
+      ["e", "A".repeat(64)],
+    ]),
+    pin([
+      ["h", "room"],
+      ["e", target],
+      ["e", target],
+    ]),
+    pin([
+      ["h", "room"],
+      ["h", "other"],
+      ["e", target],
+    ]),
+    pin([
+      ["h", "room"],
+      ["e", target],
+      ["p", target],
+    ]),
+    pin([
+      ["h", "room"],
+      ["e", target, ""],
+    ]),
+    {
+      ...pin([
+        ["h", "room"],
+        ["e", target],
+      ]),
+      kind: 9,
+    },
+  ])
+    assert.equal(validPin(rejected), false);
+  assert.equal(
+    validMessageDeletion({
+      kind: 5,
+      content: "",
+      created_at: 1788810000,
+      tags: [
+        ["h", "room"],
+        ["e", target],
+        ["k", "40004"],
+      ],
+    }),
+    true,
+  );
 });

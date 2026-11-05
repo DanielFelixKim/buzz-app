@@ -3682,7 +3682,7 @@ export function createChannelStore(
             incomingIds.has(event.id) ||
             !(
               channelRowKind(event.kind) ||
-              [40003, 5, 9005, 7, 39005].includes(event.kind)
+              [40003, 5, 9005, 7, 40004, 39005].includes(event.kind)
             )
           )
             continue;

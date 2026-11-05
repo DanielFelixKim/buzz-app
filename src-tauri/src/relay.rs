@@ -365,6 +365,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !valid_canvas(event) {
             return Err("Malformed Canvas save".into());
         }
+    } else if event.kind == 40004 {
+        if !valid_pin(event) {
+            return Err("Malformed pin".into());
+        }
     } else if event.kind == 28936 {
         // A NIP-43 leave request revokes the signer's own membership: empty
         // content and exactly the NIP-70 protected tag, nothing else.
@@ -426,6 +430,30 @@ fn valid_member_command(event: &EventTemplate) -> bool {
             (9030 | 9032, [p, r]) => target(p) && role(r),
             _ => false,
         }
+}
+
+/** Match `validatePinTemplate` in `src/features/relay/pins.ts`: one channel,
+ * one target message, no content. The relay decides membership. */
+fn valid_pin(event: &EventTemplate) -> bool {
+    let count = |name: &str| {
+        event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some(name))
+            .count()
+    };
+    event.content.is_empty()
+        && count("h") == 1
+        && count("e") == 1
+        && count("client-id") <= 1
+        && event.tags.iter().all(|tag| match tag.as_slice() {
+            [name, channel] if name == "h" => {
+                !channel.is_empty() && channel.encode_utf16().count() <= 256
+            }
+            [name, id] if name == "e" => hex_key(id),
+            [name, id] if name == "client-id" => id.encode_utf16().count() <= 128,
+            _ => false,
+        })
 }
 
 // Match the broker's purpose-bound Canvas admission, including legacy untagged retries.
@@ -527,7 +555,7 @@ fn valid_message_deletion(event: &EventTemplate) -> bool {
         && (1..=3).contains(&kinds.len())
         && kinds
             .iter()
-            .all(|tag| matches!(tag[1].as_str(), "7" | "9" | "40002"))
+            .all(|tag| matches!(tag[1].as_str(), "7" | "9" | "40002" | "40004"))
 }
 
 fn validate_workflow_template(event: &EventTemplate) -> Result<()> {

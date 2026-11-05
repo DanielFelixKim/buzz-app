@@ -1,6 +1,6 @@
 import type { EventData } from "./events";
 
-const AUXILIARY = new Set([5, 7, 9005, 40003, 39005]);
+const AUXILIARY = new Set([5, 7, 9005, 40003, 40004, 39005]);
 /** Visibility, not a second membership model. Reference-only auxiliaries need
  * retained target evidence; never guess that an orphan belongs to a public entity.
  * Resolve the whole batch before filtering, independently of arrival order. */

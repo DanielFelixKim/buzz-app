@@ -1089,6 +1089,72 @@ fn shared_kind_five_signer_accepts_message_and_reaction_deletion_only_in_broker_
 }
 
 #[test]
+fn packaged_signer_accepts_only_the_pin_shape() {
+    let target = "a".repeat(64);
+    let pin = |content: &str, tags: Vec<Vec<String>>| EventTemplate {
+        kind: 40004,
+        created_at: 123,
+        content: content.into(),
+        tags,
+    };
+    let tag = |name: &str, value: &str| vec![name.to_string(), value.to_string()];
+    let valid = vec![
+        tag("h", "room"),
+        tag("e", &target),
+        tag("client-id", "intent"),
+    ];
+    assert!(validate_event("https://relay.test", &pin("", valid.clone())).is_ok());
+    assert!(validate_event(
+        "https://relay.test",
+        &pin("", vec![tag("h", "room"), tag("e", &target)])
+    )
+    .is_ok());
+    for rejected in [
+        pin("note", valid.clone()),
+        pin("", vec![tag("e", &target)]),
+        pin("", vec![tag("h", "room")]),
+        pin("", vec![tag("h", ""), tag("e", &target)]),
+        pin("", vec![tag("h", "room"), tag("e", &"A".repeat(64))]),
+        pin(
+            "",
+            vec![tag("h", "room"), tag("e", &target), tag("e", &target)],
+        ),
+        pin(
+            "",
+            vec![tag("h", "room"), tag("h", "other"), tag("e", &target)],
+        ),
+        pin(
+            "",
+            vec![tag("h", "room"), tag("e", &target), tag("p", &target)],
+        ),
+        pin(
+            "",
+            vec![
+                tag("h", "room"),
+                vec!["e".into(), target.clone(), "".into()],
+            ],
+        ),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
+}
+
+#[test]
+fn shared_kind_five_signer_accepts_pin_removal() {
+    let event = EventTemplate {
+        kind: 5,
+        created_at: 123,
+        content: String::new(),
+        tags: vec![
+            vec!["h".into(), "room".into()],
+            vec!["e".into(), "a".repeat(64)],
+            vec!["k".into(), "40004".into()],
+        ],
+    };
+    assert!(validate_event("https://relay.test", &event).is_ok());
+}
+
+#[test]
 fn shared_kind_five_signer_accepts_only_one_agent_record_deletion() {
     let owner = "a".repeat(64);
     let agent = "b".repeat(64);

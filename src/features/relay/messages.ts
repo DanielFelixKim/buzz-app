@@ -6,6 +6,7 @@ import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { messageAuthor } from "./fold";
+import { PIN_KIND } from "./pins";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
@@ -209,15 +210,17 @@ export function createMessages(
       throw new Error("Choose between 1 and 100 events to remove");
     const originals = ids.map((id) => {
       const event = find(id);
-      if (!event || ![7, 9, 40002].includes(event.kind))
+      if (!event || ![7, 9, 40002, PIN_KIND].includes(event.kind))
         throw new Error("Load the message or reaction before removing it");
+      // Reactions and pins are removed only by their signer.
+      const signerOnly = event.kind === 7 || event.kind === PIN_KIND;
       const agentOwnerRemoval =
         !!viewer &&
-        event.kind !== 7 &&
+        !signerOnly &&
         messageAuthor(event, signingAuthority) === authorization?.agentId &&
         authorization.ownerId === viewer;
       if (
-        event.kind === 7
+        signerOnly
           ? event.pubkey !== viewer
           : !ownedMessage(event) && !agentOwnerRemoval
       )

@@ -13,6 +13,15 @@ export type MessageReaction = Readonly<{
   events: readonly Readonly<{ id: string; authorId: string }>[];
 }>;
 
+/** One member's pin of a channel message (kind 40004). */
+export type PinRecord = Readonly<{
+  id: string;
+  messageId: string;
+  pinnedBy: string;
+  /** Unix seconds from the signed pin. */
+  pinnedAt: number;
+}>;
+
 /** Folded, read-only channel state. Rows are domain data, not wire events or presentation. */
 export type ChannelSummary = Readonly<{
   id: string;
@@ -161,6 +170,8 @@ export type ChannelMessage = Readonly<{
   /** Event-local mappings, never the current community palette. */
   emoji?: readonly CustomEmoji[];
   reactions: readonly MessageReaction[];
+  /** Live pins, earliest first; absent when the message is not pinned. */
+  pinnedBy?: readonly PinRecord[];
   /** Canonical thread-opening target from signed reply/root tags; absent on root messages. */
   threadRootId?: string | undefined;
   /** Immediate signed reply target; separate from the canonical thread root. */
