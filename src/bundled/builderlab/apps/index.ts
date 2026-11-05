@@ -96,17 +96,20 @@ export function applyApps(
       canResumeUrl: viewerAppDomain() ? isViewerTarget : undefined,
       label: appName(target),
       actions: apps
-        ? (current: string) =>
-            isAppUrl(current) &&
-            createElement(ShareApp, {
-              // Sharing follows the app the panel shows now: another sign-in
-              // or app starts over, dropping any answer for the previous one.
-              key: `${state.account?.subject}\n${new URL(current).host}`,
-              url: current,
+        ? (current: string) => {
+            if (!isAppUrl(current)) return false;
+            // Sharing follows the app the panel shows now, identified by its
+            // origin: another sign-in or app starts over, dropping any answer
+            // for the previous one, while moving within an app keeps it.
+            const app = new URL(current).origin;
+            return createElement(ShareApp, {
+              key: `${state.account?.subject}\n${app}`,
+              url: app,
               apps,
               communities: joined,
               relay: ctx.relay,
-            })
+            });
+          }
         : undefined,
     });
   };

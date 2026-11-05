@@ -232,7 +232,14 @@ it("binds Share to the app the panel shows now, not the one it opened", async ()
     key: string;
     props: { url: string };
   };
-  expect(share.props.url).toBe(beta);
+  expect(share.props.url).toBe("https://beta--team.apps.builderlab.xyz");
+  // Moving within an app keeps the same Share, so nothing reloads.
+  const moved = actions(`${beta.replace("/page", "/route")}#changed`) as {
+    key: string;
+    props: { url: string };
+  };
+  expect(moved.key).toBe(share.key);
+  expect(moved.props.url).toBe(share.props.url);
   // Another app's host remounts Share, so nothing from the first carries over.
   expect(share.key).not.toBe((actions(alpha) as { key: string }).key);
   expect(actions("https://example.com/")).toBe(false);
