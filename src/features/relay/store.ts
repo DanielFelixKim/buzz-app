@@ -721,8 +721,8 @@ export function createChannelStore(
    * over from them. A failed read only leaves notices out until the next page
    * or head read. */
   async function fillNotices(state: WindowState, head: boolean) {
-    // Notices are read down from the head; a detached segment shows none.
-    if (state.ceiling !== undefined) return;
+    // Explicit seeks omit notices; a sliding reader continues their descent.
+    if (state.ceiling !== undefined && state.ceilingId === undefined) return;
     if (head) state.noticeHead = true;
     const reading = state.noticeRead;
     if (

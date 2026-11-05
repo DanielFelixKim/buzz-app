@@ -45,6 +45,7 @@ function harness({
     hold?: Promise<void> | undefined;
     failHead?: boolean;
     aux?: RelayEvent[];
+    notices?: RelayEvent[];
   } = {};
   let live!: LiveCallbacks;
   const base = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -53,6 +54,16 @@ function harness({
       ...base.transport,
       async query(filters, signal) {
         const filter = filters[0];
+        if (filter?.kinds?.includes(40099))
+          return (gate.notices ?? [])
+            .filter(
+              (event) =>
+                filter.until === undefined ||
+                event.created_at < filter.until ||
+                (event.created_at === filter.until &&
+                  event.id > (filter.before_id ?? "")),
+            )
+            .slice(0, filter.limit);
         if (!filter?.top_level) return [];
         reads.push(filter);
         await gate.hold;
@@ -660,4 +671,35 @@ it("traverses omitted dense-second pages when a newer page fits the allowance", 
   }
   expect(h.window().hasNewer).toBeFalsy();
   expect(seen.size).toBe(1000);
+});
+
+it("continues membership-notice descent after the history window slides", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  const notice = (time: number, target: string) =>
+    signed(h.relay, {
+      kind: 40099,
+      created_at: time,
+      tags: [["h", "c"]],
+      content: JSON.stringify({
+        type: "member_joined",
+        actor: h.alice.pubkey,
+        target,
+      }),
+    });
+  const target = notice(T0 + 45 * HOUR, h.alice.pubkey);
+  h.gate.notices = [
+    ...Array.from({ length: 500 }, (_, i) =>
+      notice(T0 + 50 * HOUR, i.toString(16).padStart(64, "0")),
+    ),
+    target,
+  ].sort(newestFirst);
+  await h.open();
+  for (let step = 0; step < 2; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  expect(h.window().hasNewer).toBe(true);
+  await vi.waitFor(() =>
+    expect(h.window().rows.map((row) => row.id)).toContain(target.id),
+  );
 });
