@@ -622,7 +622,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const id = required(args, "id");
     const emoji = required(args, "emoji");
     if (args.off !== true) {
-      await client.publish({ kind: 7, content: emoji, tags: [["e", id]] });
+      // NIP-25 author tag: the target's author finds reactions with one #p read.
+      const target = await tools.event(id);
+      await client.publish({
+        kind: 7,
+        content: emoji,
+        tags: [
+          ["e", id],
+          ["p", target.pubkey],
+        ],
+      });
       return "reacted";
     }
     const mine = await client.query([

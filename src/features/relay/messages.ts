@@ -464,6 +464,8 @@ export function createMessages(
         tags: [
           ["h", channelId],
           ["e", messageId],
+          // NIP-25 author tag: the target's author finds reactions with one #p read.
+          ["p", original.pubkey],
           ...(emoji && value.toLowerCase() === `:${emoji.shortcode}:`
             ? [["emoji", emoji.shortcode, emoji.url]]
             : emojiTags(value)),

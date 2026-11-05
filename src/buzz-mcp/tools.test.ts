@@ -883,6 +883,21 @@ it("refuses read arguments it cannot apply, saying how to fix them", async () =>
   expect(client.query).not.toHaveBeenCalled();
 });
 
+it("reacts addressed to the message's author", async () => {
+  const { client, published } = fake(community);
+  await callTool(client, {}, "react", { id: root, emoji: "👍" });
+  expect(published).toEqual([
+    {
+      kind: 7,
+      content: "👍",
+      tags: [
+        ["e", root],
+        ["p", alice],
+      ],
+    },
+  ]);
+});
+
 it("takes back its own reaction", async () => {
   const reaction = event({
     id: "9".repeat(64),

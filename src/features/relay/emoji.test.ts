@@ -185,6 +185,8 @@ it("reactions use retained thread targets after shared-cache eviction", () => {
     tags: expect.arrayContaining([
       ["h", "c"],
       ["e", root.id],
+      // NIP-25: addresses the target's author so their Inbox can find it.
+      ["p", member.pubkey],
     ]),
   });
 });
