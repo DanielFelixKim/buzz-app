@@ -470,7 +470,7 @@ confirmation.
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
-  them. Do not assume a particular optional plugin is on. Manage plugins checks saved plugin sources for updates when opened and when the window regains focus. An **Update** button opens the review before anything is installed.
+  them. Do not assume a particular optional plugin is on. Manage plugins checks saved folder sources and Git plugins with automatic checks enabled when opened and when the window regains focus. Git plugins need to declare update support; you can still check explicitly in their details. An **Update** button opens the review before anything is installed.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.
   A saved plugin sort can briefly wait for its plugin at startup, within the

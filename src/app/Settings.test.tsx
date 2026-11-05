@@ -728,6 +728,7 @@ function reviewPluginFixture(
       id: "example.external",
       name: "Zebra external",
       apiVersion: 1,
+      updates: { defaultEnabled: true },
       discovery: { category: "agents", tags: ["Essentials"] },
     },
     source: "external",
@@ -3048,4 +3049,63 @@ it("uses the latest source result after an update review closes", async () => {
     name: "Zebra external details",
   });
   expect(within(pane).queryByRole("button", { name: /^Update$/ })).toBeNull();
+});
+
+it.each(["saved", "default", "undeclared"])(
+  "honors automatic Git opt-outs (%s) while allowing an explicit pane check",
+  async (preference) => {
+    const fixture = reviewPluginFixture();
+    Object.assign(fixture.external, {
+      updateSource: savedGitSource,
+      updateChecks: preference === "saved" ? false : undefined,
+    });
+    if (preference !== "saved")
+      Object.assign(fixture.external.manifest, {
+        updates:
+          preference === "default" ? { defaultEnabled: false } : undefined,
+      });
+    const checkGit = vi.fn(async () => gitCheckResult("new"));
+    Object.assign(fixture.manager, { imports: { checkGit } });
+    await act(async () => {
+      fixture.publish();
+    });
+    await act(async () => {
+      fireEvent.focus(window);
+    });
+    expect(checkGit).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View Zebra external details" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+  },
+);
+
+it("does not reacquire unchanged Git sources after management actions", async () => {
+  const fixture = reviewPluginFixture();
+  Object.assign(fixture.external, { updateSource: savedGitSource });
+  const checkGit = vi.fn(async () => gitCheckResult("new"));
+  Object.assign(fixture.manager, { imports: { checkGit } });
+  await act(async () => {
+    fixture.publish();
+  });
+  await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+  await act(async () => {
+    fixture.snapshot.busy = true;
+    fixture.publish();
+  });
+  await act(async () => {
+    fixture.snapshot.busy = false;
+    fixture.snapshot.configuration.catalog = {
+      ...fixture.snapshot.configuration.catalog,
+      plugins: fixture.snapshot.configuration.catalog.plugins.map((p) => ({
+        ...p,
+        enabled: false,
+      })),
+    };
+    fixture.publish();
+  });
+  expect(checkGit).toHaveBeenCalledOnce();
+  fireEvent.focus(window);
+  await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
 });

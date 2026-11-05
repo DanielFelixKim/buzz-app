@@ -143,3 +143,63 @@ it("records a failed preview read without keeping a stale revision", () => {
     "Source unavailable",
   );
 });
+
+it("drops an obsolete installation retry after rollback rejoins the original read", async () => {
+  let finish!: (value: ReturnType<typeof preview>) => void;
+  const checkGit = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(preview("obsolete"));
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  const original = plugin();
+  const first = checks.check(original);
+  await Promise.resolve();
+  const obsolete = checks.check({ ...original, revision: "temporary" });
+  const latest = checks.check(original, undefined, false);
+  await Promise.resolve();
+  finish(preview("new"));
+  await Promise.all([first, obsolete, latest]);
+  expect(checkGit).toHaveBeenCalledOnce();
+  expect(pluginUpdateCheck(checks.snapshot(), original)?.revision).toBe("new");
+});
+
+it("does not retry a replaced source after its old read settles", async () => {
+  let finish!: (value: ReturnType<typeof preview>) => void;
+  const checkGit = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(preview("new"));
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  const original = plugin();
+  const first = checks.check(original);
+  await Promise.resolve();
+  const obsolete = checks.check({ ...original, revision: "temporary" });
+  const replacement = {
+    ...original,
+    updateSource: {
+      ...original.updateSource,
+      repository: "https://example.com/replacement",
+    },
+  };
+  await checks.check(replacement);
+  finish(preview("old"));
+  await Promise.all([first, obsolete]);
+  expect(checkGit).toHaveBeenCalledTimes(2);
+  expect(pluginUpdateCheck(checks.snapshot(), replacement)?.revision).toBe(
+    "new",
+  );
+});

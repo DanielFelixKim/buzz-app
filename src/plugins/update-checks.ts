@@ -13,6 +13,8 @@ export type UpdateCheck = {
 };
 type Snapshot = Readonly<Record<string, UpdateCheck>>;
 const identity = (plugin: PluginInfo) => JSON.stringify(plugin.updateSource);
+const installation = (plugin: PluginInfo) =>
+  JSON.stringify([plugin.revision, plugin.updateSource]);
 export function pluginUpdateCheck(
   snapshot: Snapshot,
   plugin: PluginInfo | undefined,
@@ -38,6 +40,7 @@ export function pluginUpdateAvailable(snapshot: Snapshot, plugin: PluginInfo) {
 export function createPluginUpdateChecks(imports: PluginImports | undefined) {
   let snapshot: Snapshot = {};
   let sequence = 0;
+  const installations = new Map<string, string>();
   const listeners = new Set<() => void>();
   const pending = new Map<
     string,
@@ -54,10 +57,15 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
   async function check(
     plugin: PluginInfo,
     authorize?: Authorize,
+    force = true,
   ): Promise<void> {
     const source = plugin.updateSource;
     if (!imports || plugin.source !== "external" || !source) return;
     const id = plugin.manifest.id;
+    const installed = installation(plugin);
+    installations.set(id, installed);
+    const current = () => installations.get(id) === installed;
+    if (!force && pluginUpdateCheck(snapshot, plugin)) return;
     const key = JSON.stringify(
       "root" in source
         ? ["folder", id, source.root, source.path]
@@ -71,7 +79,8 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
         (snapshot[id]?.sequence ?? 0) > request.sequence)
     ) {
       await request.promise.catch(() => {});
-      return check(plugin, authorize);
+      if (current()) return check(plugin, authorize);
+      return;
     }
     if (!request) {
       const promise = (async () => {
@@ -119,7 +128,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     } catch (reason) {
       error = String(reason);
     }
-    if (snapshot[id]?.sequence === request.sequence)
+    if (current() && snapshot[id]?.sequence === request.sequence)
       publish(id, { ...next, checking: false, revision, error });
   }
   return {
@@ -133,8 +142,14 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     check,
     observe(plugin: PluginInfo) {
       const started = ++sequence;
+      const installed = installation(plugin);
+      installations.set(plugin.manifest.id, installed);
       return (revision: string | undefined, error: string | null = null) => {
-        if ((snapshot[plugin.manifest.id]?.sequence ?? 0) > started) return;
+        if (
+          installations.get(plugin.manifest.id) !== installed ||
+          (snapshot[plugin.manifest.id]?.sequence ?? 0) > started
+        )
+          return;
         publish(plugin.manifest.id, {
           installedRevision: plugin.revision,
           source: identity(plugin),

@@ -1761,6 +1761,7 @@ test("a focused Git update refreshes an already open details pane", async ({
         id: "example.refresh",
         name: "Refresh example",
         apiVersion: 1,
+        updates: { defaultEnabled: true },
       },
     },
   ]);

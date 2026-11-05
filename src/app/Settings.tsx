@@ -35,6 +35,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -55,6 +56,7 @@ import {
   type PluginUpdateChecks,
 } from "../plugins/update-checks";
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
+import { pluginUpdateSource } from "../plugins/updates";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
@@ -1257,14 +1259,43 @@ export function Settings({
     },
     [communities.relay],
   );
+  const refreshPluginSources = useCallback(
+    (force: boolean) => {
+      if (
+        selected !== "plugins" ||
+        !catalog ||
+        busy ||
+        document.visibilityState === "hidden"
+      )
+        return;
+      for (const plugin of catalog.plugins) {
+        const source = plugin.updateSource;
+        if (
+          !source ||
+          managedBy(managed, plugin.manifest.id) ||
+          (!("root" in source) &&
+            !pluginUpdateSource(plugins, plugin.manifest.id))
+        )
+          continue;
+        void updateChecks.check(plugin, authorizePluginGit, force);
+      }
+    },
+    [
+      selected,
+      catalog,
+      busy,
+      managed,
+      updateChecks,
+      authorizePluginGit,
+      plugins,
+    ],
+  );
+  const refreshOnFocus = useEffectEvent(() => refreshPluginSources(true));
   useEffect(() => {
-    if (selected !== "plugins" || !catalog || busy) return;
+    if (selected !== "plugins") return;
     let active = true;
     const refresh = () => {
-      if (!active || document.visibilityState === "hidden") return;
-      for (const plugin of catalog.plugins)
-        if (!managedBy(managed, plugin.manifest.id))
-          void updateChecks.check(plugin, authorizePluginGit);
+      if (active) refreshOnFocus();
     };
     queueMicrotask(refresh);
     window.addEventListener("focus", refresh);
@@ -1274,7 +1305,10 @@ export function Settings({
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [selected, catalog, managed, busy, updateChecks, authorizePluginGit]);
+  }, [selected]);
+  useEffect(() => {
+    refreshPluginSources(false);
+  }, [refreshPluginSources]);
   // Keep announcements outside filtered rows and the covered narrow catalog.
   const announcement = (
     <div
