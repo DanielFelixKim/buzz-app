@@ -465,6 +465,14 @@ Release builds ignore it. With no setting, the normal Keychain read is unchanged
 Human import, creation, and deletion keep their own owners.
 Legacy agent import also keeps its exact-source read owner.
 
+macOS debug builds with the `native-mcp` feature disable legacy Keychain UI
+before app context or pending Sign out work starts. Startup fails if the app
+cannot disable UI or verify the disabled flag. The app retains the guard for
+the process lifetime and emits `BUZZ_NATIVE_KEYCHAIN_UI_DISABLED_V1` on stderr
+after verification. This guard covers the app's legacy Keychain calls. It does
+not cover Data Protection Keychain, `LAContext`, helper processes, or signing
+tools. Helpers must disable their own UI.
+
 The helper receives a fresh Unix socket as stdout and no stdin. It must return
 exactly 63 bytes of nsec text with no newline, then close stdout and exit zero.
 The native identity owner still validates the nsec checksum and scalar. Exit 10

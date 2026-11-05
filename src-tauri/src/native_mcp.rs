@@ -3,6 +3,30 @@
 use std::ffi::OsString;
 use tauri::{plugin::TauriPlugin, Config, Wry};
 
+#[cfg(all(debug_assertions, feature = "native-mcp", target_os = "macos"))]
+pub fn disable_keychain_ui() -> Result<(), String> {
+    use security_framework::os::macos::keychain::{KeychainUserInteractionLock, SecKeychain};
+    use std::sync::OnceLock;
+
+    // Drop enables UI again. Static storage keeps the guard until the process exits.
+    static GUARD: OnceLock<Result<KeychainUserInteractionLock, String>> = OnceLock::new();
+    GUARD
+        .get_or_init(|| {
+            let guard = SecKeychain::disable_user_interaction()
+                .map_err(|error| format!("disable Keychain UI: {}", error.code()))?;
+            if SecKeychain::user_interaction_allowed()
+                .map_err(|error| format!("check Keychain UI: {}", error.code()))?
+            {
+                return Err("Keychain UI remains enabled".into());
+            }
+            Ok(guard)
+        })
+        .as_ref()
+        .map_err(Clone::clone)?;
+    eprintln!("BUZZ_NATIVE_KEYCHAIN_UI_DISABLED_V1");
+    Ok(())
+}
+
 pub fn plugin(
     config: &Config,
     opt_in: Option<OsString>,
@@ -73,6 +97,17 @@ fn launch_port(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(debug_assertions, feature = "native-mcp", target_os = "macos"))]
+    #[test]
+    fn keychain_ui_stays_disabled() {
+        use security_framework::os::macos::keychain::SecKeychain;
+
+        for _ in 0..2 {
+            disable_keychain_ui().unwrap();
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+        }
+    }
 
     fn test_config() -> Config {
         let mut config: Config = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();

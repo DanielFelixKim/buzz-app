@@ -823,6 +823,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(all(debug_assertions, feature = "native-mcp", target_os = "macos"))]
+    native_mcp::disable_keychain_ui().unwrap_or_else(|message| {
+        eprintln!("Cannot disable native test Keychain UI: {message}");
+        std::process::exit(1);
+    });
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.
     let native_mcp = native_mcp::plugin(
