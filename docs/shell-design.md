@@ -434,7 +434,7 @@ closable tab in the focused pane. If focus is in the permanent main conversation
 it closes the selected tab in the visible side pane instead. A selected closable
 main-pane tab takes priority over that fallback. Hidden tabs remain untouched;
 With nothing to close, Cmd+W on macOS closes the window while keeping Buzz and
-running agents alive; Ctrl+W on Windows/Linux does nothing.
+running agents alive; Ctrl+W on Windows/Linux closes the window, as Alt+F4 does.
 The macOS native Close menu uses the same action, including when an embedded
 browser owns focus (embedded browsing is currently macOS-only). On macOS,
 Cmd+Shift+W and the native **Close All Tabs** menu item close all tabs in the current channel,
