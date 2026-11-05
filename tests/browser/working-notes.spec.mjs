@@ -1257,14 +1257,19 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   await body.fill("Manual body");
   const save = document.getByRole("button", { name: "Save", exact: true });
   for (const theme of ["light", "dark"]) {
-    for (const width of [1440, 390]) {
+    // Fractional text metrics expose WebKit clipping after the reveal settles.
+    for (const { width, textSize } of [
+      { width: 1440, textSize: 16 },
+      { width: 1440, textSize: 16.125 },
+      { width: 390, textSize: 20 },
+    ]) {
       await page.setViewportSize({ width, height: 950 });
       await page.evaluate(
-        ({ theme, width }) => {
+        ({ theme, textSize }) => {
           document.documentElement.classList.toggle("dark", theme === "dark");
-          document.documentElement.style.fontSize = width === 390 ? "20px" : "";
+          document.documentElement.style.fontSize = `${textSize}px`;
         },
-        { theme, width },
+        { theme, textSize },
       );
       await expect(save).toBeInViewport({ ratio: 1 });
       await expect
@@ -1301,7 +1306,9 @@ test("auto-saves the editor without losing focus and animates manual Save into t
       expect(saveBox.x).toBeGreaterThan(modeBox.x + modeBox.width);
       expect(saveBox.x + saveBox.width).toBeLessThan(refreshBox.x);
       await page.screenshot({
-        path: testInfo.outputPath(`manual-save-${theme}-${width}.png`),
+        path: testInfo.outputPath(
+          `manual-save-${theme}-${width}-${textSize}.png`,
+        ),
       });
     }
   }
@@ -1321,6 +1328,7 @@ test("auto-saves the editor without losing focus and animates manual Save into t
   await page.getByRole("option", { name: "Editing", exact: true }).click();
   await body.fill("Reduced motion draft");
   await expect(save).toBeVisible();
+  await expect(save).toBeInViewport({ ratio: 1 });
   await document.getByRole("button", { name: "Page actions" }).click();
   await page
     .getByRole("menuitem", { name: "Revision history", exact: true })

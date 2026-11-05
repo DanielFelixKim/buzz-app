@@ -26,9 +26,16 @@ export function NoteSaveAction({
         <motion.div
           key="save"
           className={styles.saveAction}
-          initial={{ width: 0, opacity: 0, x: -4 }}
-          animate={{ width: "auto", opacity: 1, x: 0 }}
-          exit={{ width: 0, opacity: 0, x: -4 }}
+          initial={{ width: 0, opacity: 0, x: -4, overflow: "hidden" }}
+          animate={{
+            width: "auto",
+            opacity: 1,
+            x: 0,
+            overflow: "hidden",
+            // A settled clip can crop fractional button bounds in WebKit.
+            transitionEnd: { overflow: "visible" },
+          }}
+          exit={{ width: 0, opacity: 0, x: -4, overflow: "hidden" }}
           transition={{
             duration: instant ? 0 : 0.22,
             ease: [0.2, 0.8, 0.2, 1],

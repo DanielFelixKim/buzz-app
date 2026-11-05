@@ -83,14 +83,23 @@ export async function notesFixture() {
     accepted: RelayEvent[] = [],
     queries: ReadFilter[][] = [];
   let agentKeys = [carl.pubkey, ned.pubkey];
+  const channelSnapshots = new Map<
+    string,
+    { state: string; events: ReturnType<typeof eventDto>[] }
+  >();
   const channelEvents = () =>
     [...channels.values()].flatMap((channel) => {
+      // A relay serves persisted signed snapshots, not newly signed copies on
+      // every read. Include all fields: tests also mutate roles directly.
+      const state = JSON.stringify(channel);
+      const cached = channelSnapshots.get(channel.id);
+      if (cached?.state === state) return cached.events;
       const tags = [
         ["d", channel.id],
         ["t", channel.type],
         ...channel.labels.map((label) => ["t", label]),
       ];
-      return [
+      const events = [
         signed(relay, {
           kind: 39000,
           created_at: channel.updated,
@@ -131,6 +140,8 @@ export async function notesFixture() {
           ],
         }),
       ].map(eventDto);
+      channelSnapshots.set(channel.id, { state, events });
+      return events;
     });
   const queryAs = async (who: string, filters: readonly ReadFilter[]) => {
     queries.push(filters.map((filter) => ({ ...filter })));
