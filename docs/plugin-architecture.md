@@ -556,7 +556,7 @@ which uploads of local files use. The kit grants nothing `ctx.agents` and
 `ctx.host` do not already give the plugin.
 
 A plugin, bundled or installed, can add a tab to the settings of agents
-running on this device, whatever their type, with
+running here or hosted, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives
 `{ agent }`; it reads and saves through the plugin's own `ctx.agents`. An
 optional `when(agent)` limits the tab to the agents it returns true for, and an
@@ -564,7 +564,11 @@ optional `subscribe(listener)` tells the host when `when` may answer
 differently, so the tab appears or goes without a reload. A `when` that throws
 hides only its own tab. The tab
 follows Activity and precedes History and Settings, in the agent's Build view and
-its profile panel, and is not offered for hosted or elsewhere agents. It is
+its profile panel. An agent on another device (`elsewhere`) shows no sections,
+so no added tab either. Between here and hosted the host does not filter: a tab
+meant only for agents running here says so in its `when`
+(`agent.place === "here"`), and one offered for hosted agents saves their instructions through
+`ctx.agents.hostedInstructions`, never `save`. It is
 removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
 
@@ -1203,6 +1207,42 @@ adapter, with an optional override for tests. React is provided as `ctx.react`;
 external JSX plugins declare `inject = ["react"]` to use the shared instance. The manager
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
+
+### Shell backdrops
+
+The shell paints only its own background unless a plugin registers a backdrop.
+Read it with `ctx.reflect.get("backdrops")` and register
+`{ id, component }`, for example a visualizer that runs while music plays:
+
+```ts
+ctx.reflect.get("backdrops")?.register({ id: "visualizer", component: Visualizer });
+```
+
+The component renders in a fixed, full-window layer above the shell's
+background and dot texture and below all of its content. The layer is
+`inert`, `aria-hidden` and ignores the pointer, so the backdrop cannot take
+focus, clicks or title-bar drags. Registration lasts for the plugin's Cordis
+scope. Each backdrop gets its own full-window box and stacking context, so with
+several, later registrations paint above earlier ones whatever `z-index` they
+use inside.
+Render errors remove only the failing backdrop, silently; errors in its own
+animation frames, timers or listeners are the plugin's to catch and clean up.
+Stop painting while the document is hidden, and never flash more than three
+times in any one second (WCAG 2.3.1).
+
+The host keeps the shell usable over any backdrop. While one is present, each
+header control group and the sidebar resize grip keeps a solid `bg-app` floor,
+so controls, their state fills and focus rings stay on the background they were
+designed for. Panes stay opaque. When the user prefers reduced motion or reduced
+transparency, or forced colors are active, the host does not mount backdrops at
+all, which also stops their animation; they return when the preference does.
+
+A backdrop that needs to stay clear of shell controls may read, but not style,
+these layout roles: `.shell-header` and its direct children (each a group of
+controls), `.shell-center-capsule` (centered pages; it moves into the header's
+flow while `.shell-header` has `data-compact-pages`), `.shell-body`, and the
+outermost `.panel` elements inside it (nested panels are content). On macOS the
+native window controls sit in the header's leading inset, outside these roles.
 
 ### Discovery metadata
 
