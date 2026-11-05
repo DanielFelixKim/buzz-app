@@ -17,7 +17,7 @@ type ReplyComposer = Pick<
   | "threadSeed"
   | "onCancelReply"
   | "replyContext"
-  | "disabled"
+  | "sendDisabled"
   | "onSend"
 >;
 type Selection = {
@@ -25,6 +25,8 @@ type Selection = {
   channelId: string;
   id: string;
   rootId: string;
+  /** Immediate presentation only; the exact reader decides send eligibility. */
+  preview: ChannelMessage;
 };
 
 /** One transient target and owned live reader per channel composer. */
@@ -69,6 +71,7 @@ export function useInlineReply(
         channelId: row.channelId,
         id: row.id,
         rootId: row.threadRootId ?? row.id,
+        preview: row,
       });
       requestFocus();
     },
@@ -102,9 +105,11 @@ export function useInlineReply(
     }
   }, [session, target]);
   const current = evidence?.target === target ? evidence : undefined;
-  const reply = current?.snapshot?.target;
+  const verified = current?.snapshot?.target;
+  const status = current?.snapshot?.targetStatus;
+  const pending = !current?.failed && (!status || status === "loading");
+  const reply = verified ?? (pending ? target?.preview : undefined);
   const unavailable = current?.snapshot?.targetStatus === "unavailable";
-  const failed = current?.failed || current?.snapshot?.targetStatus === "error";
   const composer: ReplyComposer = {
     retainChannelDraft: true,
     ...(focus ? { focusRequest: focus } : {}),
@@ -113,7 +118,7 @@ export function useInlineReply(
           threadRootId: target.rootId,
           replyParentId: target.id,
           threadSeed: reply,
-          disabled: !reply,
+          sendDisabled: !verified,
           onCancelReply: cancel,
           replyContext: reply ? (
             <ReplyContext row={reply} session={session} onCancel={cancel} />
@@ -122,9 +127,7 @@ export function useInlineReply(
               <span>
                 {unavailable
                   ? "Reply target is no longer available."
-                  : failed
-                    ? "Reply target could not be loaded. Cancel and select it again."
-                    : "Loading reply target…"}
+                  : "Reply target could not be loaded. Cancel and select it again."}
               </span>
               <Button size="sm" onClick={cancel}>
                 Cancel reply target

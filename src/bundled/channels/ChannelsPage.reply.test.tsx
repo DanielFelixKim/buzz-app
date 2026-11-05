@@ -119,34 +119,42 @@ async function fixture({
   ];
   let live!: LiveCallbacks;
   let omitTimelineTarget = false;
+  let targetReadGate: Promise<void> | undefined;
+  let targetReadStarted = () => {};
   const publish = vi.fn(async (_event: RelayEvent) => {});
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
-      query: async (filters) => [
-        ...events.filter((event) =>
-          filters.some(
-            (filter) =>
-              !(
-                omitTimelineTarget &&
-                filter.top_level &&
-                event.id === root.id
-              ) && matchesEvent(event, filter),
+      query: async (filters) => {
+        if (filters.some((filter) => filter.ids?.includes(root.id))) {
+          targetReadStarted();
+          await targetReadGate;
+        }
+        return [
+          ...events.filter((event) =>
+            filters.some(
+              (filter) =>
+                !(
+                  omitTimelineTarget &&
+                  filter.top_level &&
+                  event.id === root.id
+                ) && matchesEvent(event, filter),
+            ),
           ),
-        ),
-        ...filters.flatMap((filter) =>
-          filter.top_level
-            ? (filter["#h"] ?? []).map((id) =>
-                bounds(authority, id, "head", {
-                  has_more: false,
-                  next_cursor: null,
-                }),
-              )
-            : [],
-        ),
-      ],
+          ...filters.flatMap((filter) =>
+            filter.top_level
+              ? (filter["#h"] ?? []).map((id) =>
+                  bounds(authority, id, "head", {
+                    has_more: false,
+                    next_cursor: null,
+                  }),
+                )
+              : [],
+          ),
+        ];
+      },
       subscribe(callbacks) {
         live = callbacks;
         return { update() {}, dispose() {}, retry() {} };
@@ -229,6 +237,17 @@ async function fixture({
   };
   return {
     user,
+    message,
+    pauseTargetRead() {
+      let release = () => {};
+      const started = new Promise<void>((resolve) => {
+        targetReadStarted = resolve;
+      });
+      targetReadGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { started, release };
+    },
     input,
     hold,
     publish,
@@ -336,4 +355,40 @@ it("updates the selected target after edits and blocks a deleted target without 
   );
   expect(h.input).toHaveTextContent("Keep this draft");
   expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+});
+
+it("presents the reply immediately and keeps typing available while only Send waits for verification", async () => {
+  const h = await fixture();
+  const gate = h.pauseTargetRead();
+  try {
+    await h.user.pointer({ target: h.message, keys: "[MouseLeft>]" });
+    await gate.started;
+    await h.user.pointer({ keys: "[/MouseLeft]" });
+    const composer = screen.getByRole("form", { name: "Reply to thread" });
+    expect(within(composer).getByText("Reply target")).toBeVisible();
+    expect(within(composer).getByText(/Replying to/)).toBeVisible();
+    expect(screen.getByRole("textbox")).toBe(h.input);
+    expect(h.input).toHaveAttribute("contenteditable", "true");
+    await h.user.type(h.input, "Keep writing while checking");
+    expect(h.input).toHaveTextContent("Keep writing while checking");
+    expect(
+      within(composer).getByRole("button", { name: "Send message" }),
+    ).toBeDisabled();
+    fireEvent.submit(composer);
+    await act(async () => {});
+    expect(h.publish).not.toHaveBeenCalled();
+    const outside = screen.getByRole("button", { name: "Outside control" });
+    await h.user.click(outside);
+    gate.release();
+    await waitFor(() =>
+      expect(
+        within(composer).getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    expect(outside).toHaveFocus();
+    expect(h.input).toHaveTextContent("Keep writing while checking");
+  } finally {
+    gate.release();
+    await h.user.pointer({ keys: "[/MouseLeft]" });
+  }
 });

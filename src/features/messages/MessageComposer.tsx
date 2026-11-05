@@ -313,6 +313,8 @@ export type MessageComposerProps = {
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
+  /** Block delivery while retaining draft editing and local composer actions. */
+  sendDisabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
   submission?: {
     draftKey: string;
@@ -485,6 +487,7 @@ function Composer({
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
+  sendDisabled = false,
   submission,
   soloConversation,
   ownSoloConversation = false,
@@ -516,8 +519,8 @@ function Composer({
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
-    if (disabled || !active) sendAttempt.current?.abort();
-  }, [disabled, active]);
+    if (disabled || sendDisabled || !active) sendAttempt.current?.abort();
+  }, [disabled, sendDisabled, active]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the retained draft.
   useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
@@ -2229,6 +2232,7 @@ function Composer({
     }
     if (
       disabled ||
+      sendDisabled ||
       compactingNow() ||
       accepted ||
       conflict ||
@@ -3332,6 +3336,7 @@ function Composer({
               }
               disabled={
                 disabled ||
+                (!editing.target && sendDisabled) ||
                 untagged ||
                 (!editing.target && compacting) ||
                 (!editing.target && (!!accepted || conflict || sendPending)) ||
