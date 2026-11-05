@@ -6,8 +6,10 @@ import {
   Filter2Icon,
   InfoIcon,
   NoteIcon,
+  FileTextIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -93,9 +95,12 @@ export function NotesPage({
   const active = items.find((item) => item.id === selected);
   const titleLink = (note: Note) => (
     <li key={noteKey(note)}>
-      <a
-        className="text-body"
-        href={noteUrl(note, community)}
+      <NavigationItem
+        nativeButton={false}
+        role="link"
+        render={<a href={noteUrl(note, community)} />}
+        label={<span className="text-label-sm">{note.title}</span>}
+        trailing={<FileTextIcon size={16} aria-hidden="true" />}
         onClick={(event) => {
           if (
             event.button !== 0 ||
@@ -108,9 +113,7 @@ export function NotesPage({
           event.preventDefault();
           open(note);
         }}
-      >
-        {note.title}
-      </a>
+      />
     </li>
   );
   return (
@@ -218,12 +221,15 @@ export function NotesPage({
                 />
               )}
               <ul className={styles.titleList} aria-label="Notes">
-                <li key="new-note">
-                  <Button variant="subtle" size="sm" onClick={create}>
-                    <PlusIcon size={16} aria-hidden="true" /> New note
-                  </Button>
-                </li>
                 {visible.map(titleLink)}
+                <li key="new-note">
+                  <NavigationItem
+                    variant="text"
+                    icon={<PlusIcon size={16} aria-hidden="true" />}
+                    label="New note"
+                    onClick={create}
+                  />
+                </li>
               </ul>
               {!loading && !error && query && !visible.length && (
                 <p role="status">No matching notes.</p>

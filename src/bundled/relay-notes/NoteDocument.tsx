@@ -192,14 +192,14 @@ export function NoteDocument({
       const focus = pendingFocus.current;
       pendingFocus.current = undefined;
       if (focus?.target === "body") editor.current?.focusSelection(focus);
-      else {
+      else if (focus?.target === "title") {
         const field = titleInput.current;
         field?.focus();
         field?.setSelectionRange(
           focus?.start ?? field.value.length,
           focus?.end ?? field.value.length,
         );
-      }
+      } else editor.current?.focusEnd();
     });
     return () => cancelAnimationFrame(frame);
   }, [active, busy, unavailable, note, canEdit, editing, dialog]);

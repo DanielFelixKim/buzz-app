@@ -72,6 +72,25 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
   expect(
     Math.abs(listBounds.x * 2 + listBounds.width - page.viewportSize().width),
   ).toBeLessThan(1);
+  const firstTitle = list.getByRole("link").first();
+  await expect(firstTitle).toHaveCSS("text-decoration-line", "none");
+  await expect(firstTitle.locator(".text-label-sm")).toHaveCSS(
+    "font-weight",
+    "500",
+  );
+  const docIcon = firstTitle.locator("svg");
+  const titleBounds = await firstTitle.locator(".text-label-sm").boundingBox();
+  expect((await docIcon.boundingBox()).x).toBeGreaterThan(
+    titleBounds.x + titleBounds.width,
+  );
+  await expect(docIcon).toHaveAttribute("aria-hidden", "true");
+  const createBounds = await list
+    .getByRole("button", { name: "New note" })
+    .boundingBox();
+  const lastNoteBounds = await list.getByRole("link").last().boundingBox();
+  expect(createBounds.y).toBeGreaterThan(
+    lastNoteBounds.y + lastNoteBounds.height,
+  );
   await page.screenshot({ path: testInfo.outputPath("notes-list.png") });
   const links = await list.getByRole("link").all();
   const first = await links[0].boundingBox();
@@ -109,7 +128,7 @@ test("Back and Forward restore note navigation, filters, drafts, dialogs and con
     exact: true,
   });
   await expect(
-    document.getByRole("textbox", { name: "Title", exact: true }),
+    document.getByRole("textbox", { name: "Document body", exact: true }),
   ).toBeFocused();
   await disableAutoSave(page, document);
   await expect(

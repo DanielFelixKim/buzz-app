@@ -55,10 +55,10 @@ it("shows only title links in revision order and opens the selected channel-back
     within(list)
       .getAllByRole("listitem")
       .map((row) => row.textContent?.trim()),
-  ).toEqual(["New note", "Latest note", "First note"]);
+  ).toEqual(["Latest note", "First note", "New note"]);
   expect(
     within(list).getByRole("button", { name: "New note" }),
-  ).toHaveAttribute("data-variant", "subtle");
+  ).toHaveAttribute("data-variant", "text");
   expect(screen.getByRole("link", { name: "Latest note" })).toHaveAttribute(
     "href",
     noteUrl(latest, props.community),
@@ -79,7 +79,7 @@ it("shows only title links in revision order and opens the selected channel-back
     within(list)
       .getAllByRole("listitem")
       .map((row) => row.textContent?.trim()),
-  ).toEqual(["New note", "First note", "Latest note"]);
+  ).toEqual(["First note", "Latest note", "New note"]);
 });
 
 it("retains mounted editor state across Back and focuses the full-view Back button", async () => {

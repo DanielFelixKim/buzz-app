@@ -119,7 +119,7 @@ reuse the original UUID and attempted payload, preserving subsequent edits as
 a draft against the accepted first revision.
 
 The Viewing/Editing selector controls the document mode. New visits default to
-Editing for editable notes and focuses the title on entry; explicit Viewing/Editing history choices remain
+Editing for editable notes and focuses the body on entry; explicit Viewing/Editing history choices remain
 authoritative. Read-only and deleted notes keep their reader presentation, and
 retained drafts remain available after access changes. Editing reveals the
 formatting list directly, without a formatting toggle. Both modes keep the same
@@ -173,8 +173,9 @@ formatting bar hides in source mode. An untouched editor does not normalize the
 original document. Rich edits use the shared
 serializer; source spelling of supported constructs may normalize.
 
-The browser lists linked note titles in newest-revision order, without
-card previews, author folders or row metadata. A subtle **New note** button precedes
+The browser lists linked note titles in newest-revision order as separated rows,
+with heavier titles, no underlines and a subtle trailing document icon. There are no
+card previews, author folders or row metadata. A subtle **+ New note** action follows
 the note titles and remains available in an empty collection. **Show
 deleted notes** lives in the search field's trailing filter menu, retaining the
 existing history-backed filter state. Author and revision metadata remain
