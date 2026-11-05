@@ -586,6 +586,36 @@ mod tests {
     }
 
     #[test]
+    fn saved_create_approval_restores_and_renews_with_the_same_scopes() {
+        let mut saved = grant();
+        saved.approval.scopes = vec!["read".into(), "post".into(), "create".into()];
+        saved.expires_at = 3_592_000;
+        let bytes = serde_json::to_vec(&saved).unwrap();
+        let mut restored: Grant = serde_json::from_slice(&bytes).unwrap();
+        assert!(restored.approval == saved.approval);
+
+        let request = renewal_request(&restored, 1);
+        restored.reserve_at(&request, 2_728_000).unwrap();
+        restored.renew(&request, 2_728_000).unwrap();
+        assert_eq!(restored.approval.scopes, ["read", "post", "create"]);
+        assert_eq!(restored.expires_at, 5_320_000);
+
+        for scopes in [
+            vec!["read", "post"],
+            vec!["create"],
+            vec!["create", "post", "read"],
+        ] {
+            let mut changed = restored.clone();
+            let mut request = renewal_request(&changed, 2);
+            changed.reserve_at(&request, 2_728_000).unwrap();
+            request.approval.as_mut().unwrap().scopes =
+                scopes.iter().map(|scope| (*scope).into()).collect();
+            assert!(changed.renew(&request, 2_728_000).is_err(), "{scopes:?}");
+            assert_eq!(changed.expires_at, restored.expires_at, "{scopes:?}");
+        }
+    }
+
+    #[test]
     fn renewal_refuses_expired_approval_and_invalid_connection_context() {
         let mut saved = grant();
         saved.expires_at = 3_592_000;
