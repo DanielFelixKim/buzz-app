@@ -404,10 +404,14 @@ export function createUnread({
   const ownThreads = new Set<string>();
   // `channel:root` of the threads the viewer is part of, with the newest
   // time they wrote or read in each (see thread-participation.ts). Read from
-  // storage by the first repair, extended and read again by every repair, and
-  // evicted last when retained evidence overflows. The live map is bounded by
-  // what the walk, the evidence and follows can teach; the 1,000 limit is
-  // applied where it is read (`newest()`) and in the saved record.
+  // storage by the first repair, extended and read again by every repair.
+  // Between saves it grows with what the walk, the evidence, lookups and
+  // follows teach; the 1,000 limit applies where it is read (`newest()`), and
+  // each save trims this map to the newest 1,000 it persists. A thread a save
+  // forgets is ordinary again, its evidence and its root, until something
+  // teaches it again; the next save then ranks it with the rest. While the
+  // threads hold at most a quarter of a full budget, their evidence is
+  // evicted last (see `accept`).
   let remembered: Map<string, ThreadMark> | undefined;
   // What storage holds, with the walk mark, so a repair writes only a change.
   let persisted: ThreadParticipation | undefined;
@@ -1584,10 +1588,15 @@ export function createUnread({
     // a read reply outside them only needs its root to group under.
     const teaches = () =>
       structuralRecovery && (entry.mentioned || conversation(entry));
-    // A root the cache let go is fetched again for a thread whose root it
-    // keeps from then on: remembered, or taught by this reply. Another
-    // thread's lookup stays done, so replies needing more roots than the
-    // cache holds cannot cycle their fetches.
+    // A root the cache let go is fetched again for a reply in a remembered
+    // thread or one that teaches its thread, and held while that thread is
+    // remembered. That is not permanent: a save forgets threads outside the
+    // newest 1,000, and a forgotten thread's root is ordinary structure, let
+    // go once 1,024 newer events are held besides the remembered roots; a
+    // reply that teaches the thread again then fetches it again. Each fetch
+    // makes the root the newest, so it repeats no faster than that turnover.
+    // Another thread's lookup stays done, so replies needing more roots than
+    // the cache holds cannot cycle their fetches.
     const found = lookups.get(key);
     if (found?.released && (teaches() || pinned(event))) lookups.delete(key);
     else if (
@@ -2620,7 +2629,8 @@ export function createUnread({
        * advanced to the newest authored time when the walk reached its end;
        * a walk cut short by a dropped page is taken up by the next repair.
        * The rest are forgotten in this session as on disk, so their roots
-       * are ordinary structure from then on, let go past its bound. */
+       * are ordinary structure, let go past its bound, until a reply, the
+       * walk or a follow teaches their threads again. */
       save() {
         const ranked = [...roots].sort(([, a], [, b]) => b.at - a.at);
         const nextRoots = new Map(ranked.slice(0, THREAD_PARTICIPATION_LIMIT));
