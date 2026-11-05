@@ -1587,7 +1587,7 @@ it("pins another member's message, marks it and unpins only the viewer's own pin
 });
 
 it("shows another member's pin without offering to remove it", async () => {
-  const h = await fixture(
+  await fixture(
     true,
     false,
     false,
@@ -1601,10 +1601,6 @@ it("shows another member's pin without offering to remove it", async () => {
       pinnedByPeer: true,
     },
   );
-  h.owner.session.profiles.ensure([
-    h.owner.session.channels.window("room").rows[0]?.pinnedBy?.[0]?.pinnedBy ??
-      "",
-  ]);
   const item = await screen.findByRole("menuitem", {
     name: "Pinned by Honey",
   });

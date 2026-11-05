@@ -46,6 +46,7 @@ export function rowProfileIds(row: ChannelMessage): readonly string[] {
         ...row.mentions,
         ...(row.mentionReferences ?? []),
         ...row.participants,
+        ...(row.pinnedBy ?? []).map((pin) => pin.pinnedBy),
       ];
 }
 

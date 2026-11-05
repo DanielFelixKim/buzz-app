@@ -2,6 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { foldMessages } from "./fold";
 import { CHANNEL_KINDS, type LiveCallbacks } from "./live";
 import { PIN_KIND, pinTemplate, validatePinTemplate } from "./pins";
+import { rowProfileIds } from "./membership";
 import { createMessages } from "./messages";
 import { PublishRejected, type Outbox } from "./outbox";
 import { createRelaySession } from "./session";
@@ -195,4 +196,9 @@ it("a pin shows before the relay confirms it and reverts when refused", async ()
   await flush();
   expect(owner.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
   expect(owner.session.channels.window("c").rows[0]?.pinnedBy).toBeUndefined();
+});
+
+it("demands the pinner's profile with the pinned row", () => {
+  const row = foldMessages("c", relay.pubkey, [root, pin(viewer)])[0];
+  expect(row && rowProfileIds(row)).toContain(viewer.pubkey);
 });
