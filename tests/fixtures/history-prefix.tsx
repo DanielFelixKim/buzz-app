@@ -1,3 +1,4 @@
+import { getPublicKey } from "nostr-tools";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // Actual conversation UI/session and folded events; no live identity or relay.
 import { StrictMode, useEffect, useState, useSyncExternalStore } from "react";
@@ -18,6 +19,7 @@ declare global {
     prependHistory(): void;
     loadSlidingOlder(): void;
     slidingHeldReads: number;
+    lastSlidingAnchor: string | undefined;
     holdSlidingPage(before?: number): void;
     releaseSlidingPage(holdNext?: boolean, before?: number): void;
   }
@@ -82,14 +84,40 @@ const owner = createRelaySession({
 // A small real session budget makes both sliding edges observable without a scale fixture.
 const sliding = new URLSearchParams(location.search).has("sliding");
 const compact = new URLSearchParams(location.search).has("compact");
-const slidingEvents = Array.from({ length: 140 }, (_, i) =>
-  message(
-    viewer,
-    "images",
-    `Message ${i}. ${"History remains readable. ".repeat(compact ? 0 : 8)}`,
-    1700000000 + i,
-  ),
-).reverse();
+const dense = new URLSearchParams(location.search).has("dense");
+const secret = new Uint8Array(32).fill(1);
+const denseAuthor = { secret, pubkey: getPublicKey(secret) };
+const densePayload = "x".repeat(128 * 1024);
+const denseBody = "History remains readable. ".repeat(40);
+const slidingEvents = (
+  dense
+    ? [
+        ...Array.from({ length: 79 }, (_, i) =>
+          message(
+            denseAuthor,
+            "images",
+            `dense${i}. ${denseBody}`,
+            1700000000,
+            [
+              ["ms", "100"],
+              ["metadata", densePayload],
+            ],
+          ),
+        ),
+        message(denseAuthor, "images", `anchor31. ${denseBody}`, 1700000000, [
+          ["ms", "0"],
+          ["metadata", densePayload],
+        ]),
+      ]
+    : Array.from({ length: 140 }, (_, i) =>
+        message(
+          viewer,
+          "images",
+          `Message ${i}. ${"History remains readable. ".repeat(compact ? 0 : 8)}`,
+          1700000000 + i,
+        ),
+      )
+).sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
 let heldPage: Promise<void> | undefined;
 let heldBefore: number | undefined;
 let receiveSliding = (_events: typeof slidingEvents) => {};
@@ -163,18 +191,31 @@ const slidingOwner = sliding
           return { update() {}, retry() {}, dispose() {} };
         },
       },
-      { maxHistoryRows: 60 },
+      dense ? {} : { maxHistoryRows: 60 },
     )
   : undefined;
 receiveSliding([
   roster(relay, "images", [viewer.pubkey]),
   metadata(relay, "images", "History"),
 ]);
+const slidingQueries = slidingOwner
+  ? {
+      ...slidingOwner.session,
+      channels: {
+        ...slidingOwner.session.channels,
+        loadOlder(channelId: string, anchorId?: string) {
+          window.lastSlidingAnchor = anchorId;
+          slidingOwner.session.channels.loadOlder(channelId, anchorId);
+        },
+      },
+    }
+  : undefined;
 function SlidingFixture() {
   if (!slidingOwner) throw new Error("Missing sliding session");
   return <SlidingTimeline session={slidingOwner.session} />;
 }
 function SlidingTimeline({ session }: { session: typeof owner.session }) {
+  const [ready, setReady] = useState(!dense);
   window.loadSlidingOlder = () => session.channels.loadOlder("images");
   const snapshot = useSyncExternalStore(
     (listener) => session.channels.subscribeWindow("images", listener),
@@ -183,11 +224,23 @@ function SlidingTimeline({ session }: { session: typeof owner.session }) {
   useEffect(() => {
     session.channels.ensure("images");
   }, [session]);
+  useEffect(() => {
+    if (ready || snapshot.status !== "ready" || snapshot.loadingOlder) return;
+    if (snapshot.rows.length >= 60) setReady(true);
+    else session.channels.loadOlder("images");
+  }, [session, snapshot, ready]);
   return (
     <div
       data-oldest={snapshot.rows[0]?.createdAt}
       data-newest={snapshot.rows.at(-1)?.createdAt}
       data-count={snapshot.rows.length}
+      data-ids={snapshot.rows.map((row) => row.id).join(",")}
+      data-has-more={snapshot.hasMore}
+      data-anchor={
+        dense
+          ? "00ab65f8aff0e6bc80f47599a111f67cde3741b702d720b83a8805a8fd26db6c"
+          : undefined
+      }
       data-loading={!!snapshot.loadingOlder || !!snapshot.loadingNewer}
       style={{
         height: 650,
@@ -196,13 +249,21 @@ function SlidingTimeline({ session }: { session: typeof owner.session }) {
         flexDirection: "column",
       }}
     >
-      <ChannelTimeline
-        scope="sliding-history"
-        channelId="images"
-        queries={session}
-        window={snapshot}
-        onOpenLink={() => false}
-      />
+      {ready && (
+        <ChannelTimeline
+          scope="sliding-history"
+          revealMessageId={
+            dense
+              ? "00ab65f8aff0e6bc80f47599a111f67cde3741b702d720b83a8805a8fd26db6c"
+              : undefined
+          }
+          {...(dense ? { historyControl: "scroll" as const } : {})}
+          channelId="images"
+          queries={slidingQueries ?? session}
+          window={snapshot}
+          onOpenLink={() => false}
+        />
+      )}
     </div>
   );
 }

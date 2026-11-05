@@ -1,3 +1,4 @@
+import { getPublicKey } from "nostr-tools";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import type { LiveCallbacks } from "./live";
@@ -39,7 +40,6 @@ function harness({
   const history = Array.from({ length: count }, (_, i) =>
     message(alice, "c", `m${i}`, T0 + i * spacing),
   );
-  const ordered = [...history].sort(newestFirst);
   const reads: ReadFilter[] = [];
   const gate: {
     hold?: Promise<void> | undefined;
@@ -74,6 +74,7 @@ function harness({
           filter.until !== undefined && filter.before_id
             ? { createdAt: filter.until, eventId: filter.before_id }
             : null;
+        const ordered = [...history].sort(newestFirst);
         const after = cursor
           ? ordered.filter(
               (row) =>
@@ -748,12 +749,12 @@ it("does not resurrect a joining message deleted and evicted during an older rea
   ).not.toBe(joining.content);
 });
 
-it("retains a rendered anchor across shared-second older trimming", async () => {
+it("retains a rendered anchor that fits with shared-second older rows", async () => {
   const h = setup({ count: 60, maxHistoryRows: 40, spacing: 0 });
   await h.open();
   h.channels.loadOlder("c");
   await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
-  const anchor = h.window().rows[0]?.id;
+  const anchor = h.window().rows[20]?.id;
   assert.exists(anchor);
   h.channels.loadOlder("c", anchor);
   await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
@@ -766,14 +767,14 @@ it("retains a rendered anchor across shared-second older trimming", async () => 
   expect(h.window().hasMore).toBe(false);
 });
 
-it("retains a rendered anchor across shared-second newer trimming", async () => {
+it("retains a rendered anchor that fits with shared-second newer rows", async () => {
   const h = setup({ count: 60, maxHistoryRows: 40, spacing: 0 });
   await h.open();
   for (let step = 0; h.window().hasMore && step < 5; step++) {
     h.channels.loadOlder("c");
     await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
   }
-  const anchor = h.window().rows.at(-1)?.id;
+  const anchor = h.window().rows[19]?.id;
   assert.exists(anchor);
   h.channels.loadNewer?.("c", anchor);
   await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
@@ -786,4 +787,43 @@ it("retains a rendered anchor across shared-second newer trimming", async () => 
     expect(h.window().rows.map((row) => row.id)).toContain(nextAnchor);
   }
   expect(h.window().hasNewer).toBeFalsy();
+});
+
+it("hands off a rendered anchor when preserving it would repeat the older cursor", async () => {
+  const h = setup({ count: 0 });
+  const secret = new Uint8Array(32).fill(1);
+  const alice = { secret, pubkey: getPublicKey(secret) };
+  const payload = "x".repeat(128 * 1024);
+  const tags = [
+    ["ms", "100"],
+    ["metadata", payload],
+  ];
+  const rows = Array.from({ length: 79 }, (_, i) =>
+    message(alice, "c", `dense${i}`, T0, tags),
+  );
+  const firstId = [...rows].sort(newestFirst)[0]?.id;
+  assert.exists(firstId);
+  // This signed ms=0 row sorts first both in rendered order and relay ID order.
+  const anchor = message(alice, "c", "anchor3", T0, [
+    ["ms", "0"],
+    ["metadata", payload],
+  ]);
+  expect(anchor.id < firstId).toBe(true);
+  h.history.push(...rows, anchor);
+  await h.open();
+  expect(h.window().rows[0]?.id).toBe(anchor.id);
+  const seen = new Set(h.window().rows.map((row) => row.id));
+  for (let step = 0; h.window().hasMore && step < 5; step++) {
+    const before = h.window().rows.map((row) => row.id);
+    h.channels.loadOlder("c", h.window().rows[0]?.id);
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    expect(h.window().rows.map((row) => row.id)).not.toEqual(before);
+    for (const row of h.window().rows) seen.add(row.id);
+    const ids = new Set(h.window().rows.map((row) => row.id));
+    expect(
+      byteSize(h.history.filter((event) => ids.has(event.id))),
+    ).toBeLessThanOrEqual(8 * 1024 * 1024);
+  }
+  expect(h.window().hasMore).toBe(false);
+  expect(seen.size).toBe(80);
 });

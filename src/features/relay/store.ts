@@ -1205,11 +1205,14 @@ export function createChannelStore(
       return events;
     if (end === "oldest") rows.reverse();
     const anchor = rows.findIndex((event) => event.id === anchorId);
-    const slice = (count: number) =>
-      rows.slice(
-        Math.max(0, anchor - count + 1),
-        Math.max(0, anchor - count + 1) + count,
-      );
+    const previous = new Set(state.events.map((event) => event.id));
+    const edge = rows.findIndex((event) => previous.has(event.id));
+    const slice = (count: number) => {
+      let start = Math.max(0, anchor - count + 1);
+      // Hand off an anchor that would discard every row beyond the old edge.
+      if (edge > 0 && start >= edge) start = 0;
+      return rows.slice(start, start + count);
+    };
     let kept = slice(maxHistoryRows);
     const retain = (ids: ReadonlySet<string>) => relatedEvents(events, ids);
     let retained = retain(new Set(kept.map((event) => event.id)));
