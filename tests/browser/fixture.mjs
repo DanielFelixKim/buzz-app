@@ -79,6 +79,8 @@ export const test = base.extend({
   agentPeers: [false, { option: true }],
   inboxDm: [false, { option: true }],
   inboxDmOldAnchor: [false, { option: true }],
+  // Two peers react to one of the viewer's messages in the first channel.
+  inboxReactions: [false, { option: true }],
   inboxThreadWindow: [false, { option: true }],
   inboxSoloAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
@@ -155,6 +157,7 @@ export const test = base.extend({
       agentPeers,
       inboxDm,
       inboxDmOldAnchor,
+      inboxReactions,
       inboxThreadWindow,
       inboxSoloAgent,
       tallMessages,
@@ -704,6 +707,34 @@ export const test = base.extend({
             1700000900,
           ),
         );
+    if (inboxReactions) {
+      const mine = sign(
+        9,
+        [["h", channels[0]]],
+        "Should we ship reactions in Inbox?",
+        userKey,
+        1700000950,
+      );
+      const react = (content, key, at) =>
+        sign(
+          7,
+          [
+            ["h", channels[0]],
+            ["e", mine.id],
+            ["p", viewer],
+          ],
+          content,
+          key,
+          at,
+        );
+      histories
+        .get(`primary/${channels[0]}`)
+        .push(
+          mine,
+          react("👍", peerKeys[0], 1700000960),
+          react("🎉", peerKeys[1], 1700000970),
+        );
+    }
     if (sidebarUnread) {
       for (const id of Object.keys(dmMembers).length
         ? Object.keys(dmMembers)
@@ -1547,6 +1578,27 @@ export const test = base.extend({
               ),
             ),
         ];
+      // Reactions addressed to the viewer by NIP-25 p tag.
+      if (
+        filter["#p"] &&
+        !filter["#h"] &&
+        filter.kinds?.length === 1 &&
+        filter.kinds[0] === 7
+      ) {
+        expect(filter["#p"]).toEqual([viewer]);
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .filter(
+            (event) =>
+              event.kind === 7 &&
+              event.tags.some(([k, v]) => k === "p" && v === viewer),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      }
       if (filter["#p"] && !filter["#h"] && filter.kinds?.includes(9)) {
         expect([...filter.kinds].sort((a, b) => a - b)).toEqual([9, 40002]);
         expect(filter["#p"]).toEqual([viewer]);
