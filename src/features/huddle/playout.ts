@@ -1,8 +1,8 @@
 /**
  * Plays 48 kHz mono PCM frames back to back into `output`. The first frame
  * starts `lead` seconds out; after a true underrun playback re-anchors 20 ms
- * out. Frames that would queue more than 200 ms ahead are dropped so late
- * speech is never accumulated.
+ * out. An incoming frame is dropped when it would start more than 200 ms
+ * ahead, so a burst cannot accumulate seconds of late speech.
  */
 export function createPlayout(
   context: BaseAudioContext,
