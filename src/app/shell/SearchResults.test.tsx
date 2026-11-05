@@ -7338,6 +7338,84 @@ it("labels a row by its verified name over a cached profile name without a namin
   }
 });
 
+it("finds a cached verified person by display name while full names are shown", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    known = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+    query: async () => [],
+    subscribe(callbacks) {
+      callbacks.state({ status: "connected", routes: [] });
+      return {
+        update() {},
+        retry() {},
+        dispose() {},
+        syncVerifiedProfiles(_filter, sink) {
+          sink.event(
+            eventDto(
+              signed(relay, {
+                kind: 30382,
+                created_at: 1_000_000,
+                content: "",
+                tags: [
+                  ["d", known.pubkey],
+                  ["p", known.pubkey],
+                  ["active", "true"],
+                  ["display_name", "kade"],
+                  ["username", "kuser"],
+                  ["issuer_label", "Block"],
+                  ["verified_at", "1000000"],
+                  ["full_name", "Other Person"],
+                ],
+              }),
+            ),
+          );
+          sink.eose();
+          return () => {};
+        },
+      };
+    },
+  });
+  // The directory returns nobody: only the shared profile cache knows them.
+  const t = peopleSession(owner.session);
+  try {
+    void owner.session.profiles.ensure([known.pubkey]);
+    await waitFor(() =>
+      expect(
+        owner.session.profiles.snapshot().get(known.pubkey)?.verified,
+      ).toBeDefined(),
+    );
+    render(
+      <SearchResults
+        session={t.session}
+        query="kade"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={vi.fn()}
+      />,
+    );
+    const people = await screen.findByRole("group", { name: "People" });
+    await waitFor(() =>
+      expect(
+        within(people).getByText("kade", { exact: true }),
+      ).toBeInTheDocument(),
+    );
+    act(() => setNamePreference("full"));
+    await waitFor(() =>
+      expect(
+        within(people).getByText("Other Person", { exact: true }),
+      ).toBeInTheDocument(),
+    );
+  } finally {
+    cleanup();
+    setNamePreference("display");
+    owner.dispose();
+  }
+});
+
 /** A session over joined `discovery` whose searches answer `hits`, recording
  * every message read. */
 function operatorSession(

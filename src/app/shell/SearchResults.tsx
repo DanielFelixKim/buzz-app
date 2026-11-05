@@ -892,7 +892,8 @@ export function SearchResults({
         (found?.source === "public-profile" && pageVerified(pubkey)
           ? undefined
           : found?.name) ?? source.name;
-      const fullName = verifiedOf(pubkey)?.fullName;
+      const verified = verifiedOf(pubkey);
+      const fullName = verified?.fullName;
       people.push({
         pubkey,
         label,
@@ -900,7 +901,11 @@ export function SearchResults({
         username: source.username !== source.name ? source.username : undefined,
         fullName: fullName !== label ? fullName : undefined,
         agentName: agentName !== source.name ? agentName : undefined,
-        profileNames: searched.get(pubkey),
+        // A cached person the directory did not return still matches by the
+        // verified display name a full-name label hides.
+        profileNames:
+          searched.get(pubkey) ??
+          (verified ? [verified.displayName] : undefined),
         agent,
         relationship: relationships.rank(pubkey),
         usageKeys: [personKey(pubkey), ...(dm ? [`channel:${dm}`] : [])],
