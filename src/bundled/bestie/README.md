@@ -93,8 +93,9 @@ list uses InlineHeader. This sits separately from the Behavior controls,
 Remembers you and Checks in. Changing one access path does not
 change the other.
 
-**Inbox** is on by default for a Bestie made on this device. It adds an
-instruction section and makes the read-only `inbox` tool available
+**Inbox** starts off until explicitly enabled. Choosing or reselecting a Bestie
+preserves its saved Inbox preference, including an off choice.
+Inbox adds an instruction section and makes the read-only `inbox` tool available
 only to runs while that exact agent remains the owner’s account-saved Bestie.
 The tool reads the owner’s bounded Inbox projection, which can include private
 DM and private-channel notifications; it does not add Bestie to any of those

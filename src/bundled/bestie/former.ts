@@ -1,7 +1,7 @@
 import type { Agent, Agents } from "../../features/agents/service";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { FEATURES, featureState, inbox, memory } from "./features";
+import { FEATURES, featureState, memory } from "./features";
 import { privateChannels } from "./PrivateChannels";
 import {
   cannotEdit,
@@ -365,8 +365,8 @@ export function stopFormerCheckIns(relay: RelayData, agents: ReconcileAgents) {
   };
 }
 
-/** Turns default owner-facing features on for a local agent this device just
- * made Bestie. A Bestie configured elsewhere keeps its existing choices. */
+/** Turns memory on for a local agent this device just made Bestie. Inbox
+ * stays as chosen. A Bestie configured elsewhere keeps its existing choices. */
 export function rememberNewBestie(
   relay: RelayData,
   agents: ReconcileAgents,
@@ -381,7 +381,7 @@ export function rememberNewBestie(
         inCommunity(candidate, relay.snapshot()),
     );
   if (!agent || cannotEdit(agents, agent)) return Promise.resolve();
-  return [memory, inbox].reduce(async (saved, feature) => {
+  return [memory].reduce(async (saved, feature) => {
     await saved;
     const current = agents
       .snapshot()

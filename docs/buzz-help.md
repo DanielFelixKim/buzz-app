@@ -817,8 +817,8 @@ available rather than silently discarding it.
   access from private-channel membership. **Inbox** lets a local Bestie
   help triage notifications, including those from private channels and DMs. It
   does not join those conversations, grant their history, or allow replies there.
-  It starts on when you make a local agent Bestie on this device; an existing
-  Bestie's choice stays as it is. Reads are allowed
+  It starts off until you turn it on. Choosing a Bestie again preserves its
+  saved Inbox preference. Reads are allowed
   only in an explicitly private DM or Solo chat containing just you and Bestie.
   Private-channel rows let you remove Bestie,
   add it to one channel, or add it to all your currently eligible private

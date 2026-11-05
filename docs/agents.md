@@ -111,8 +111,9 @@ results as it does other Buzz tools. See
 ## Bestie Inbox access
 
 The optional run-only `AgentHandle.inbox(context)` delegates the owner's bounded
-notification projection to the account's current local Bestie. Settings and
-authorization share the marked-section policy in
+notification projection to the account's current local Bestie. Inbox starts off
+until the owner enables it; choosing or reselecting a Bestie preserves its saved
+Inbox preference. Settings and authorization share the marked-section policy in
 `bestie-features.ts`: incomplete or damaged markers deny access; edits inside
 complete sections remain enabled. This is not separate per-use consent.
 
