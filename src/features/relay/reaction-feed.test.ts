@@ -25,8 +25,19 @@ function setup() {
     bob = keypair();
   const stored: RelayEvent[] = [];
   let failing: Error | undefined;
+  // Reads matching a held predicate wait for its release.
+  const holds: {
+    match: (filter: ReadFilter) => boolean;
+    gate: Promise<void>;
+    started: boolean;
+  }[] = [];
   let live!: LiveCallbacks;
   const query = vi.fn(async (filters: readonly ReadFilter[]) => {
+    for (const hold of holds)
+      if (filters.some(hold.match)) {
+        hold.started = true;
+        await hold.gate;
+      }
     if (failing) throw failing;
     return stored.filter((event) =>
       filters.some((filter) => matchesEvent(event, filter)),
@@ -59,6 +70,18 @@ function setup() {
     admit,
     fail(error?: Error) {
       failing = error;
+    },
+    hold(match: (filter: ReadFilter) => boolean) {
+      let release = () => {};
+      const hold = {
+        match,
+        gate: new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+        started: false,
+      };
+      holds.push(hold);
+      return { started: () => hold.started, release };
     },
     deliver: (events: RelayEvent[]) =>
       live.receive(events, { phase: "live", channelId: "room" }),
@@ -233,4 +256,112 @@ it("retires notices when the viewer leaves the target's channel", async () => {
   h.admit("room", [h.alice.pubkey], 50);
   await h.session.reactionFeed.refresh();
   expect(h.feed().notices).toEqual([]);
+});
+
+it("drops a reaction retracted while its target lookup is in flight", async () => {
+  const h = setup();
+  const mine = message(h.viewer, "room", "Mine", 20);
+  h.stored.push(mine);
+  await h.session.reactionFeed.ensure();
+  const lookup = h.hold((filter) => !!filter.ids);
+  const reaction = react(h.alice, mine, "👍", 30);
+  // Admitted from the same lookup: proof the lookup finished.
+  const kept = react(h.bob, mine, "🎉", 31);
+  h.deliver([reaction, kept]);
+  await vi.waitFor(() => expect(lookup.started()).toBe(true));
+  h.deliver([remove(h.alice, reaction.id)]);
+  lookup.release();
+  await vi.waitFor(() =>
+    expect(h.feed().notices.map((notice) => notice.id)).toEqual([kept.id]),
+  );
+});
+
+it("reads nothing for live reactions until Inbox asks", async () => {
+  const h = setup();
+  const mine = message(h.viewer, "room", "Mine", 20);
+  h.stored.push(mine);
+  h.deliver([react(h.alice, mine, "👍", 30)]);
+  await Promise.resolve();
+  expect(h.query).not.toHaveBeenCalled();
+  expect(h.feed().notices).toEqual([]);
+});
+
+it("uses the last e tag as the target and rejects oversized content", async () => {
+  const h = setup();
+  const mine = message(h.viewer, "room", "Mine", 20);
+  const other = message(h.alice, "room", "Theirs", 19);
+  const reaction = signed(h.alice, {
+    kind: 7,
+    content: "👍",
+    created_at: 30,
+    tags: [
+      ["e", other.id],
+      ["e", mine.id],
+      ["p", h.viewer.pubkey],
+    ],
+  });
+  h.stored.push(mine, other, reaction, react(h.bob, mine, "x".repeat(65), 31));
+  await h.session.reactionFeed.ensure();
+  expect(h.feed().notices.map((notice) => notice.id)).toEqual([reaction.id]);
+});
+
+it.each(["clear", "purge", "dispose"] as const)(
+  "%s retires an in-flight refresh without publishing its notices",
+  async (action) => {
+    const h = setup();
+    const mine = message(h.viewer, "room", "Mine", 20);
+    h.stored.push(mine, react(h.alice, mine, "👍", 30));
+    const lookup = h.hold((filter) => !!filter.ids);
+    const work = h.session.reactionFeed.ensure();
+    await vi.waitFor(() => expect(lookup.started()).toBe(true));
+    h.session.reactionFeed[action]();
+    lookup.release();
+    await work;
+    expect(h.feed()).toMatchObject({ status: "idle", notices: [] });
+  },
+);
+
+it("stale keeps verified notices, drops an in-flight live lookup, and reconnect refreshes", async () => {
+  const h = setup();
+  const mine = message(h.viewer, "room", "Mine", 20);
+  const first = react(h.alice, mine, "👍", 30);
+  h.stored.push(mine, first);
+  await h.session.reactionFeed.ensure();
+  // A message no notice names yet, so its reaction needs a lookup.
+  const later = message(h.viewer, "room", "Later", 25);
+  h.stored.push(later);
+  const lookup = h.hold((filter) => !!filter.ids);
+  const second = react(h.bob, later, "🎉", 31);
+  h.deliver([second]);
+  await vi.waitFor(() => expect(lookup.started()).toBe(true));
+  h.session.reactionFeed.stale();
+  lookup.release();
+  await Promise.resolve();
+  expect(h.feed()).toMatchObject({
+    status: "idle",
+    freshness: "stale",
+    notices: [{ id: first.id }],
+  });
+  h.stored.push(second);
+  h.session.reactionFeed.reconnect();
+  await vi.waitFor(() =>
+    expect(h.feed()).toMatchObject({
+      status: "ready",
+      freshness: "observed",
+    }),
+  );
+  expect(h.feed().notices.map((notice) => notice.id)).toEqual([
+    second.id,
+    first.id,
+  ]);
+});
+
+it("the session clears retained notices with its cache", async () => {
+  const h = setup();
+  const mine = message(h.viewer, "room", "Mine", 20);
+  h.stored.push(mine, react(h.alice, mine, "👍", 30));
+  await h.session.reactionFeed.ensure();
+  expect(h.feed().notices).toHaveLength(1);
+  await h.clearCache();
+  expect(h.feed()).toMatchObject({ status: "idle", notices: [] });
 });

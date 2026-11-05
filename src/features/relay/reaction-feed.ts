@@ -1,6 +1,6 @@
-import { byteSize } from "./budget";
+import { listByteSize } from "./budget";
 import type { ChannelQueries } from "./contracts";
-import type { CustomEmoji } from "./emoji";
+import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { RelayEvent, ReadFilter } from "./events";
 import { deletionApplies } from "./fold";
 import type { RelayReader } from "./reader";
@@ -34,12 +34,14 @@ const targetKinds = [9, 40002, 40008];
 const deletionKinds = [5, 9005];
 const maxNotices = 1000;
 const maxBytes = 2 * 1024 * 1024;
+const maxUnmatched = 1000;
 const cursorOf = (event: RelayEvent) => ({
   until: event.created_at,
   before_id: event.id,
 });
-const tagValue = (event: RelayEvent, name: string) =>
-  event.tags.find((tag) => tag[0] === name)?.[1];
+// NIP-25: the reacted-to event is the last `e` tag.
+const targetOf = (event: RelayEvent) =>
+  event.tags.filter((tag) => tag[0] === "e").at(-1)?.[1];
 const older = (event: RelayEvent, cursor: ReturnType<typeof cursorOf>) =>
   event.created_at < cursor.until ||
   (event.created_at === cursor.until && event.id > cursor.before_id);
@@ -85,6 +87,13 @@ export function createReactionFeed({
   const notices = new Map<string, ReactionNotice>();
   // Deleted reaction and target ids, so a late copy cannot re-add them.
   const deleted = new Set<string>();
+  // Deletions of reactions or targets not yet admitted, such as a retraction
+  // that arrives while its reaction's target lookup is in flight.
+  const unmatched = new Map<string, RelayEvent[]>();
+  const retracted = (id: string, kind: number, pubkey: string) =>
+    (unmatched.get(id) ?? []).some((deletion) =>
+      deletionApplies(deletion, deletable(id, kind, pubkey), signingAuthority),
+    );
   let snapshot: ReactionFeedSnapshot = Object.freeze({
     status: "idle",
     notices: Object.freeze([]),
@@ -112,7 +121,7 @@ export function createReactionFeed({
     let overflow = false;
     while (
       sorted.length > maxNotices ||
-      (sorted.length && byteSize(sorted) > maxBytes)
+      (sorted.length && listByteSize(sorted) > maxBytes)
     ) {
       const oldest = sorted.pop();
       if (oldest) notices.delete(oldest.id);
@@ -130,7 +139,8 @@ export function createReactionFeed({
     !notices.has(event.id) &&
     !deleted.has(event.id) &&
     event.tags.some(([name, value]) => name === "p" && value === viewer) &&
-    !!tagValue(event, "e");
+    validReactionContent(event.content) &&
+    !!targetOf(event);
   /** Verified targets for these reactions, from retained notices or the relay. */
   async function targetsFor(
     reactions: readonly RelayEvent[],
@@ -148,7 +158,7 @@ export function createReactionFeed({
     const missing = [
       ...new Set(
         reactions
-          .map((event) => tagValue(event, "e") ?? "")
+          .map((event) => targetOf(event) ?? "")
           .filter((id) => id && !known.has(id) && !deleted.has(id)),
       ),
     ];
@@ -186,8 +196,15 @@ export function createReactionFeed({
     targets: Awaited<ReturnType<typeof targetsFor>>,
   ) {
     for (const event of reactions) {
-      const target = targets.get(tagValue(event, "e") ?? "");
+      const target = targets.get(targetOf(event) ?? "");
       if (!target || !candidate(event)) continue;
+      if (
+        retracted(event.id, 7, event.pubkey) ||
+        retracted(target.messageId, target.targetKind, viewer)
+      ) {
+        deleted.add(event.id);
+        continue;
+      }
       const shortcode = event.content.match(/^:([^:\s]+):$/)?.[1];
       const emojiTag = event.tags.find(
         ([name, code, url]) =>
@@ -212,6 +229,11 @@ export function createReactionFeed({
       if (!deletionKinds.includes(deletion.kind)) continue;
       for (const [name, id] of deletion.tags) {
         if (name !== "e" || !id) continue;
+        unmatched.set(id, [...(unmatched.get(id) ?? []), deletion]);
+        for (const oldest of unmatched.keys()) {
+          if (unmatched.size <= maxUnmatched) break;
+          unmatched.delete(oldest);
+        }
         const reaction = notices.get(id);
         if (
           reaction &&
@@ -338,7 +360,8 @@ export function createReactionFeed({
     if (closed) return;
     if (applyDeletions(events)) publishNotices();
     const reactions = events.filter(candidate);
-    if (!reactions.length) return;
+    // Before Inbox asks, its first refresh reads these anyway.
+    if (!requested || !reactions.length) return;
     const generation = epoch;
     // A failed live lookup is recovered by the next refresh's #p read.
     void targetsFor(reactions, liveReads.signal)
@@ -361,6 +384,7 @@ export function createReactionFeed({
     work = undefined;
     notices.clear();
     deleted.clear();
+    unmatched.clear();
     publish({
       status: "idle",
       error: undefined,
@@ -400,6 +424,7 @@ export function createReactionFeed({
       work = undefined;
       notices.clear();
       deleted.clear();
+      unmatched.clear();
       snapshot = Object.freeze({
         status: "idle",
         notices: Object.freeze([]),

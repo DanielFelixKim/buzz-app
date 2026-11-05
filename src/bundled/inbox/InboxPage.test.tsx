@@ -5414,3 +5414,80 @@ it("reports a reaction seen-state save failure", async () => {
     "Could not save Inbox reactions on this device. Try again.",
   );
 });
+
+it("closes a reaction row's tab when its channel is archived, and does not reopen it on restore", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  fireEvent.click(
+    within(reactionRow() ?? document.body).getByRole("button", {
+      name: /^Open /,
+    }),
+  );
+  await findReader();
+  act(() => h.archiveRoom(true, 100));
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  expect(queryReader()).not.toBeInTheDocument();
+  act(() => h.archiveRoom(false, 101));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(reactionRow()).not.toHaveAttribute("data-selected");
+  expect(queryReader()).not.toBeInTheDocument();
+});
+
+it("keeps the opened reaction row selected and listed under Unread only after Inbox remounts", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  const view = render(h.view);
+  await chooseFilter("Reactions");
+  await chooseFilter("Unread only", "Attention");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  fireEvent.click(
+    within(reactionRow() ?? document.body).getByRole("button", {
+      name: /^Open /,
+    }),
+  );
+  await findReader();
+  await waitFor(() =>
+    expect(
+      within(reactionRow() ?? document.body).queryByRole("img", {
+        name: "Unread",
+      }),
+    ).toBeNull(),
+  );
+  view.unmount();
+  render(h.view);
+  await findReader();
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(reactionRow()).toHaveAttribute("data-selected", "true");
+});
+
+it("leaves reaction rows out of the Archived view", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  h.addEvent(reactionTo(h.alice, h.root, "👍", 30));
+  render(h.view);
+  await waitFor(() => expect(reactionRow()).toBeDefined());
+  await chooseFilter("Archived", "Show");
+  await waitFor(() => expect(reactionRow()).toBeUndefined());
+});
+
+it("opens a DM reaction row as the whole DM", async () => {
+  const h = fixture({ withDm: true });
+  const mine = message(h.viewer, "dm-room", "Lunch at noon?", 24);
+  h.addEvent(mine);
+  h.addEvent(reactionTo(h.alice, mine, "👍", 30));
+  render(h.view);
+  await chooseFilter("Reactions");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  const row = reactionRow();
+  if (!row) throw new Error("Missing reaction row");
+  expect(row).toHaveTextContent("DM · Alice");
+  fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  await findReader();
+  // A whole-DM tab is named for the DM, not for the reacted-to message.
+  await waitFor(() => expect(sideTabs()).toEqual(["Alice"]));
+});

@@ -189,6 +189,7 @@ const tabTarget = (
       };
 
 type Selection = { channelId: string; messageId: string; rootId?: string };
+type ReactionSelection = { id: string; channelId: string };
 // The row a tab opened and the list's offset, kept as long as the session's
 // tabs so returning to Inbox still archives and advances from the conversation
 // it restores, at the place it left. A relaunch starts at the top.
@@ -197,6 +198,7 @@ const selections = new WeakMap<
   {
     opened?: PageTabTarget | undefined;
     target?: Selection | undefined;
+    reaction?: ReactionSelection | undefined;
     scrollTop?: number | undefined;
     /** Whether the selected row overlapped the list's visible box. */
     selectedShown?: boolean | undefined;
@@ -474,10 +476,9 @@ function InboxList({
   };
   const showing = !!opened && isOpen(opened);
   // The reaction row whose message the open tab shows; it ends with the tab.
-  const [selectedReaction, setSelectedReaction] = useState<string>();
-  useEffect(() => {
-    if (selectedReaction && !showing) setSelectedReaction(undefined);
-  }, [selectedReaction, showing]);
+  const [selectedReaction, setSelectedReaction] = useState(
+    () => selections.get(session)?.reaction,
+  );
   const [selectedTarget, setSelectedTarget] = useState(
     () => selections.get(session)?.target,
   );
@@ -486,8 +487,9 @@ function InboxList({
       ...selections.get(session),
       opened,
       target: selectedTarget,
+      reaction: selectedReaction,
     });
-  }, [session, opened, selectedTarget]);
+  }, [session, opened, selectedTarget, selectedReaction]);
   const fallbackRow = useRef<HTMLButtonElement | null>(null);
   const fallbackControl = useRef<HTMLButtonElement | null>(null);
   const viewFocus = useRef(false);
@@ -642,6 +644,18 @@ function InboxList({
     closeTab,
     inbox.status,
   ]);
+  const reactionRetired = list.channels.some(
+    (channel) =>
+      channel.id === selectedReaction?.channelId &&
+      (channel.archived || channel.huddle || channel.metadataPending),
+  );
+  useEffect(() => {
+    if (!selectedReaction || (!reactionRetired && showing)) return;
+    // As for a conversation row, restoring the channel does not reopen it.
+    if (reactionRetired && opened && closeTab(opened))
+      retiredFocus.current = true;
+    setSelectedReaction(undefined);
+  }, [selectedReaction, reactionRetired, showing, opened, closeTab]);
   useLayoutEffect(() => {
     if (!retiredFocus.current) return;
     retiredFocus.current = false;
@@ -656,16 +670,15 @@ function InboxList({
     )
       fallbackControl.current?.focus({ preventScroll: true });
   });
+  const reactionRowIds = reactionItems.map((row) => row.id).join(" ");
   useEffect(() => {
     if (
       menu &&
       !items.some((item) => item.id === menu.id) &&
-      !reactionFeed.notices.some(
-        (notice) => `reaction:${notice.messageId}` === menu.id,
-      )
+      !reactionRowIds.split(" ").includes(menu.id)
     )
       setMenu(undefined);
-  }, [items, reactionFeed.notices, menu]);
+  }, [items, reactionRowIds, menu]);
   // Enrich bounded activity candidates before applying Sender: unknown authors
   // must be able to appear after their profiles arrive, even in an empty view.
   // Keep main's bounded optional profile demand, independent of presentation.
@@ -727,7 +740,7 @@ function InboxList({
       (senderFilter === "everyone" ||
         senderKind(row.reactorIds[0] ?? "") ===
           (senderFilter === "agents" ? "agent" : "human")) &&
-      (!unreadOnly || reactionUnread(row) || row.id === selectedReaction),
+      (!unreadOnly || reactionUnread(row) || row.id === selectedReaction?.id),
   );
   // Conversation and reaction rows interleave by their newest activity.
   const entries = [
@@ -1117,7 +1130,7 @@ function InboxList({
       profiles,
       name,
     );
-    const selectedRow = selectedReaction === row.id;
+    const selectedRow = selectedReaction?.id === row.id;
     const unread = reactionUnread(row);
     return (
       <li
@@ -1177,7 +1190,7 @@ function InboxList({
                   });
                 cancelRetry();
                 setSelectedTarget(undefined);
-                setSelectedReaction(row.id);
+                setSelectedReaction({ id: row.id, channelId: row.channelId });
                 if (unread) markReactions(row, false);
               }}
             />
