@@ -21,6 +21,36 @@ const splitImage = async (page) => {
   });
 };
 
+// Read the saved PNG from its own bytes rather than the displayed element,
+// which WebKit can occasionally read back blank.
+const savedArtwork = async (page) => {
+  const saved = page.getByRole("img", { name: "Saved avatar" });
+  await expect(saved).toBeVisible();
+  return saved.evaluate(async (image) => {
+    const bitmap = await createImageBitmap(
+      await (await fetch(image.src)).blob(),
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0);
+    const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+    const at = (x, y) =>
+      Array.from(data.slice((y * 512 + x) * 4, (y * 512 + x) * 4 + 4));
+    let left = 0;
+    let right = 0;
+    for (let i = 3; i < data.length; i += 4)
+      if (data[i]) (i >> 2) % 512 < 256 ? left++ : right++;
+    return {
+      size: [bitmap.width, bitmap.height],
+      left: at(10, 256),
+      right: at(500, 256),
+      alpha: { corner: data[3], left, right },
+    };
+  });
+};
+
 const drag = async (page, locator, dx, dy) => {
   const box = await locator.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -52,22 +82,8 @@ test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
     path: test.info().outputPath("agent-avatar-crop.png"),
   });
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  const saved = page.getByRole("img", { name: "Saved avatar" });
-  await expect(saved).toBeVisible();
-  const pixels = await saved.evaluate(async (image) => {
-    await image.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0);
-    const at = (x, y) => Array.from(context.getImageData(x, y, 1, 1).data);
-    return {
-      size: [image.naturalWidth, image.naturalHeight],
-      left: at(10, 256),
-      right: at(500, 256),
-    };
-  });
+  const { size, left, right } = await savedArtwork(page);
+  const pixels = { size, left, right };
   expect(pixels).toEqual({
     size: [512, 512],
     left: [255, 0, 0, 255],
@@ -120,6 +136,15 @@ test("pans and zooms an emoji over a transparent background", async ({
     .click();
   await page.getByRole("slider", { name: "Zoom" }).fill("1.2");
   const emoji = page.getByRole("button", { name: "Choose emoji" });
+  // A click without a drag still opens the picker.
+  await emoji.click();
+  await expect(
+    page.getByRole("dialog", { name: "Choose emoji" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Choose emoji" })).toHaveCount(
+    0,
+  );
   // Drag the emoji's center to the right edge; the drag opens no picker.
   await drag(page, emoji, 1, 0);
   await expect(page.getByRole("dialog", { name: "Choose emoji" })).toHaveCount(
@@ -129,22 +154,8 @@ test("pans and zooms an emoji over a transparent background", async ({
     path: test.info().outputPath("agent-avatar-emoji.png"),
   });
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  const saved = page.getByRole("img", { name: "Saved avatar" });
-  await expect(saved).toBeVisible();
-  const alpha = await saved.evaluate(async (image) => {
-    await image.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0);
-    const { data } = context.getImageData(0, 0, 512, 512);
-    let left = 0;
-    let right = 0;
-    for (let i = 3; i < data.length; i += 4)
-      if (data[i]) (i >> 2) % 512 < 256 ? left++ : right++;
-    return { left, right, corner: data[3] };
-  });
+  const { size, alpha } = await savedArtwork(page);
+  expect(size).toEqual([512, 512]);
   expect(alpha.corner).toBe(0);
   expect(alpha.left).toBe(0);
   expect(alpha.right).toBeGreaterThan(0);
