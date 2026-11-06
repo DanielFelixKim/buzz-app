@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 /** The host may supply artwork for recognized sources; unknown images keep normal loading. */
@@ -42,13 +43,18 @@ function AvatarArtwork({
   src,
   fallback,
   loading,
+  fallbackShown,
 }: {
   src: string;
   fallback: ReactNode;
   loading: "eager" | "lazy" | undefined;
+  fallbackShown: RefObject<boolean>;
 }) {
   const [status, setStatus] = useState<ImageStatus>("loading");
-  const [showFallback, setShowFallback] = useState(false);
+  // The delay keeps artwork that is ready at once from flashing the initial.
+  // An initial already on screen has nothing to protect, so it stays until
+  // this image is ready rather than blanking for the delay.
+  const [showFallback, setShowFallback] = useState(() => fallbackShown.current);
   const [attempt, setAttempt] = useState(0);
   const [previouslyLoaded] = useState(() => loadedAvatarSources.has(src));
   const image = useRef<HTMLImageElement>(null);
@@ -65,6 +71,10 @@ function AvatarArtwork({
       }
     }
   }, [src]);
+  useLayoutEffect(() => {
+    fallbackShown.current =
+      status === "failed" || (status === "loading" && showFallback);
+  }, [fallbackShown, status, showFallback]);
   useEffect(() => {
     if (status !== "loading") return;
     const timer = window.setTimeout(() => setShowFallback(true), 150);
@@ -150,6 +160,13 @@ export function Avatar({
   const artwork = src ? renderArtwork?.(src) : undefined;
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
+  // Whether the fallback was on screen at the last commit; mounted
+  // AvatarArtwork reports its own.
+  const fallbackShown = useRef(false);
+  useLayoutEffect(() => {
+    if (!src) fallbackShown.current = true;
+    else if (artwork) fallbackShown.current = false;
+  });
   return (
     <span
       className="buzz-avatar-status"
@@ -176,6 +193,7 @@ export function Avatar({
               src={src}
               fallback={content}
               loading={loading}
+              fallbackShown={fallbackShown}
             />
           ) : (
             // data-avatar-fallback: see `.buzz-avatar:has(> [data-avatar-fallback])`.

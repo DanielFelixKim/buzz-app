@@ -145,6 +145,56 @@ it("preserves delayed loading and error fallbacks, resetting when the source cha
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("keeps a visible initial until artwork that replaces it is ready", () => {
+  vi.useFakeTimers();
+  // Images stay pending until the test fires their load or error event.
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  const props = { alt: "Agent", fallback: "A" };
+  const view = render(<Avatar {...props} />);
+  const avatar = screen.getByRole("img", { name: "Agent" });
+  const artwork = () => {
+    const image = view.container.querySelector("img");
+    if (!image) throw new Error("Expected avatar artwork");
+    return image;
+  };
+  expect(avatar).toHaveTextContent("A");
+
+  // A picture arriving for an avatar already showing its initial.
+  view.rerender(<Avatar {...props} src="https://example.test/arrived.png" />);
+  expect(artwork()).not.toHaveAttribute("data-loaded");
+  expect(avatar).toHaveTextContent("A");
+  act(() => vi.advanceTimersByTime(150));
+  expect(avatar).toHaveTextContent("A");
+
+  // A new source replacing a still-loading source whose initial is showing.
+  view.rerender(<Avatar {...props} src="https://example.test/resized.png" />);
+  expect(artwork()).toHaveAttribute("src", "https://example.test/resized.png");
+  expect(avatar).toHaveTextContent("A");
+  fireEvent.error(artwork());
+  expect(avatar).toHaveTextContent("A");
+
+  // A new source replacing a failed one.
+  view.rerender(<Avatar {...props} src="https://example.test/ready.png" />);
+  expect(artwork()).not.toHaveAttribute("data-loaded");
+  expect(avatar).toHaveTextContent("A");
+  fireEvent.load(artwork());
+  expect(artwork()).toHaveAttribute("data-loaded", "true");
+  expect(avatar).toHaveTextContent("");
+
+  // Replacing loaded artwork keeps the delay: no initial flashes before the
+  // next image has had its chance to be ready.
+  view.rerender(<Avatar {...props} src="https://example.test/next.png" />);
+  expect(avatar).toHaveTextContent("");
+  act(() => vi.advanceTimersByTime(149));
+  expect(avatar).toHaveTextContent("");
+  act(() => vi.advanceTimersByTime(1));
+  expect(avatar).toHaveTextContent("A");
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("retries a failed source behind the fallback until it or another mount loads", () => {
   vi.useFakeTimers();
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
