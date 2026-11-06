@@ -1,6 +1,6 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { afterEach, expect, it, vi } from "vitest";
-import type { ReactElement, ReactNode } from "react";
+import type { ReactElement } from "react";
 import { Virtualizer } from "virtua";
 import { ChannelTimeline } from "./ChannelTimeline";
 import { JumpToLatestButton } from "./JumpToLatestButton";
@@ -139,7 +139,6 @@ function setup({
   initial = undefined as unknown,
   mounted = [] as { id: string; y: number }[],
   initialRows = undefined as ChannelMessage[] | undefined,
-  start = undefined as ReactNode,
 } = {}) {
   Object.assign(hooks, {
     refs: [],
@@ -218,14 +217,6 @@ function setup({
         ]);
     }
   };
-  // The measured edge above the rows: its height is Virtua's start margin.
-  let edgeHeight = 0;
-  const edgeElement = {
-    get clientWidth() {
-      return element.clientWidth;
-    },
-    getBoundingClientRect: () => ({ height: edgeHeight }),
-  };
   const element = {
     clientWidth: 1124,
     clientHeight: 668,
@@ -237,16 +228,12 @@ function setup({
     focus: vi.fn(),
     getBoundingClientRect: () => ({ top: 0 }),
     querySelector: () => list,
-    // Row geometry reads `y` when asked, so a test can move the rows.
     querySelectorAll: () =>
-      mounted.map((row) => ({
-        dataset: { messageId: row.id },
-        getBoundingClientRect: () => ({ top: row.y, bottom: row.y + 100 }),
+      mounted.map(({ id, y }) => ({
+        dataset: { messageId: id },
+        getBoundingClientRect: () => ({ top: y, bottom: y + 100 }),
         querySelector: () => ({
-          getBoundingClientRect: () => ({
-            top: row.y + 32,
-            bottom: row.y + 80,
-          }),
+          getBoundingClientRect: () => ({ top: y + 32, bottom: y + 80 }),
         }),
       })),
   };
@@ -341,7 +328,6 @@ function setup({
       },
       onOpenLink: () => false,
       revealMessageId,
-      start,
     });
     if (key !== null && key !== scoped.key) {
       for (const effect of hooks.effects) effect.cleanup?.();
@@ -358,9 +344,15 @@ function setup({
       scoped.props,
     );
     section.props.ref.current = element;
-    (
-      section.props.children[0] as ReactElement<{ ref: { current: unknown } }>
-    ).props.ref.current = edgeElement;
+    const edge = section.props.children[0] as ReactElement<{
+      ref: { current: unknown };
+    }>;
+    edge.props.ref.current = {
+      get clientWidth() {
+        return element.clientWidth;
+      },
+      getBoundingClientRect: () => ({ height: 0 }),
+    };
     const virtualizer = section.props.children.find(
       (child) =>
         !!child &&
@@ -477,18 +469,6 @@ function setup({
     resize(runFrames = true) {
       resized(element);
       render(runFrames);
-    },
-    /** The edge laid out at a new height, as start content enters or leaves. */
-    edge(height: number, runFrames = true) {
-      edgeHeight = height;
-      resized(edgeElement);
-      render(runFrames);
-    },
-    hasStart() {
-      const edge = section.props.children[0] as ReactElement<{
-        children: unknown[];
-      }>;
-      return edge.props.children.includes(start);
     },
     measureRows(runFrames = true) {
       list.style.height = `${Number.parseFloat(list.style.height) + 100}px`;
@@ -725,68 +705,6 @@ it.each([
   const h = setup(options);
   h.scroll();
   expect(h.loadOlder).not.toHaveBeenCalled();
-  h.unmount();
-});
-it("shows the start content only once the oldest history is loaded", () => {
-  const h = setup({ hasMore: true, start: "Welcome" });
-  expect(h.hasStart()).toBe(false);
-  h.update({ hasMore: false });
-  expect(h.hasStart()).toBe(true);
-  h.update({ hasMore: true, loadingOlder: false });
-  expect(h.hasStart()).toBe(false);
-  h.unmount();
-});
-it("keeps a settled reader's rows in place as start content enters and leaves the edge", () => {
-  const row = { id: "first", y: 100 };
-  const h = setup({ hasMore: true, start: "Welcome", mounted: [row] });
-  // The rows' viewport geometry follows the scroll offset, as in a browser.
-  let offset = 1200;
-  Object.defineProperty(h.element, "scrollTop", {
-    configurable: true,
-    get: () => offset,
-    set(value: number) {
-      row.y -= value - offset;
-      offset = value;
-    },
-  });
-  h.scroll();
-  h.gesture(true);
-  // The last older page lands and the welcome grows the edge above the rows,
-  // which moves them down before the shift's scroll event records a place.
-  h.update({ hasMore: false });
-  row.y += 140;
-  h.dispatchScroll();
-  h.handle.scrollToIndex.mockClear();
-  h.edge(140);
-  expect(h.element.scrollTop).toBe(1340);
-  expect(row.y).toBe(100);
-  // The restore that follows the size change returns to the corrected place,
-  // not to the row's position after the edge had pushed it down.
-  expect(h.handle.scrollToIndex).toHaveBeenCalledWith(0, {
-    align: "start",
-    offset: -100,
-  });
-  for (const [, options] of h.handle.scrollToIndex.mock.calls)
-    expect(options).toEqual({ align: "start", offset: -100 });
-  // Trimming the oldest page reopens history and the welcome leaves again.
-  h.update({ hasMore: true });
-  row.y -= 140;
-  h.dispatchScroll();
-  h.handle.scrollToIndex.mockClear();
-  h.edge(0);
-  expect(h.element.scrollTop).toBe(1200);
-  expect(row.y).toBe(100);
-  for (const [, options] of h.handle.scrollToIndex.mock.calls)
-    expect(options).toEqual({ align: "start", offset: -100 });
-  h.unmount();
-});
-it("leaves a following reader at the bottom when start content enters the edge", () => {
-  const h = setup({ hasMore: true, start: "Welcome" });
-  h.scroll(false);
-  const before = h.element.scrollTop;
-  h.update({ hasMore: false });
-  h.edge(140);
-  expect(h.element.scrollTop).toBe(before);
   h.unmount();
 });
 it("programmatic scroll does not page before a user gesture", () => {

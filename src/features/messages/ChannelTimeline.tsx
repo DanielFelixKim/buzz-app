@@ -31,7 +31,6 @@ import {
   useSyncExternalStore,
   Fragment,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
@@ -187,9 +186,6 @@ export type ChannelTimelineProps = {
   chatPresentation?: boolean | undefined;
   /** False: rows open existing threads but offer none to start; see MessageRow. */
   startsThreads?: boolean | undefined;
-  /** Shown above the first message once all history is loaded; it is not a
-   * message and replaces the empty-conversation notice. */
-  start?: ReactNode;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -250,7 +246,6 @@ function Timeline({
   onOpenMediaReview,
   chatPresentation = false,
   startsThreads = true,
-  start,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -724,12 +719,6 @@ function Timeline({
       window.error)
   )
     setReserveHistorySpace(true);
-  // The measured edge carries the start content, so Virtua offsets rows below it.
-  const atStart =
-    !!start &&
-    window.status === "ready" &&
-    !window.hasMore &&
-    !window.historyLimited;
   const handle = useRef<VirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0, edgeHeight: 0 });
   const width = size.width;
@@ -1339,20 +1328,6 @@ function Timeline({
         next.edgeHeight === measuredSize.edgeHeight
       )
         return;
-      // Start content entering or leaving the edge moves every row below it
-      // before Virtua learns the new start margin. Keep a settled reader's
-      // rows where they were; a following reader is pinned to the bottom.
-      const edgeDelta = next.edgeHeight - measuredSize.edgeHeight;
-      if (edgeDelta && settled.current && !follow.current) {
-        correctScrollTop(element, edgeDelta);
-        // The restore this size change schedules must return here, not to
-        // the place a scroll event recorded after the edge had moved the rows.
-        if (
-          !restoredAnchor.current &&
-          pendingRestore.current !== intent.current
-        )
-          savedPosition.current = { ...positionAt(element), bottom: false };
-      }
       // A growing composer shrinks the viewport. Pin a reader who was at the
       // bottom before paint so history rises with it; the restore lands later.
       if (
@@ -1876,10 +1851,8 @@ function Timeline({
         ref={edge}
         className={styles.edge}
         data-history-space={reserveHistorySpace || undefined}
-        data-start={atStart || undefined}
       >
         {edgeError && <span role="alert">{edgeError}</span>}
-        {atStart && start}
         {window.historyLimited ? (
           <span>History window limit reached</span>
         ) : window.hasMore && queries.channels.cachedOnly ? (
@@ -2121,7 +2094,6 @@ function Timeline({
         <div className={styles.timelineEnd} aria-hidden="true" />
       </div>
       {!rows.length &&
-        !atStart &&
         !window.hasMore &&
         window.status === "ready" &&
         !window.error &&
