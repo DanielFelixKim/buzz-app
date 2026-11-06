@@ -163,9 +163,8 @@ the linked message's channel and thread; it cannot combine with `channel` or
 `send` needs `channel`, `text`, and `audience`;
 `reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept
 `mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.
-Unknown fields are rejected. File access, commands, Git
-credentials, and plugin tools are unavailable. Connection credentials must stay
-out of logs and messages.
+Unknown fields are rejected. File access, commands, Git credentials, and plugin
+tools are unavailable. Connection credentials must stay out of logs and messages.
 
 ### Durable external approval
 

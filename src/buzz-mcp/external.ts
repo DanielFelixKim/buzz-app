@@ -134,14 +134,12 @@ export async function respondExternal(
       };
     connected();
   }
-  if (method === "tools/list") {
-    if (params.cursor !== undefined)
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: { code: -32602, message: "Tool cursors are not supported." },
-      };
-  }
+  if (method === "tools/list" && params.cursor !== undefined)
+    return {
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32602, message: "Tool cursors are not supported." },
+    };
   if (scopes.length === 1 && scopes[0] === "agent") {
     const reply = await respond(client, {}, input, added, {
       instructions:
