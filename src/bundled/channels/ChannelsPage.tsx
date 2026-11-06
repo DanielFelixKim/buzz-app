@@ -1877,7 +1877,8 @@ function ChannelWorkspace({
   const docked = !!showingPanel && !showingMediaReview;
   // A floating dock covers the conversation, even the strip beside a card:
   // keep focus, typing, reading and assistive technology out of it.
-  const covered = useCoveredByDock(split.ref, docked);
+  const conversation = useRef<HTMLElement>(null);
+  const covered = useCoveredByDock(split.ref, conversation, docked);
   // A routed thread can mount behind a collapsed pane, where it cannot take
   // focus, or already be selected, so its pane does not move focus. Once its
   // tab shows, hand it focus nothing else took.
@@ -2176,6 +2177,7 @@ function ChannelWorkspace({
       )}
       <Panel
         as="article"
+        ref={conversation}
         aria-label="Conversation"
         data-overlay-boundary=""
         data-solo-focus-pane={solo ? "" : undefined}

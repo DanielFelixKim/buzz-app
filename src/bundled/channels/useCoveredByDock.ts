@@ -1,12 +1,30 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
 
+const live = (element: HTMLElement) =>
+  !element.closest("[hidden], [inert]") && element.getClientRects().length > 0;
+
+/** Focus the board's dock: its selected tab, else its first live control. */
+export function focusDock(board: Element | null | undefined) {
+  const find = (selector: string) =>
+    Array.from(
+      board?.querySelectorAll<HTMLElement>(
+        `:scope > [data-panel-dock] :is(${selector})`,
+      ) ?? [],
+    ).find(live);
+  (
+    find('[role="tab"][aria-selected="true"]') ??
+    find('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')
+  )?.focus({ preventScroll: true });
+}
+
 /**
- * Whether the board's open dock floats over its conversation, as a card or at
- * full width. A media and a container query decide that, so CSS stays the only
+ * Whether the board's open dock floats over `content`, as a card or at full
+ * width. A media and a container query decide that, so CSS stays the only
  * owner of the breakpoints: this reads the dock's computed position.
  */
 export function useCoveredByDock(
   board: RefObject<HTMLElement | null>,
+  content: RefObject<HTMLElement | null>,
   open: boolean,
 ) {
   const [overlay, setOverlay] = useState(false);
@@ -16,8 +34,14 @@ export function useCoveredByDock(
     const dock = element.querySelector<HTMLElement>(
       ":scope > [data-panel-dock]",
     );
-    const measure = () =>
-      setOverlay(!!dock && getComputedStyle(dock).position === "absolute");
+    const measure = () => {
+      const covering = !!dock && getComputedStyle(dock).position === "absolute";
+      // Inert content would drop focus to the page, so hand it to the dock
+      // first, as narrow Settings hands it to its details.
+      if (covering && content.current?.contains(document.activeElement))
+        focusDock(element);
+      setOverlay(covering);
+    };
     measure();
     // Either query flips with the board's or the dock's size.
     const observer = new ResizeObserver(measure);
@@ -28,7 +52,7 @@ export function useCoveredByDock(
       // A reopened dock never covers from a stale width.
       setOverlay(false);
     };
-  }, [board, open]);
+  }, [board, content, open]);
   // Derived while rendering, so closing the dock uncovers in the same commit.
   return open && overlay;
 }

@@ -277,7 +277,7 @@ export function PageTabs({
   const split = usePanelSplit(scope, `page:${id}`);
   const hasTabs = secondary.items.length > 0;
   const showingPanel = tabState.paneOpen && hasTabs;
-  const covered = useCoveredByDock(split.ref, showingPanel);
+  const covered = useCoveredByDock(split.ref, fallbackFocus, showingPanel);
   // As in a plain channel visit, the page reads its visible selected side tab
   // while focus stays anywhere on the page, such as the row that opened it.
   // A conversation moved to the main pane still reads only by its own focus.

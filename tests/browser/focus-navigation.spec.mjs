@@ -5,6 +5,7 @@ import {
   settleShellToggle,
 } from "./navigation.mjs";
 import { clickRow, open } from "./timeline.mjs";
+import { readJournal } from "./reading.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({
@@ -233,6 +234,21 @@ test.extend({ companionFixture: true })(
       name: "Channel settings",
       exact: true,
     });
+    const conversation = page.locator('article[aria-label="Conversation"]');
+    const dock = page.locator("[data-channel-workspace] > [data-panel-dock]");
+    const search = page.getByRole("button", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    // Beside the pane, main is live and the PC binding cycles from it to side.
+    if (!keys.apple) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await expect(conversation).not.toHaveAttribute("inert");
+      await members.focus();
+      await expect(members).toBeFocused();
+      await page.keyboard.press(keys.side);
+      await expect(tab).toBeFocused();
+    }
     for (const mode of ["light", "dark"]) {
       await page.evaluate((mode) => {
         document.documentElement.dataset.colorMode = mode;
@@ -241,8 +257,20 @@ test.extend({ companionFixture: true })(
       for (const width of [600, 900, 1440]) {
         await page.setViewportSize({ width, height: 900 });
         await tab.click();
-        // The PC binding cycles: start in main so its next destination is side.
-        if (!keys.apple) await members.focus();
+        // The PC binding cycles: start outside the side pane so its next
+        // destination is side. Where the pane floats over main, as at narrow
+        // widths or with enlarged text, main can't take focus: start from
+        // Search instead.
+        if (!keys.apple) {
+          const covered = await dock.evaluate(
+            (element) => getComputedStyle(element).position === "absolute",
+          );
+          if (covered) await expect(conversation).toHaveAttribute("inert", "");
+          else await expect(conversation).not.toHaveAttribute("inert");
+          const start = covered ? search : members;
+          await start.focus();
+          await expect(start).toBeFocused();
+        }
         await expect(page.locator("html")).not.toHaveAttribute(
           "data-keyboard-navigation",
           "",
@@ -450,9 +478,9 @@ test.extend({ readState: true, threadUnread: true })(
     await page.keyboard.type(" wide");
     await expect(composer).toHaveText("Alpha draft wide");
 
-    // Narrowing while typing leaves the composer it covers; the draft stays.
+    // Narrowing while typing hands focus to the thread's tab; the draft stays.
     await page.setViewportSize({ width: 600, height: 900 });
-    await expect(composer).not.toBeFocused();
+    await expect(tab).toBeFocused();
     await page.keyboard.type("x");
     await expect(composer).toHaveText("Alpha draft wide");
 
@@ -498,5 +526,159 @@ test.extend({ readState: true, threadUnread: true })(
     await page.keyboard.press("End");
     await page.keyboard.type("!");
     await expect(composer).toHaveText("Alpha draft wide!");
+  },
+);
+
+// Reading follows focus. A covered conversation can't hold it, so a message
+// that arrives under the pane stays unread until the pane closes, while the
+// thread that took focus keeps reading.
+test.extend({ readState: true, threadUnread: true })(
+  "a covered conversation reads nothing until it is uncovered",
+  async ({ page, app }) => {
+    const frontiers = async () =>
+      (await readJournal(page))?.state.frontiers ?? {};
+    const read = (frontier, event, catchUp) =>
+      Object.hasOwn(frontier, `msg:${event.id}`) ||
+      (frontier[catchUp] ?? 0) >= event.created_at;
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await open(page, app);
+    const history = app.histories.get("primary/alpha");
+    const root = history.find((event) => event.content === "Thread root 1");
+    await clickRow(
+      page,
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ }),
+    );
+    const tab = page
+      .locator("[data-panel-workspace]")
+      .getByRole("tab", { name: "Thread root 1", exact: true });
+    await expect(tab).toBeVisible();
+    // Typing in the conversation reads it.
+    await page
+      .getByRole("textbox", { name: "Message #Alpha", exact: true })
+      .click();
+    const newest = Math.max(...history.map((event) => event.created_at));
+    await expect
+      .poll(async () => (await frontiers())["activity:alpha"] ?? 0)
+      .toBeGreaterThanOrEqual(newest);
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(tab).toBeFocused();
+    const caughtUp = (await frontiers())["activity:alpha"];
+    const message = app.append(
+      "primary",
+      "alpha",
+      "Arrived while covered",
+      true,
+      false,
+      undefined,
+      undefined,
+      [],
+      caughtUp + 1,
+    );
+    await expect(
+      page.locator(`[data-channel-timeline] [data-message-id="${message.id}"]`),
+    ).toBeAttached();
+    // The thread reads a later reply, so the conversation's own dwell for the
+    // message has passed too.
+    const reply = app.reply(root.id);
+    await expect
+      .poll(async () =>
+        read(await frontiers(), reply, `thread-activity:${root.id}`),
+      )
+      .toBe(true);
+    expect(read(await frontiers(), message, "activity:alpha")).toBe(false);
+    await page
+      .getByRole("button", { name: "Close Thread root 1 tab", exact: true })
+      .click();
+    await expect
+      .poll(async () => read(await frontiers(), message, "activity:alpha"))
+      .toBe(true);
+  },
+);
+
+// The Activity page's tabs float over it the same way. The native close-all
+// command must still reach the page while its tabs cover it.
+test.extend({
+  readState: true,
+  threadUnread: true,
+  threadUnreadMentions: true,
+})(
+  "an Activity tab covering the page keeps focus out and still closes all tabs",
+  async ({ page, app }) => {
+    await page.setViewportSize({ width: 600, height: 900 });
+    await open(page, app);
+    await page
+      .getByRole("navigation", { name: "Apps dock", exact: true })
+      .getByRole("tab", { name: "Activity", exact: true })
+      .click();
+    const inbox = page.getByRole("region", { name: "Activity", exact: true });
+    await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+    await inbox
+      .getByRole("list", { name: "Activity", exact: true })
+      .getByRole("listitem")
+      .filter({ hasText: "Unread reply 1" })
+      .getByRole("button", { name: /^Open / })
+      .click();
+    const side = page.locator("[data-panel-workspace]");
+    const tab = side.getByRole("tab", { selected: true });
+    await expect(tab).toBeVisible();
+    await settlePanelMotion(page);
+    const covered = inbox.locator(
+      'div[tabindex="-1"]:has(> [data-main-workspace])',
+    );
+    await expect(covered).toHaveAttribute("inert", "");
+    await expect(covered).toHaveAttribute("aria-hidden", "true");
+    await tab.focus();
+    for (let press = 0; press < 8; press++) {
+      await page.keyboard.press("Shift+Tab");
+      expect(
+        await covered.evaluate((element) =>
+          element.contains(document.activeElement),
+        ),
+      ).toBe(false);
+    }
+    const handled = await page.evaluate(() => {
+      const event = new Event("buzz:close-all-tabs", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    expect(handled).toBe(true);
+    await expect(side).toHaveCount(0);
+    await expect(covered).not.toHaveAttribute("inert");
+    await expect(
+      inbox.getByRole("tab", { name: "Activity", exact: true }),
+    ).toBeFocused();
+  },
+);
+
+// A pane that stays open over the conversation keeps focus when another closes.
+test.extend({ companionFixture: true })(
+  "closing a tab under the companion keeps focus in the dock",
+  async ({ page, app }) => {
+    await page.setViewportSize({ width: 600, height: 900 });
+    await open(page, app);
+    await openChannelDetails(page);
+    const close = page.getByRole("button", {
+      name: "Close Channel settings tab",
+      exact: true,
+    });
+    await expect(close).toBeVisible();
+    await page
+      .getByRole("button", { name: "Companion fixture", exact: true })
+      .click();
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
+      exact: true,
+    });
+    await expect(companion).toBeVisible();
+    await settlePanelMotion(page);
+    await expect(
+      page.locator('article[aria-label="Conversation"]'),
+    ).toHaveAttribute("inert", "");
+    await close.click();
+    await expect(close).toHaveCount(0);
+    // Its opener stays covered, so a live dock control takes focus.
+    await expect(companion.locator(":focus")).toHaveCount(1);
   },
 );
