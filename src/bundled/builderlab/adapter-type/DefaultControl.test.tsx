@@ -67,14 +67,14 @@ async function fixture() {
   );
   render(<Control />);
   await screen.findByRole("button", {
-    name: "Builderlab default model: Sol 6.1 · Default, Low",
+    name: "Builderlab default model, Low thinking: Sol 6.1",
   });
   return { defaults, session, request, acquire };
 }
 async function chooseHigh() {
   const user = userEvent.setup();
   await user.click(
-    screen.getByRole("button", { name: /^Builderlab default model:/ }),
+    screen.getByRole("button", { name: /^Builderlab default model/ }),
   );
   (await screen.findByRole("menuitem", { name: "OpenAI" })).focus();
   await user.keyboard("{ArrowRight}");
@@ -88,7 +88,7 @@ it("saves an explicit thinking choice on the recommended model, restores it and 
   await chooseHigh();
   expect(
     await screen.findByRole("button", {
-      name: "Builderlab default model: Sol 6.1, High",
+      name: "Builderlab default model, High thinking: Sol 6.1",
     }),
   ).toBeVisible();
   expect(new BuilderlabDefaults().resolve("account", catalog)).toEqual({
@@ -97,14 +97,14 @@ it("saves an explicit thinking choice on the recommended model, restores it and 
   });
   await userEvent
     .setup()
-    .click(screen.getByRole("button", { name: /^Builderlab default model:/ }));
+    .click(screen.getByRole("button", { name: /^Builderlab default model/ }));
   await userEvent.setup().click(
     await screen.findByRole("menuitem", {
       name: "Use Builderlab recommended",
     }),
   );
   expect(
-    await screen.findByRole("button", { name: /Default, Low/ }),
+    await screen.findByRole("button", { name: /Low thinking: Sol 6.1/ }),
   ).toBeVisible();
   expect(h.defaults.read("account")).toBeUndefined();
 });
@@ -117,7 +117,9 @@ it("keeps the effective default when local persistence refuses a write", async (
   await chooseHigh();
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
   expect(h.defaults.read("account")).toBeUndefined();
-  expect(screen.getByRole("button", { name: /Default, Low/ })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Low thinking: Sol 6.1/ }),
+  ).toBeVisible();
 });
 
 it("isolates persisted choices by account and environment and falls back for unsupported pairs", () => {
@@ -176,7 +178,7 @@ it("recovers a failed catalog request and ignores a late reply after account cha
     .setup()
     .click(screen.getByRole("button", { name: "Retry models" }));
   expect(
-    await screen.findByRole("button", { name: /Default, Low/ }),
+    await screen.findByRole("button", { name: /Low thinking: Sol 6.1/ }),
   ).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

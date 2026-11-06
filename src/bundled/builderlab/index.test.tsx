@@ -336,7 +336,7 @@ it.each([undefined, false, true])(
         ).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("ready");
         expect(
-          screen.getByRole("button", { name: /^Builderlab default model:/ }),
+          screen.getByRole("button", { name: /^Builderlab default model/ }),
         ).toBeVisible();
       } else {
         expect(
@@ -390,7 +390,7 @@ it.each([undefined, false, true])(
         ).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("attention");
         expect(
-          screen.queryByRole("button", { name: /^Builderlab default model:/ }),
+          screen.queryByRole("button", { name: /^Builderlab default model/ }),
         ).not.toBeInTheDocument();
       }
     } finally {

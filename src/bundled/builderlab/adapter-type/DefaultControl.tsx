@@ -45,11 +45,6 @@ export function createDefaultControl(
     const subject = login.account?.subject;
     const selected =
       subject && loaded ? defaults.resolve(subject, loaded) : undefined;
-    const saved = subject ? defaults.read(subject) : undefined;
-    const inherited =
-      !saved ||
-      selected?.modelId !== saved.modelId ||
-      selected?.reasoningEffort !== saved.reasoningEffort;
     const save = (modelId: string, reasoningEffort: string) => {
       if (!subject || session.snapshot() !== login || !loaded) return;
       if (
@@ -75,15 +70,11 @@ export function createDefaultControl(
           compact
           groupByFamily
           includeDefault={false}
-          label="Builderlab default model"
+          label={`Builderlab default model${selected ? `, ${effortLabel(selected.reasoningEffort)} thinking` : ""}`}
           resetLabel="Use Builderlab recommended"
-          value={inherited ? "" : (selected?.modelId ?? "")}
-          defaultModel={loaded?.recommended?.modelId}
+          value={selected?.modelId ?? ""}
           defaultLabel="Choose a model"
           effort={selected?.reasoningEffort}
-          effortLabel={
-            selected ? effortLabel(selected.reasoningEffort) : undefined
-          }
           models={(loaded?.models ?? []).map((model) => ({
             ...modelChoice(model),
             efforts: model.supportedReasoningEfforts.map((id) => ({
@@ -97,10 +88,7 @@ export function createDefaultControl(
             login.status !== "signed-in" ||
             !login.account?.canUseRemoteAgents
           }
-          onEffortChange={(id, effort) => {
-            const modelId = id || loaded?.recommended?.modelId;
-            if (modelId) save(modelId, effort);
-          }}
+          onEffortChange={save}
           onChange={(id) => {
             if (!id) save("", "");
           }}
