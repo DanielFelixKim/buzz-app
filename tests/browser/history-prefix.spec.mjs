@@ -258,16 +258,14 @@ for (const compact of [false, true]) {
       step < (compact ? 20 : 5);
       step++
     ) {
-      if (compact) {
-        await page
-          .getByRole("region", { name: "Channel message history" })
-          .hover();
-        await page.mouse.wheel(0, 600);
-      } else {
-        await page
-          .getByRole("button", { name: "Load newer messages", exact: true })
-          .click();
-      }
+      const history = page.getByRole("region", {
+        name: "Channel message history",
+      });
+      await history.hover();
+      await page.mouse.wheel(
+        0,
+        await history.evaluate((element) => element.scrollHeight),
+      );
       await settle(page);
       await expect(snapshot).toHaveAttribute("data-loading", "false");
       await expect(page.getByRole("alert")).toHaveCount(0);

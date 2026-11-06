@@ -2119,19 +2119,23 @@ function Timeline({
       <div ref={activityTail}>
         {window.hasNewer && (
           <div className={styles.edge}>
-            <Button
-              type="button"
-              disabled={window.loadingNewer}
-              onClick={() =>
-                queries.channels.loadNewer?.(channelId, readingAnchor())
-              }
-            >
-              {window.loadingNewer
-                ? "Loading newer…"
-                : window.error
-                  ? "Retry newer messages"
-                  : "Load newer messages"}
-            </Button>
+            {historyControl === "button" || window.error ? (
+              <Button
+                type="button"
+                disabled={window.loadingNewer}
+                onClick={() =>
+                  queries.channels.loadNewer?.(channelId, readingAnchor())
+                }
+              >
+                {window.loadingNewer
+                  ? "Loading newer…"
+                  : window.error
+                    ? "Retry newer messages"
+                    : "Load newer messages"}
+              </Button>
+            ) : window.loadingNewer ? (
+              <span role="status">Loading newer…</span>
+            ) : null}
           </div>
         )}
         <AgentConnectionSetup

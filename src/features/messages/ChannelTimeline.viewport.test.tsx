@@ -1123,3 +1123,52 @@ it("keeps positioning idle when an unrelated activity update leaves the shown ro
     owner.dispose();
   }
 });
+
+it.each(["scroll", "button"] as const)(
+  "newer history respects %s controls and retains retry",
+  (historyControl) => {
+    const { owner, updates, content } = activityFixture();
+    const loadNewer = vi.fn();
+    const queries = {
+      ...owner.session,
+      channels: { ...owner.session.channels, loadNewer },
+    };
+    const base = content(updates(2), undefined, true, queries);
+    const show = (loadingNewer = false, error?: string) =>
+      cloneElement(base, {
+        historyControl,
+        window: { ...base.props.window, hasNewer: true, loadingNewer, error },
+      });
+    try {
+      const view = render(show());
+      expect(
+        screen.queryByRole("button", {
+          name: "Load newer messages",
+          exact: true,
+        }) !== null,
+      ).toBe(historyControl === "button");
+      view.rerender(show(true));
+      if (historyControl === "scroll") {
+        expect(screen.getByRole("status")).toHaveTextContent("Loading newer…");
+        expect(
+          screen.queryByRole("button", { name: "Loading newer…", exact: true }),
+        ).toBeNull();
+      } else {
+        expect(
+          screen.getByRole("button", { name: "Loading newer…", exact: true }),
+        ).toBeDisabled();
+      }
+      view.rerender(show(false, "Read failed"));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Retry newer messages",
+          exact: true,
+        }),
+      );
+      expect(loadNewer).toHaveBeenCalledTimes(1);
+      expect(loadNewer.mock.calls[0]?.[0]).toBe("alpha");
+    } finally {
+      owner.dispose();
+    }
+  },
+);
