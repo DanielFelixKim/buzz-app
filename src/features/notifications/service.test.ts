@@ -734,7 +734,7 @@ it("a plugin sound that fails to load warns once and alerts fall back to the def
   await flush();
   expect(t.plays).toEqual(["flutter"]);
 });
-it("the example sound pack registers playable WAV tones", async () => {
+it("the example Starship pack registers playable WAV sounds", async () => {
   const blobs: Blob[] = [];
   vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
     blobs.push(blob as Blob);
@@ -746,12 +746,12 @@ it("the example sound pack registers playable WAV tones", async () => {
     expect(t.service.soundRegistry.snapshot()).toHaveLength(1),
   );
   const [pack] = t.service.soundRegistry.snapshot();
-  expect(pack?.label).toBe("Example tones");
+  expect(pack?.label).toBe("Starship");
   expect(pack?.sounds.map((sound) => sound.ref)).toEqual([
-    "test.plugin/chime",
-    "test.plugin/drop",
-    "test.plugin/tick",
-    "test.plugin/bell",
+    "test.plugin/shield-recharge",
+    "test.plugin/plasma-shot",
+    "test.plugin/comms-ping",
+    "test.plugin/mission-complete",
   ]);
   for (const blob of blobs) {
     expect(blob.type).toBe("audio/wav");

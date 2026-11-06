@@ -48,27 +48,49 @@ function tone(notes) {
 
 export function apply(ctx) {
   ctx.notifications.sounds.register({
-    id: "tones",
-    label: "Example tones",
+    id: "starship",
+    label: "Starship",
     sounds: [
       {
-        id: "chime",
-        label: "Chime",
+        id: "shield-recharge",
+        label: "Shield Recharge",
         audio: tone([
-          [880, 0.12],
-          [1320, 0.3],
+          [440, 0.07],
+          [554, 0.07],
+          [659, 0.07],
+          [880, 0.2],
         ]),
       },
       {
-        id: "drop",
-        label: "Drop",
+        id: "plasma-shot",
+        label: "Plasma Shot",
         audio: tone([
-          [660, 0.1],
-          [440, 0.25],
+          [1600, 0.04],
+          [1200, 0.04],
+          [800, 0.05],
+          [500, 0.12],
         ]),
       },
-      { id: "tick", label: "Tick", audio: tone([[1760, 0.06]]) },
-      { id: "bell", label: "Bell", audio: tone([[1046.5, 0.6]]) },
+      {
+        id: "comms-ping",
+        label: "Comms Ping",
+        // A 0 Hz note is a rest.
+        audio: tone([
+          [1318.5, 0.08],
+          [0, 0.05],
+          [1318.5, 0.2],
+        ]),
+      },
+      {
+        id: "mission-complete",
+        label: "Mission Complete",
+        audio: tone([
+          [523.3, 0.1],
+          [659.3, 0.1],
+          [784, 0.1],
+          [1046.5, 0.4],
+        ]),
+      },
     ],
   });
 }
