@@ -205,7 +205,9 @@ export class NotificationsService extends Service implements Notifications {
     this.publish({ viewer, error: null });
     this.preferences.selectViewer(viewer);
   }
-  updatePreferences(patch: Partial<NotificationPreferences>) {
+  updatePreferences(
+    patch: Partial<Omit<NotificationPreferences, "quietConversations">>,
+  ) {
     return this.preferences.update(patch);
   }
   setConversationSound(
@@ -225,28 +227,15 @@ export class NotificationsService extends Service implements Notifications {
       throw new Error(
         "Save your notification choices in Settings → Notifications, then retry background triage.",
       );
-    // Another window may have written a different policy before its storage event arrives.
-    this.preferences.reload();
-    if (this.state.preferencesError)
-      throw new Error(
-        "Could not load conversation sound settings. Retry before starting background work.",
-      );
-    const quiet = this.state.preferences.quietConversations ?? [];
-    const matches = (entry: (typeof quiet)[number]) =>
-      entry.communityOrigin === parsed.scope.communityOrigin &&
-      entry.channelId === parsed.channelId;
     if (
-      quiet.some(matches) === (sound === "silent") &&
-      !this.state.preferencesError
+      !this.preferences.setConversationSound(
+        {
+          communityOrigin: parsed.scope.communityOrigin,
+          channelId: parsed.channelId,
+        },
+        sound,
+      )
     )
-      return;
-    const next = quiet.filter((entry) => !matches(entry));
-    if (sound === "silent")
-      next.push({
-        communityOrigin: parsed.scope.communityOrigin,
-        channelId: parsed.channelId,
-      });
-    if (!this.preferences.update({ quietConversations: next }))
       throw new Error(
         "Could not save silent conversation settings. Retry before starting background work.",
       );

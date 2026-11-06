@@ -23,15 +23,19 @@ afterEach(async () => {
 });
 function setup(
   authorized?: (target: import("../navigation/targets").OpenTarget) => boolean,
+  values = new Map<string, string>(),
 ) {
   const ctx = new Context();
   contexts.push(ctx);
   let module: PluginModule = { apply() {} };
   const runtime = new PluginRuntime(ctx, async () => module);
   ctx.effect(() => () => runtime.dispose());
-  const values = new Map<string, string>();
   const host = {
     localStorage: {
+      get length() {
+        return values.size;
+      },
+      key: (index: number) => [...values.keys()][index] ?? null,
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => values.set(key, value),
     },
@@ -657,18 +661,15 @@ it("rechecks durable quiet policy before skipping a repeated setting from anothe
     channelId: "quiet-chat",
   } as const;
   t.service.setConversationSound(target, "silent");
-  const key = `buzz-notification-preferences.v1:${viewer}`;
-  const saved = JSON.parse(t.values.get(key) ?? "null");
-  t.values.set(key, JSON.stringify({ ...saved, quietConversations: [] }));
+  const key = `buzz-notification-preferences.v1:sound:${viewer}:${JSON.stringify([target.scope.communityOrigin, target.channelId])}`;
+  t.values.set(key, "default");
   t.service.setConversationSound(target, "silent");
-  expect(
-    JSON.parse(t.values.get(key) ?? "null").quietConversations,
-  ).toHaveLength(1);
+  expect(t.values.get(key)).toBe("silent");
   vi.spyOn(t.host.localStorage, "getItem").mockImplementationOnce(() => {
     throw new Error("Storage unavailable");
   });
   expect(() => t.service.setConversationSound(target, "silent")).toThrow(
-    "Could not load",
+    "Could not save",
   );
 });
 
@@ -695,4 +696,62 @@ it("does not reload older saved on settings over unsaved off intent", () => {
     sound: false,
   });
   expect(t.service.snapshot().preferencesError).toBeTruthy();
+});
+
+it("preserves overlapping different-chat writes and stale Settings saves across windows", () => {
+  const a = setup(() => true);
+  const b = setup(() => true, a.values);
+  const target = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "chat-a",
+  } as const;
+  // Both windows read before either write commits, as independent renderers can.
+  const write = a.host.localStorage.setItem;
+  vi.spyOn(a.host.localStorage, "setItem").mockImplementationOnce(
+    (key, value) => {
+      b.service.setConversationSound(
+        { ...target, channelId: "chat-b" },
+        "silent",
+      );
+      write(key, value);
+    },
+  );
+  a.service.setConversationSound(target, "silent");
+  // A third Settings window is stale when it saves a normal sound choice.
+  const stale = setup(() => true, a.values);
+  a.service.setConversationSound({ ...target, channelId: "chat-c" }, "silent");
+  stale.service.updatePreferences({ sound: false });
+  const restored = setup(() => true, a.values);
+  expect(
+    restored.service
+      .snapshot()
+      .preferences.quietConversations?.map((e) => e.channelId)
+      .sort(),
+  ).toEqual(["chat-a", "chat-b", "chat-c"]);
+});
+
+it("keeps the first and newest chats silent beyond 1,000 saved conversations", () => {
+  const t = setup(() => true);
+  for (let index = 0; index < 1002; index++)
+    t.service.setConversationSound(
+      {
+        version: 1,
+        kind: "conversation",
+        scope: { viewer, communityOrigin: "https://community.test" },
+        channelId: `chat-${index}`,
+      },
+      "silent",
+    );
+  t.service.updatePreferences({ notifyWhileViewing: true });
+  const restored = setup(() => true, t.values);
+  const quiet = restored.service.snapshot().preferences.quietConversations;
+  expect(quiet).toHaveLength(1002);
+  expect(quiet).toEqual(
+    expect.arrayContaining([
+      { communityOrigin: "https://community.test", channelId: "chat-0" },
+      { communityOrigin: "https://community.test", channelId: "chat-1001" },
+    ]),
+  );
 });

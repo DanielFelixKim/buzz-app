@@ -60,8 +60,7 @@ function parseSounds(raw: unknown): CategorySounds {
 }
 function parseQuietConversations(raw: unknown) {
   if (raw === undefined) return Object.freeze([]);
-  if (!Array.isArray(raw) || raw.length > 1000)
-    throw new Error("Invalid quiet conversations");
+  if (!Array.isArray(raw)) throw new Error("Invalid quiet conversations");
   return Object.freeze(
     raw.map((entry: unknown) => {
       if (!entry || typeof entry !== "object")
@@ -121,22 +120,59 @@ export function createNotificationPreferences(
 ) {
   let viewer: string | undefined;
   let disposed = false;
+  // Keep the old list as a fallback; new choices are independent atomic records.
+  let legacyQuiet: NotificationPreferences["quietConversations"];
+  const unsavedSounds = new Map<string, "silent" | "default">();
   let state = {
     preferences: DEFAULT_NOTIFICATION_PREFERENCES,
     error: null as string | null,
   };
   const listeners = new Set<() => void>();
   const key = () => `${KEY}:${viewer ?? "device"}`;
+  const soundPrefix = () => `${KEY}:sound:${viewer ?? "device"}:`;
+  const soundKey = (entry: { communityOrigin: string; channelId: string }) =>
+    soundPrefix() + JSON.stringify([entry.communityOrigin, entry.channelId]);
   const notify = () => {
     for (const listener of listeners) listener();
   };
   function restore() {
     try {
       const raw = host?.localStorage.getItem(key());
+      const preferences = raw
+        ? parsePreferences(JSON.parse(raw))
+        : DEFAULT_NOTIFICATION_PREFERENCES;
+      legacyQuiet = preferences.quietConversations;
+      const quiet = new Map(
+        (legacyQuiet ?? []).map((entry) => [soundKey(entry), entry]),
+      );
+      const storage = host?.localStorage;
+      for (let index = 0; storage && index < storage.length; index++) {
+        const recordKey = storage.key(index);
+        if (!recordKey?.startsWith(soundPrefix())) continue;
+        const [communityOrigin, channelId] = JSON.parse(
+          recordKey.slice(soundPrefix().length),
+        );
+        const [entry] = parseQuietConversations([
+          { communityOrigin, channelId },
+        ]);
+        const sound = storage.getItem(recordKey);
+        // A concurrent removal may occur between enumeration and reading.
+        if (sound === null) continue;
+        if (
+          !entry ||
+          soundKey(entry) !== recordKey ||
+          (sound !== "silent" && sound !== "default")
+        )
+          throw new Error("Invalid conversation sound");
+        if (sound === "silent") quiet.set(soundKey(entry), entry);
+        else quiet.delete(soundKey(entry));
+      }
+      unsavedSounds.clear();
       state = {
-        preferences: raw
-          ? parsePreferences(JSON.parse(raw))
-          : DEFAULT_NOTIFICATION_PREFERENCES,
+        preferences: {
+          ...preferences,
+          quietConversations: [...quiet.values()],
+        },
         error: null,
       };
     } catch {
@@ -150,13 +186,19 @@ export function createNotificationPreferences(
     notify();
   }
   const changed = (event: StorageEvent) => {
-    if (event.key !== key() && event.key !== null) return;
+    if (
+      event.key !== key() &&
+      event.key !== null &&
+      !event.key.startsWith(soundPrefix())
+    )
+      return;
     try {
       if (event.storageArea !== host?.localStorage) return;
     } catch {
       /* restore reports the failure */
     }
-    restore();
+    // A remote change must not replace active unsaved off/silent intent.
+    if (!state.error) restore();
   };
   restore();
   host?.addEventListener("storage", changed);
@@ -173,21 +215,75 @@ export function createNotificationPreferences(
       if (next !== undefined && !/^[a-f0-9]{64}$/.test(next))
         throw new Error("Invalid notification viewer");
       viewer = next;
+      legacyQuiet = undefined;
+      unsavedSounds.clear();
       restore();
     },
-    update(patch: Partial<NotificationPreferences>) {
+    update(
+      patch: Partial<Omit<NotificationPreferences, "quietConversations">>,
+    ) {
       if (disposed) return false;
       const preferences = parsePreferences({ ...state.preferences, ...patch });
       let error: string | null = null;
       try {
         if (!host) throw new Error("No browser storage");
-        host.localStorage.setItem(key(), JSON.stringify(preferences));
+        for (const [recordKey, sound] of unsavedSounds)
+          host.localStorage.setItem(recordKey, sound);
+        // Never save the projected list: stale Settings windows cannot erase
+        // sound records written by another window.
+        host.localStorage.setItem(
+          key(),
+          JSON.stringify({ ...preferences, quietConversations: legacyQuiet }),
+        );
+        unsavedSounds.clear();
       } catch {
         error =
           "These notification choices are active, but could not be saved on this device. Retry saving.";
       }
-      // An off action takes effect even if persistence fails. Permission completion never changes it.
-      state = { preferences, error };
+      if (error === null) {
+        // Include remote choices whose events arrived while a failed save kept
+        // local off intent active. Our choices are now durable too.
+        restore();
+      } else {
+        // An off action takes effect even if persistence fails.
+        state = { preferences, error };
+        notify();
+      }
+      return state.error === null;
+    },
+    setConversationSound(
+      entry: { communityOrigin: string; channelId: string },
+      sound: "silent" | "default",
+    ) {
+      if (disposed) return false;
+      const recordKey = soundKey(entry);
+      const quiet = (state.preferences.quietConversations ?? []).filter(
+        (item) => soundKey(item) !== recordKey,
+      );
+      if (sound === "silent") quiet.push(entry);
+      let error: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        // Independent chats never share a read-modify-write transaction.
+        // Persist default too, so it overrides a legacy silent entry.
+        if (host.localStorage.getItem(recordKey) !== sound)
+          host.localStorage.setItem(recordKey, sound);
+        if (
+          state.preferences.quietConversations?.some(
+            (item) => soundKey(item) === recordKey,
+          ) ===
+          (sound === "silent")
+        )
+          return true;
+      } catch {
+        unsavedSounds.set(recordKey, sound);
+        error =
+          "These notification choices are active, but could not be saved on this device. Retry saving.";
+      }
+      state = {
+        preferences: { ...state.preferences, quietConversations: quiet },
+        error,
+      };
       notify();
       return error === null;
     },
