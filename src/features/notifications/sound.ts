@@ -61,31 +61,3 @@ export function resolveCategorySound(
     (sounds as Partial<Record<string, SoundName>>)[category] ?? DEFAULT_SOUND
   );
 }
-
-const cache = new Map<SoundName, HTMLAudioElement>();
-
-function getAudio(name: SoundName): HTMLAudioElement {
-  let audio = cache.get(name);
-  if (!audio) {
-    audio = new Audio(`/sounds/${name}.mp3`);
-    cache.set(name, audio);
-  }
-  return audio;
-}
-
-export function playNotificationSound(
-  name: SoundName,
-): HTMLAudioElement | null {
-  if (name === "silent") return null;
-  try {
-    const audio = getAudio(name);
-    audio.currentTime = 0;
-    audio.play().catch(() => {
-      // Best-effort — user may not have interacted with the page yet.
-    });
-    return audio;
-  } catch {
-    // Best-effort only.
-    return null;
-  }
-}

@@ -13,11 +13,8 @@ import {
   type NotificationPermissionState,
 } from "./platform";
 import { afterPresentation } from "./presentation";
-import {
-  playNotificationSound,
-  resolveCategorySound,
-  type SoundName,
-} from "./sound";
+import { resolveCategorySound, type SoundName } from "./sound";
+import { createSoundRegistry } from "./sounds";
 import { pluginNotificationText, type NotificationText } from "./content";
 
 export type NotificationCategoryDescriptor = Readonly<{
@@ -87,6 +84,8 @@ export class NotificationsService extends Service implements Notifications {
   readonly indicator = createUnreadIndicator();
   private readonly contributions;
   private readonly gates;
+  readonly soundRegistry = createSoundRegistry();
+  private readonly playSound: (name: SoundName) => void;
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Set<Candidate>();
   // Outstanding audio decisions for submissions awaiting platform acceptance.
@@ -110,10 +109,11 @@ export class NotificationsService extends Service implements Notifications {
     private readonly preferences = createNotificationPreferences(),
     private readonly authorized: (target: OpenTarget) => boolean = (target) =>
       !("scope" in target && target.scope),
-    private readonly playSound: (name: SoundName) => void = (name) =>
-      void playNotificationSound(name),
+    playSound?: (name: SoundName) => void,
   ) {
     super(ctx, "notifications");
+    this.playSound =
+      playSound ?? ((name) => void this.soundRegistry.play(name));
     this.contributions =
       createContributions<NotificationCategoryDescriptor>(ctx);
     this.gates = createContributions<NotificationGate>(ctx);

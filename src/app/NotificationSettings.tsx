@@ -111,9 +111,10 @@ export function NotificationSettings({
   const previewSound = useCallback(
     (category: NotificationCategory, name: SoundName) => {
       stopPreview();
-      if (name === "silent") return;
+      const source = notifications.soundRegistry.source(name);
+      if (!source) return;
       try {
-        const audio = new Audio(`/sounds/${name}.mp3`);
+        const audio = new Audio(source);
         previewAudio.current = audio;
         preview.current = { category, name };
         const stop = () => stopPreview(audio);
@@ -125,7 +126,7 @@ export function NotificationSettings({
         stopPreview();
       }
     },
-    [stopPreview],
+    [notifications, stopPreview],
   );
   useEffect(
     () => () => {
