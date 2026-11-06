@@ -20,10 +20,7 @@ import { PLUGIN_TOOLS } from "./plugins";
 import { SETTINGS_TOOLS } from "./settings";
 import { SOLO_WORKER_TOOLS } from "./solo-worker";
 import { Context } from "@deepseek-ai/cordis";
-import {
-  AgentProtectionService,
-  MAX_PROTECTED_ACTION_BYTES,
-} from "../features/agent-protection/service";
+import { AgentProtectionService } from "../features/agent-protection/service";
 import type { Agent } from "../features/agents/service";
 
 function gate<T>() {
@@ -372,7 +369,7 @@ it.each(["agent_create", "agent_update"])(
   },
 );
 
-it("refuses an oversized captured file before review or publication", async () => {
+it("enforces a plugin’s captured-file budget before review or publication", async () => {
   const { client, published } = fake(community);
   const ctx = new Context();
   const agent = {
@@ -398,21 +395,20 @@ it("refuses an oversized captured file before review or publication", async () =
     .agentProtection.register({
       processProtection: { readOnlyPaths: [], hiddenPaths: [] },
       check,
+      limits: { maxActionBytes: 1024, maxReviewPromptBytes: 3072 },
     });
   const protection = service.bind(agent);
   if (!protection) throw new Error("Expected protected handle");
   client.protect = (action) =>
     protection.check(action, new AbortController().signal);
-  client.read = vi.fn(async () =>
-    new TextEncoder().encode("x".repeat(MAX_PROTECTED_ACTION_BYTES)),
-  );
+  client.read = vi.fn(async () => new TextEncoder().encode("x".repeat(1024)));
   try {
     await expect(
       callSessionTool(client, { channel: "chan" }, "send", {
         audience: "everyone",
         path: "large.md",
       }),
-    ).rejects.toThrow("too large");
+    ).rejects.toThrow("evidence budget");
     expect(client.read).toHaveBeenCalledExactlyOnceWith("large.md");
     expect(check).not.toHaveBeenCalled();
     expect(client.upload).not.toHaveBeenCalled();

@@ -10,10 +10,37 @@ import type {
   ProtectedSpawn,
 } from "./models";
 
-// Transport ceilings, independent of the selected model’s token capacity.
-// A complete action may be encoded again inside a review prompt.
-export const MAX_PROTECTED_ACTION_BYTES = 8 * 1024 * 1024;
-export const MAX_REVIEW_PROMPT_BYTES = 3 * MAX_PROTECTED_ACTION_BYTES;
+// Resource safeguard, not a review/model budget. Plugins select their working
+// limits below this ceiling; declarations above it fail rather than being clamped.
+export const MAX_PROTECTION_PAYLOAD_BYTES = 32 * 1024 * 1024;
+export type ProtectionLimits = Readonly<{
+  maxActionBytes: number;
+  maxReviewPromptBytes: number;
+}>;
+// Keep legacy providers' behavior when they do not declare review limits.
+const DEFAULT_LIMITS: ProtectionLimits = Object.freeze({
+  maxActionBytes: 256 * 1024,
+  maxReviewPromptBytes: 768 * 1024,
+});
+const protectionLimits = (
+  limits: ProtectionLimits = DEFAULT_LIMITS,
+): ProtectionLimits => {
+  if (
+    !limits ||
+    Object.keys(limits).sort().join() !==
+      "maxActionBytes,maxReviewPromptBytes" ||
+    Object.values(limits).some(
+      (value) =>
+        !Number.isSafeInteger(value) ||
+        value < 1 ||
+        value > MAX_PROTECTION_PAYLOAD_BYTES,
+    )
+  )
+    throw new Error(
+      "Invalid protection limits: declare positive byte budgets up to 32 MiB",
+    );
+  return Object.freeze({ ...limits });
+};
 
 export type ProtectionBinding = Readonly<{ provider: string; policy: unknown }>;
 export type ProtectionAction = Readonly<{
@@ -40,6 +67,8 @@ export type ProtectionRequest = ProtectionAction &
 /** A denial its provider explained, for Buzz to show people. */
 export type ProtectionDenial = Readonly<{ allowed: false; reason: string }>;
 export type ProtectionProvider = Readonly<{
+  /** Plugin-owned serialized UTF-8 budgets, captured at registration. */
+  limits?: ProtectionLimits;
   phases?(policy: unknown): ProtectionPhases;
   /** Checks one immutable action. Failure, removal and cancellation deny it. */
   check(
@@ -224,12 +253,14 @@ export class AgentProtectionService extends Service {
           Array.isArray(prompt.outputSchema)))
     )
       throw new Error("Invalid model completion prompt");
+    const protection = this.providers.get(caller);
     if (
       new TextEncoder().encode(JSON.stringify(prompt)).length >
-      MAX_REVIEW_PROMPT_BYTES
+      (protection?.value.limits ?? DEFAULT_LIMITS).maxReviewPromptBytes
     )
-      throw new Error("Model completion context is too large");
-    const protection = this.providers.get(caller);
+      throw new Error(
+        "Model completion exceeds the protection plugin’s review budget",
+      );
     // The same spawn for every review, so the runtime can keep its worker;
     // revoking the provider kills it.
     let spawn = protection?.reviewers.get(model.runtime);
@@ -310,6 +341,7 @@ export class AgentProtectionService extends Service {
     const next = {
       value: {
         ...value,
+        limits: protectionLimits(value.limits),
         processProtection: copy(value.processProtection),
         runtimeProcesses: copy(value.runtimeProcesses ?? {}),
       },
@@ -460,9 +492,11 @@ export class AgentProtectionService extends Service {
         });
         if (
           new TextEncoder().encode(JSON.stringify(request)).length >
-          MAX_PROTECTED_ACTION_BYTES
+          (provider.value.limits ?? DEFAULT_LIMITS).maxActionBytes
         )
-          throw new Error("Protected action is too large");
+          throw new Error(
+            "Protected action exceeds the protection plugin’s evidence budget",
+          );
         let stop!: () => void;
         const cancelled = new Promise<never>((_, reject) => {
           stop = () => reject(new Error("Protected action was cancelled"));

@@ -2,8 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   AgentProtectionService,
-  MAX_PROTECTED_ACTION_BYTES,
-  MAX_REVIEW_PROMPT_BYTES,
+  MAX_PROTECTION_PAYLOAD_BYTES,
   ProtectionDenied,
   type ProtectionRequest,
 } from "./service";
@@ -643,24 +642,30 @@ it("requires a current requesting identity in the same relay for the agent model
   }
 });
 
-it("preserves complete large actions and bounds serialized review prompts separately", async () => {
+it("uses the protection plugin’s captured evidence and prompt budgets", async () => {
   const f = await fixture();
   const check = vi.fn(async (_request: ProtectionRequest) => true);
-  f.plugin.agentProtection.register({ processProtection, check });
+  const limits = {
+    maxActionBytes: 12 * 1024 * 1024,
+    maxReviewPromptBytes: 28 * 1024 * 1024,
+  };
+  f.plugin.agentProtection.register({ processProtection, check, limits });
+  // Registration captures the declaration; subsequent mutation cannot expand it.
+  limits.maxActionBytes = MAX_PROTECTION_PAYLOAD_BYTES;
   const gate = f.security.bind({
     ...f.agent,
     protection: { provider: "security.test", policy: {} },
   });
   if (!gate) throw new Error("Expected protected handle");
-  const content = `${'"\\😀'.repeat(200000)}final evidence`;
+  const content = `${'"\\😀'.repeat(1100000)}final evidence`;
   await gate.check({ ...action, content }, new AbortController().signal);
   expect(check.mock.calls[0]?.[0]).toMatchObject({ content });
   await expect(
     gate.check(
-      { ...action, content: "x".repeat(MAX_PROTECTED_ACTION_BYTES) },
+      { ...action, content: "x".repeat(12 * 1024 * 1024) },
       new AbortController().signal,
     ),
-  ).rejects.toThrow("too large");
+  ).rejects.toThrow("budget");
   expect(check).toHaveBeenCalledOnce();
   const complete = vi.fn<ReviewModelProvider["complete"]>(async () => ({
     text: '{"blocked":true,"reason":"review"}',
@@ -694,10 +699,69 @@ it("preserves complete large actions and bounds serialized review prompts separa
       { runtime: "buzz.test", id: "configured" },
       {
         system: "Plugin instructions",
-        input: "x".repeat(MAX_REVIEW_PROMPT_BYTES),
+        input: "x".repeat(28 * 1024 * 1024),
       },
       new AbortController().signal,
     ),
-  ).rejects.toThrow("too large");
+  ).rejects.toThrow("budget");
   expect(complete).toHaveBeenCalledOnce();
+  // The plugin can raise the prompt budget beyond the former 24 MiB app cap.
+  const larger = {
+    system: "Plugin instructions",
+    input: "x".repeat(25 * 1024 * 1024),
+  };
+  await f.plugin.agentProtection.complete(
+    { runtime: "buzz.test", id: "configured" },
+    larger,
+    new AbortController().signal,
+  );
+  expect(complete.mock.calls[1]?.[1]).toEqual(larger);
+});
+
+it.each([0, -1, 1.5, NaN, Infinity, MAX_PROTECTION_PAYLOAD_BYTES + 1])(
+  "rejects invalid plugin review budgets (%s) without replacing the live provider",
+  async (limit) => {
+    const f = await fixture();
+    const check = vi.fn(async () => true);
+    f.plugin.agentProtection.register({ processProtection, check });
+    for (const limits of [
+      { maxActionBytes: limit, maxReviewPromptBytes: 1024 },
+      { maxActionBytes: 1024, maxReviewPromptBytes: limit },
+    ])
+      expect(() =>
+        f.plugin.agentProtection.register({ processProtection, check, limits }),
+      ).toThrow("Invalid protection limits");
+    const gate = f.security.bind({
+      ...f.agent,
+      protection: { provider: "security.test", policy: {} },
+    });
+    await gate?.check(action, new AbortController().signal);
+    expect(check).toHaveBeenCalledOnce();
+  },
+);
+
+it("keeps legacy budgets and lets a plugin choose a smaller evidence budget", async () => {
+  const f = await fixture();
+  const check = vi.fn(async () => true);
+  const bind = () =>
+    f.security.bind({
+      ...f.agent,
+      protection: { provider: "security.test", policy: {} },
+    });
+  f.plugin.agentProtection.register({ processProtection, check });
+  await expect(
+    bind()?.check(
+      { ...action, content: "x".repeat(256 * 1024) },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("evidence budget");
+  f.plugin.agentProtection.register({
+    processProtection,
+    check,
+    limits: { maxActionBytes: 1, maxReviewPromptBytes: 1 },
+  });
+  await expect(
+    bind()?.check(action, new AbortController().signal),
+  ).rejects.toThrow("evidence budget");
+  expect(check).not.toHaveBeenCalled();
 });
