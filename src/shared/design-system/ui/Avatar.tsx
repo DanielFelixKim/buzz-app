@@ -187,7 +187,7 @@ export function Avatar({
   statusBadge?: "online" | "away" | "offline" | undefined;
   /** Immediate visible editors, and rows whose virtualized list already bounds
    * what mounts, may bypass lazy scheduling, never image readiness. */
-  loading?: "eager" | "lazy";
+  loading?: "eager" | "lazy" | undefined;
 }) {
   const renderArtwork = useContext(AvatarArtworkContext);
   const artwork = src ? renderArtwork?.(src) : undefined;

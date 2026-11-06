@@ -686,6 +686,9 @@ function MessageRowContent({
       edited={editedInBody && displayRow.edited}
     />
   );
+  // Only the virtualized timeline pins rows; its buffer already bounds which
+  // rows mount, and WebKit's lazy margin sits inside it.
+  const avatarLoading = keepMounted ? "eager" : undefined;
   const avatarSize = compactAvatar && !flat ? "small" : "default";
   const authorName = (
     <>
@@ -734,6 +737,7 @@ function MessageRowContent({
                 size={avatarSize}
                 shape={avatarShape}
                 statusBadge={presence === "unknown" ? undefined : presence}
+                loading={avatarLoading}
               />
               {presence !== "unknown" && (
                 <span className="sr-only select-none" id={presenceId}>
@@ -760,6 +764,7 @@ function MessageRowContent({
         size={avatarSize}
         shape={avatarShape}
         statusBadge={presence === "unknown" ? undefined : presence}
+        loading={avatarLoading}
       />
     </span>
   );

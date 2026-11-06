@@ -31,16 +31,21 @@ const profiles = authors.map((author, i) =>
   }),
 );
 const rows = foldMessages("avatars", relay.pubkey, events);
+// `?direct` shows the pictures as third-party https artwork instead.
+const direct = new URLSearchParams(location.search).has("direct");
 const owner = createRelaySession({
   viewer: viewer.pubkey,
   relayAuthor: relay.pubkey,
   media: (url, size) =>
-    mediaUrl(
-      url,
-      (target) => `http://buzz-media.localhost/${encodeURIComponent(target)}`,
-      relayOrigin,
-      size,
-    ),
+    direct
+      ? url
+      : mediaUrl(
+          url,
+          (target) =>
+            `http://buzz-media.localhost/${encodeURIComponent(target)}`,
+          relayOrigin,
+          size,
+        ),
   query: async (filters) =>
     profiles.filter((event) =>
       filters.some((filter) => filter.authors?.includes(event.pubkey)),
