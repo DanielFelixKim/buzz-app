@@ -1626,7 +1626,12 @@ it.each(
 );
 
 it("includes retained live roots in cached seek row admission", async () => {
-  const h = setup({ count: 160, spacing: 0, maxHistoryRows: 40 });
+  const h = setup({ count: 161, spacing: 0, maxHistoryRows: 40 });
+  const traffic = [...h.history].sort(newestFirst)[70];
+  assert.exists(traffic);
+  // Reserve an interior root before loading, rather than signing until a
+  // random ID lands between two adjacent roots in a dense second.
+  h.history.splice(h.history.indexOf(traffic), 1);
   await h.open();
   for (let step = 0; step < 3; step++) {
     h.channels.loadOlder("c");
@@ -1636,19 +1641,8 @@ it("includes retained live roots in cached seek row admission", async () => {
     .window()
     .rows.map((row) => row.id)
     .sort();
-  const lower = ids.at(-2),
-    upper = ids.at(-1),
-    target = ids[0];
-  assert.exists(lower);
-  assert.exists(upper);
+  const target = ids[0];
   assert.exists(target);
-  let traffic!: RelayEvent;
-  for (
-    let nonce = 0;
-    !traffic || traffic.id <= lower || traffic.id >= upper;
-    nonce++
-  )
-    traffic = message(h.alice, "c", `retained live ${nonce}`, T0);
   h.history.push(traffic);
   h.live.receive([traffic], { channelId: "c", phase: "live" });
   expect(h.window().rows.some((row) => row.id === traffic.id)).toBe(true);
