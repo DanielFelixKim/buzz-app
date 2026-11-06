@@ -10172,7 +10172,7 @@ it.each(["Do nothing", "Invite"])(
   },
 );
 
-it("Enter on a deliberately focused Invite adds a nonmember before sending", async () => {
+it("Enter right after the prompt opens invites a nonmember and sends", async () => {
   const h = mount();
   const add = vi.fn(async () => {});
   const list = {
@@ -10189,10 +10189,7 @@ it("Enter on a deliberately focused Invite adds a nonmember before sending", asy
   act(() => h.commands().insertMention(first));
   fireEvent.submit(screen.getByRole("form"));
   const invite = screen.getByRole("button", { name: "Invite" });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
-  );
-  invite.focus();
+  await waitFor(() => expect(invite).toHaveFocus());
   await userEvent.setup().keyboard("{Enter}");
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(add).toHaveBeenCalledWith("channel", first.pubkey);
@@ -10293,8 +10290,9 @@ it.each([
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "Honey is in oss.example.com. Bringing it here adds the same agent",
     );
-    // Enter on the initial focus declines: nothing joins, sends, or is lost.
+    // Enter on the highlighted Don't bring declines: nothing joins, sends, or is lost.
     const safe = screen.getByRole("button", { name: "Don't bring" });
+    expect(safe).toHaveAttribute("data-variant", "prominent");
     await waitFor(() => expect(safe).toHaveFocus());
     await userEvent.setup().keyboard("{Enter}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -10375,7 +10373,7 @@ it("brings several agents in, then adds them together", async () => {
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
 });
 
-it.each(["close", "escape", "enter"])(
+it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",
   async (action) => {
     const h = mount();
@@ -10402,14 +10400,11 @@ it.each(["close", "escape", "enter"])(
     );
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+      expect(screen.getByRole("button", { name: "Invite" })).toHaveFocus(),
     );
     if (action === "close")
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    else
-      await userEvent
-        .setup()
-        .keyboard(action === "enter" ? "{Enter}" : "{Escape}");
+    else await userEvent.setup().keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
