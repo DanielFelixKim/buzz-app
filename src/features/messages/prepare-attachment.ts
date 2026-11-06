@@ -24,13 +24,13 @@ const animatedWebp = (chunks: ReturnType<typeof webpChunks>) =>
 
 /** Whether painting the image would keep only its first frame. */
 export async function animatedImage(file: Blob): Promise<boolean> {
+  const type = imageType(new Uint8Array(await file.slice(0, 32).arrayBuffer()));
+  if (type === "image/gif") return true;
+  if (type !== "image/png" && type !== "image/webp") return false;
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const type = imageType(bytes.subarray(0, 32));
-  return (
-    type === "image/gif" ||
-    (type === "image/png" && animatedPng(pngChunks(bytes))) ||
-    (type === "image/webp" && animatedWebp(webpChunks(bytes)))
-  );
+  return type === "image/png"
+    ? animatedPng(pngChunks(bytes))
+    : animatedWebp(webpChunks(bytes));
 }
 
 /** Prepare pixels before the byte-exact upload contract; the relay still validates. */
