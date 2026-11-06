@@ -155,7 +155,7 @@ Legacy external clients must accept `create` in `buzz/grantedScopes`,
 advertised. Older Nexus clients that accept only read/post reject an unknown
 supported scope even when their grant still contains only read/post.
 
-The shared schemas apply with explicit
+For legacy grants, the shared schemas apply with explicit
 targets: `read` needs `channel`, `thread`, or `message_url`. A `message_url` uses
 the linked message's channel and thread; it cannot combine with `channel` or
 `thread`. Searches with `q` need `channel` or `message_url`;
@@ -163,7 +163,7 @@ the linked message's channel and thread; it cannot combine with `channel` or
 `send` needs `channel`, `text`, and `audience`;
 `reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept
 `mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.
-Unknown fields are rejected. For legacy grants, file access, commands, Git
+Unknown fields are rejected. File access, commands, Git
 credentials, and plugin tools are unavailable. Connection credentials must stay
 out of logs and messages.
 
