@@ -37,6 +37,7 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
   const descriptions = {
     idle: "Click to update",
     ready: "Click to update",
+    scheduled: "Buzz restarts once agents finish their work.",
     installing: "Updating",
     checking: "Checking for updates...",
     available: "Preparing update...",

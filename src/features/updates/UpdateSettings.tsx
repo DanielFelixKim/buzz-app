@@ -53,6 +53,7 @@ export function UpdateSettings({
     downloading: "Downloading update…",
     installing: "Installing update…",
     ready: "Ready to install. Buzz will restart.",
+    scheduled: "Restarting when agents are idle.",
     error: "",
   };
   const label =
