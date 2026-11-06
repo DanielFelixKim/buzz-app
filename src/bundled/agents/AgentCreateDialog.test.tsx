@@ -29,6 +29,7 @@ import type {
 import {
   croppedAvatar,
   emojiAvatar,
+  emojiAvatarScale,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
 import { AgentCreateDialog } from "./AgentCreateDialog";
@@ -379,12 +380,18 @@ it("creates with a custom emoji on a chosen background", async () => {
     within(
       within(dialog).getByRole("group", { name: "Avatar background" }),
     ).getAllByRole("button"),
-  ).toHaveLength(20);
+  ).toHaveLength(21);
   await user.click(
     within(dialog).getByRole("button", { name: "Use #0090FF background" }),
   );
   await user.click(createButton());
-  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith("🤖", "#0090FF");
+  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith(
+    "🤖",
+    "#0090FF",
+    emojiAvatarScale,
+    0,
+    0,
+  );
   await waitFor(() =>
     expect(uploadAvatar).toHaveBeenCalledWith(
       file,

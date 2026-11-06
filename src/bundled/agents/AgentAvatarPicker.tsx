@@ -21,11 +21,13 @@ import { AvatarEmojiPicker } from "../../features/profiles/AvatarEditor";
 import {
   AvatarCropFrame,
   AvatarZoom,
+  useAvatarPan,
 } from "../../features/profiles/AvatarCrop";
 import {
   type AvatarCrop,
   croppedAvatar,
   emojiAvatar,
+  emojiAvatarScale,
   uncropped,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
@@ -71,14 +73,20 @@ const backgrounds = [
   "#A16207",
   "#334155",
   "#18181B",
+  "transparent",
 ] as const;
 
 export type AvatarSelection =
   | { kind: "gloopie"; picture: string }
-  | { kind: "emoji"; emoji: string; color: string }
+  | { kind: "emoji"; emoji: string; color: string; crop?: AvatarCrop }
   | { kind: "image"; picture: string; crop?: AvatarCrop };
 
+type EmojiSelection = Extract<AvatarSelection, { kind: "emoji" }>;
+
 const defaultEmojiColor = backgrounds[0];
+
+// The emoji's center stays inside the frame.
+const emojiCenter = (value: number) => Math.min(0.5, Math.max(-0.5, value));
 
 export function AgentAvatarPicker({
   name,
@@ -101,15 +109,21 @@ export function AgentAvatarPicker({
   const filmCorners = useMediaCorners();
   const mode = selection.kind;
   const picture = selection.kind === "emoji" ? "" : selection.picture;
-  const lastEmoji = useRef("😀");
-  const lastColor = useRef<string>(defaultEmojiColor);
+  const lastEmoji = useRef<EmojiSelection>({
+    kind: "emoji",
+    emoji: "😀",
+    color: defaultEmojiColor,
+  });
   const [animateEmoji, setAnimateEmoji] = useState(false);
   const [animateBackdrop, setAnimateBackdrop] = useState(false);
   const [animateColor, setAnimateColor] = useState(false);
-  const emoji =
-    selection.kind === "emoji" ? selection.emoji : lastEmoji.current;
-  const color =
-    selection.kind === "emoji" ? selection.color : lastColor.current;
+  const emojiSelection =
+    selection.kind === "emoji" ? selection : lastEmoji.current;
+  const { emoji, color } = emojiSelection;
+  const setEmoji = (change: Partial<EmojiSelection>) => {
+    lastEmoji.current = { ...emojiSelection, ...change };
+    onChange(lastEmoji.current);
+  };
   const [emojiOpen, setEmojiOpen] = useState(false);
   // The chosen file shows at once; it stays the artwork after its upload lands.
   const [local, setLocal] = useState<{
@@ -119,9 +133,11 @@ export function AgentAvatarPicker({
     progress?: number;
   } | null>(null);
   // The crop lives in the selection so its owner can tell a reframe is a change.
-  const crop = (selection.kind === "image" && selection.crop) || uncropped;
+  const crop = (selection.kind !== "gloopie" && selection.crop) || uncropped;
   const setCrop = (value: AvatarCrop) =>
-    onChange({ kind: "image", picture, crop: value });
+    selection.kind === "emoji"
+      ? setEmoji({ crop: value })
+      : onChange({ kind: "image", picture, crop: value });
   const cropImage = useRef<HTMLImageElement>(null);
   const uploading = local && local.picture === undefined ? local : null;
   const busy = !!uploading;
@@ -228,7 +244,14 @@ export function AgentAvatarPicker({
       const image = cropImage.current;
       const paint =
         selection.kind === "emoji"
-          ? () => emojiAvatar(selection.emoji, selection.color)
+          ? () =>
+              emojiAvatar(
+                selection.emoji,
+                selection.color,
+                emojiAvatarScale * crop.zoom,
+                crop.y,
+                crop.x,
+              )
           : cropping && image && crop !== uncropped
             ? () => croppedAvatar(image, crop)
             : undefined;
@@ -297,6 +320,11 @@ export function AgentAvatarPicker({
     input.current?.click();
   };
   const locked = disabled || busy;
+  const emojiPan = useAvatarPan(
+    crop,
+    (x, y) => setCrop({ ...crop, x: emojiCenter(x), y: emojiCenter(y) }),
+    locked,
+  );
   return (
     <>
       <div
@@ -362,11 +390,7 @@ export function AgentAvatarPicker({
               onChange(
                 next === "gloopie"
                   ? { kind: "gloopie", picture: lastAvatar.url }
-                  : {
-                      kind: "emoji",
-                      emoji: lastEmoji.current,
-                      color: lastColor.current,
-                    },
+                  : lastEmoji.current,
               );
               setError("");
             }}
@@ -454,13 +478,21 @@ export function AgentAvatarPicker({
                   </span>
                 </div>
               ) : mode === "emoji" ? (
-                <PopoverRoot open={emojiOpen} onOpenChange={setEmojiOpen}>
+                <PopoverRoot
+                  open={emojiOpen}
+                  onOpenChange={(open) => {
+                    // The click that ends a drag only moves the emoji.
+                    if (!open || !emojiPan.moved.current) setEmojiOpen(open);
+                  }}
+                >
                   <PopoverTrigger
                     render={
                       <SurfaceButton
                         className={styles.emojiAvatarButton}
                         aria-label="Choose emoji"
+                        aria-description="Drag or use the arrow keys to move the emoji"
                         disabled={locked}
+                        {...emojiPan.handlers}
                       />
                     }
                   >
@@ -469,7 +501,11 @@ export function AgentAvatarPicker({
                       className={styles.emojiAvatarArtwork}
                       style={{ backgroundColor: color }}
                     >
-                      <EmojiSwap emoji={emoji} animate={animateEmoji} />
+                      <EmojiSwap
+                        emoji={emoji}
+                        crop={crop}
+                        animate={animateEmoji}
+                      />
                     </span>
                   </PopoverTrigger>
                   <PopoverPopup
@@ -490,8 +526,7 @@ export function AgentAvatarPicker({
                       disabled={locked}
                       onSelect={(value, animate) => {
                         setAnimateEmoji(animate);
-                        lastEmoji.current = value;
-                        onChange({ kind: "emoji", emoji: value, color });
+                        setEmoji({ emoji: value });
                         setEmojiOpen(false);
                       }}
                     />
@@ -517,15 +552,16 @@ export function AgentAvatarPicker({
                   shape="squircle"
                 />
               )}
+              {/* Floats over the artwork so showing it never moves the card. */}
+              {!uploading && (mode === "emoji" || (cropping && !selected)) && (
+                <AvatarZoom
+                  className={`${styles.avatarZoom} glass-secondary`}
+                  crop={crop}
+                  disabled={locked}
+                  onChange={setCrop}
+                />
+              )}
             </div>
-            {cropping && !selected && (
-              <AvatarZoom
-                className={styles.avatarZoom}
-                crop={crop}
-                disabled={locked}
-                onChange={setCrop}
-              />
-            )}
           </div>
           <div ref={dockSurface} className={styles.dockSurface}>
             <div
@@ -543,7 +579,7 @@ export function AgentAvatarPicker({
                 {backgrounds.map((swatch) => (
                   <span key={swatch} className={styles.dockItem}>
                     <IconButton
-                      data-color-swatch=""
+                      data-color-swatch={swatch}
                       variant="primary"
                       shape="round"
                       size="sm"
@@ -559,15 +595,18 @@ export function AgentAvatarPicker({
                       }
                       aria-label={`Use ${swatch} background`}
                       aria-pressed={color === swatch}
-                      style={{ backgroundColor: swatch }}
+                      style={
+                        swatch === "transparent"
+                          ? undefined
+                          : { backgroundColor: swatch }
+                      }
                       onPointerDown={(event) => {
                         if (event.pointerType === "mouse")
                           event.preventDefault();
                       }}
                       onClick={(event) => {
                         setAnimateColor(event.detail > 0);
-                        lastColor.current = swatch;
-                        onChange({ kind: "emoji", emoji, color: swatch });
+                        setEmoji({ color: swatch });
                       }}
                     />
                   </span>

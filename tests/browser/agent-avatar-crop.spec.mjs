@@ -1,10 +1,6 @@
 import { test, expect } from "./source-fixture.mjs";
 
-// The saved artwork must be the framed part of the image, painted by a real canvas.
-test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
-  page,
-}) => {
-  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+const splitImage = async (page) => {
   // A 200x100 image: red on the left half, blue on the right.
   const artwork = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
@@ -23,6 +19,26 @@ test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
     mimeType: "image/png",
     buffer: Buffer.from(artwork),
   });
+};
+
+const drag = async (page, locator, dx, dy) => {
+  const box = await locator.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    box.x + box.width / 2 + dx * box.width,
+    box.y + box.height / 2 + dy * box.height,
+    { steps: 4 },
+  );
+  await page.mouse.up();
+};
+
+// The saved artwork must be the framed part of the image, painted by a real canvas.
+test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+  await splitImage(page);
   const frame = page.getByRole("application", { name: "Image position" });
   await expect(frame).toBeVisible();
   await expect(frame.locator("[data-avatar-shape]")).toHaveAttribute(
@@ -31,13 +47,7 @@ test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
   );
   await page.getByRole("slider", { name: "Zoom" }).fill("2");
   // Drag the image right until its red half fills the frame.
-  const box = await frame.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 2, box.y + box.height / 2, {
-    steps: 4,
-  });
-  await page.mouse.up();
+  await drag(page, frame, 1.5, 0);
   await page.screenshot({
     path: test.info().outputPath("agent-avatar-crop.png"),
   });
@@ -63,4 +73,79 @@ test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
     left: [255, 0, 0, 255],
     right: [255, 0, 0, 255],
   });
+});
+
+test("a drag past the avatar selects no page text", async ({ page }) => {
+  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+  await splitImage(page);
+  const frame = page.getByRole("application", { name: "Image position" });
+  await expect(frame).toBeVisible();
+  await drag(page, frame, 0, 4);
+  expect(await page.evaluate(() => String(window.getSelection()))).toBe("");
+});
+
+test("the zoom slider appears over the avatar without moving the card", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+  const dock = page.getByRole("group", { name: "Agent avatars" });
+  const before = await dock.boundingBox();
+  await splitImage(page);
+  const frame = page.getByRole("application", { name: "Image position" });
+  const zoom = page.getByRole("slider", { name: "Zoom" });
+  const pill = page.locator("label", { has: zoom });
+  await expect(frame).toBeVisible();
+  expect(await dock.boundingBox()).toEqual(before);
+  await page.mouse.move(0, 0);
+  await expect(pill).toHaveCSS("opacity", "0");
+  await frame.hover();
+  await expect(pill).toHaveCSS("opacity", "1");
+  // Moving from the image onto the slider keeps it.
+  await zoom.hover();
+  await expect(pill).toHaveCSS("opacity", "1");
+  await drag(page, zoom, 0.25, 0);
+  await expect(zoom).not.toHaveValue("1");
+  // A mouse-focused slider still hides once the pointer leaves.
+  await page.mouse.move(0, 0);
+  await expect(pill).toHaveCSS("opacity", "0");
+});
+
+test("pans and zooms an emoji over a transparent background", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Use transparent background" })
+    .click();
+  await page.getByRole("slider", { name: "Zoom" }).fill("1.2");
+  const emoji = page.getByRole("button", { name: "Choose emoji" });
+  // Drag the emoji's center to the right edge; the drag opens no picker.
+  await drag(page, emoji, 1, 0);
+  await expect(page.getByRole("dialog", { name: "Choose emoji" })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("agent-avatar-emoji.png"),
+  });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const saved = page.getByRole("img", { name: "Saved avatar" });
+  await expect(saved).toBeVisible();
+  const alpha = await saved.evaluate(async (image) => {
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const { data } = context.getImageData(0, 0, 512, 512);
+    let left = 0;
+    let right = 0;
+    for (let i = 3; i < data.length; i += 4)
+      if (data[i]) (i >> 2) % 512 < 256 ? left++ : right++;
+    return { left, right, corner: data[3] };
+  });
+  expect(alpha.corner).toBe(0);
+  expect(alpha.left).toBe(0);
+  expect(alpha.right).toBeGreaterThan(0);
 });

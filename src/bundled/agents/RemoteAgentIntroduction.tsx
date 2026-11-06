@@ -1,10 +1,10 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
-import { EmojiArtwork } from "../../features/profiles/AvatarEditor";
 import { BuilderlabLogoIcon } from "../../shared/design-system/icons";
 import type { AvatarSelection } from "./AgentAvatarPicker";
 import { AgentPortrait } from "./AgentCard";
 import styles from "./AgentCreate.module.css";
+import { EmojiSwap } from "./EmojiSwap";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const endings = [
@@ -153,7 +153,11 @@ export function RemoteAgentIntroduction({
             className={styles.remoteEmoji}
             style={{ backgroundColor: avatar.color }}
           >
-            <EmojiArtwork emoji={avatar.emoji} animate={false} />
+            <EmojiSwap
+              emoji={avatar.emoji}
+              crop={avatar.crop}
+              animate={false}
+            />
           </div>
         ) : (
           <AgentPortrait

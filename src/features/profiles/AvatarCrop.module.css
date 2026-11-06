@@ -27,8 +27,7 @@
   pointer-events: none;
 }
 .zoom {
-  display: grid;
-  gap: var(--space-1);
+  display: flex;
 }
 .zoom input {
   width: 100%;

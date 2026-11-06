@@ -1,4 +1,10 @@
-import { useRef, useState, type Ref } from "react";
+import {
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type Ref,
+} from "react";
 import { type AvatarCrop, avatarCropBox } from "./avatar-upload";
 import styles from "./AvatarCrop.module.css";
 
@@ -8,6 +14,50 @@ const arrows: Record<string, [number, number]> = {
   ArrowUp: [0, -0.02],
   ArrowDown: [0, 0.02],
 };
+
+/** Drag or arrow-key panning in frame widths. A mouse press never starts a
+ * text selection, and `moved` is set only for the click that ends a drag. */
+export function useAvatarPan(
+  crop: AvatarCrop,
+  move: (x: number, y: number) => void,
+  disabled?: boolean,
+) {
+  const drag = useRef<{ x: number; y: number; crop: AvatarCrop } | null>(null);
+  const moved = useRef(false);
+  const end = () => {
+    drag.current = null;
+    if (moved.current) setTimeout(() => (moved.current = false));
+  };
+  return {
+    moved,
+    handlers: {
+      onPointerDown(event: PointerEvent<HTMLElement>) {
+        if (disabled || event.button) return;
+        if (event.pointerType === "mouse") event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { x: event.clientX, y: event.clientY, crop };
+      },
+      onPointerMove(event: PointerEvent<HTMLElement>) {
+        const start = drag.current;
+        if (!start) return;
+        const dx = event.clientX - start.x;
+        const dy = event.clientY - start.y;
+        moved.current ||= Math.hypot(dx, dy) > 3;
+        if (!moved.current) return;
+        const size = event.currentTarget.clientWidth;
+        move(start.crop.x + dx / size, start.crop.y + dy / size);
+      },
+      onPointerUp: end,
+      onPointerCancel: end,
+      onKeyDown(event: KeyboardEvent<HTMLElement>) {
+        const [dx, dy] = arrows[event.key] ?? [0, 0];
+        if (disabled || (!dx && !dy)) return;
+        event.preventDefault();
+        move(crop.x + dx, crop.y + dy);
+      },
+    },
+  };
+}
 
 /** Drag or use the arrow keys to pan an image inside its avatar shape. The
  * shape clips only the artwork, so the focus ring stays visible. */
@@ -28,9 +78,11 @@ export function AvatarCropFrame({
 }) {
   const [aspect, setAspect] = useState(1);
   const box = avatarCropBox(aspect, crop);
-  const drag = useRef<{ x: number; y: number; crop: AvatarCrop } | null>(null);
-  const move = (x: number, y: number) =>
-    onChange(avatarCropBox(aspect, { ...crop, x, y }).crop);
+  const pan = useAvatarPan(
+    box.crop,
+    (x, y) => onChange(avatarCropBox(aspect, { ...crop, x, y }).crop),
+    disabled,
+  );
   return (
     <div
       // A 2D pan has no widget role; the description gives its keys.
@@ -40,32 +92,7 @@ export function AvatarCropFrame({
       aria-description="Drag or use the arrow keys to move the image"
       aria-disabled={disabled || undefined}
       className={styles.frame}
-      onPointerDown={(event) => {
-        if (disabled) return;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = { x: event.clientX, y: event.clientY, crop: box.crop };
-      }}
-      onPointerMove={(event) => {
-        const start = drag.current;
-        if (!start) return;
-        const size = event.currentTarget.clientWidth;
-        move(
-          start.crop.x + (event.clientX - start.x) / size,
-          start.crop.y + (event.clientY - start.y) / size,
-        );
-      }}
-      onPointerUp={() => {
-        drag.current = null;
-      }}
-      onPointerCancel={() => {
-        drag.current = null;
-      }}
-      onKeyDown={(event) => {
-        const [dx, dy] = arrows[event.key] ?? [0, 0];
-        if (disabled || (!dx && !dy)) return;
-        event.preventDefault();
-        move(box.crop.x + dx, box.crop.y + dy);
-      }}
+      {...pan.handlers}
     >
       <div data-avatar-shape={shape} className={styles.artwork}>
         <img
@@ -102,7 +129,7 @@ export function AvatarZoom({
 }) {
   return (
     <label className={`${styles.zoom} ${className ?? ""}`}>
-      <span className="text-label-sm">Zoom</span>
+      <span className="sr-only">Zoom</span>
       <input
         type="range"
         min={1}

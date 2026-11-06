@@ -339,11 +339,6 @@
   display: grid;
   gap: var(--space-3);
 }
-.avatarZoom {
-  width: 100%;
-  max-width: 12rem;
-  justify-self: center;
-}
 .avatarSelected {
   position: relative;
   width: 100%;
@@ -355,11 +350,40 @@
   position: absolute;
   inset: 0;
 }
+/* The zoom slider floats on the artwork's lower edge. With a mouse it shows
+   only while the pointer is over the avatar or a key has focused it. */
+.avatarSelected > .avatarZoom {
+  inset: auto 15% var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+}
+@media (hover: hover) {
+  .avatarSelected:not(:hover, :has(:focus-visible)) > .avatarZoom {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .avatarZoom {
+    transition: opacity var(--duration-state) var(--easing-state);
+  }
+}
 .emojiAvatarButton,
 .emojiAvatarArtwork {
   display: block;
   width: 100%;
   height: 100%;
+}
+.emojiAvatarButton {
+  touch-action: none;
+}
+.avatarDock [data-color-swatch="transparent"] {
+  color: var(--text-primary);
+  background:
+    repeating-conic-gradient(
+      var(--border-primary) 0 25%,
+      var(--surface-panel) 0 50%
+    )
+    50% / 0.75rem 0.75rem;
 }
 @media (prefers-reduced-motion: no-preference) {
   .avatarSurface[data-color-transition],

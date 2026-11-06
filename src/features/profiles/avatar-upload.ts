@@ -66,13 +66,15 @@ export async function uploadAvatar(
  * inscribed in a circular avatar, so clipping never crops it. */
 export const emojiAvatarScale = 0.7;
 
-/** Fit painted pixels: emoji font metrics differ between browser engines. */
+/** Fit painted pixels: emoji font metrics differ between browser engines.
+ * `offset` and `x` move the emoji down and right, in image widths. */
 export function paintEmojiAvatar(
   canvas: HTMLCanvasElement,
   emoji: string,
   color?: string,
   scale = emojiAvatarScale,
   offset = 0,
+  x = 0,
 ) {
   canvas.width = canvas.height = 512;
   const context = canvas.getContext("2d");
@@ -121,22 +123,25 @@ export function paintEmojiAvatar(
   paint(
     context,
     516 * fit,
-    256 - ((left + right + 1) / 2 - 512) * fit,
+    256 + 512 * x - ((left + right + 1) / 2 - 512) * fit,
     256 + 512 * offset - ((top + bottom + 1) / 2 - 512) * fit,
   );
 }
 
-/** Persist ordinary square artwork; Avatar owns human/agent clipping. */
+/** Persist ordinary square artwork; Avatar owns human/agent clipping. A
+ * `transparent` color leaves the background clear. */
 export async function emojiAvatar(
   emoji: string,
   color: string,
   scale = emojiAvatarScale,
   offset = 0,
+  x = 0,
 ): Promise<File> {
-  if (!emoji || emoji.length > 64 || !/^#[0-9a-f]{6}$/i.test(color))
+  const clear = color === "transparent";
+  if (!emoji || emoji.length > 64 || (!clear && !/^#[0-9a-f]{6}$/i.test(color)))
     throw new Error("Choose an emoji and a background color.");
   const canvas = document.createElement("canvas");
-  paintEmojiAvatar(canvas, emoji, color, scale, offset);
+  paintEmojiAvatar(canvas, emoji, clear ? undefined : color, scale, offset, x);
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (value) =>

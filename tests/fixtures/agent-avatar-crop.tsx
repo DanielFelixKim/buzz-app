@@ -60,6 +60,7 @@ function Fixture() {
         Save
       </Button>
       {saved && <img src={saved} alt="Saved avatar" width={128} height={128} />}
+      <p>Agents introduce themselves with this avatar.</p>
     </main>
   );
 }
