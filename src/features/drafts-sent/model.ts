@@ -15,7 +15,7 @@ export type Entry = {
   /** Sent: Buzz's millisecond send order (`ms` tag), so same-second messages sort as Buzz shows them. */
   createdAtMs?: number;
   /** Sent: the message as the timeline renders it. */
-  row?: ChannelMessage;
+  row?: ChannelMessage | undefined;
 };
 
 export const SENT_LIMIT = 100;
@@ -62,18 +62,24 @@ function current(events: readonly ReadEvent[], viewer: string) {
   const deleted = new Set(
     updates.filter((update) => update.kind !== 40003).flatMap(targetsOf),
   );
-  const edits = new Map<string, ReadEvent>();
+  const edits = new Map<string, ReadEvent[]>();
   // A deleted edit no longer counts, so the message falls back to its previous text.
   for (const edit of updates)
     if (edit.kind === 40003 && !deleted.has(edit.id))
-      for (const target of targetsOf(edit)) {
-        const known = edits.get(target);
-        if (!known || compareEvents(edit, known) > 0) edits.set(target, edit);
-      }
+      for (const target of targetsOf(edit))
+        edits.set(target, [...(edits.get(target) ?? []), edit]);
   return (event: ReadEvent) => {
     if (deleted.has(event.id)) return undefined;
-    const edit = edits.get(event.id);
-    return edit ? { ...event, content: edit.content } : event;
+    const own = edits.get(event.id) ?? [];
+    const latest = own.reduce<ReadEvent | undefined>(
+      (known, edit) =>
+        !known || compareEvents(edit, known) > 0 ? edit : known,
+      undefined,
+    );
+    return {
+      event: latest ? { ...event, content: latest.content } : event,
+      edits: own,
+    };
   };
 }
 
@@ -90,12 +96,14 @@ export function sentEntries(
       !accepted(original)
     )
       continue;
-    const event = now(original);
-    if (!event) continue;
+    const read = now(original);
+    if (!read) continue;
+    const { event, edits } = read;
     const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channelId || !Number.isFinite(event.created_at)) continue;
     const root = threadRoot(event);
-    const [row] = foldMessages(channelId, "", [event], {
+    // Its edits' own tags count too, as in the timeline: emoji and attachments.
+    const [row] = foldMessages(channelId, "", [original, ...edits], {
       includeReplies: true,
     });
     entries.set(event.id, {
@@ -105,7 +113,7 @@ export function sentEntries(
       text: event.content,
       createdAt: event.created_at,
       createdAtMs: eventMs(event),
-      ...(row ? { row } : {}),
+      row,
     });
   }
   // Newest first: the reverse of Buzz's message order.

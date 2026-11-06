@@ -64,7 +64,8 @@ import { listed, scopeOf } from "./scope";
 import { useActivity, useDeletions, useSent } from "./views";
 import styles from "./DraftsSent.module.css";
 import type { ConversationExtensions } from "../conversation/contracts";
-import { MessagePreview } from "../messages/MessagePreview";
+import { MessagePreview, plainPreview } from "../messages/MessagePreview";
+import { rowProfileIds } from "../relay/membership";
 
 /** Labels change by the minute, so half a minute keeps them current. */
 const TICK_MS = 30_000;
@@ -261,13 +262,18 @@ function ScopedPage({
   const shownDrafts = drafts.entries.filter((entry) =>
     listed(byId.get(entry.channelId)),
   );
+  // Folded once per read, not on every channel list change.
+  const sentRead = useMemo(
+    () => sentEntries(sent.events, viewer),
+    [sent.events, viewer],
+  );
   const sentList = useMemo(
     () =>
-      sentEntries(sent.events, viewer).filter(
+      sentRead.filter(
         (entry) =>
           byId.has(entry.channelId) && listed(byId.get(entry.channelId)),
       ),
-    [sent.events, viewer, byId],
+    [sentRead, byId],
   );
 
   const { threads, rooms } = contextFilters(
@@ -402,11 +408,8 @@ function ScopedPage({
       row.place.members.slice(0, 3))
       people.add(key);
   // And the people sent messages mention.
-  for (const row of sentRows)
-    for (const key of [
-      ...(row.entry.row?.mentions ?? []),
-      ...(row.entry.row?.mentionReferences ?? []),
-    ])
+  for (const { entry } of sentRows)
+    for (const key of entry.row ? rowProfileIds(entry.row) : [])
       people.add(key);
   const missing = [...people]
     .sort()
@@ -418,8 +421,13 @@ function ScopedPage({
       void session.profiles.ensure(missing.split(",")).catch(() => {});
   }, [session, missing]);
 
+  // A sent row's label and search read what its preview shows.
   const text = (row: Row) =>
-    row.placeholder ? row.entry.text : preview(row.entry.text, "Attachment");
+    row.placeholder
+      ? row.entry.text
+      : row.entry.row
+        ? plainPreview(row.entry.row)
+        : preview(row.entry.text, "Attachment");
   const visibleDrafts = draftRows.filter((row) =>
     matches(text(row), row.place.title, search),
   );
@@ -583,7 +591,7 @@ function ScopedPage({
           </span>
         }
         preview={
-          !draft && entry.row ? (
+          entry.row ? (
             <MessagePreview
               row={entry.row}
               session={session}

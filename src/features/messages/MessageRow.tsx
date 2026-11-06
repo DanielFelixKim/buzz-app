@@ -1245,6 +1245,7 @@ function MessageRowContent({
                 <MessageLink
                   url={`buzz://message?${new URLSearchParams({ channel: row.channelId, id: row.sentFromThread.rootId, thread: row.sentFromThread.rootId })}`}
                   registry={extensions?.links}
+                  extensions={extensions}
                   session={session}
                   scope={scope}
                   onOpenLink={openLink}

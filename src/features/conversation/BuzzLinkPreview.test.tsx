@@ -10,6 +10,7 @@ import type {
   ChannelReference,
 } from "../relay/contracts";
 import { mediaUrl } from "../relay/transport";
+import type { ConversationExtensions } from "./contracts";
 
 afterEach(cleanup);
 const text = (tree: HTMLElement) =>
@@ -35,6 +36,7 @@ function setup(
   profiles = new Map<string, { name?: string; picture?: string }>(),
   reference?: ChannelReference,
   status: ChannelList["status"] = "ready",
+  extensions?: ConversationExtensions,
 ) {
   const views: { view: ThreadView; publish(next: ThreadSnapshot): void }[] = [];
   const starts = [snapshots].flat();
@@ -109,6 +111,7 @@ function setup(
       session={session}
       channelId="channel"
       messageId={messageId}
+      extensions={extensions}
     />,
   );
   return {
@@ -402,4 +405,35 @@ it("shows the linked message as its timeline row, inert inside the card", () => 
     [root.authorId, mentioned],
     "background",
   );
+});
+it("renders the linked message with the linking conversation's inline renderers", () => {
+  const renderers = [
+    {
+      id: "word",
+      key: "test/word",
+      pluginId: "test",
+      revision: "1",
+      title: "Word",
+      matches: ({ text }: { text: string }) =>
+        [...text.matchAll(/PLUGIN/g)].map((match) => ({
+          start: match.index,
+          end: match.index + 6,
+        })),
+      component: ({ text }: { text: string }) => <mark>{text}</mark>,
+    },
+  ];
+  const extensions: ConversationExtensions = {
+    tools: { snapshot: () => [], subscribe: () => () => {} },
+    inline: { snapshot: () => renderers, subscribe: () => () => {} },
+  };
+  const linked = { ...root, content: "Shipped by PLUGIN" };
+  const { tree } = setup(
+    { ...base, status: "ready", root: linked },
+    root.id,
+    undefined,
+    undefined,
+    "ready",
+    extensions,
+  );
+  expect(tree.querySelector("[data-compact] mark")?.textContent).toBe("PLUGIN");
 });

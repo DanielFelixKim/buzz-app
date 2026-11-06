@@ -56,7 +56,7 @@ export function MessagePreview({
 }: {
   row: ChannelMessage;
   session: RelaySession;
-  extensions: ConversationExtensions | undefined;
+  extensions?: ConversationExtensions | undefined;
 }) {
   const directory = useReferenceDirectory(session);
   const text = useMemo(() => plainText(row.content), [row.content]);
