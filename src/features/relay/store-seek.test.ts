@@ -1323,6 +1323,34 @@ it("keeps isolated exact reads from advancing the older cursor across unread his
   ).toBe(true);
 });
 
+it("admits live arrivals beyond the loaded composite cursor within its first second", async () => {
+  const h = setup({ count: 450, spacing: 0 });
+  await h.open();
+  let release!: () => void;
+  h.gate.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const before = h.reads.length;
+  h.channels.loadOlder("c");
+  try {
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+    const cursor = h.reads.at(-1)?.before_id;
+    assert.exists(cursor);
+    let event!: RelayEvent;
+    for (let nonce = 0; !event || event.id <= cursor; nonce++)
+      event = message(h.alice, "c", `delayed live ${nonce}`, T0);
+    h.history.push(event);
+    await h.owner.session.read([{ ids: [event.id], limit: 1 }]);
+    expect(h.window().rows.some((row) => row.id === event.id)).toBe(false);
+    h.live.receive([event], { channelId: "c", phase: "live" });
+    expect(h.window().rows.some((row) => row.id === event.id)).toBe(true);
+  } finally {
+    release();
+    h.gate.hold = undefined;
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+});
+
 it("counts actual transport retries inside the seek read allowance", async () => {
   const h = setup({ count: 300, now: 8e15 });
   await h.open();

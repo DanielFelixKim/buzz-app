@@ -3927,7 +3927,7 @@ export function createChannelStore(
     }
   });
   /** Verified traffic shares the same fold as reads and local intent. Window bounds remain read-owned. */
-  function accept(events: readonly RelayEvent[], paged = false) {
+  function accept(events: readonly RelayEvent[], paged = false, live = false) {
     if (disposed || !transport) return;
     const generation = epoch;
     const changedChannels = new Set(
@@ -4030,7 +4030,8 @@ export function createChannelStore(
             !ids.has(event.id) &&
             state.cursor &&
             (event.created_at < state.cursor.createdAt ||
-              (event.created_at === state.cursor.createdAt &&
+              (!live &&
+                event.created_at === state.cursor.createdAt &&
                 event.id > state.cursor.eventId))
           )
             continue;

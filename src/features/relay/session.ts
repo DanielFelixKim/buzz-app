@@ -897,7 +897,8 @@ export function createRelaySession(
         if (epoch !== accessEpoch) return;
         statuses.accept(visible);
         if (epoch !== accessEpoch) return;
-        if (channelTraffic) channels.accept(visible);
+        if (channelTraffic)
+          channels.accept(visible, false, incomingPhase === "live");
         for (const listener of observations) {
           if (closed || epoch !== accessEpoch) return;
           listener(visible);
