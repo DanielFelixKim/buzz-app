@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { agentAvatars } from "../../features/agents/avatar-packs";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -31,6 +39,7 @@ import type { RelayEvent } from "../../features/relay/events";
 import { setDefaultAgent } from "../../features/solo/default-agent";
 import { readView, writeView } from "../../shared/view-state";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { rememberFirstAgent } from "./FirstAgentWelcome";
 import { PinnedBestie } from "./PinnedBestie";
 import { bestieRoute } from "./routes";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
@@ -73,6 +82,9 @@ afterEach(() => {
 const pollen = "b".repeat(64),
   fizz = "c".repeat(64),
   libraryOnly = "e".repeat(64);
+const pollenArtwork = agentAvatars[0];
+if (!pollenArtwork) throw new Error("Fixture needs bundled agent artwork");
+const { url: pollenPicture, preview: pollenPreview } = pollenArtwork;
 const pollenDM = "11111111-1111-4111-8111-111111111111";
 const fizzDM = "22222222-2222-4222-8222-222222222222";
 const libraryDM = "33333333-3333-4333-8333-333333333333";
@@ -94,6 +106,7 @@ async function fixture({
   badRoster = false,
   archived = false,
   withReply = false,
+  hasOlder = false,
 } = {}) {
   // The timeline waits for a measurable host before mounting its virtualizer.
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
@@ -165,7 +178,20 @@ async function fixture({
           )
         )
           return [...discovery.values()].flat();
-        if (withReply && filters.some((f) => f.top_level))
+        const history = filters.find((filter) => filter.top_level);
+        if (history?.before_id)
+          return [
+            bounds(
+              relayKey,
+              pollenDM,
+              `${history.until}:${history.before_id}`,
+              {
+                has_more: false,
+                next_cursor: null,
+              },
+            ),
+          ];
+        if (withReply && history)
           return [
             root,
             summary(relayKey, pollenDM, root.id, {
@@ -173,8 +199,10 @@ async function fixture({
               participants: [response.pubkey],
             }),
             bounds(relayKey, pollenDM, "head", {
-              has_more: false,
-              next_cursor: null,
+              has_more: hasOlder,
+              next_cursor: hasOlder
+                ? { created_at: root.created_at, id: root.id }
+                : null,
             }),
           ];
         if (
@@ -184,6 +212,13 @@ async function fixture({
           )
         )
           return [root, response];
+        if (history)
+          return [
+            bounds(relayKey, history["#h"]?.[0] ?? pollenDM, "head", {
+              has_more: false,
+              next_cursor: null,
+            }),
+          ];
         return [];
       },
       openDirectMessage: open,
@@ -209,6 +244,7 @@ async function fixture({
       {
         pubkey: pollen,
         name: "Pollen",
+        picture: pollenPicture,
         owner: viewer.pubkey,
         relayUrl: "wss://test.example",
       },
@@ -353,9 +389,10 @@ async function fixture({
 
 it("opens the actual verified DM and sends plain text without a seeded removable mention", async () => {
   const f = await fixture();
+  rememberFirstAgent(f.scope, pollen);
   f.choose(pollen);
   const user = userEvent.setup();
-  f.mount();
+  const view = f.mount();
   const input = await screen.findByRole("textbox", { name: "Message Pollen" });
   expect(f.open).toHaveBeenCalledWith([pollen], expect.any(AbortSignal));
   expect(
@@ -364,6 +401,28 @@ it("opens the actual verified DM and sends plain text without a seeded removable
     channelType: "dm",
     members: expect.arrayContaining([pollen]),
   });
+  const welcome = await screen.findByRole("article", {
+    name: "Welcome to Buzz",
+  });
+  expect(welcome).toHaveTextContent(
+    "Ask away, or tell me what you’d like to work on.",
+  );
+  expect(within(welcome).getByText("Pollen")).toBeVisible();
+  expect(
+    within(welcome).getByRole("heading", { name: "Welcome to Buzz!" }),
+  ).toBeVisible();
+  expect(
+    within(welcome)
+      .getByRole("img", { name: "Pollen avatar" })
+      .querySelector("img"),
+  ).toHaveAttribute("src", pollenPreview);
+  expect(
+    within(welcome).queryByText(/Local welcome|not a sent message/),
+  ).not.toBeInTheDocument();
+  expect(within(welcome).queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.queryByText("No messages yet.")).not.toBeInTheDocument();
+  expect(f.send).not.toHaveBeenCalled();
+  expect(f.session.channels.window(pollenDM).rows).toHaveLength(0);
   expect(input).not.toHaveTextContent("@Pollen");
   expect(
     screen.queryByRole("button", { name: /Remove mention/ }),
@@ -373,10 +432,47 @@ it("opens the actual verified DM and sends plain text without a seeded removable
   await waitFor(() =>
     expect(f.send).toHaveBeenCalledWith(pollenDM, "Morning", [], []),
   );
-  expect(input).not.toHaveTextContent("@Pollen");
+  expect(
+    screen.getByRole("article", { name: "Welcome to Buzz" }),
+  ).toBeVisible();
+  view.unmount();
+  f.mount();
+  expect(
+    await screen.findByRole("article", { name: "Welcome to Buzz" }),
+  ).toBeVisible();
+  expect(f.send).toHaveBeenCalledTimes(1);
+  act(() => f.choose(fizz));
+  await screen.findByRole("textbox", { name: "Message Fizz" });
+  expect(
+    screen.queryByRole("article", { name: "Welcome to Buzz" }),
+  ).not.toBeInTheDocument();
+  act(() => f.choose(pollen));
+  expect(
+    await screen.findByRole("textbox", { name: "Message Pollen" }),
+  ).not.toHaveTextContent("@Pollen");
   expect(
     screen.queryByRole("button", { name: /Remove mention/ }),
   ).not.toBeInTheDocument();
+});
+
+it("shows the local welcome only at known history start and keeps real history intact", async () => {
+  const f = await fixture({ existing: true, withReply: true, hasOlder: true });
+  rememberFirstAgent(f.scope, pollen);
+  f.choose(pollen);
+  f.mount();
+  const older = await screen.findByRole("button", {
+    name: "Load older messages",
+  });
+  expect(await screen.findByText("Are you there?")).toBeVisible();
+  expect(
+    screen.queryByRole("article", { name: "Welcome to Buzz" }),
+  ).not.toBeInTheDocument();
+  await userEvent.setup().click(older);
+  expect(
+    await screen.findByRole("article", { name: "Welcome to Buzz" }),
+  ).toBeVisible();
+  expect(screen.getByText("Are you there?")).toBeVisible();
+  expect(f.send).not.toHaveBeenCalled();
 });
 
 it("reuses an existing DM and its ordinary draft after leaving and reopening Bestie", async () => {
@@ -388,6 +484,9 @@ it("reuses an existing DM and its ordinary draft after leaving and reopening Bes
     await screen.findByRole("textbox", { name: "Message Pollen" }),
   ).toHaveTextContent("Existing DM draft");
   expect(f.open).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("article", { name: "Welcome to Buzz" }),
+  ).not.toBeInTheDocument();
   view.unmount();
   f.mount();
   expect(

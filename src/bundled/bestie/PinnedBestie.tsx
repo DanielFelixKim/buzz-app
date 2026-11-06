@@ -28,6 +28,7 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
+import { FirstAgentWelcome, useFirstAgentWelcome } from "./FirstAgentWelcome";
 import { bestieChat } from "./chat";
 import { BestieChooser } from "./BestieChooser";
 import { bestieBaseTarget, bestieRoute, bestieThreadTarget } from "./routes";
@@ -127,7 +128,8 @@ export function PinnedBestie({
         extensions={extensions}
         navigator={navigator}
         navigation={navigation}
-        agent={{ pubkey: saved, name }}
+        agent={{ pubkey: saved, name, picture: identity?.avatar }}
+        community={connection.origin}
         channel={channel}
       />
     );
@@ -212,7 +214,8 @@ export function PinnedBestie({
           extensions={extensions}
           navigator={navigator}
           navigation={navigation}
-          agent={{ pubkey: agent.pubkey, name }}
+          agent={{ pubkey: agent.pubkey, name, picture: agent.avatar }}
+          community={connection.origin}
           channel={undefined}
         />
       );
@@ -237,6 +240,7 @@ function DirectMessage({
   navigator,
   navigation,
   agent,
+  community,
   channel,
 }: {
   session: RelaySession;
@@ -245,7 +249,8 @@ function DirectMessage({
   extensions: ConversationExtensions;
   navigator: Navigation;
   navigation?: PageNavigation | undefined;
-  agent: { pubkey: string; name: string };
+  agent: { pubkey: string; name: string; picture?: string | undefined };
+  community?: string | undefined;
   channel: ChannelSummary | undefined;
 }) {
   const [attempt, retry] = useState(0);
@@ -288,7 +293,8 @@ function DirectMessage({
         navigator={navigator}
         navigation={navigation}
         channel={channel}
-        bestie={agent.name}
+        agent={agent}
+        community={community}
       />
     );
   if (error || attempt > 0)
@@ -325,7 +331,8 @@ function BestieConversation({
   navigator,
   navigation,
   channel,
-  bestie,
+  agent,
+  community,
 }: {
   session: RelaySession;
   scope: string;
@@ -334,8 +341,11 @@ function BestieConversation({
   navigator: Navigation;
   navigation?: PageNavigation | undefined;
   channel: ChannelSummary;
-  bestie: string;
+  agent: { pubkey: string; name: string; picture?: string | undefined };
+  community?: string | undefined;
 }) {
+  const bestie = agent.name;
+  const welcome = useFirstAgentWelcome(scope, agent.pubkey, channel.id);
   const [sent, setSent] = useState<string>();
   const routed =
     navigation?.target.kind === "page"
@@ -426,6 +436,15 @@ function BestieConversation({
           <>
             <ChannelBody
               viewer={session.viewer}
+              intro={
+                welcome ? (
+                  <FirstAgentWelcome
+                    name={bestie}
+                    picture={agent.picture}
+                    community={community}
+                  />
+                ) : undefined
+              }
               cached={!!channel.cached}
               revealMessageId={sent}
               marksRead

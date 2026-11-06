@@ -32,6 +32,7 @@ import {
   usePagePresentation,
 } from "./BestieNavigation";
 import { BESTIE_PAGE } from "./bestie-context";
+import { EmptyBestieAvatar } from "../../bundled/bestie/EmptyBestieAvatar";
 
 export function PageNavigation({
   pages,
@@ -86,7 +87,7 @@ export function PageNavigation({
     );
   }
   return pages.map((page, index) => {
-    const { label, icon, image, avatar } = presentation(page);
+    const { label, icon, image, avatar, placeholder } = presentation(page);
     const Badge = page.badge;
     const badge = Badge && (
       <ContributionBoundary key={contributionKey(page)} fallback={null}>
@@ -97,7 +98,9 @@ export function PageNavigation({
       onSelect(page.key);
       document.getElementById("main-content")?.focus({ preventScroll: true });
     };
-    const pageIcon = avatar ? (
+    const pageIcon = placeholder ? (
+      <EmptyBestieAvatar key={page.key} compact />
+    ) : avatar ? (
       <Avatar
         key={page.key}
         src={avatar.src}
