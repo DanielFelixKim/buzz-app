@@ -2280,7 +2280,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn access_rule_socket_reaches_git() {
-        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+        use std::os::unix::net::UnixListener;
 
         let home = tempfile::tempdir_in("/tmp").unwrap();
         let socket = home.path().join("team.sock");
@@ -2300,14 +2300,18 @@ mod tests {
         let mut git = Git::new().unwrap();
         git.ssh_auth_sock = transport.ssh_auth_sock;
 
-        let bin = home.path().join("bin");
-        fs::create_dir(&bin).unwrap();
-        let executable = bin.join("git");
-        fs::write(&executable, "#!/bin/sh\n/usr/bin/printenv SSH_AUTH_SOCK\n").unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-        let mut command = git.command();
-        command.env("PATH", &bin);
-        let output = git.run_command(command, 1024).unwrap();
+        // Use the installed Git instead of executing a freshly written script,
+        // which can race parallel process creation with ETXTBSY on Linux.
+        let output = git
+            .run(
+                &[
+                    "-c",
+                    "alias.socket=!/usr/bin/printenv SSH_AUTH_SOCK",
+                    "socket",
+                ],
+                1024,
+            )
+            .unwrap();
         assert_eq!(
             String::from_utf8(output).unwrap().trim(),
             socket.to_str().unwrap()
