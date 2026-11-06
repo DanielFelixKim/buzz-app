@@ -9,7 +9,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
 import { ChannelTimeline } from "./ChannelTimeline";
@@ -1170,3 +1170,136 @@ it.each(["scroll", "button"] as const)(
     }
   },
 );
+
+it.each(["wheel", "key", "shift-space", "button-key"])(
+  "keeps paging direction owned by the %s gesture when both edges fit",
+  (input) => {
+    const { owner, updates, content } = activityFixture();
+    const loadOlder = vi.fn(),
+      loadNewer = vi.fn();
+    const queries = {
+      ...owner.session,
+      channels: { ...owner.session.channels, loadOlder, loadNewer },
+    };
+    const base = content(updates(2), undefined, true, queries);
+    try {
+      render(
+        cloneElement(base, {
+          window: { ...base.props.window, hasMore: true, hasNewer: true },
+        }),
+      );
+      const scroller = screen.getByRole("region", {
+        name: "Channel message history",
+      });
+      if (input === "wheel") fireEvent.wheel(scroller, { deltaY: 100 });
+      if (input === "key") fireEvent.keyDown(scroller, { key: "End" });
+      if (input === "shift-space")
+        fireEvent.keyDown(scroller, { key: " ", shiftKey: true });
+      if (input === "button-key") {
+        const button = screen.getAllByRole("button")[0];
+        assert.exists(button);
+        fireEvent.keyDown(button, { key: " " });
+      }
+      expect(loadOlder).toHaveBeenCalledTimes(input === "shift-space" ? 1 : 0);
+      expect(loadNewer).toHaveBeenCalledTimes(
+        ["wheel", "key"].includes(input) ? 1 : 0,
+      );
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it("requests attachment when Jump to latest has no displayed rows", () => {
+  const { owner, content } = activityFixture();
+  const attach = vi.fn();
+  const queries = {
+    ...owner.session,
+    channels: { ...owner.session.channels, attach },
+  };
+  const base = content([], undefined, true, queries);
+  try {
+    render(
+      cloneElement(base, { window: { ...base.props.window, hasNewer: true } }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /jump to latest/i }));
+    expect(attach).toHaveBeenCalledWith("alpha");
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each(["older", "newer"] as const)(
+  "labels only the failed %s direction as Retry",
+  (errorDirection) => {
+    const { owner, updates, content } = activityFixture();
+    const base = content(updates(2));
+    try {
+      render(
+        cloneElement(base, {
+          historyControl: "button",
+          window: {
+            ...base.props.window,
+            hasMore: true,
+            hasNewer: true,
+            error: "Read failed",
+            errorDirection,
+          },
+        }),
+      );
+      expect(
+        screen.getByRole("button", {
+          name:
+            errorDirection === "older"
+              ? "Retry older messages"
+              : "Load older messages",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", {
+          name:
+            errorDirection === "newer"
+              ? "Retry newer messages"
+              : "Load newer messages",
+        }),
+      ).toBeInTheDocument();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it("resumes paging on continued pointer movement after a scroll correction", () => {
+  const { owner, updates, content } = activityFixture();
+  const loadNewer = vi.fn();
+  const queries = {
+    ...owner.session,
+    channels: { ...owner.session.channels, loadNewer },
+  };
+  const base = content(updates(2), undefined, true, queries);
+  try {
+    render(
+      cloneElement(base, { window: { ...base.props.window, hasNewer: true } }),
+    );
+    const scroller = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    Object.defineProperty(scroller, "scrollHeight", {
+      value: 1000,
+      configurable: true,
+    });
+    fireEvent.pointerDown(scroller);
+    fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+    fireEvent(
+      scroller,
+      Object.assign(new Event("pointermove", { bubbles: true }), {
+        movementY: 10,
+      }),
+    );
+    scroller.scrollTop = 100;
+    fireEvent.scroll(scroller);
+    expect(loadNewer).toHaveBeenCalledOnce();
+  } finally {
+    owner.dispose();
+  }
+});

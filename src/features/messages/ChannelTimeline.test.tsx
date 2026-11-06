@@ -961,7 +961,7 @@ it("a user gesture at a restored top pages without needing a DOM scroll event", 
   const h = setup({ hasMore: true, initial: { offset: 0, bottom: false } });
   h.element.scrollTop = 0;
   expect(h.loadOlder).not.toHaveBeenCalled();
-  h.gesture();
+  h.gesture(true);
   expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel", undefined);
   h.unmount();
 });
@@ -1181,8 +1181,8 @@ it("honors one cached top-edge gesture when the replacement head becomes verifie
     initial: { offset: 0, bottom: false },
   });
   h.element.scrollTop = 0;
-  h.gesture();
-  h.gesture();
+  h.gesture(true);
+  h.gesture(true);
   h.update({ freshness: "cached" }); // A handoff is not successful revalidation.
   expect(h.olderReads).not.toHaveBeenCalled();
   h.update({ freshness: "verified" });
@@ -1213,7 +1213,7 @@ it.each([
 ])("retires cached paging demand on %j, including later recovery", (patch) => {
   const h = setup({ hasMore: true, freshness: "cached" });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   h.update(patch);
   h.update({
     freshness: "verified",
@@ -1229,7 +1229,7 @@ it.each([
 it("rechecks current geometry before honoring the cached gesture", () => {
   const h = setup({ hasMore: true, freshness: "cached" });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   h.element.scrollTop = 4000;
   h.update({ freshness: "verified" });
   h.element.scrollTop = 0;
@@ -1240,10 +1240,10 @@ it("rechecks current geometry before honoring the cached gesture", () => {
 it("gestures during an older read do not queue a following page", () => {
   const h = setup({ hasMore: true });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   h.update({ loadingOlder: true });
-  h.gesture();
-  h.gesture();
+  h.gesture(true);
+  h.gesture(true);
   h.update({ loadingOlder: false });
   expect(h.olderReads).toHaveBeenCalledTimes(1);
   h.unmount();
@@ -1251,13 +1251,13 @@ it("gestures during an older read do not queue a following page", () => {
 it("a manual retry with more history does not revive automatic paging", () => {
   const h = setup({ hasMore: true });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   h.update({ loadingOlder: true });
   h.update({ loadingOlder: false, error: "rate-limited", freshness: "cached" });
-  h.gesture();
+  h.gesture(true);
   h.retry();
   h.update({ loadingOlder: true, error: undefined });
-  h.gesture();
+  h.gesture(true);
   h.update({ loadingOlder: false, freshness: "verified" });
   expect(h.olderReads).toHaveBeenCalledTimes(2);
   h.unmount();
@@ -1265,7 +1265,7 @@ it("a manual retry with more history does not revive automatic paging", () => {
 it("a blocked button preserves cached gesture until verification accepts one older read", () => {
   const h = setup({ hasMore: true, freshness: "cached" });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   h.retry();
   h.update({ freshness: "verified" });
   expect(h.olderReads).toHaveBeenCalledTimes(1);
@@ -1274,7 +1274,7 @@ it("a blocked button preserves cached gesture until verification accepts one old
 it("unmount drops cached intent before a late successful head", () => {
   const h = setup({ hasMore: true, freshness: "cached" });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   h.unmount();
   h.update({ freshness: "verified" }); // Probe retired refs as well as keyed remount.
   expect(h.olderReads).not.toHaveBeenCalled();
@@ -1283,12 +1283,12 @@ it("unmount drops cached intent before a late successful head", () => {
 it("a switch away and back cannot inherit the first mount's cached gesture", () => {
   const h = setup({ hasMore: true, freshness: "cached" });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   h.navigate("other");
   h.navigate("channel");
   h.update({ freshness: "verified" });
   expect(h.olderReads).not.toHaveBeenCalled();
-  h.gesture();
+  h.gesture(true);
   expect(h.olderReads).toHaveBeenCalledTimes(1);
   h.unmount();
 });
@@ -1296,7 +1296,7 @@ it("a switch away and back cannot inherit the first mount's cached gesture", () 
 it("cached rows without a head owner page immediately over the normal read path", () => {
   const h = setup({ hasMore: true, freshness: "cached", blocked: false });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   expect(h.olderReads).toHaveBeenCalledTimes(1);
   h.update({ freshness: "verified" });
   expect(h.olderReads).toHaveBeenCalledTimes(1);
@@ -1374,7 +1374,7 @@ it.each(["held head", "live handoff", "disconnected"])(
     });
     h.element.scrollTop = 0;
     try {
-      h.gesture();
+      h.gesture(true);
       h.retry();
       if (mode !== "disconnected") {
         expect(channels.window("channel").loadingOlder).toBe(false);
@@ -1411,7 +1411,7 @@ it.each(["held head", "live handoff", "disconnected"])(
 it("cached rerenders do not reissue a blocked attempt", () => {
   const h = setup({ hasMore: true, freshness: "cached" });
   h.element.scrollTop = 0;
-  h.gesture();
+  h.gesture(true);
   expect(h.loadOlder).toHaveBeenCalledTimes(1);
   h.update({ freshness: "cached" });
   h.update({ freshness: "cached" });

@@ -20,6 +20,8 @@ type Reading = {
   restoring?: (() => boolean) | undefined;
   /** False: this list marks nothing read; its owner decides what was read. */
   enabled?: boolean | undefined;
+  /** Detached history can acknowledge visible rows, never the live bottom. */
+  atHead?: boolean | undefined;
 };
 /** `useReading` for an owner that renders its own `MessageEditScope`. */
 export function Reading(props: Reading) {
@@ -40,6 +42,7 @@ export function useReading({
   settled,
   restoring,
   enabled = true,
+  atHead = true,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
   useEffect(() => {
@@ -147,6 +150,7 @@ export function useReading({
     };
     function bottomId() {
       if (
+        !atHead ||
         !latestMessageId ||
         element.scrollHeight - element.clientHeight - element.scrollTop > 1
       )
@@ -318,6 +322,7 @@ export function useReading({
     session,
     channelId,
     latestMessageId,
+    atHead,
     rootId,
     scroller,
     settled,

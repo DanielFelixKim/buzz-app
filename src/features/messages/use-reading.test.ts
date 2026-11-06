@@ -29,6 +29,7 @@ function setup({
   latestMessageId = undefined as string | undefined,
   rootId = undefined as string | undefined,
   enabled = true,
+  atHead = true,
   focus = "element" as "element" | "composer" | "parent" | "outside" | "header",
 } = {}) {
   vi.useFakeTimers();
@@ -118,6 +119,7 @@ function setup({
       latestMessageId,
       rootId,
       enabled,
+      atHead,
     },
     reactStrictMode: strict,
     wrapper: ({ children }: { children: ReactNode }) =>
@@ -167,6 +169,7 @@ function setup({
         latestMessageId,
         rootId,
         enabled,
+        atHead,
       }),
     unmount: view.unmount,
   };
@@ -650,3 +653,18 @@ it.each(["transitionend", "animationend"])(
     expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
   },
 );
+
+it("reads visible rows without catching up a detached same-second segment", async () => {
+  const h = setup({ latestMessageId: "bottom", atHead: false });
+  h.setRows([row("bottom", 100, 200)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(
+    h.leases.some(
+      (lease) =>
+        lease.observe.mock.calls.length + lease.catchUp.mock.calls.length > 0,
+    ),
+  ).toBe(true);
+  expect(h.leases.flatMap((lease) => lease.catchUp.mock.calls)).toHaveLength(0);
+});

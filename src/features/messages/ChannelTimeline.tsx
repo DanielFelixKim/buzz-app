@@ -64,18 +64,22 @@ import { useMessageVisit } from "./MessageManagement";
 // Inner scrollports own the key while they can move. At their top boundary,
 // native keyboard chaining differs by engine/OS, even with CSS containment.
 // Admit a candidate there; only observed history movement can leave follow.
-function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
+function scrollsHistory(event: KeyboardEvent<HTMLElement>, up = true): boolean {
   if (event.defaultPrevented) return false;
   const modified = event.altKey || event.ctrlKey || event.metaKey;
   // ArrowUp includes native Command/Option/Control+Up variants; Control+Home
   // is the Windows/Linux start chord. These are intent candidates: only an
   // observed upward history scroll can actually leave bottom follow.
-  const upward =
-    event.key === "ArrowUp" ||
-    (!modified &&
-      (["PageUp", "Home"].includes(event.key) ||
-        (event.key === " " && event.shiftKey))) ||
-    (event.key === "Home" && event.ctrlKey && !event.altKey && !event.metaKey);
+  const upward = up
+    ? event.key === "ArrowUp" ||
+      (!modified &&
+        (["PageUp", "Home"].includes(event.key) ||
+          (event.key === " " && event.shiftKey))) ||
+      (event.key === "Home" && event.ctrlKey && !event.altKey && !event.metaKey)
+    : event.key === "ArrowDown" ||
+      (!modified &&
+        !event.shiftKey &&
+        ["PageDown", "End", " "].includes(event.key));
   if (!upward) return false;
   let target = event.target instanceof HTMLElement ? event.target : null;
   if (!target || !event.currentTarget.contains(target)) return false;
@@ -90,7 +94,9 @@ function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
     const style = getComputedStyle(target);
     if (
       ["auto", "scroll", "overlay"].includes(style.overflowY) &&
-      target.scrollTop > 0
+      (up
+        ? target.scrollTop > 0
+        : target.scrollTop + target.clientHeight < target.scrollHeight)
     )
       return false;
     target = target.parentElement;
@@ -896,7 +902,6 @@ function Timeline({
     if (bottom) setNewMessageCount(0);
   }, []);
   const jumpToLatest = useCallback(() => {
-    if (!handle.current || !rows.length) return;
     queries.channels.attach?.(channelId);
     intent.current++;
     follow.current = true;
@@ -907,6 +912,7 @@ function Timeline({
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     layoutCorrection.current = true;
+    if (!handle.current || !rows.length) return;
     const tailHeight =
       activityTail.current?.getBoundingClientRect().height ?? 0;
     handle.current.scrollToIndex(rows.length - 1, {
@@ -1113,6 +1119,7 @@ function Timeline({
       .filter((row) => !row.membership && !row.huddle)
       .at(-1)?.id,
     enabled: marksRead,
+    atHead: !window.hasNewer,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
@@ -1776,7 +1783,7 @@ function Timeline({
           upwardGesture.current = false;
       });
     // At a restored top edge, input cannot move the DOM and emits no scroll.
-    if (scroller.current && scroller.current.scrollTop <= 0)
+    if (upward && scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
   return (
@@ -1814,9 +1821,10 @@ function Timeline({
       }}
       onKeyDown={(event) => {
         moveMessageSelection(event);
-        gesture(scrollsHistoryUp(event));
-        if (["ArrowDown", "PageDown", "End", " "].includes(event.key))
-          loadNearBottom(event.currentTarget);
+        const upward = scrollsHistory(event);
+        const downward = scrollsHistory(event, false);
+        if (upward || downward) gesture(upward);
+        if (downward) loadNearBottom(event.currentTarget);
       }}
       onPointerDown={() => {
         pointerHeld.current = true;
@@ -1830,6 +1838,10 @@ function Timeline({
         document?.addEventListener("pointerup", up);
         document?.addEventListener("pointercancel", up);
         gesture();
+      }}
+      onPointerMove={(event) => {
+        if (pointerHeld.current && (event.movementX || event.movementY))
+          gesture();
       }}
       onPointerUp={() => {
         pointerHeld.current = false;
@@ -1916,7 +1928,7 @@ function Timeline({
           >
             {window.loadingOlder
               ? "Loading older…"
-              : window.error
+              : window.error && window.errorDirection !== "newer"
                 ? "Retry older messages"
                 : "Load older messages"}
           </Button>
@@ -2129,7 +2141,7 @@ function Timeline({
               >
                 {window.loadingNewer
                   ? "Loading newer…"
-                  : window.error
+                  : window.error && window.errorDirection !== "older"
                     ? "Retry newer messages"
                     : "Load newer messages"}
               </Button>
