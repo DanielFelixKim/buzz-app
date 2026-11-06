@@ -40,6 +40,29 @@ test("saves an emoji over a transparent background in a squircle", async ({
     .getByRole("button", { name: "Use transparent background" })
     .click();
   await expect(artwork).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  // The card stays opaque and the tick contrasts with the checkerboard.
+  const { surface, tick, primary } = await artwork.evaluate((art) => {
+    const alpha = (color) => {
+      const context = document.createElement("canvas").getContext("2d");
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return context.getImageData(0, 0, 1, 1).data[3];
+    };
+    let card = art.parentElement;
+    while (!card.style.backgroundColor) card = card.parentElement;
+    const probe = document.body.appendChild(document.createElement("i"));
+    probe.style.color = "var(--text-primary)";
+    const primary = getComputedStyle(probe).color;
+    probe.remove();
+    const swatch = document.querySelector('[data-color-swatch="transparent"]');
+    return {
+      surface: alpha(getComputedStyle(card).backgroundColor),
+      tick: getComputedStyle(swatch.querySelector("svg")).color,
+      primary,
+    };
+  });
+  expect(surface).toBe(255);
+  expect(tick).toBe(primary);
   await page.screenshot({
     path: test.info().outputPath("agent-avatar-transparent.png"),
   });
