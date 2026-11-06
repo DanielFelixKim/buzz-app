@@ -142,7 +142,8 @@ export function Avatar({
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
-  /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
+  /** Immediate visible editors, and rows whose virtualized list already bounds
+   * what mounts, may bypass lazy scheduling, never image readiness. */
   loading?: "eager" | "lazy";
 }) {
   const renderArtwork = useContext(AvatarArtworkContext);

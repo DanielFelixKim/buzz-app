@@ -532,6 +532,57 @@ test("virtualized rows request images on mount, beyond native lazy margins", asy
   }
 });
 
+// The same browser-only margin applies to the people a membership row shows,
+// each usually seen once, so no earlier load marks their avatars for eager loading.
+test("membership rows request avatars on mount, beyond native lazy margins", async ({
+  page,
+}) => {
+  const requested = new Set();
+  // Held responses keep each avatar loading while the mounted rows are read.
+  await page.route("https://avatar.test/**", (route) => {
+    requested.add(route.request().url());
+  });
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/membership-scroll.html`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    // Avatars mount once the directory has read the added people's profiles.
+    await expect(
+      feed.locator("[data-membership-row] img").first(),
+    ).toBeAttached();
+    await settle(page, feed);
+    const mounted = await feed.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      return [...element.querySelectorAll("[data-membership-row] img")].map(
+        (image) => ({
+          source: image.src,
+          distant: image.getBoundingClientRect().bottom < top - innerHeight,
+        }),
+      );
+    });
+    expect(
+      mounted.some(({ distant }) => distant),
+      "an avatar is mounted beyond one viewport above the reader",
+    ).toBe(true);
+    await expect
+      .poll(() =>
+        mounted
+          .map(({ source }) => source)
+          .filter((source) => !requested.has(source)),
+      )
+      .toEqual([]);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+    } finally {
+      await server.close();
+    }
+  }
+});
+
 // Virtua measurement, native scroll clamping and actual eviction require a browser.
 test("decoded image resizing preserves reading and bottom following across remounts", async ({
   page,
