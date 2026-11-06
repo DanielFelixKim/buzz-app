@@ -1351,6 +1351,25 @@ it("admits live arrivals beyond the loaded composite cursor within its first sec
   }
 });
 
+it("keeps live boundary arrivals from advancing the cursor across unread same-second roots", async () => {
+  const h = setup({ count: 450, spacing: 0, maxHistoryBytes: 12000 });
+  await h.open();
+  const cursor = h
+    .window()
+    .rows.map((row) => row.id)
+    .sort()
+    .at(-1);
+  assert.exists(cursor);
+  let event!: RelayEvent;
+  for (let nonce = 0; !event || event.id <= cursor; nonce++)
+    event = message(h.alice, "c", `large live ${nonce}${"x".repeat(7000)}`, T0);
+  h.live.receive([event], { channelId: "c", phase: "live" });
+  expect(h.window().rows.some((row) => row.id === event.id)).toBe(true);
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.reads.at(-1)?.before_id).toBe(cursor);
+});
+
 it("counts actual transport retries inside the seek read allowance", async () => {
   const h = setup({ count: 300, now: 8e15 });
   await h.open();

@@ -4103,7 +4103,17 @@ export function createChannelStore(
           .filter((event) => channelRowKind(event.kind))
           .sort(newestFirst)
           .at(-1);
-        if (oldest) {
+        // Only a page proves continuity beyond the committed cursor. A live
+        // arrival in its second can render without proving intervening IDs.
+        const cursor = state.cursor;
+        if (
+          oldest &&
+          (paged ||
+            !cursor ||
+            oldest.created_at > cursor.createdAt ||
+            (oldest.created_at === cursor.createdAt &&
+              oldest.id <= cursor.eventId))
+        ) {
           state.floor = undefined;
           moveCursor(state, {
             createdAt: oldest.created_at,
