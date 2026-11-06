@@ -9,6 +9,7 @@ import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 import { usePermissionCheck } from "./usePermissionCheck";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type { NotificationsService } from "../features/notifications/service";
+import type { SoundPack } from "../features/notifications/sounds";
 import type { NotificationCategory } from "../features/notifications/preferences";
 import {
   CATEGORY_SOUND_LABELS,
@@ -29,15 +30,23 @@ const SOUND_ROWS: readonly NotificationCategory[] = [
 function AlertSoundRow({
   category,
   value,
+  available,
+  packs,
   disabled,
   onChange,
 }: {
   category: NotificationCategory;
   value: SoundRef;
+  available: boolean;
+  packs: readonly SoundPack[];
   disabled: boolean;
   onChange: (next: SoundRef) => void;
 }) {
   const recommended = RECOMMENDED_SOUND_BY_CATEGORY[category];
+  const packSound = packs
+    .flatMap((pack) => pack.sounds)
+    .find((sound) => sound.ref === value);
+  const unavailable = available ? null : `${value} (unavailable)`;
 
   const names = [
     "silent",
@@ -54,10 +63,15 @@ function AlertSoundRow({
           variant="compact"
           disabled={disabled}
           value={value}
-          valueLabel={value === "silent" ? "Silent" : value}
+          valueLabel={
+            value === "silent"
+              ? "Silent"
+              : (unavailable ?? packSound?.label ?? value)
+          }
           groups={[
             {
-              label: "",
+              // Unlabelled until a pack adds a second group.
+              label: packs.length ? "Buzz" : "",
               options: names.map((name) => ({
                 value: name,
                 label:
@@ -68,6 +82,18 @@ function AlertSoundRow({
                       : name,
               })),
             },
+            // A choice whose pack is disabled stays listed and selected, so
+            // Select never replaces it and re-enabling the pack restores it.
+            ...(unavailable
+              ? [{ label: "", options: [{ value, label: unavailable }] }]
+              : []),
+            ...packs.map((pack) => ({
+              label: pack.label,
+              options: pack.sounds.map((sound) => ({
+                value: sound.ref,
+                label: sound.label,
+              })),
+            })),
           ]}
           onValueChange={(next) => onChange(next as SoundRef)}
         />
@@ -88,6 +114,10 @@ export function NotificationSettings({
     notifications.snapshot,
   );
   const { preferences, permission } = state;
+  const soundPacks = useSyncExternalStore(
+    notifications.soundRegistry.subscribe,
+    notifications.soundRegistry.snapshot,
+  );
   const [checking, checkPermission] = usePermissionCheck(() =>
     notifications.refreshPermission(),
   );
@@ -275,6 +305,10 @@ export function NotificationSettings({
                         category={category}
                         disabled={preferences.categories[category] === false}
                         value={preferences.sounds[category]}
+                        available={notifications.soundRegistry.isAvailable(
+                          preferences.sounds[category],
+                        )}
+                        packs={soundPacks}
                         onChange={(next) => {
                           if (next === preferences.sounds[category]) return;
                           notifications.updatePreferences({
