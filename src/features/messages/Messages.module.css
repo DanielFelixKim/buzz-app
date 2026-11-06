@@ -262,7 +262,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   overflow-wrap: anywhere;
 }
 .text {
-  white-space: normal;
+  white-space: pre-wrap;
 }
 .text[data-single-emoji] {
   --inline-emoji-size: var(--size-emoji-display);
@@ -1900,6 +1900,8 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
 }
 .text:not(p) > .edited {
   display: block;
+  /* Its leading space separates an inline marker; here it would indent. */
+  white-space: normal;
 }
 .text:not(p) > :has(+ .edited:last-child) {
   margin-bottom: var(--space-1);
