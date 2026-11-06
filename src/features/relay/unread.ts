@@ -2344,7 +2344,9 @@ export function createUnread({
           // A historical window is not the live bottom. Check retained evidence
           // at invocation, not after a later arrival queues behind this intent.
           indexEvidence();
-          const rows = byChannel.get(channelId) ?? [];
+          // Storage below can await while new arrivals extend the live index.
+          // Only evidence retained when this dwell was earned may be read.
+          const rows = [...(byChannel.get(channelId) ?? [])];
           const newer = rows.some(
             (entry) =>
               entry.event.created_at > event.created_at &&
