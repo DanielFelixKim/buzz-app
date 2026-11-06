@@ -1125,14 +1125,12 @@ function Composer({
         : undefined;
     if (!editing.target) return userDraft(valueRef.current);
     const parked = beforeEdit.current?.value;
+    const unsaved =
+      parked && dirty.current && JSON.stringify(parked) !== revision.current;
+    const authored =
+      parked && (hasDraftContent(parked) || unsaved) && userDraft(parked);
     const recovered = deferredRecovery.current?.draft;
-    if (
-      !parked ||
-      !recovered ||
-      (!untouchedDraft(parked) &&
-        automaticTag.current !== JSON.stringify(parked))
-    )
-      return parked && hasDraftContent(parked) ? userDraft(parked) : undefined;
+    if (!parked || !recovered || authored) return authored || undefined;
     if (viewRevision(scope, draftKey) !== JSON.stringify(recovered))
       throw new Error(
         "The recovered draft changed during message editing. Finish or cancel the edit before reading it.",

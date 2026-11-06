@@ -16061,3 +16061,23 @@ it("reads newer saved prose while an empty unsent draft is parked for message ed
     readOwnerDraft("scope", "channel", undefined, h.session),
   ).toMatchObject({ text: "Newer saved replacement", source: "saved" });
 });
+
+it("keeps an unsaved clear authoritative while parked in sent-message editing", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  h.fill("Saved prose intentionally cleared");
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    h.fill("");
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    h.fill("Private sent-message edit");
+    expect(
+      readOwnerDraft("scope", "channel", undefined, h.session),
+    ).toBeUndefined();
+  } finally {
+    fail.mockRestore();
+  }
+});
