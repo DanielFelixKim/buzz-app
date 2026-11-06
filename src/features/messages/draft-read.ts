@@ -2,7 +2,11 @@
 import { draftCoordinates, viewRevision } from "../../shared/view-state";
 import { composerMarkdown } from "./composer-markdown";
 import { acceptedComposerSend } from "./composer-accepted";
-import { mentionDraft, type MentionDraft } from "./mention-draft";
+import {
+  legacyFollowupDraft,
+  mentionDraft,
+  type MentionDraft,
+} from "./mention-draft";
 
 export type OwnerDraft = Readonly<{
   text: string;
@@ -92,5 +96,6 @@ export function readOwnerDraft(
     (!value || typeof value !== "object" || Array.isArray(value))
   )
     throw new Error("The saved draft cannot be read.");
-  return snapshot(mentionDraft(value), "saved");
+  const draft = mentionDraft(value);
+  return legacyFollowupDraft(draft) ? undefined : snapshot(draft, "saved");
 }

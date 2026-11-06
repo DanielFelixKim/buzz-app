@@ -3,6 +3,7 @@ import { composerSchema, projectComposerDocument } from "./composer-document";
 import { afterEach, expect, it, vi } from "vitest";
 import { recoveryFor } from "./composer-accepted";
 import { createRelaySession } from "../relay/session";
+import { typedDraft } from "./composer-testing";
 import { mentionDraft } from "./mention-draft";
 import { writeView } from "../../shared/view-state";
 import { readOwnerDraft, registerComposerDraft } from "./draft-read";
@@ -138,6 +139,15 @@ it("detects conflicting rich links with identical displayed labels", () => {
     first();
     second();
   }
+});
+
+it("excludes remembered recipient seeds but preserves typed recipient drafts", () => {
+  const recipient = { pubkey: "b".repeat(64), name: "Ada", start: 0, end: 4 };
+  const seed = { text: "@Ada", recipients: [recipient] };
+  writeView(scope, "draft:channel", seed);
+  expect(readOwnerDraft(scope, "channel")).toBeUndefined();
+  writeView(scope, "draft:channel", typedDraft(seed));
+  expect(readOwnerDraft(scope, "channel")?.text).toBe("@Ada");
 });
 
 it("suppresses accepted sibling snapshots while preserving newer live prose", () => {
