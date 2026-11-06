@@ -11,7 +11,12 @@ import type {
   HostProcess,
   HostProcessOptions,
 } from "../../host/service";
-import { AgentSessions, ServerPool, SHARED_POOL } from "./agent-sessions";
+import {
+  AgentSessions,
+  type SavedConversation,
+  ServerPool,
+  SHARED_POOL,
+} from "./agent-sessions";
 import { AcpProcess, REQUEST_TIMEOUT_MS, TOOL_SERVER } from "./process";
 import { AcpSession } from "./session";
 import type { AcpHooks, ToolServer } from "./types";
@@ -56,6 +61,10 @@ function fakeHarness(
     stopReason?: string;
     /** Every `session/load` is answered with this error. */
     loadError?: { code: number; message: string };
+    /** Each `session/close` waits in `closes` to be answered. */
+    holdClose?: boolean;
+    /** Every `session/close` is answered with this error. */
+    closeError?: { code: number; message: string };
   }> = {},
 ) {
   const started: {
@@ -70,6 +79,7 @@ function fakeHarness(
     steered: string[];
     finish(): void;
   }[] = [];
+  const closes: (() => void)[] = [];
   let servers = 0;
   let rejectPrompts = options.rejectPrompts ?? 0;
   const serve = async (): Promise<HostMcpServer> => {
@@ -137,6 +147,10 @@ function fakeHarness(
             });
           else if (method === "session/new")
             reply(id, { sessionId: `session-${++sessions}` });
+          else if (method === "session/close" && options.closeError)
+            send({ id, error: options.closeError });
+          else if (method === "session/close" && options.holdClose)
+            closes.push(() => reply(id, {}));
           else if (method === "session/close") reply(id, {});
           else if (method === "session/load" && options.loadError)
             send({ id, error: options.loadError });
@@ -195,7 +209,7 @@ function fakeHarness(
   };
   const sent = (method: string) =>
     received.filter((message) => message.method === method);
-  return { spawn, serve, started, received, turns, sent };
+  return { spawn, serve, started, received, turns, sent, closes };
 }
 
 const start = (
@@ -842,5 +856,222 @@ describe("resuming a saved session", () => {
       acp.open({ cwd: "/work", systemPrompt: "", load: "saved-1" }),
     ).rejects.toThrow("This Harness session has not finished closing");
     expect(harness.sent("session/load")).toHaveLength(1);
+  });
+});
+
+describe("holding a conversation", () => {
+  const CLOSES = {
+    mcpCapabilities: { http: true },
+    sessionCapabilities: { close: {} },
+  };
+  function held(
+    harness: ReturnType<typeof fakeHarness>,
+    acp: AcpProcess,
+    launch = async () => ({ workspace: "/work", systemPrompt: "" }),
+  ) {
+    const saved = new Map<string, SavedConversation>();
+    const sessions = new AgentSessions({
+      label: "Harness",
+      resolveDirectory: async (path) => path,
+      tools,
+      process: { get: async () => acp },
+      launch,
+      choice: () => ({ provider: "", model: "" }),
+      fingerprint: () => "",
+      store: {
+        get: (key) => saved.get(key),
+        set: (key, value) => saved.set(key, value),
+      },
+    });
+    return { sessions, saved, harness };
+  }
+  const deferred = <T = void>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    return { promise, resolve, reject };
+  };
+
+  it("starts its work only once the old session's close is acknowledged, and messages wait for it", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES, holdClose: true });
+    const { sessions } = held(harness, await start(harness));
+    await sessions.deliver("chat", "hello", 1);
+    const order: string[] = [];
+    const holding = sessions.exclusive("chat", async ({ saved }) => {
+      order.push(`work ${saved}`);
+      return "done";
+    });
+    await flush();
+    const later = sessions
+      .deliver("chat", "later", 2)
+      .then(() => order.push("later"));
+    await flush();
+    expect(harness.sent("session/close")).toHaveLength(1);
+    expect(order).toEqual([]);
+    expect(sessions.active("chat")).toBe(true);
+    harness.closes.shift()?.();
+    await expect(holding).resolves.toBe("done");
+    await later;
+    expect(order).toEqual(["work session-1", "later"]);
+    expect(harness.turns.map((turn) => turn.text)).toEqual(["hello", "later"]);
+    expect(harness.sent("session/delete")).toEqual([]);
+  });
+
+  it("never starts its work after a close the harness failed, deleting nothing", async () => {
+    const harness = fakeHarness({
+      capabilities: CLOSES,
+      closeError: { code: -32000, message: "close failed" },
+    });
+    const { sessions, saved } = held(harness, await start(harness));
+    await sessions.deliver("chat", "hello", 1);
+    const before = saved.get("chat");
+    const work = vi.fn(async () => undefined);
+    await expect(sessions.exclusive("chat", work)).rejects.toThrow(
+      "close failed",
+    );
+    // The failed close stays failed: the next hold is refused too.
+    await expect(sessions.exclusive("chat", work)).rejects.toThrow(
+      "close failed",
+    );
+    expect(work).not.toHaveBeenCalled();
+    expect(sessions.active("chat")).toBe(false);
+    expect(saved.get("chat")).toEqual(before);
+    expect(harness.sent("session/delete")).toEqual([]);
+  });
+
+  it("leaves other conversations alone", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions } = held(harness, await start(harness));
+    await sessions.deliver("other", "hello", 1);
+    const working = deferred();
+    const holding = sessions.exclusive("chat", () => working.promise);
+    await flush();
+    await expect(sessions.deliver("other", "again", 2)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(harness.sent("session/close")).toEqual([]);
+    working.resolve();
+    await holding;
+  });
+
+  it("lets one caller in at a time once an opening session settles", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const launching = deferred();
+    const { sessions } = held(harness, await start(harness), async () => {
+      await launching.promise;
+      return { workspace: "/work", systemPrompt: "" };
+    });
+    const opening = sessions.deliver("chat", "hello", 1);
+    await flush();
+    const first = deferred();
+    const entered: string[] = [];
+    const a = sessions.exclusive("chat", () => {
+      entered.push("a");
+      return first.promise;
+    });
+    const b = sessions.exclusive("chat", async () => {
+      entered.push("b");
+    });
+    launching.resolve();
+    await opening;
+    await flush();
+    expect(entered).toEqual(["a"]);
+    first.resolve();
+    await Promise.all([a, b]);
+    expect(entered).toEqual(["a", "b"]);
+  });
+
+  it("tells its work of an interrupt at once, without waiting for it", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions } = held(harness, await start(harness));
+    const working = deferred();
+    let signal: AbortSignal | undefined;
+    const holding = sessions.exclusive("chat", (held) => {
+      signal = held.signal;
+      return working.promise;
+    });
+    await flush();
+    await sessions.interrupt("chat");
+    expect(signal?.aborted).toBe(true);
+    expect(sessions.active("chat")).toBe(true);
+    working.resolve();
+    await holding;
+    expect(sessions.active("chat")).toBe(false);
+  });
+
+  it("never starts work interrupted while it waits for a close", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES, holdClose: true });
+    const { sessions } = held(harness, await start(harness));
+    await sessions.deliver("chat", "hello", 1);
+    const work = vi.fn(async () => undefined);
+    const holding = sessions.exclusive("chat", work);
+    await flush();
+    await sessions.interrupt("chat");
+    harness.closes.shift()?.();
+    await expect(holding).rejects.toThrow("Harness was stopped");
+    expect(work).not.toHaveBeenCalled();
+    expect(sessions.active("chat")).toBe(false);
+  });
+
+  it("is aborted by dispose, and shutdown waits for its work", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions } = held(harness, await start(harness));
+    const working = deferred();
+    let signal: AbortSignal | undefined;
+    const holding = sessions.exclusive("chat", (held) => {
+      signal = held.signal;
+      return working.promise;
+    });
+    await flush();
+    let shut = false;
+    const shutting = sessions.shutdown().then(() => (shut = true));
+    await flush();
+    expect(signal?.aborted).toBe(true);
+    expect(shut).toBe(false);
+    working.resolve();
+    await Promise.all([holding, shutting]);
+    await expect(
+      sessions.exclusive("chat", async () => undefined),
+    ).rejects.toThrow("Harness was stopped");
+  });
+
+  it("refuses the conversation while a session its work opened outlives it", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions } = held(harness, await start(harness));
+    const exited = deferred();
+    await sessions.exclusive("chat", async ({ outlives }) => {
+      outlives(exited.promise);
+    });
+    const work = vi.fn(async () => undefined);
+    await expect(sessions.exclusive("chat", work)).rejects.toThrow(
+      "Harness has not retired this conversation's session",
+    );
+    expect(work).not.toHaveBeenCalled();
+    exited.resolve();
+    await flush();
+    await sessions.exclusive("chat", work);
+    expect(work).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a session only while it holds the conversation, and releases it on failure", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions, saved } = held(harness, await start(harness));
+    let late: ((id: string) => void) | undefined;
+    await sessions.exclusive("chat", async ({ keep }) => {
+      keep("saved-1");
+      late = keep;
+    });
+    expect(saved.get("chat")?.sessions).toEqual(["saved-1"]);
+    late?.("saved-2");
+    expect(saved.get("chat")?.sessions).toEqual(["saved-1"]);
+    await expect(
+      sessions.exclusive("chat", async ({ saved: newest }) => {
+        throw new Error(`could not load ${newest}`);
+      }),
+    ).rejects.toThrow("could not load saved-1");
+    expect(sessions.active("chat")).toBe(false);
   });
 });
