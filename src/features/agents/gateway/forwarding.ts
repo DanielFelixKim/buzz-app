@@ -20,10 +20,13 @@ import {
   type ForwardOwner,
 } from "../../host/forward";
 import type { AgentKey } from "../membership";
+import type { SessionPlace } from "../service";
 import {
   bindingAdmits,
   discoveryBundle,
   inferenceBundle,
+  isBuzzUuid,
+  isHex64,
   type GatewayBinding,
   type TurnContext,
 } from "./contract";
@@ -87,6 +90,23 @@ export const CHANGED =
   "This agent's gateway access changed as the turn started, so it didn't run. Try again.";
 export const UNAVAILABLE =
   "Buzz couldn't start forwarding to the agent gateway on this device, so the turn didn't run.";
+export const FORWARDING_PROTECTED =
+  "Protected agents can't run through the agent gateway yet, so this turn didn't run.";
+
+/** A control's error for a fallback notice: it never runs unforwarded. */
+export const compactRefusal = (notice: string) =>
+  notice.replace(
+    /^Ran without the agent gateway: /,
+    "Couldn't compact through the agent gateway: ",
+  );
+/** A session control's own context: its channel, and its thread only for a
+ * thread's session; it carries no message. */
+export const controlTurn = (place: SessionPlace, scope: string): TurnContext =>
+  Object.freeze({
+    channel_id: isBuzzUuid(place.channelId) ? place.channelId : null,
+    message_id: null,
+    thread_id: scope !== "channel" && isHex64(place.root) ? place.root : null,
+  });
 
 export class GatewayForwarding {
   /** Native route keys must be short and opaque; agent keys need not be. */
