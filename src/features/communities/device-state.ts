@@ -58,7 +58,7 @@ export async function purgeCommunityDeviceState(
     saveRepositoriesFolder(origin, viewer, "");
   });
   await attempt("view state", () => clearViewScope(scope));
-  await attempt("welcome", () => forgetWelcome(origin));
+  await attempt("welcome record", () => forgetWelcome(origin));
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));
   await attempt("thread follows", () => forgetThreadFollows(scope));

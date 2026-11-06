@@ -198,10 +198,13 @@ function setup({
       for (const listener of listeners) listener();
     });
   };
+  // A stable snapshot, as the real reader keeps: a new one each call would
+  // never let useSyncExternalStore settle.
+  const saved = {
+    memberships: [{ id: "https://primary.example", ...membership }],
+  };
   const communities = {
-    snapshot: () => ({
-      memberships: [{ id: "https://primary.example", ...membership }],
-    }),
+    snapshot: () => saved,
     subscribe: () => () => {},
   } as unknown as CommunityReader;
   vi.mocked(communityRequest).mockResolvedValue(info);
@@ -229,6 +232,13 @@ function setup({
 const channel = () => screen.getByRole("combobox", { name: "Welcome channel" });
 const titleField = () => screen.getByRole("textbox", { name: "Title" });
 const messageField = () => screen.getByRole("textbox", { name: "Message" });
+/** Replace the whole message, as the published text arriving would. The
+ * editor's value setter dispatches its change at once, so it runs in act:
+ * fireEvent.change would set it while building the event, outside act. */
+const setMessage = (text: string) =>
+  act(() => {
+    (messageField() as ComposerInputElement).value = text;
+  });
 const starters = () =>
   screen.getByRole("region", { name: "Also add new members to" });
 const removeLabel = (name: string) => `Remove #${name} from starter channels`;
@@ -283,7 +293,7 @@ it("writes toolbar formatting and a pasted channel link into the message as Mark
   const { setLanding, user } = setup();
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
   const input = messageField();
-  fireEvent.change(input, { target: { value: "" } });
+  setMessage("");
   // A channel's Copy link writes the bare link.
   const link = `buzz://channel/${square}`;
   act(() => {
@@ -328,11 +338,14 @@ it("shows a pasted channel link through the conversation's link renderer, as the
     component: ({ url }) => <span>{url}</span>,
   };
   const subscribe = () => () => {};
+  // Registries keep their snapshot until a contribution changes.
+  const links = [renderer];
+  const none: never[] = [];
   setup({
     extensions: {
-      links: { snapshot: () => [renderer], subscribe },
-      inline: { snapshot: () => [], subscribe },
-      tools: { snapshot: () => [], subscribe },
+      links: { snapshot: () => links, subscribe },
+      inline: { snapshot: () => none, subscribe },
+      tools: { snapshot: () => none, subscribe },
     },
   });
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
@@ -360,8 +373,8 @@ const plainClipboard = (text: string) => ({
 /** Paste `text` as plain text into a message field holding only `before` and
  * `after`, with the caret between them. */
 function pasteIntoMessage(text: string, before = "", after = "") {
+  setMessage(before + after);
   const input = messageField() as ComposerInputElement;
-  fireEvent.change(input, { target: { value: before + after } });
   act(() => {
     input.focus();
     input.setSelectionRange(before.length, before.length);
@@ -469,7 +482,7 @@ it("keeps an npub pasted into toolbar code as pasted", async () => {
   const { setLanding, user } = setup({ names: { [alice]: "Alice" } });
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
   const input = messageField();
-  fireEvent.change(input, { target: { value: "" } });
+  setMessage("");
   act(() => {
     input.focus();
     document.dispatchEvent(new Event("selectionchange"));
@@ -596,9 +609,7 @@ it("requires a channel when none is designated and sends the defaults as empty",
   );
   expect(channel()).toHaveValue("");
   expect(readLanding).not.toHaveBeenCalled();
-  fireEvent.change(messageField(), {
-    target: { value: `${DEFAULT_WELCOME_MESSAGE}\n` },
-  });
+  setMessage(`${DEFAULT_WELCOME_MESSAGE}\n`);
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   await user.type(channel(), "town");
   await user.click(await screen.findByRole("option", { name: "Town square" }));
@@ -617,7 +628,7 @@ it("requires a channel when none is designated and sends the defaults as empty",
 it("normalizes line endings and trims the title and message before sending", async () => {
   const { setLanding, user } = setup();
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
-  fireEvent.change(messageField(), { target: { value: "  Hi\r\nall  " } });
+  setMessage("  Hi\r\nall  ");
   fireEvent.change(titleField(), { target: { value: "  Hello, newcomer " } });
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
@@ -633,25 +644,23 @@ it("normalizes line endings and trims the title and message before sending", asy
 it("blocks messages the relay would refuse and restores the defaults in the draft", async () => {
   const { setLanding, user } = setup();
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
-  fireEvent.change(messageField(), { target: { value: "  \n " } });
+  setMessage("  \n ");
   expect(
     screen.getByText("Enter a welcome message, or restore the defaults."),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  fireEvent.change(messageField(), { target: { value: "a".repeat(4001) } });
+  setMessage("a".repeat(4001));
   expect(
     screen.getByText("Shorten the message to 4,000 characters."),
   ).toBeVisible();
-  fireEvent.change(messageField(), { target: { value: "a\u0007b" } });
+  setMessage("a\u0007b");
   expect(
     screen.getByText(
       "Remove control characters. Line breaks and tabs are fine.",
     ),
   ).toBeVisible();
   // Unicode scalar values, not UTF-16 units, as the relay counts; tabs pass.
-  fireEvent.change(messageField(), {
-    target: { value: `${"😀".repeat(1999)}\t${"😀".repeat(2000)}` },
-  });
+  setMessage(`${"😀".repeat(1999)}\t${"😀".repeat(2000)}`);
   expect(screen.getByText("4,000 of 4,000 characters")).toBeVisible();
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   fireEvent.change(titleField(), { target: { value: "Hello" } });
@@ -689,18 +698,18 @@ it("blocks invisible-only text and hidden direction characters, as the relay doe
   const { setLanding } = setup();
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
   // Zero-width and braille-blank characters alone leave nothing to read.
-  fireEvent.change(messageField(), { target: { value: "\u200B\u2800" } });
+  setMessage("\u200B\u2800");
   expect(
     screen.getByText("Enter a welcome message, or restore the defaults."),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  fireEvent.change(messageField(), { target: { value: "\u202Eabc" } });
+  setMessage("\u202Eabc");
   expect(
     screen.getByText("Remove the hidden text-direction characters."),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   // A zero-width space inside readable text is fine.
-  fireEvent.change(messageField(), { target: { value: "Hello\u200Bworld" } });
+  setMessage("Hello\u200Bworld");
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   fireEvent.change(titleField(), { target: { value: " \u200B " } });
   expect(
@@ -720,7 +729,7 @@ it('titles the default "Welcome" for a community known only by its address', asy
     membership: { name: "primary.example" },
   });
   await waitFor(() => expect(titleField()).toHaveValue("Welcome"));
-  fireEvent.change(messageField(), { target: { value: "Say hello" } });
+  setMessage("Say hello");
   await user.click(screen.getByRole("button", { name: "Save" }));
   // An untouched default title is sent as the default.
   await waitFor(() =>
@@ -745,7 +754,7 @@ it("resends a published title untouched, even one matching this viewer's default
     },
   });
   await waitFor(() => expect(titleField()).toHaveValue("Welcome to Primary"));
-  fireEvent.change(messageField(), { target: { value: "Say hello" } });
+  setMessage("Say hello");
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(setLanding).toHaveBeenLastCalledWith(
@@ -766,7 +775,8 @@ it("resends a published title untouched, even one matching this viewer's default
       expect.any(Function),
     ),
   );
-  // Typed back in, the same words are a custom title.
+  // Cleared and typed back in, the same words are a custom title.
+  fireEvent.change(titleField(), { target: { value: "" } });
   fireEvent.change(titleField(), { target: { value: "Welcome to Primary" } });
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
@@ -788,7 +798,7 @@ it("shows the relay's reason and keeps the draft when it refuses", async () => {
     ),
   );
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
-  fireEvent.change(messageField(), { target: { value: "Say hello" } });
+  setMessage("Say hello");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Landing requires an open, unarchived channel without a ttl",
@@ -803,7 +813,7 @@ async function unconfirmedSave(fixture: ReturnType<typeof setup>) {
     new ChannelLifecycleUnconfirmed(new Error("timeout")),
   );
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
-  fireEvent.change(messageField(), { target: { value: "Say hello" } });
+  setMessage("Say hello");
   await fixture.user.click(screen.getByRole("button", { name: "Save" }));
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Not confirmed yet");
@@ -928,7 +938,7 @@ it("announces starter edits, and rests focus in the pane when Cancel or Save tak
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("Welcome saved")).toBeInTheDocument();
   // Save speaks for itself; the edit's announcement is withdrawn.
-  expect(screen.queryByText(/when you save/)).toBeNull();
+  expect(screen.queryByText(/will be removed when you save/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   expect(channel()).toHaveFocus();
 });
@@ -939,12 +949,19 @@ it("keeps the starter list, its typed search and focus when a re-read finds the 
   await waitFor(() => expect(channel()).toHaveValue("Lobby"));
   await user.click(remove("Town square"));
   await unconfirmedSave(fixture);
-  await user.type(addField(), "ran");
-  vi.mocked(communityRequest).mockResolvedValueOnce({
-    policy: null,
-    landingChannels: false,
-  });
+  // The relay's support is read again, and answers while the admin is
+  // searching for a channel to add.
+  let answer!: () => void;
+  vi.mocked(communityRequest).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        answer = () => resolve({ policy: null, landingChannels: false });
+      }),
+  );
   await user.click(screen.getByRole("button", { name: "Check again" }));
+  await waitFor(() => expect(communityRequest).toHaveBeenCalledTimes(2));
+  await user.type(addField(), "ran");
+  await act(async () => answer());
   expect(
     await screen.findByText(
       "This community’s relay doesn’t support a welcome channel.",
@@ -954,19 +971,24 @@ it("keeps the starter list, its typed search and focus when a re-read finds the 
   expect(addField()).toHaveValue("ran");
   expect(addField()).toHaveFocus();
   expect(removable("Town square")).toBeNull();
-  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  // The search's open list hides the action row from role queries.
+  expect(
+    screen.getByRole("button", { name: "Save", hidden: true }),
+  ).toBeEnabled();
+  expect(
+    screen.queryByRole("textbox", { name: "Message", hidden: true }),
+  ).toBeNull();
 });
 
 it("shows Save only for a change, and Cancel returns to the published state", async () => {
   const { setLanding, user } = setup();
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
-  fireEvent.change(messageField(), { target: { value: "Hi there!" } });
+  setMessage("Hi there!");
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   // Typing back to the published text leaves nothing to save.
-  fireEvent.change(messageField(), { target: { value: "Hi there" } });
+  setMessage("Hi there");
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  fireEvent.change(messageField(), { target: { value: "Draft" } });
+  setMessage("Draft");
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(messageField()).toHaveValue("Hi there");
   expect(channel()).toHaveValue("Lobby");
@@ -977,7 +999,7 @@ it("shows Save only for a change, and Cancel returns to the published state", as
 it("starts over from the relay when the community's session changes", async () => {
   const { readLanding, reconnect } = setup();
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
-  fireEvent.change(messageField(), { target: { value: "Draft" } });
+  setMessage("Draft");
   reconnect();
   await waitFor(() => expect(readLanding).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
@@ -994,7 +1016,7 @@ it("abandons a save that is still in flight when the form closes", async () => {
       }),
   );
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
-  fireEvent.change(messageField(), { target: { value: "Say hello" } });
+  setMessage("Say hello");
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(setLanding).toHaveBeenCalledTimes(1));
   const [, , signal, active] = setLanding.mock.calls[0] ?? [];
@@ -1148,7 +1170,7 @@ it("adds a starter to the draft and publishes it, after the welcome, on Save", a
   expect(remove("Random")).toBeEnabled();
   // A starter change alone offers Save.
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  fireEvent.change(messageField(), { target: { value: "Say hello" } });
+  setMessage("Say hello");
   const release = holdRun(run, flag);
   await user.click(screen.getByRole("button", { name: "Save" }));
   try {
@@ -1306,7 +1328,7 @@ it("publishes the steps before a refusal and keeps the ones after it in the draf
   };
   const { run, setLanding, user } = setup({ joined: [unlisted] });
   await waitFor(() => expect(channel()).toHaveValue("Lobby"));
-  fireEvent.change(messageField(), { target: { value: "Say hello" } });
+  setMessage("Say hello");
   // Steps run by channel name: Random, Town square, then Unlisted.
   await user.type(addField(), "ran");
   await user.click(await screen.findByRole("option", { name: "Random" }));
@@ -1406,7 +1428,7 @@ it("holds starter edits while the welcome saves", async () => {
       }),
   );
   await waitFor(() => expect(messageField()).toHaveValue("Hi there"));
-  fireEvent.change(messageField(), { target: { value: "Say hello" } });
+  setMessage("Say hello");
   await user.click(screen.getByRole("button", { name: "Save" }));
   try {
     expect(remove("Town square")).toBeDisabled();
@@ -1419,7 +1441,13 @@ it("holds starter edits while the welcome saves", async () => {
   } finally {
     await act(async () => settle());
   }
-  expect(remove("Town square")).toBeEnabled();
+  // The browse list is still open, hiding the rows from role queries.
+  expect(
+    screen.getByRole("button", {
+      name: removeLabel("Town square"),
+      hidden: true,
+    }),
+  ).toBeEnabled();
 });
 
 it("still lists and saves starter channels when the relay has no welcome channel", async () => {

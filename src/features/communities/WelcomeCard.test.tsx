@@ -103,10 +103,12 @@ it("shows an identity link as an inert chip when not interactive, as the editor'
 });
 
 it("titles the default with the community the viewer saved, else a custom title", () => {
+  // A stable snapshot, as the real reader keeps it between changes.
+  const saved = {
+    memberships: [{ id: "https://primary.example", name: "Primary" }],
+  };
   const communities = {
-    snapshot: () => ({
-      memberships: [{ id: "https://primary.example", name: "Primary" }],
-    }),
+    snapshot: () => saved,
     subscribe: () => () => {},
   } as unknown as CommunityReader;
   const { rerender } = render(
@@ -136,13 +138,15 @@ it("titles the default with the community the viewer saved, else a custom title"
 });
 
 it("welcomes a community known only by its address without naming it", () => {
-  const reader = (membership: Record<string, string>) =>
-    ({
-      snapshot: () => ({
-        memberships: [{ id: "https://primary.example", ...membership }],
-      }),
+  const reader = (membership: Record<string, string>) => {
+    const saved = {
+      memberships: [{ id: "https://primary.example", ...membership }],
+    };
+    return {
+      snapshot: () => saved,
       subscribe: () => () => {},
-    }) as unknown as CommunityReader;
+    } as unknown as CommunityReader;
+  };
   const { rerender } = render(
     <CommunityWelcomeCard
       communities={reader({ name: "primary.example" })}
