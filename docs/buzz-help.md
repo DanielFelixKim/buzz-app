@@ -835,3 +835,9 @@ Confirm the deletion; pending or uncertain results remain in the workflow notice
 If permission changes during confirmation, Buzz explains why deletion could not
 start and keeps any editor draft.
 Owning the agent does not grant permission to edit or run its workflow.
+
+With the optional Owner draft reader plugin enabled, your own local agents can
+read your unsent draft for a channel or thread on this device when you ask.
+Reading leaves the draft unchanged and does not send it. Attached files are not
+included. The answer identifies live composer text or a saved draft; resolve
+conflicting open copies in Buzz before asking an agent to read them.

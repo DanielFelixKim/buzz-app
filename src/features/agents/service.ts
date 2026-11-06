@@ -190,6 +190,7 @@ import {
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
+import { readOwnerDraft, type OwnerDraft } from "../messages/draft-read";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 import {
@@ -498,6 +499,8 @@ export type AgentHandle = Readonly<{
   tabs(): ReturnType<typeof channelTabs> | undefined;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
+  /** On a run only: this device's owner draft, scoped to its live community. */
+  readDraft?(channel: string, thread?: string): OwnerDraft | undefined;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
@@ -2154,6 +2157,35 @@ export class AgentsService extends Service implements Agents {
       tabs: (agent) => {
         const session = this.bindingOf(agent)?.session;
         return session && channelTabs(session, ctx.navigation);
+      },
+      readDraft: (agent) => {
+        const binding = this.bindingOf(agent);
+        if (!binding) return undefined;
+        return (channel, thread) => {
+          binding.controller.signal.throwIfAborted();
+          if (
+            this.bindingOf(agent) !== binding ||
+            this.communities.snapshot().viewer !== agent.owner ||
+            binding.viewer !== agent.owner ||
+            !this.liveMember(agent.key)
+          )
+            throw new Error(
+              "Your owner's draft is unavailable from this session.",
+            );
+          const target = binding.session.channels
+            .list()
+            .channels.find((item) => item.id === channel);
+          if (
+            !target ||
+            target.cached ||
+            target.pending ||
+            !target.members?.includes(agent.owner)
+          )
+            throw new Error(
+              "The draft's channel is not available to your owner.",
+            );
+          return readOwnerDraft(binding.scope, channel, thread);
+        };
       },
       settings: () => this.deviceSettings,
       classifier: () => this.classifier(),

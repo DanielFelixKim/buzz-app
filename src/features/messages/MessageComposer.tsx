@@ -5,6 +5,7 @@ import {
   updateSoloModelPicks,
 } from "./solo-model-picks";
 import { subscribeModelPicks } from "./solo-model-picks-storage";
+import { registerComposerDraft } from "./draft-read";
 import { useChatLinkSharing } from "./useChatLinkSharing";
 import {
   draftGif,
@@ -1126,6 +1127,12 @@ function Composer({
   useEffect(() => {
     setPasteTooLong(false);
   }, [draft, editing.target]);
+  const liveDraft = useRef<(() => MentionDraft) | undefined>(undefined);
+  liveDraft.current = editing.target ? undefined : () => valueRef.current;
+  useEffect(() => {
+    if (submission) return;
+    return registerComposerDraft(scope, draftKey, () => liveDraft.current?.());
+  }, [scope, draftKey, submission]);
   const editScope = useMessageEditScope();
   const editableRows = () =>
     editMessages ??

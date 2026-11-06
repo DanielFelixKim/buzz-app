@@ -161,6 +161,8 @@ export interface BuzzClient {
   readonly attention?: AgentAttention;
   /** The owner's thread tabs, where the host shows them. */
   tabs?: ThreadTabs;
+  /** Read one owner draft on this device, only in an owned agent's live run. */
+  readDraft?: import("../features/agents/service").AgentHandle["readDraft"];
   /** Buzz settings on this device, in an agent's own run. Each call checks
    * the turn first, as the other tools do. */
   settings?: Readonly<{

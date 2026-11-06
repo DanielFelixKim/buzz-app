@@ -374,3 +374,21 @@ it("offers the handle's settings, checking the turn before each call", () => {
   expect(settings.list).not.toHaveBeenCalled();
   expect(settings.get).not.toHaveBeenCalled();
 });
+
+it("reads owner drafts only through a run capability while the turn is live", () => {
+  const draft = { text: "Unsent owner prose", recipients: [], source: "saved" };
+  const readDraft = vi.fn(() => draft);
+  const controller = new AbortController();
+  const options = {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+    signal: controller.signal,
+  };
+  const client = appClient({ readDraft } as unknown as AgentHandle, options);
+  expect(client.readDraft?.("channel", "a".repeat(64))).toEqual(draft);
+  expect(readDraft).toHaveBeenCalledExactlyOnceWith("channel", "a".repeat(64));
+  controller.abort(new Error("Turn ended"));
+  expect(() => client.readDraft?.("channel")).toThrow("Turn ended");
+  expect(readDraft).toHaveBeenCalledOnce();
+  expect(appClient({} as AgentHandle, options).readDraft).toBeUndefined();
+});

@@ -15340,6 +15340,53 @@ it("gives a run this device's plugins as the agent, and refuses a request its re
   }
 });
 
+describe("Owner draft reads", () => {
+  async function running() {
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const handle = runnerGate<AgentHandle>();
+    f.run.mockImplementationOnce(async ({ agent }) => {
+      handle.resolve(agent);
+    });
+    f.plugin.agents.wake(bot, {
+      channel,
+      root: "e".repeat(64),
+      text: "Read my draft",
+    });
+    return { f, agent: await handle.promise };
+  }
+  it("exposes the read to an owned run, never a plugin handle, and refuses unavailable channels", async () => {
+    const getItem = vi.fn(() => JSON.stringify("Owner prose"));
+    vi.stubGlobal("localStorage", { getItem });
+    const { f, agent } = await running();
+    expect(agent.readDraft?.(channel)).toEqual({
+      text: "Owner prose",
+      recipients: [],
+      source: "saved",
+    });
+    expect(getItem).toHaveBeenLastCalledWith(
+      `buzz-view.v1:${JSON.stringify([`https://relay.example.test:${viewer}`, `draft:${channel}`])}`,
+    );
+    expect(f.plugin.agents.handle(bot)).not.toHaveProperty("readDraft");
+    expect(() => agent.readDraft?.("missing")).toThrow("channel");
+    expect(() => agent.readDraft?.("saved")).toThrow("channel");
+    f.confirm(channel, [bot]);
+    expect(() => agent.readDraft?.(channel)).toThrow("channel");
+  });
+  it.each(["removed", "reconnected", "signed out"])(
+    "refuses a stale read after %s",
+    async (reason) => {
+      const { f, agent } = await running();
+      if (reason === "removed") await f.service.remove(bot);
+      else if (reason === "reconnected") f.reconnecting();
+      else f.signIn(other);
+      expect(() => agent.readDraft?.(channel)).toThrow();
+    },
+  );
+});
+
 describe("Buzz settings", () => {
   const root = "e".repeat(64);
   function catalog() {

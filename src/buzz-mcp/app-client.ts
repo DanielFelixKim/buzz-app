@@ -47,7 +47,7 @@ export function appClient(
   };
   const handoff = agent.handoff;
   const plugins = agent.plugins;
-  const { settings } = agent;
+  const { settings, readDraft } = agent;
   return {
     ...(agent.protection
       ? {
@@ -241,6 +241,14 @@ export function appClient(
       close: (channel, root) => tabs().close(channel, root),
       rename: (channel, root, name) => tabs().rename(channel, root, name),
     },
+    ...(readDraft
+      ? {
+          readDraft: (channel: string, thread?: string) => {
+            check();
+            return readDraft(channel, thread);
+          },
+        }
+      : {}),
     ...(settings
       ? {
           settings: {

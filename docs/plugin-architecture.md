@@ -603,6 +603,19 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+An owned local agent's run client also offers optional `readDraft(channelId,
+threadRootId?)`. It reads only the current owner's local draft in that run's
+community, rechecking the live owner, session and channel membership on each
+call. It returns `{ text, recipients, source }`, or `undefined` when there is
+no saved or mounted draft. `source` is `composer` for the live editor, including
+unsaved text, or `saved` for durable text when no editor holds it. Disagreeing
+mounted editors and unavailable storage fail explicitly. Sent-message editing
+text, attachment bytes and other owners' or communities' drafts are excluded.
+The capability is absent from `Agents.handle` and standalone clients. It does
+not read, send or synchronize anything through the relay. Installed plugins
+remain trusted code; this is an ownership guard, not a plugin sandbox.
+`examples/plugins/draft` is a standalone consumer exposing `draft_get`.
+
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
 default) gives local agents three tools. `plugin_authoring_guide` returns
 [the authoring guide](plugin-authoring-guide.md), bundled with the app.

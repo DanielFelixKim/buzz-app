@@ -1,3 +1,4 @@
+import * as draftPlugin from "../../../examples/plugins/draft/plugin.js";
 // @vitest-environment jsdom
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -82,6 +83,10 @@ import type {
   ChannelSummary,
   Profile,
 } from "../relay/contracts";
+import { readOwnerDraft } from "./draft-read";
+import { appClient } from "../../buzz-mcp/app-client";
+import { callSessionTool, type AddedTool } from "../../buzz-mcp/session-tools";
+import type { AgentHandle } from "../agents/service";
 import { readView, viewRevision, writeView } from "../../shared/view-state";
 import { clearDraft } from "../../bundled/drafts-sent/drafts";
 import { followupDraft } from "./mention-draft";
@@ -15471,3 +15476,237 @@ describe("oversized paste feedback", () => {
     ).toBeVisible();
   });
 });
+
+it("lets an external agent tool read live composer text without sending, focus changes, or stale storage", async () => {
+  const h = mount();
+  h.fill("Owner draft before storage fails");
+  let tool: AddedTool | undefined;
+  draftPlugin.apply({
+    agents: {
+      addTool: (value: AddedTool) => {
+        tool = value;
+      },
+    },
+  });
+  const client = appClient(
+    {
+      readDraft: (channel, thread) => readOwnerDraft("scope", channel, thread),
+    } as AgentHandle,
+    {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    },
+  );
+  const field = screen.getByRole("textbox");
+  const read = () =>
+    callSessionTool(client, {}, "draft_get", { channel: "channel" }, [tool!]);
+  const writes = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw Error("Disk full");
+    });
+  h.fill("Newest unsaved draft: DRAFT_8246");
+  const saved = viewRevision("scope", "draft:channel");
+  expect(saved).not.toContain("DRAFT_8246");
+  const reply = JSON.parse((await read()) as string);
+  expect(reply.draft).toMatchObject({
+    text: "Newest unsaved draft: DRAFT_8246",
+    source: "composer",
+  });
+  expect(document.activeElement).toBe(field);
+  expect(field).toHaveValue("Newest unsaved draft: DRAFT_8246");
+  expect(viewRevision("scope", "draft:channel")).toBe(saved);
+  expect(h.onSend).not.toHaveBeenCalled();
+  writes.mockRestore();
+  h.retarget({ channelId: "different" });
+  expect(readOwnerDraft("scope", "channel")?.source).toBe("saved");
+});
+
+it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
+  "a real Codex reads a real unsent composer draft through the external tool",
+  { timeout: 180_000 },
+  async () => {
+    const { spawn } = await import("node:child_process");
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir, homedir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { CodexRuntime } = await import("../../bundled/codex/runtime");
+    const h = mount();
+    const prose = `Unsent fixture draft ${crypto.randomUUID()}`;
+    h.fill(prose);
+    let draftTool: AddedTool | undefined;
+    draftPlugin.apply({
+      agents: {
+        addTool: (tool: AddedTool) => {
+          draftTool = tool;
+        },
+      },
+    });
+    let reads = 0;
+    const tool: AddedTool = {
+      ...draftTool!,
+      call: async (...args) => {
+        reads++;
+        return draftTool!.call(...args);
+      },
+    };
+    const cwd = await mkdtemp(join(tmpdir(), "buzz-draft-codex-"));
+    const children = new Set<ReturnType<typeof spawn>>();
+    const published: { content: string }[] = [];
+    const owner = "a".repeat(64),
+      pubkey = "b".repeat(64);
+    const storage = new Map<string, string>();
+    const runtime = new CodexRuntime(
+      async (_id, options = {}) => {
+        const child = spawn(
+          process.env.BUZZ_DRAFT_LIVE_CODEX!,
+          [
+            "app-server",
+            ...(options.args ?? []),
+            "-c",
+            "features.multi_agent=false",
+          ],
+          {
+            cwd: options.cwd?.replace(/^~(?=\/|$)/, homedir()),
+            stdio: ["pipe", "pipe", "pipe"],
+            env: Object.fromEntries(
+              Object.entries(process.env).filter(
+                ([key]) =>
+                  !key.startsWith("BUZZ_") && !key.startsWith("NOSTR_"),
+              ),
+            ),
+          },
+        );
+        children.add(child);
+        child.stdout.on("data", (chunk) => options.onStdout?.(String(chunk)));
+        child.stderr.on("data", (chunk) => options.onStderr?.(String(chunk)));
+        const exited = new Promise<number | null>((resolve, reject) => {
+          child.once("error", reject);
+          child.once("exit", (code) => {
+            children.delete(child);
+            resolve(code);
+          });
+        });
+        return {
+          write: (text) =>
+            new Promise<void>((resolve, reject) =>
+              child.stdin.write(text, (error) =>
+                error ? reject(error) : resolve(),
+              ),
+            ),
+          end: async () => {
+            child.stdin.end();
+          },
+          kill: async () => {
+            child.kill();
+          },
+          exited,
+        };
+      },
+      () => ({
+        connection: h.session,
+        scope: "scope",
+        channel: async () => ({
+          name: "Draft test",
+          dm: false,
+          members: [owner, pubkey],
+        }),
+        read: async () => [],
+        profiles: async () => {},
+        name: () => undefined,
+        profile: () => undefined,
+        channelLabel: () => ({ name: "Draft test" }),
+        subscribeChannels: () => () => {},
+        workflowAuthority: () => undefined,
+        memoryListing: async () => ({ entries: [], partial: false }),
+        soloChat: async () => true,
+      }),
+      async () => null,
+      {
+        keys: () => [...storage.keys()],
+        get: (key) => storage.get(key) ?? null,
+        read: async (key) => storage.get(key) ?? null,
+        scan: async (prefix) =>
+          Object.fromEntries(
+            [...storage].filter(([key]) => key.startsWith(prefix)),
+          ),
+        set: async (key, value) => {
+          if (value === null) storage.delete(key);
+          else storage.set(key, value);
+        },
+        add: async (key, value) => {
+          const held = storage.get(key);
+          if (held !== undefined) return held;
+          storage.set(key, value);
+          return value;
+        },
+      },
+      undefined,
+      () => [tool],
+    );
+    try {
+      await runtime.run({
+        trigger: {
+          type: "mention",
+          event: {
+            id: "c".repeat(64),
+            pubkey: owner,
+            kind: 9,
+            created_at: Math.floor(Date.now() / 1000),
+            content:
+              "Call buzz.draft_get with channel channel. Then send the exact draft text back using buzz.send with final true. Use no shell, file, or delegation tools.",
+            tags: [["h", "channel"]],
+            sig: "",
+          } as RelayEvent,
+        },
+        channelId: "channel",
+        agent: {
+          key: pubkey,
+          pubkey,
+          owner,
+          name: "Draft reader",
+          relay: "wss://fixture.test",
+          readDraft: (channel: string, thread?: string) =>
+            readOwnerDraft("scope", channel, thread),
+          query: async () => [],
+          publish: async (event: Parameters<AgentHandle["publish"]>[0]) => {
+            published.push(event);
+            return {
+              ...event,
+              id: "d".repeat(64),
+              pubkey,
+              created_at: 1,
+              sig: "",
+            };
+          },
+          attention: { enabled: () => false },
+        } as unknown as AgentHandle,
+        config: {
+          workspace: cwd,
+          model: "",
+          effort: "",
+          instructions:
+            "This is an isolated acceptance test. Use draft_get to read the draft. Send one final answer. Do not delegate.",
+        },
+        signal: new AbortController().signal,
+        workingUntil: () => {},
+        current: () => true,
+      });
+      await vi.waitFor(() => expect(published).toHaveLength(1), {
+        timeout: 150_000,
+        interval: 100,
+      });
+      expect(reads).toBeGreaterThan(0);
+      expect(published[0]?.content).toContain(prose);
+      expect(screen.getByRole("textbox")).toHaveValue(prose);
+      expect(h.onSend).not.toHaveBeenCalled();
+      console.log(
+        "PASS real Codex read unique live draft via external draft_get and left composer unchanged",
+      );
+    } finally {
+      runtime.dispose();
+      for (const child of children) child.kill("SIGKILL");
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);

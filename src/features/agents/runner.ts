@@ -490,6 +490,7 @@ export type RunnerHost = {
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
+  readDraft?(agent: Agent): AgentHandle["readDraft"];
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -2677,6 +2678,7 @@ export class AgentRunners {
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
+    const readDraft = run ? this.host.readDraft?.(agent) : undefined;
     const handle = guarded(
       {
         protection: protection && {
@@ -2774,6 +2776,7 @@ export class AgentRunners {
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),
+        ...(readDraft && { readDraft }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>

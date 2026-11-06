@@ -2,6 +2,7 @@
 
 All example plugins live here with `manifest.json` and prebuilt `plugin.js` files:
 
+- `draft`: an owner-only agent tool for reading unsent drafts, requiring the host’s `readDraft` run capability.
 - `counter` and `notes`: offline playgrounds.
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+G /
   Control+Shift+G increments through the injected host service. Requires `shortcuts`.
