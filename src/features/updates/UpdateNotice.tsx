@@ -3,7 +3,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import type { Updates } from "./updates";
 
-/** Offers restart once a downloaded update is ready, except while Settings shows it inline; dismissal lasts until it resolves. */
+/** Offers restart once a downloaded update is ready, now or once agents are idle, except while Settings shows it inline; dismissal lasts until it resolves. */
 export function UpdateNotice({ updates }: { updates: Updates }) {
   const status = useSyncExternalStore(
     updates.subscribe,
@@ -25,8 +25,17 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
     updates.noticeRecovery,
     updates.noticeRecovery,
   );
+  const working = useSyncExternalStore(
+    updates.subscribe,
+    updates.workingCount,
+    updates.workingCount,
+  );
   const { state } = status;
-  const visible = state === "ready" || state === "installing" || recovery;
+  const visible =
+    state === "ready" ||
+    state === "scheduled" ||
+    state === "installing" ||
+    recovery;
   if (!visible || dismissed || inline) return null;
   const pending = [
     "checking",
@@ -47,6 +56,15 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
       "Automatic updates aren't available on this build. Download the latest release manually.",
     error: "",
   };
+  const offerIdle = state === "ready" && updates.idleOptionAvailable();
+  const description =
+    status.state === "error"
+      ? status.message
+      : state === "ready" && working > 0
+        ? workingDescription(working)
+        : state === "scheduled" && working > 0
+          ? `${descriptions.scheduled} ${working} working now.`
+          : descriptions[state];
   return (
     <ToastNotice
       title={
@@ -54,11 +72,11 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
           ? "Update failed"
           : recovery
             ? "Software Updates"
-            : "Ready to update!"
+            : state === "scheduled"
+              ? "Update scheduled"
+              : "Ready to update!"
       }
-      description={
-        status.state === "error" ? status.message : descriptions[state]
-      }
+      description={description}
       tone={state === "error" ? "error" : "info"}
       onDismiss={updates.dismissNotice}
       closeLabel="Dismiss update notification"
@@ -66,15 +84,38 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
       <Button
         type="button"
         size="sm"
+        variant={offerIdle && working === 0 ? "prominent" : undefined}
         loading={pending}
         onClick={() =>
-          void (state === "ready"
+          void (state === "ready" || state === "scheduled"
             ? updates.installAndRelaunch()
             : updates.checkForUpdate())
         }
       >
-        {state === "ready" || state === "installing" ? "Update now" : "Retry"}
+        {state === "ready" || state === "scheduled" || state === "installing"
+          ? "Update now"
+          : "Retry"}
       </Button>
+      {offerIdle && (
+        <Button
+          type="button"
+          size="sm"
+          variant={working > 0 ? "prominent" : undefined}
+          onClick={updates.installWhenIdle}
+        >
+          Update when agents are idle
+        </Button>
+      )}
+      {state === "scheduled" && (
+        <Button type="button" size="sm" onClick={updates.cancelScheduled}>
+          Cancel
+        </Button>
+      )}
     </ToastNotice>
   );
 }
+
+const workingDescription = (count: number) =>
+  count === 1
+    ? "1 agent is working. Updating now interrupts it."
+    : `${count} agents are working. Updating now interrupts them.`;
