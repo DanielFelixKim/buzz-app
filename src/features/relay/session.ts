@@ -1187,8 +1187,10 @@ export function createRelaySession(
               "unavailable",
               "Channels are not discovered yet.",
             );
+          const suspended = new Set(channels.suspendedPreviews());
           for (const id of ids)
-            if (!channels.queries.get?.(id)) learnedForAgents.add(id);
+            if (!channels.queries.get?.(id) && !suspended.has(id))
+              learnedForAgents.add(id);
         }
         await channels.queries.resolve?.(ids, { ...options, viewerLookup });
       },
