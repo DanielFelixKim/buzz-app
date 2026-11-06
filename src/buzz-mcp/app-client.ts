@@ -47,7 +47,7 @@ export function appClient(
   };
   const handoff = agent.handoff;
   const plugins = agent.plugins;
-  const { settings } = agent;
+  const { settings, soloWorkspaces } = agent;
   return {
     ...(agent.protection
       ? {
@@ -80,6 +80,30 @@ export function appClient(
           ...(options.nativeToolGate ? { nativeToolGate: true as const } : {}),
         }
       : {}),
+    ...(soloWorkspaces && {
+      soloWorkspaces: {
+        list: async () => {
+          check();
+          const result = await soloWorkspaces.list(options.signal);
+          check();
+          return result;
+        },
+        prepare: async (workspace: string, members: readonly string[]) => {
+          check();
+          const file = await soloWorkspaces.prepare(
+            workspace,
+            members,
+            options.signal,
+          );
+          check();
+          return async (id: string) => {
+            check();
+            await file(id);
+            check();
+          };
+        },
+      },
+    }),
     pubkey: agent.pubkey,
     key: agent.key,
     owner: agent.owner,

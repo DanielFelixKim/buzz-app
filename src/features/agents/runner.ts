@@ -9,6 +9,7 @@ import type {
   Agent,
   AgentAttention,
   AgentHandle,
+  SoloWorkspaces,
   AgentCreationInput,
   AgentUpdateInput,
   AgentHandoff,
@@ -486,6 +487,7 @@ export type RunnerHost = {
   handoff(agent: Agent, handoff: AgentHandoff): void;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
+  soloWorkspaces?(agent: Agent): SoloWorkspaces | undefined;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
@@ -2677,6 +2679,8 @@ export class AgentRunners {
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
+    const workspaces = run ? this.host.soloWorkspaces?.(agent) : undefined;
+    const created = new Map<string, RelayEvent>();
     const handle = guarded(
       {
         protection: protection && {
@@ -2704,6 +2708,11 @@ export class AgentRunners {
               lifetime,
               check,
             );
+            if (workspaces && event.kind === 9007) {
+              const id = published.tags.find(([key]) => key === "h")?.[1];
+              created.clear();
+              if (id) created.set(id, published);
+            }
             if (ownReply) {
               const channel = this.host.channel(agent, published);
               if (
@@ -2768,6 +2777,39 @@ export class AgentRunners {
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
+          },
+        }),
+        ...(workspaces && {
+          soloWorkspaces: {
+            list: (signal?: AbortSignal) =>
+              workspaces.list(
+                AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
+              ),
+            prepare: async (
+              workspace: string,
+              members: readonly string[],
+              signal?: AbortSignal,
+            ) => {
+              const active = AbortSignal.any([
+                lifetime,
+                ...(signal ? [signal] : []),
+              ]);
+              const file = await workspaces.prepare(workspace, members, active);
+              // Only the next create published through this run can be filed once.
+              created.clear();
+              let attempted = false;
+              return async (id: string) => {
+                active.throwIfAborted();
+                if (attempted)
+                  throw new Error("Solo placement was already attempted");
+                const event = created.get(id);
+                created.delete(id);
+                if (!event)
+                  throw new Error("No new chat from this run to file");
+                attempted = true;
+                await file(event);
+              };
+            },
           },
         }),
         templates: () => this.host.templates(agent),

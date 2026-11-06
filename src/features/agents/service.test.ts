@@ -1,3 +1,6 @@
+import { createSoloPreferences } from "../relay/solo-preferences";
+import type { ChannelKit } from "../channel-templates/capability";
+import type { KitEntry, KitValue } from "../channel-templates/model";
 import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices } from "./choices";
@@ -10987,6 +10990,331 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
 });
+
+it("binds run-only Solo placement to the owner, community and just-created confirmed chat", async () => {
+  const f = await setup();
+  const preferences = {
+    refresh: vi.fn(async () => {}),
+    writable: true,
+    snapshot: () => ({
+      status: "ready",
+      data: { sections: [{ id: "work", name: "Work" }] },
+    }),
+    assign: vi.fn(async () => {}),
+  };
+  const authority = "f".repeat(64);
+  const read = vi.fn(async () => [
+    event("meta", {
+      kind: 39000,
+      pubkey: authority,
+      tags: [
+        ["d", "new-chat"],
+        ["t", "stream"],
+        ["t", "buzz.solo"],
+        ["P", bot],
+      ],
+    }),
+    event("roster", {
+      kind: 39002,
+      pubkey: authority,
+      tags: [
+        ["d", "new-chat"],
+        ["p", bot],
+        ["p", viewer],
+      ],
+    }),
+  ]);
+  Object.assign(f.session, {
+    channelKit: { refresh: vi.fn(async () => {}) },
+    soloPreferences: preferences,
+    relayAuthor: authority,
+    snapshotRead: read,
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  const workspace = handle.soloWorkspaces;
+  if (!workspace) throw new Error("Missing run workspace capability");
+  try {
+    expect(f.plugin.agents.handle(bot)?.soloWorkspaces).toBeUndefined();
+    expect(await workspace.list()).toEqual([{ id: "work", name: "Work" }]);
+    await expect(workspace.prepare("work", [])).rejects.toThrow(
+      "Include your owner",
+    );
+    await expect(workspace.prepare("unknown", [viewer])).rejects.toThrow(
+      "No such Solo workspace",
+    );
+    const file = await workspace.prepare("work", [viewer]);
+    await expect(file("old-chat")).rejects.toThrow("No new chat from this run");
+    await handle.publish({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", "new-chat"],
+        ["t", "buzz.solo"],
+        ["p", viewer],
+      ],
+    });
+    await file("new-chat");
+    expect(preferences.assign).toHaveBeenCalledExactlyOnceWith(
+      "new-chat",
+      "work",
+      expect.any(AbortSignal),
+    );
+    expect(read).toHaveBeenCalledExactlyOnceWith(
+      [
+        {
+          kinds: [39000, 39002],
+          authors: [authority],
+          "#d": ["new-chat"],
+          limit: 2,
+          consistency: "strong",
+        },
+      ],
+      { signal: expect.any(AbortSignal) },
+    );
+    await expect(file("new-chat")).rejects.toThrow("already attempted");
+    const stale = await workspace.prepare("work", [viewer]);
+    f.connect(false);
+    await expect(stale("new-chat")).rejects.toThrow();
+    await expect(workspace.list()).rejects.toThrow();
+    expect(preferences.assign).toHaveBeenCalledTimes(1);
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it.each([
+  "owner missing",
+  "caller missing",
+  "wrong creator",
+  "not Solo",
+  "region",
+  "wrong authority",
+  "wrong coordinate",
+])("refuses Solo placement for unconfirmed authority: %s", async (failure) => {
+  const f = await setup();
+  const authority = "f".repeat(64);
+  const assign = vi.fn(async () => {});
+  const metadata = event("meta", {
+    kind: 39000,
+    pubkey: authority,
+    tags: [
+      ["d", "new-chat"],
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+      ["P", bot],
+    ],
+  });
+  const roster = event("roster", {
+    kind: 39002,
+    pubkey: authority,
+    tags: [
+      ["d", "new-chat"],
+      ["p", bot],
+      ["p", viewer],
+    ],
+  });
+  if (failure === "owner missing")
+    roster.tags = roster.tags.filter(([, value]) => value !== viewer);
+  if (failure === "caller missing")
+    roster.tags = roster.tags.filter(([, value]) => value !== bot);
+  if (failure === "wrong creator")
+    metadata.tags = metadata.tags.map((tag) =>
+      tag[0] === "P" ? ["P", other] : tag,
+    );
+  if (failure === "not Solo")
+    metadata.tags = metadata.tags.filter(([, value]) => value !== "buzz.solo");
+  if (failure === "region")
+    metadata.tags.push(["t", "buzz.region:example:work"]);
+  if (failure === "wrong authority") roster.pubkey = other;
+  if (failure === "wrong coordinate") roster.tags[0] = ["d", "other-chat"];
+  Object.assign(f.session, {
+    channelKit: { refresh: vi.fn(async () => {}) },
+    relayAuthor: authority,
+    snapshotRead: vi.fn(async () => [metadata, roster]),
+    soloPreferences: {
+      refresh: async () => {},
+      writable: true,
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [{ id: "work", name: "Work" }] },
+      }),
+      assign,
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  try {
+    const file = await handle.soloWorkspaces?.prepare("work", [viewer]);
+    await handle.publish({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", "new-chat"],
+        ["t", "buzz.solo"],
+        ["p", viewer],
+      ],
+    });
+    await expect(file?.("new-chat")).rejects.toThrow("not confirmed");
+    expect(assign).not.toHaveBeenCalled();
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("fences workspace discovery when its community binding changes during the read", async () => {
+  const f = await setup();
+  const gate = runnerGate();
+  const started = runnerGate();
+  Object.assign(f.session, {
+    channelKit: { refresh: vi.fn(async () => {}) },
+    relayAuthor: "f".repeat(64),
+    snapshotRead: vi.fn(),
+    soloPreferences: {
+      refresh: async () => {
+        started.resolve();
+        await gate.promise;
+      },
+      writable: true,
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [{ id: "work", name: "Private name" }] },
+      }),
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  const pending = handle.soloWorkspaces?.list();
+  const refused = expect(pending).rejects.toThrow();
+  try {
+    await started.promise;
+    f.signIn(other);
+    gate.resolve();
+    await refused;
+  } finally {
+    gate.resolve();
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it.each([false, true])(
+  "uses the existing Solo preference writer and detects a target deleted after create: %s",
+  async (deleted) => {
+    const f = await setup();
+    const lifetime = new AbortController();
+    let entries: KitEntry[] = [
+      {
+        eventId: "head",
+        createdAt: 1,
+        record: {
+          version: 1,
+          community: "https://relay.example.test",
+          deleted: false,
+          value: {
+            type: "groups",
+            id: "me",
+            groups: [
+              { id: "work", name: "Work", defaultTemplateId: "do-not-copy" },
+            ],
+            assignments: {},
+          },
+        },
+      },
+    ];
+    const save = vi.fn(async (value: KitValue) => {
+      entries = [
+        {
+          eventId: "next",
+          createdAt: 2,
+          record: {
+            version: 1,
+            community: "https://relay.example.test",
+            deleted: false,
+            value,
+          },
+        },
+      ];
+    });
+    const kit = {
+      available: true,
+      refresh: vi.fn(async () => {}),
+      snapshot: () => ({ status: "ready", entries }),
+      save,
+    } as unknown as ChannelKit;
+    const preferences = createSoloPreferences(kit, lifetime.signal);
+    const authority = "f".repeat(64);
+    Object.assign(f.session, {
+      channelKit: kit,
+      soloPreferences: preferences.queries,
+      relayAuthor: authority,
+      snapshotRead: async () => [
+        event("meta", {
+          kind: 39000,
+          pubkey: authority,
+          tags: [
+            ["d", "new-chat"],
+            ["t", "stream"],
+            ["t", "buzz.solo"],
+            ["P", bot],
+          ],
+        }),
+        event("roster", {
+          kind: 39002,
+          pubkey: authority,
+          tags: [
+            ["d", "new-chat"],
+            ["p", bot],
+            ["p", viewer],
+          ],
+        }),
+      ],
+    });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    const handle = await handleOf(f.run, f.emit);
+    try {
+      const file = await handle.soloWorkspaces?.prepare("work", [viewer]);
+      await handle.publish({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", "new-chat"],
+          ["t", "buzz.solo"],
+          ["p", viewer],
+        ],
+      });
+      if (deleted) entries = [];
+      if (deleted) {
+        await expect(file?.("new-chat")).rejects.toThrow(
+          "Solo group is unavailable",
+        );
+        expect(save).not.toHaveBeenCalled();
+      } else {
+        await file?.("new-chat");
+        expect(save).toHaveBeenCalledExactlyOnceWith(
+          {
+            type: "groups",
+            id: "me",
+            groups: [
+              { id: "work", name: "Work", defaultTemplateId: "do-not-copy" },
+            ],
+            assignments: { "new-chat": "work" },
+          },
+          "head",
+          false,
+          expect.any(AbortSignal),
+        );
+        await preferences.queries.refresh();
+        expect(preferences.queries.snapshot().data?.assignments).toEqual({
+          "new-chat": "work",
+        });
+      }
+    } finally {
+      preferences.dispose();
+      lifetime.abort();
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
 
 describe("Attention plugin sources", () => {
   const root = "e".repeat(64);

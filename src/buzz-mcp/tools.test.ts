@@ -1703,6 +1703,90 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
   ).resolves.toBe(`${plain} ops (stream, private)\nyou: owner`);
 });
 
+it("discovers local workspaces and files only after creating a Solo with explicit members", async () => {
+  const { client, published } = relay();
+  const file = vi.fn(async () => {});
+  const list = vi.fn(async () => [{ id: "work", name: "Work" }]);
+  const prepare = vi.fn(async () => file);
+  client.soloWorkspaces = { list, prepare };
+  expect(await callTool(client, {}, "solo_workspace_list", {})).toBe(
+    JSON.stringify([{ id: "work", name: "Work" }]),
+  );
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  });
+  const id = published[0]?.tags[0]?.[1];
+  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice]);
+  expect(file).toHaveBeenCalledExactlyOnceWith(id);
+  expect(answer).toBe(
+    `created ${id}\nadded ${alice} Alice Smith\nfiled in workspace work`,
+  );
+  expect(published).toHaveLength(1);
+  expect(published[0]?.kind).toBe(9007);
+});
+
+it("rejects unsupported or invalid workspace placement before publication", async () => {
+  const { client, published } = relay();
+  const args = {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  };
+  await expect(callTool(client, {}, "solo_workspace_list", {})).rejects.toThrow(
+    "unavailable on this host",
+  );
+  await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
+    "unavailable on this host",
+  );
+  const prepare = vi.fn(async () => {
+    throw new Error("No such workspace");
+  });
+  client.soloWorkspaces = { list: async () => [], prepare };
+  await expect(
+    callTool(client, {}, "channel_create", {
+      ...args,
+      solo: false,
+      members: undefined,
+    }),
+  ).rejects.toThrow("workspace is for Solo");
+  await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
+    "No such workspace",
+  );
+  expect(published).toEqual([]);
+});
+
+it.each([
+  "deleted target",
+  "record full",
+  "revision conflict",
+  "community changed",
+])("keeps the created chat ID when filing fails: %s", async (message) => {
+  const { client, published } = relay();
+  const file = vi.fn(async () => {
+    throw new Error(message);
+  });
+  client.soloWorkspaces = { list: async () => [], prepare: async () => file };
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  });
+  const id = published[0]?.tags[0]?.[1];
+  expect(answer).toContain(`created ${id}`);
+  expect(answer).toContain(`created, not filed in workspace: ${message}`);
+  expect(answer).toContain("do not create another chat");
+  expect(published).toHaveLength(1);
+  expect(file).toHaveBeenCalledOnce();
+});
+
 it("refuses Solo arguments that do not fit, before publishing", async () => {
   const { client, published } = relay();
   const create = (args: Record<string, unknown>) =>

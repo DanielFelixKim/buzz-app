@@ -84,8 +84,16 @@ behavior on the label, so a rename touches copy only.
   caller, including the standalone stdio server: signed by the caller, with the
   label and any `members` it names. The caller is the creator, so an agent's
   key makes a chat its human members see as shared, not their own. It sends no
-  message, so no agent turn starts, and it does not file the chat in a
-  workspace. It cannot check NIP-CL support first, so on a relay that drops the
+  message, so no agent turn starts. Locally hosted agent runs may use
+  `solo_workspace_list` for their host-bound owner's personal workspace IDs and
+  pass an exact `workspace` to `channel_create` with `solo: true`. Include the
+  owner explicitly in `members`; filing never adds members, copies workspace
+  defaults or Canvas, or changes the creator. This capability is unavailable to
+  standalone/external connections, Nexus workers, and plugin agent handles.
+  Creation and filing are not atomic: a placement failure reports the created
+  chat ID and “created, not filed.” Use **Move to** on that chat, not another
+  create. Omitting `workspace` preserves creation without filing.
+  It cannot check NIP-CL support first, so on a relay that drops the
   label it reports an ordinary private channel instead.
 - **Share** opens the same access dialog from Solo and Messages. This flow
   preserves channel ID, history, Canvas, existing members,
