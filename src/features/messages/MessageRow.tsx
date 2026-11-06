@@ -683,11 +683,13 @@ function MessageRowContent({
       edited={editedInBody && displayRow.edited}
     />
   );
-  const avatarSize = compactAvatar
-    ? "tiny"
-    : layout === "timeline"
-      ? "default"
-      : "small";
+  const avatarSize = flat
+    ? "default"
+    : compactAvatar
+      ? "tiny"
+      : layout === "timeline"
+        ? "default"
+        : "small";
   const authorName = (
     <>
       {/* Inside the name, so the byline keeps the text baseline. */}
@@ -835,7 +837,7 @@ function MessageRowContent({
         ))}
       quickControls={
         <>
-          {stackPrevious && showTime && (
+          {stackPrevious && showTime && !flat && (
             <span
               className={styles.keyboardMessageTime}
               data-message-keyboard-time
@@ -1123,6 +1125,15 @@ function MessageRowContent({
               (!(flat ? stackPrevious : stackNext) || avatarFocused) && (
                 <div className={styles.messageAvatar}>{avatar}</div>
               )}
+            {!renderMessage && flat && stackPrevious && (
+              <span className={styles.continuationTime}>
+                <MessageTimestamp
+                  createdAt={row.createdAt}
+                  visible={showTime}
+                  compact
+                />
+              </span>
+            )}
             <div className={styles.messageHeader}>
               {!row.membership &&
                 !row.huddle &&
@@ -1258,7 +1269,9 @@ function MessageRowContent({
             )}
             <MessageTimestampHint
               createdAt={
-                !renderMessage && stackPrevious ? row.createdAt : undefined
+                !renderMessage && stackPrevious && !flat
+                  ? row.createdAt
+                  : undefined
               }
               attachments={attachmentGroups.length > 0}
             >

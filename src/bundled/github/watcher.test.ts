@@ -1398,10 +1398,10 @@ describe("github_watch_pr", () => {
     savePolicy(`deny body:/^\\s*nit\\b/i
 allow author:/^COPILOT/
 allow org:block
-allow org:squareup author:/^ada_/`);
+allow org:example-org author:/^ada_/`);
     const app = setup();
     await app.call({ url });
-    app.members(["alice@block", "ada_x@squareup", "bob@squareup"]);
+    app.members(["alice@block", "ada_x@example-org", "bob@example-org"]);
     app.gh(
       answer({
         comments: [

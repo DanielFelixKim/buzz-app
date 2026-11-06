@@ -37,6 +37,10 @@ export type ChannelSummary = Readonly<{
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */
   cached?: true;
+  /** Metadata the relay has not confirmed since it was downloaded or since the
+   * stream last dropped: the channel may have turned private, so its saved
+   * visibility grants no one reading. */
+  metadataCached?: true;
   /** A Solo chat this device is starting; the relay has not confirmed it yet. */
   pending?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
@@ -221,8 +225,13 @@ export type ChannelWindow = Readonly<{
   hasNewer?: boolean | undefined;
   loadingNewer?: boolean | undefined;
 }>;
-/** Post-write discovery opts into writer reads; browsing keeps the default. */
-export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
+/** Post-write discovery opts into writer reads; browsing keeps the default.
+ * `viewerLookup` marks a lookup the viewer's own action asks for (a name
+ * search, label lookup, mounted link or search read): the channels it finds
+ * become known to the viewer's traffic. Rechecks and agents' lookups leave
+ * that as it was. */
+export type ChannelReadOptions = ReadOptions &
+  Pick<ReadFilter, "consistency"> & { viewerLookup?: boolean };
 export type PublicChannelSearch = Readonly<{
   channels: readonly ChannelSummary[];
   /** The metadata read stopped at its bound, so some channels were not checked. */

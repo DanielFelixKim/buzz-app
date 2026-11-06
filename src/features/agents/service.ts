@@ -1261,6 +1261,9 @@ export type Agents = {
   wake(agent: AgentKey, wake: AgentWake): void;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
+  /** Calls `listener` when a turn this copy of the app runs for the agent
+   * reports a new step, as its harness names them. */
+  subscribeSteps(agent: AgentKey, listener: () => void): () => void;
   /** Gives each `interrupted` agent again the turns it was working on, each
    * once its community connects. */
   resumeInterrupted(): void;
@@ -1613,6 +1616,8 @@ type Binding = {
   controller: AbortController;
   stopLive: () => void;
   connection: Connection;
+  /** The channels its agents' watches name that it keeps live, and its stop. */
+  attending?: Readonly<{ key: string; stop: () => void }>;
   /** Its config support while no config channels are up: being checked, the
    * check failed (and when), or the relay has none. */
   support?: "checking" | "unsupported" | Readonly<{ failed: number }>;
@@ -1895,7 +1900,7 @@ export class AgentsService extends Service implements Agents {
       pubkey: string,
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
-    localActivity = createLocalAgentActivity(),
+    private readonly localActivity = createLocalAgentActivity(),
     /** Runs watch classifiers on this device's decision backend. */
     private readonly decisions: Decisions | undefined = undefined,
     /** Which artifact types an agent has synced, from its config channel
@@ -1995,11 +2000,21 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
-      ownershipChanged: () => this.notify(),
+      // Only the copy that runs an agent keeps its watched channels live.
+      ownershipChanged: () => {
+        this.attend(this.state.running);
+        this.notify();
+      },
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
       member: (agent, event) => this.member(agent, event),
+      reads: (agent, event) => this.reads(agent, event),
       dm: (agent, event) => this.dm(agent, event),
+      unattended: (agent, event, live) => {
+        const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+        const session = this.bindingOf(agent)?.session;
+        return !channel || !session || session.unattended(channel, live);
+      },
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
@@ -2260,7 +2275,7 @@ export class AgentsService extends Service implements Agents {
           }
         },
       },
-      activity: localActivity,
+      activity: this.localActivity,
       channel: (agent, event) => this.channelOf(agent, event),
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
@@ -2844,6 +2859,33 @@ export class AgentsService extends Service implements Agents {
     });
   }
   snapshot = () => this.state;
+  subscribeSteps = (agent: AgentKey, listener: () => void) => {
+    const pubkey = pubkeyOf(agent);
+    const { reader } = this.localActivity;
+    /** Each of the agent's work rows' latest step, by its message. */
+    const steps = () =>
+      new Map(
+        reader
+          .work()
+          .flatMap((work) =>
+            work.agent === pubkey && work.step
+              ? [
+                  [
+                    `${work.scope} ${work.messageId}`,
+                    `${work.step.tool} ${work.step.target ?? ""}`,
+                  ] as const,
+                ]
+              : [],
+          ),
+      );
+    let last = steps();
+    return reader.subscribeWork(() => {
+      const next = steps();
+      const stepped = [...next].some(([work, step]) => last.get(work) !== step);
+      last = next;
+      if (stepped) listener();
+    });
+  };
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -5806,6 +5848,7 @@ export class AgentsService extends Service implements Agents {
     this.edits.delete(origin);
     entry?.stop();
     entry?.binding?.stopLive();
+    entry?.binding?.attending?.stop();
     entry?.binding?.controller.abort();
     this.communityConfigs.get(origin)?.dispose();
     this.communityConfigs.delete(origin);
@@ -5833,6 +5876,7 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.scope !== live?.scope;
     if (changed) {
       entry.binding?.stopLive();
+      entry.binding?.attending?.stop();
       entry.binding?.controller.abort();
       this.listings.delete(origin);
       this.edits.delete(origin);
@@ -6036,6 +6080,7 @@ export class AgentsService extends Service implements Agents {
     );
     this.announce();
     this.runners.catchUp(false);
+    this.attend(running);
     for (const [origin, config] of this.communityConfigs)
       void config.attach(
         running
@@ -6052,6 +6097,36 @@ export class AgentsService extends Service implements Agents {
             ),
           ),
       );
+  }
+
+  /** Keeps live, in each community, the channels that the enabled watches
+   * of the agents this copy runs name, so a watch also hears a public channel
+   * the owner has not joined. A watch of "all" hears what the session already
+   * listens to. A copy that does not hold an agent leaves its channels out. */
+  private attend(running: readonly Agent[]) {
+    const wanted = new Map<Binding, Set<string>>();
+    for (const { binding } of this.bound.values())
+      if (binding) wanted.set(binding, new Set());
+    for (const agent of running) {
+      const channels = this.bindingOf(agent);
+      const ids = channels && wanted.get(channels);
+      if (!ids || !agent.attentionEnabled || !this.runners.runs(agent.key))
+        continue;
+      for (const { value } of Object.values(agent.attention))
+        if (value.type === "event" && value.enabled && value.channels !== "all")
+          for (const id of value.channels) ids.add(id);
+    }
+    for (const [binding, ids] of wanted) {
+      const key = JSON.stringify([...ids].sort());
+      if (binding.attending?.key === key) continue;
+      // The new set goes in before the old one goes out, so a channel in
+      // both keeps its live route.
+      const previous = binding.attending;
+      if (ids.size)
+        binding.attending = { key, stop: binding.session.attend([...ids]) };
+      else delete binding.attending;
+      previous?.stop();
+    }
   }
 
   /** Tells each community which agents this copy runs there: online every
@@ -6148,11 +6223,10 @@ export class AgentsService extends Service implements Agents {
     );
   }
   /** Whether the agent is in the event's channel, by its relay-signed roster.
-   * The stream is the owner's, so a watch, even of "all", sees only what the
-   * agent itself could read; an event with no channel, or whose roster is
-   * unknown, wakes no watch. A roster only loaded from disk decides nothing
-   * (undefined): the agent may have been removed or added since it was saved,
-   * so the event waits until the relay confirms it. */
+   * An event with no channel, or whose roster is unknown, is in none. A
+   * roster only loaded from disk decides nothing (undefined): the agent may
+   * have been removed or added since it was saved, so the event waits until
+   * the relay confirms it. */
   private member(
     agent: Agent,
     event: Pick<RelayEvent, "tags">,
@@ -6160,6 +6234,27 @@ export class AgentsService extends Service implements Agents {
     const summary = this.channelOf(agent, event);
     if (summary?.cached) return undefined;
     return !!summary?.members?.includes(agent.pubkey);
+  }
+  /** Whether the agent may read the event's channel: it is in it, or the
+   * channel is public, as its relay-signed metadata says, and neither hidden
+   * nor a DM, so the relay lets anyone read it. The stream is the owner's,
+   * so a watch, even of "all", hears only what the agent itself could read.
+   * For an agent not in the channel, metadata not yet read, or only loaded
+   * from disk, decides nothing (undefined): the channel may have turned
+   * public or private since. */
+  private reads(
+    agent: Agent,
+    event: Pick<RelayEvent, "tags">,
+  ): boolean | undefined {
+    const member = this.member(agent, event);
+    if (member !== false) return member;
+    const summary = this.channelOf(agent, event);
+    if (summary?.metadataCached || summary?.metadataPending) return undefined;
+    return (
+      summary?.visibility === "public" &&
+      !summary.hidden &&
+      summary.channelType !== "dm"
+    );
   }
   /** Whether the event's channel is a DM of exactly the agent and one other,
    * by the same roster. A group DM, or one whose roster is unknown, is not. */
