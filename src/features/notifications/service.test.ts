@@ -5,6 +5,8 @@ import type { PluginModule } from "../../plugins/api";
 import { provideNavigation } from "../navigation/service";
 import { NotificationsService, type Notifications } from "./service";
 import { createNotificationPreferences } from "./preferences";
+// @ts-expect-error -- example plugins ship as untyped, prebuilt JavaScript.
+import * as examplePack from "../../../examples/plugins/sound-pack/plugin.js";
 import type {
   NotificationPlatform,
   NotificationPermissionState,
@@ -731,4 +733,29 @@ it("a plugin sound that fails to load warns once and alerts fall back to the def
   await flush();
   expect(t.plays).toEqual(["flutter"]);
   vi.unstubAllGlobals();
+});
+it("the example sound pack registers playable WAV tones", async () => {
+  const blobs: Blob[] = [];
+  vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+    blobs.push(blob as Blob);
+    return `blob:test/${blobs.length}`;
+  });
+  const t = setup();
+  t.install(examplePack as PluginModule);
+  await vi.waitFor(() =>
+    expect(t.service.soundRegistry.snapshot()).toHaveLength(1),
+  );
+  const [pack] = t.service.soundRegistry.snapshot();
+  expect(pack?.label).toBe("Example tones");
+  expect(pack?.sounds.map((sound) => sound.ref)).toEqual([
+    "test.plugin/chime",
+    "test.plugin/drop",
+    "test.plugin/tick",
+    "test.plugin/bell",
+  ]);
+  for (const blob of blobs) {
+    expect(blob.type).toBe("audio/wav");
+    const header = new Uint8Array(await blob.arrayBuffer()).subarray(0, 12);
+    expect(new TextDecoder().decode(header)).toMatch(/^RIFF.{4}WAVE$/s);
+  }
 });
