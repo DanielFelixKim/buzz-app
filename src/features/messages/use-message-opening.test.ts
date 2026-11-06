@@ -55,6 +55,7 @@ function channel(pages: string[][], replies: Record<string, string> = {}) {
   } as unknown as ChannelQueries;
   return {
     queries,
+    set: (patch: Partial<ChannelWindow>) => act(() => set(patch)),
     loadOlder,
     /** A cached window: readable rows, not yet verified against the relay. */
     cached(ids: string[], error?: string) {
@@ -532,4 +533,67 @@ it("reads an empty channel again when the stream drops before its queued retry r
   } finally {
     owner.dispose();
   }
+});
+
+it.each(["cached", "verified"] as const)(
+  "reattaches %s sliding history before deciding an evicted newer message is a thread",
+  (freshness) => {
+    const c = channel([["target"]]);
+    const attach = vi.fn(() => c.set({ refreshing: true }));
+    const queries = { ...c.queries, attach };
+    const view = renderHook(() => useMessageOpening(queries, "c", "target"));
+    c.set({
+      status: "ready",
+      rows: [],
+      freshness,
+      hasMore: false,
+      hasNewer: true,
+    });
+    expect(attach).toHaveBeenCalledWith("c");
+    expect(c.loadOlder).not.toHaveBeenCalled();
+    expect(view.result.current).toBeUndefined();
+    c.set({
+      refreshing: false,
+      hasNewer: false,
+      freshness: "verified",
+      rows: [{ id: "target" } as ChannelMessage],
+    });
+    expect(view.result.current).toBe(true);
+    expect(attach).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("does not reattach an already decided request when its row is later evicted", () => {
+  const c = channel([["target"]]);
+  const attach = vi.fn();
+  const view = renderHook(() =>
+    useMessageOpening({ ...c.queries, attach }, "c", "target"),
+  );
+  c.head();
+  expect(view.result.current).toBe(true);
+  c.set({ rows: [], hasNewer: true });
+  expect(view.result.current).toBe(true);
+  expect(attach).not.toHaveBeenCalled();
+});
+
+it("revalidates a retained cached target at its timestamp without discarding the distant segment", () => {
+  const c = channel([["target"]]);
+  const attach = vi.fn();
+  const target = { id: "target", createdAt: 123 } as ChannelMessage;
+  const seek = vi.fn(async () => {
+    c.set({ freshness: "verified", rows: [target] });
+    return target.id;
+  });
+  const queries = { ...c.queries, attach, seek };
+  const view = renderHook(() => useMessageOpening(queries, "c", "target"));
+  c.set({
+    status: "ready",
+    rows: [target],
+    freshness: "cached",
+    hasMore: true,
+    hasNewer: true,
+  });
+  expect(seek).toHaveBeenCalledWith("c", 123, expect.any(AbortSignal));
+  expect(attach).not.toHaveBeenCalled();
+  expect(view.result.current).toBe(true);
 });

@@ -60,8 +60,9 @@ export function useMessageOpening(
     key: string;
     inTimeline: boolean;
   }>();
-  const pages = useRef({ key, count: 0 });
-  if (pages.current.key !== key) pages.current = { key, count: 0 };
+  const pages = useRef({ key, count: 0, attached: false });
+  if (pages.current.key !== key)
+    pages.current = { key, count: 0, attached: false };
   // Cached rows may be stale: wait for verified history or a settled failure.
   const deciding =
     !!key &&
@@ -86,18 +87,55 @@ export function useMessageOpening(
     window.hasMore &&
     !window.historyLimited &&
     pages.current.count < SEEK_PAGES;
+  const needsHead =
+    !!key &&
+    ensured === key &&
+    decided?.key !== key &&
+    !pages.current.attached &&
+    !!channels.attach &&
+    !!window.hasNewer &&
+    !window.error &&
+    (!verified || !row);
   // A page or head read in flight can still change the answer: a refreshed
   // head can drop a message the old one held.
-  const busy = window.loadingOlder || !!window.refreshing;
-  if (key && deciding && !busy && (found || !seekable))
+  const busy =
+    window.loadingOlder || !!window.loadingNewer || !!window.refreshing;
+  if (key && deciding && !needsHead && !busy && (found || !seekable))
     setDecided({ key, inTimeline: found });
   useEffect(() => {
-    if (!key || !deciding || found || !seekable || busy) return;
+    if (!key || busy) return;
+    if (needsHead) {
+      pages.current.attached = true;
+      const retained = window.rows.find((row) => row.id === messageId);
+      if (!verified && retained && channels.seek) {
+        void channels
+          .seek(channelId, retained.createdAt, new AbortController().signal)
+          .catch(() => setDecided({ key, inTimeline: false }));
+        return;
+      }
+      channels.attach?.(channelId);
+      if (!channels.window(channelId).refreshing)
+        setDecided({ key, inTimeline: false });
+      return;
+    }
+    if (!deciding || found || !seekable) return;
     channels.loadOlder(channelId);
     const after = channels.window(channelId);
     if (after.loadingOlder) pages.current.count += 1;
     // Declined with no read in flight: no page will come.
     else if (!after.refreshing) setDecided({ key, inTimeline: false });
-  }, [key, deciding, found, seekable, busy, channels, channelId]);
+  }, [
+    key,
+    deciding,
+    found,
+    seekable,
+    needsHead,
+    busy,
+    channels,
+    channelId,
+    window.rows,
+    verified,
+    messageId,
+  ]);
   return key && decided?.key === key ? decided.inTimeline : undefined;
 }
