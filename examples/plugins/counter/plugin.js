@@ -16,7 +16,7 @@ export function apply(ctx) {
           style: { padding: "var(--space-panel-inset)" },
         },
         React.createElement("h1", null, "Counter playground"),
-        React.createElement("p", null, "Your updated local plugin is running."),
+        React.createElement("p", null, "Your second test update is running."),
         React.createElement(
           "button",
           { type: "button", onClick: () => setCount(count + 1) },
