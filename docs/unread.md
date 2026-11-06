@@ -68,8 +68,10 @@ catch-up (including a message taller than the viewport):
 - The same channel catch-up also writes `msg:` marks for the retained top-level
   mentions and broadcast replies through the bottom row, as in Slack and Discord,
   so a mention taller than the viewport is still read. Messages marked unread
-  keep their intent. These marks stay on this device: frontier-only sync never
-  publishes `msg:` marks, though it still reads them from older clients.
+  keep their intent. Retained rows are captured when dwell completes; arrivals
+  during the storage write wait for their own reading intent. These marks stay on
+  this device: frontier-only sync never publishes `msg:` marks, though it still
+  reads them from older clients.
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.
