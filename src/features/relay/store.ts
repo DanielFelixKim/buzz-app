@@ -4025,6 +4025,25 @@ export function createChannelStore(
     accept,
     clearCache,
     dispose,
+    /** A dropped stream also ends the relay's confirmation of each joined
+     * channel's metadata: the channel may turn private meanwhile, and the
+     * replay after a reconnect can arrive before discovery reads it again.
+     * Until a fresh read, the metadata counts as only saved
+     * (`metadataCached`), and discovery's next read asks for it again. */
+    staleMetadata() {
+      if (disposed || !transport || !discovery) return;
+      let changed = false;
+      for (const [id, roster] of discovery.rosterVersions())
+        if (
+          hasTag(roster, "p", transport.viewer) &&
+          discovery.metadataVersion(id) &&
+          !pendingMetadata.has(id)
+        ) {
+          pendingMetadata.add(id);
+          changed = true;
+        }
+      if (changed) setList(list, true);
+    },
     /** A disconnected stream invalidates a head's freshness lease, not its content.
      * Inactive cached heads will revalidate when demanded, without an all-roster read.
      * The session drops its queued catch-ups with the stream, so an empty window

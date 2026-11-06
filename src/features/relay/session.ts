@@ -1384,20 +1384,40 @@ export function createRelaySession(
       (id) => !attendChecked.has(id) && !attendReading.has(id),
     );
     for (const id of unknown) attendChecked.add(id);
+    // A suspended preview is unknown only until its recheck; it was known
+    // before, so its read keeps the provenance it had.
+    const suspended = new Set(channels.suspendedPreviews());
     for (const id of fresh) {
       attendReading.add(id);
-      learnedForAgents.add(id);
+      if (!suspended.has(id)) learnedForAgents.add(id);
     }
     for (let start = 0; start < fresh.length; start += 128) {
-      const batch = fresh.slice(start, start + 128);
-      const lookUp = () =>
+      const queued = fresh.slice(start, start + 128);
+      const lookUp = () => {
+        // A channel no attendance wants now, or known since, is not read:
+        // its batch would delay the reads that current watches wait for.
+        const wanted = new Set([...attended].flat());
+        const batch = queued.filter(
+          (id) => wanted.has(id) && !channels.queries.get?.(id),
+        );
+        for (const id of queued)
+          if (!batch.includes(id)) {
+            attendReading.delete(id);
+            if (!wanted.has(id) && !channels.queries.get?.(id))
+              learnedForAgents.delete(id);
+          }
+        if (!batch.length) return Promise.resolve();
         // In the background lane, so an interactive read never waits behind it.
-        resolve(batch, { signal: lifetime.signal, priority: "background" })
+        return resolve(batch, {
+          signal: lifetime.signal,
+          priority: "background",
+        })
           .catch(() => {})
           .finally(() => {
             for (const id of batch) attendReading.delete(id);
             updateInterests();
           });
+      };
       attendLookups = attendLookups.then(lookUp, lookUp);
     }
   };
@@ -3698,6 +3718,7 @@ export function createRelaySession(
         workflows.interrupt();
         streamDropped = true;
         channels.staleHeads();
+        channels.staleMetadata();
         for (const thread of threads) thread.stale();
         unread.stale();
         inboxFeed.stale();

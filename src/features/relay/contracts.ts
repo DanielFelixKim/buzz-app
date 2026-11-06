@@ -37,8 +37,9 @@ export type ChannelSummary = Readonly<{
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */
   cached?: true;
-  /** Downloaded metadata the relay has not confirmed since: the channel may
-   * have turned private, so its saved visibility grants no one reading. */
+  /** Metadata the relay has not confirmed since it was downloaded or since the
+   * stream last dropped: the channel may have turned private, so its saved
+   * visibility grants no one reading. */
   metadataCached?: true;
   /** A Solo chat this device is starting; the relay has not confirmed it yet. */
   pending?: true;
