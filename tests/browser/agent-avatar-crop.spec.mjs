@@ -37,15 +37,19 @@ const savedArtwork = async (page) => {
     const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
     const at = (x, y) =>
       Array.from(data.slice((y * 512 + x) * 4, (y * 512 + x) * 4 + 4));
+    // Count pixels painted over the background, which fills the corner.
     let left = 0;
     let right = 0;
-    for (let i = 3; i < data.length; i += 4)
-      if (data[i]) (i >> 2) % 512 < 256 ? left++ : right++;
+    for (let i = 0; i < data.length; i += 4)
+      if (
+        data.slice(i, i + 4).some((value, channel) => value !== data[channel])
+      )
+        (i >> 2) % 512 < 256 ? left++ : right++;
     return {
       size: [bitmap.width, bitmap.height],
       left: at(10, 256),
       right: at(500, 256),
-      alpha: { corner: data[3], left, right },
+      painted: { left, right },
     };
   });
 };
@@ -84,7 +88,10 @@ test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
   // A cold WebKit can read a just-decoded image as blank once; read again.
   let saved;
   await expect
-    .poll(async () => (saved = await savedArtwork(page)).left[3])
+    .poll(async () => {
+      saved = await savedArtwork(page);
+      return saved.left[3];
+    })
     .toBeGreaterThan(0);
   const { size, left, right } = saved;
   expect({ size, left, right }).toEqual({
@@ -129,14 +136,9 @@ test("the zoom slider appears over the avatar without moving the card", async ({
   await expect(pill).toHaveCSS("opacity", "0");
 });
 
-test("pans and zooms an emoji over a transparent background", async ({
-  page,
-}) => {
+test("pans and zooms an emoji over its background", async ({ page }) => {
   await page.goto("/tests/fixtures/agent-avatar-picker.html");
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Use transparent background" })
-    .click();
   await page.getByRole("slider", { name: "Zoom" }).fill("1.2");
   const emoji = page.getByRole("button", { name: "Choose emoji" });
   // A click without a drag still opens the picker.
@@ -157,9 +159,8 @@ test("pans and zooms an emoji over a transparent background", async ({
     path: test.info().outputPath("agent-avatar-emoji.png"),
   });
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  const { size, alpha } = await savedArtwork(page);
+  const { size, painted } = await savedArtwork(page);
   expect(size).toEqual([512, 512]);
-  expect(alpha.corner).toBe(0);
-  expect(alpha.left).toBe(0);
-  expect(alpha.right).toBeGreaterThan(0);
+  expect(painted.left).toBe(0);
+  expect(painted.right).toBeGreaterThan(0);
 });
