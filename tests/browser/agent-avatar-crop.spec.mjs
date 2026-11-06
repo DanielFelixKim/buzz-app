@@ -21,15 +21,14 @@ const splitImage = async (page) => {
   });
 };
 
-// Read the saved PNG from its own bytes rather than the displayed element,
-// which WebKit can occasionally read back blank.
+// Copy the saved PNG's decoded pixels rather than drawing the displayed
+// element, which WebKit can occasionally read back blank.
 const savedArtwork = async (page) => {
   const saved = page.getByRole("img", { name: "Saved avatar" });
   await expect(saved).toBeVisible();
   return saved.evaluate(async (image) => {
-    const bitmap = await createImageBitmap(
-      await (await fetch(image.src)).blob(),
-    );
+    await image.decode();
+    const bitmap = await createImageBitmap(image);
     const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
