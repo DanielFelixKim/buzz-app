@@ -320,6 +320,9 @@ impl Codec {
         peers: &Peers,
         mut emit: impl FnMut(String, Vec<f32>) -> Result<()>,
     ) -> Result<()> {
+        // A person may have several devices. Each tick still carries only
+        // 10 ms per person to the shared playout, never concatenated devices.
+        let mut mixed: BTreeMap<String, Vec<f32>> = BTreeMap::new();
         for (index, receiver) in &mut self.receivers {
             if receiver.last_packet.elapsed() > Duration::from_millis(500)
                 && receiver.jitter.is_empty()
@@ -331,8 +334,24 @@ impl Codec {
                     .jitter
                     .get_audio()
                     .map_err(|e| format!("Huddle playback failed: {e}"))?;
-                emit(peer.clone(), samples)?;
+                match mixed.entry(peer.clone()) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(samples);
+                    }
+                    std::collections::btree_map::Entry::Occupied(mut entry) => {
+                        for (sum, sample) in entry.get_mut().iter_mut().zip(samples) {
+                            *sum += sample;
+                        }
+                    }
+                }
             }
+        }
+        for (peer, mut samples) in mixed {
+            // Clip once after summing, so opposite-polarity sources can cancel.
+            for sample in &mut samples {
+                *sample = sample.clamp(-1.0, 1.0);
+            }
+            emit(peer, samples)?;
         }
         Ok(())
     }
@@ -1577,7 +1596,80 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert_eq!(heard, [owner.clone(), owner]);
+        assert_eq!(heard, [owner]);
+    }
+
+    #[test]
+    fn playout_mixes_devices_per_person_and_clamps_only_the_final_sum() {
+        let mut peers = BTreeMap::from([
+            (1, "owner".into()),
+            (2, "owner".into()),
+            (3, "owner".into()),
+            (4, "other".into()),
+        ]);
+        let mut codec = Codec::new(None).unwrap();
+        let mut controls: Vec<_> = (0..4).map(|_| Codec::new(None).unwrap()).collect();
+        // Two positive streams plus one inverted stream expose intermediate
+        // clipping. A separate person's stream must remain separate.
+        for (i, control) in controls.iter_mut().enumerate() {
+            let index = (i + 1) as u8;
+            for seq in 0..10 {
+                let samples: Vec<_> = (0..FRAME_SAMPLES)
+                    .map(|n| {
+                        let phase =
+                            (seq * FRAME_SAMPLES + n) as f32 * 440.0 * std::f32::consts::TAU
+                                / 48000.0;
+                        phase.sin() * if i == 2 { -0.5 } else { 0.9 }
+                    })
+                    .collect();
+                let packet = [vec![index], control.encoder.encode(&samples).unwrap()].concat();
+                codec.insert(&packet, &peers).unwrap();
+                control.insert(&packet, &peers).unwrap();
+            }
+        }
+        let pull = |codec: &mut Codec, peers: &Peers| {
+            let mut heard = BTreeMap::new();
+            codec
+                .play(peers, |peer, samples| {
+                    assert!(
+                        heard.insert(peer, samples).is_none(),
+                        "more than one frame per person per tick"
+                    );
+                    Ok(())
+                })
+                .unwrap();
+            heard
+        };
+        let mut clipped = false;
+        let mut distinguishes_intermediate_clip = false;
+        for _ in 0..12 {
+            let heard = pull(&mut codec, &peers);
+            assert_eq!(heard.len(), 2);
+            let reference: Vec<_> = controls
+                .iter_mut()
+                .map(|c| pull(c, &peers).into_values().next().unwrap())
+                .collect();
+            assert_eq!(heard["other"], reference[3]);
+            assert_eq!(heard["owner"].len(), 480);
+            for (i, actual) in heard["owner"].iter().enumerate() {
+                let sum = reference[0][i] + reference[1][i] + reference[2][i];
+                clipped |= sum.abs() > 1.0;
+                let expected = sum.clamp(-1.0, 1.0);
+                let premature = ((reference[0][i] + reference[1][i]).clamp(-1.0, 1.0)
+                    + reference[2][i])
+                    .clamp(-1.0, 1.0);
+                distinguishes_intermediate_clip |= (expected - premature).abs() > 0.01;
+                assert!((actual - expected).abs() < 0.00001);
+            }
+        }
+        assert!(clipped, "fixture must exercise clipping");
+        assert!(
+            distinguishes_intermediate_clip,
+            "fixture must expose premature clipping"
+        );
+        codec.replace(&mut peers, BTreeMap::from([(4, "other".into())]));
+        let heard = pull(&mut codec, &peers);
+        assert_eq!(heard.keys().collect::<Vec<_>>(), ["other"]);
     }
 
     #[test]

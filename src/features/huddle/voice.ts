@@ -1,3 +1,4 @@
+import { createPcmSender } from "./sender";
 import type {
   Agent,
   Agents,
@@ -44,9 +45,6 @@ export function createHuddleVoices(
     let closing: Promise<void> | undefined;
     let starting: Promise<void> | undefined;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
-    let sending = false;
-    // Keep at most 160 ms of waiting audio; one 20 ms frame may be in flight.
-    const pending: number[][] = [];
     const fail = (error?: unknown) => {
       if (abort.signal.aborted) return;
       void stop();
@@ -55,10 +53,14 @@ export function createHuddleVoices(
         `${agent.name}: ${error instanceof Error ? error.message : error || "Voice disconnected"}. Leave and rejoin the Huddle to retry.`,
       );
     };
+    const sender = createPcmSender(
+      (samples) => bridge.send(id, samples),
+      abort.signal,
+      fail,
+    );
     function stop() {
       if (closing) return closing;
       abort.abort();
-      pending.length = 0;
       clearInterval(heartbeat);
       closing = Promise.allSettled([
         starting,
@@ -112,23 +114,7 @@ export function createHuddleVoices(
           conversation: { channelId: room },
           signal: abort.signal,
           ended: fail,
-          async output(samples) {
-            if (abort.signal.aborted) return;
-            if (pending.length === 8) pending.shift();
-            pending.push(samples);
-            if (sending) return;
-            sending = true;
-            try {
-              while (!abort.signal.aborted && pending.length) {
-                const frame = pending.shift();
-                if (frame) await bridge.send(id, frame);
-              }
-            } catch (error) {
-              fail(error);
-            } finally {
-              sending = false;
-            }
-          },
+          output: sender.send,
         });
         if (abort.signal.aborted) await opened.close();
         else {

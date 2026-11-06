@@ -434,7 +434,7 @@ it("reports a rejected room resolution with the originating call id", async () =
   );
 });
 
-it("retains the newest eight waiting frames and serializes bridge sends", async () => {
+it("retains the newest four waiting frames and serializes bridge sends", async () => {
   const f = setup();
   f.agents([agent("a")]);
   f.start();
@@ -452,10 +452,6 @@ it("retains the newest eight waiting frames and serializes bridge sends", async 
   await draining;
   expect(f.bridge.send.mock.calls.map(([, samples]) => samples[0])).toEqual([
     0,
-    5 / 16,
-    6 / 16,
-    7 / 16,
-    8 / 16,
     9 / 16,
     10 / 16,
     11 / 16,
