@@ -83,6 +83,7 @@ import {
   type ToolServer,
 } from "./goose";
 import { forwardedTurn } from "./forwarded";
+import { marked, unforged } from "./transcript";
 import {
   absolute,
   AgentSessions,
@@ -216,6 +217,22 @@ export class GooseRuntime {
   prompts(agent: AgentKey) {
     return sessionPrompts(this.agentStore, "goose", agent);
   }
+  /** Fallback notices, by the turn whose prompt was marked with each, kept
+   * only while the app runs: a reload, or goose compacting the prompt away,
+   * loses them. */
+  private readonly noticed = new Map<AgentKey, Map<string, string>>();
+  notices(agent: AgentKey): ReadonlyMap<string, string> {
+    return this.noticed.get(agent) ?? new Map();
+  }
+  private noted(agent: AgentKey, turn: string, notice: string) {
+    const notices = this.noticed.get(agent) ?? new Map<string, string>();
+    notices.set(turn, notice);
+    for (const oldest of notices.keys()) {
+      if (notices.size <= NOTICE_LIMIT) break;
+      notices.delete(oldest);
+    }
+    this.noticed.set(agent, notices);
+  }
 
   /** The desktop host's methods goose agents run with. */
   private get desktop() {
@@ -274,7 +291,10 @@ export class GooseRuntime {
         } catch (error) {
           failure ??= { error };
         }
-        if (!failure) return;
+        if (!failure) {
+          this.noticed.delete(pubkey);
+          return;
+        }
         // Back, stopped, until a later retirement closes what is left.
         if (entry) this.agents.set(pubkey, entry);
         throw failure.error;
@@ -437,6 +457,7 @@ export class GooseRuntime {
     interruptible,
     named,
     gateway,
+    gatewayFallback,
   }: Delivery) {
     const settings = config(raw);
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
@@ -489,6 +510,12 @@ export class GooseRuntime {
     );
     const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // A wake run without the gateway says so beside its prompt in Activity:
+    // its prompt ends with a mark naming the turn. A wake is always sent as
+    // `refresh` rebuilds it, steered or queued, so only that is marked.
+    const marking = wake && gatewayFallback ? crypto.randomUUID() : undefined;
+    if (marking && gatewayFallback)
+      this.noted(agent.key, marking, gatewayFallback.notice);
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean, admitted?: string) => {
       const turn = await this.turn(
@@ -608,7 +635,7 @@ export class GooseRuntime {
                       (await prompt(fresh, key)).text,
                       notes,
                     );
-                    return text;
+                    return marking ? marked(text, marking) : text;
                   },
                 }
               : {}),
@@ -929,9 +956,9 @@ export class GooseRuntime {
   /** `text` with the notes plugins left for the turn and the Buzz tools'
    * end-of-turn note, when there are any. */
   private review(entry: Entry, text: string, notes: readonly string[] = []) {
-    return [text, ...notes, turnNote(entry.handle)]
-      .filter(Boolean)
-      .join("\n\n");
+    return unforged(
+      [text, ...notes, turnNote(entry.handle)].filter(Boolean).join("\n\n"),
+    );
   }
 
   /** Says in the thread that a turn failed, so nobody waits on it. */
@@ -1287,6 +1314,8 @@ const NOT_COMPACTED =
   "Couldn't compact: this conversation's session ran through the agent gateway, which this agent's turns don't use now.";
 /** goose's error for held work it never ran. */
 const STOPPED = "goose was stopped";
+/** The most fallback notices an agent keeps, the oldest dropped first. */
+const NOTICE_LIMIT = 100;
 const LATE = "goose did not start in time";
 const NOT_RETIRED =
   "goose didn't stop after a forwarded turn; the agent retires once it has.";

@@ -81,9 +81,9 @@ import { protectionHistoryEntry } from "./security";
 import {
   readSessionTitle,
   readTranscript,
-  withNotices,
   type Conversation,
 } from "./transcript";
+import { withNotices } from "../../features/agents/activity-transcript";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 
 /** The effort levels Claude lists, which a session can switch to between
