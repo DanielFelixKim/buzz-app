@@ -258,6 +258,50 @@ it("leaves archived conversations' drafts out of the list and count, but keeps t
   ).not.toBeNull();
 });
 
+it("shows archived conversations' drafts on request, labeled and clearable, without counting them", async () => {
+  const user = userEvent.setup();
+  saved("draft:old", "Stranded note");
+  saved("draft:dm", "Lunch tomorrow?");
+  const h = harness();
+  const Page = h.page.component;
+  const Badge = h.page.badge;
+  render(
+    <>
+      <Badge />
+      <Page />
+    </>,
+  );
+  const toggle = screen.getByRole("button", { name: "Show archived (1)" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await user.click(toggle);
+  expect(screen.getByRole("button", { name: "Hide archived" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  const list = screen.getByRole("list", { name: "Drafts" });
+  expect(within(list).getByText("Archived")).toBeInTheDocument();
+  expect(
+    within(list).getByRole("button", {
+      name: "Open conversation in #old-plans, archived: Stranded note",
+    }),
+  ).toBeInTheDocument();
+  // Shown, still not counted.
+  expect(screen.getByLabelText("1 draft")).toBeInTheDocument();
+  await user.click(
+    within(list).getByRole("button", {
+      name: "Clear draft in #old-plans, archived: Stranded note",
+    }),
+  );
+  expect(screen.queryByText("Stranded note")).toBeNull();
+  expect(
+    localStorage.getItem(
+      `buzz-view.v1:${JSON.stringify([scope, "draft:old"])}`,
+    ),
+  ).toBeNull();
+  // Nothing archived is left to show.
+  expect(screen.queryByRole("button", { name: /archived/i })).toBeNull();
+});
+
 it("lists drafts first and continues a thread draft at its root", async () => {
   saved(`draft:team:thread:${root}`, { text: "Finish launch reply" });
   saved("draft:dm", "Lunch tomorrow?");

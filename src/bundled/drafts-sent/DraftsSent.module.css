@@ -202,6 +202,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Drafts in archived conversations stay out of the list until asked for. */
+.archivedToggle {
+  align-self: flex-start;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Beside the row, not inside its button: clearing never opens the draft. */
 .clear {
   flex: none;
