@@ -4112,8 +4112,7 @@ export function createChannelStore(
         for (const event of events)
           if (
             ([40003, 5, 9005, 7, 39005].includes(event.kind) ||
-              (live &&
-                channelRowKind(event.kind) &&
+              (channelRowKind(event.kind) &&
                 newest &&
                 oldest &&
                 newestFirst(newest, event) <= 0 &&
