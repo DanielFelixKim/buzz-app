@@ -12,7 +12,8 @@ import type {
   HostProcessOptions,
 } from "../../host/service";
 import { AgentSessions, ServerPool, SHARED_POOL } from "./agent-sessions";
-import { AcpProcess, REQUEST_TIMEOUT_MS } from "./process";
+import { AcpProcess, REQUEST_TIMEOUT_MS, TOOL_SERVER } from "./process";
+import { AcpSession } from "./session";
 import type { AcpHooks, ToolServer } from "./types";
 
 type Message = {
@@ -53,6 +54,8 @@ function fakeHarness(
     promptError?: { code: number; message: string };
     /** Why a turn that ran ends. */
     stopReason?: string;
+    /** Every `session/load` is answered with this error. */
+    loadError?: { code: number; message: string };
   }> = {},
 ) {
   const started: {
@@ -135,7 +138,20 @@ function fakeHarness(
           else if (method === "session/new")
             reply(id, { sessionId: `session-${++sessions}` });
           else if (method === "session/close") reply(id, {});
-          else if (method === "session/prompt" && rejectPrompts > 0) {
+          else if (method === "session/load" && options.loadError)
+            send({ id, error: options.loadError });
+          else if (method === "session/load") {
+            // As goose does: the saved conversation replays before the answer.
+            for (const sessionUpdate of ["user_message_chunk", "tool_call"])
+              send({
+                method: "session/update",
+                params: {
+                  sessionId: params.sessionId,
+                  update: { sessionUpdate, toolCallId: "call-1" },
+                },
+              });
+            reply(id, {});
+          } else if (method === "session/prompt" && rejectPrompts > 0) {
             rejectPrompts--;
             send({ id, error: { code: -32000, message: "Sign in first" } });
           } else if (method === "session/prompt" && options.promptError)
@@ -663,5 +679,168 @@ describe("the shared server pool", () => {
     expect(pool.size).toBe(1);
     gooseSessions.dispose();
     genericSessions.dispose();
+  });
+});
+
+describe("resuming a saved session", () => {
+  const LOADS = {
+    mcpCapabilities: { http: true },
+    loadSession: true,
+    sessionCapabilities: { close: {} },
+  };
+
+  it("loads it with fresh tools, never seeing its replay, naming or new-session meta", async () => {
+    const names = vi.fn(async () => true);
+    const newSessionMeta = vi.fn(() => ({}));
+    const systemPrompt = vi.fn(async () => undefined);
+    const hooks: AcpHooks = { ...HOOKS, names, newSessionMeta, systemPrompt };
+    const harness = fakeHarness({ capabilities: LOADS });
+    const acp = await start(harness, {}, hooks);
+    const first = await acp.open({
+      cwd: "/work",
+      systemPrompt: "Be Buzz.",
+      tools,
+    });
+    await acp.close(first);
+    names.mockClear();
+    newSessionMeta.mockClear();
+    systemPrompt.mockClear();
+    const updates = vi.spyOn(AcpSession.prototype, "update");
+    const seen: unknown[] = [];
+    const named = vi.fn();
+    try {
+      const session = await acp.open({
+        cwd: "/work",
+        systemPrompt: "Be Buzz.",
+        title: "A new title",
+        named,
+        tools,
+        load: first.id,
+        onSession: (opened) => {
+          opened.observe = (update) => seen.push(update);
+        },
+      });
+      await flush();
+      expect(session.id).toBe(first.id);
+      expect(updates).not.toHaveBeenCalled();
+      expect(seen).toEqual([]);
+      expect(harness.sent("session/new")).toHaveLength(1);
+      // The first session's server was token-1; its token is never reused.
+      expect(harness.sent("session/load")[0]?.params).toEqual({
+        sessionId: first.id,
+        cwd: "/work",
+        mcpServers: [
+          {
+            type: "http",
+            name: TOOL_SERVER,
+            url: "http://127.0.0.1:40002/mcp",
+            headers: [{ name: "Authorization", value: "Bearer token-2" }],
+          },
+        ],
+      });
+      expect(names).not.toHaveBeenCalled();
+      expect(newSessionMeta).not.toHaveBeenCalled();
+      expect(named).not.toHaveBeenCalled();
+      // Set under its key again, which replaces it rather than adding one.
+      expect(systemPrompt).toHaveBeenCalledExactlyOnceWith(
+        acp,
+        first.id,
+        "Be Buzz.",
+      );
+    } finally {
+      updates.mockRestore();
+    }
+  });
+
+  it("leads no prompt with the instructions its conversation already holds", async () => {
+    const harness = fakeHarness({ capabilities: LOADS });
+    const acp = await start(harness);
+    const session = await acp.open({
+      cwd: "/work",
+      systemPrompt: "Be Buzz.",
+      load: "saved-1",
+    });
+    await session.send("next");
+    expect(harness.turns.map((turn) => turn.text)).toEqual(["next"]);
+  });
+
+  it("refuses, never opening a new session, without loadSession or when the load fails", async () => {
+    const without = fakeHarness();
+    const plain = await start(without);
+    await expect(
+      plain.open({ cwd: "/work", systemPrompt: "", load: "saved-1" }),
+    ).rejects.toThrow("This Harness cannot resume a session");
+    expect(without.sent("session/load")).toEqual([]);
+    expect(without.sent("session/new")).toEqual([]);
+
+    const failing = fakeHarness({
+      capabilities: LOADS,
+      loadError: { code: -32002, message: "Session not found: saved-1" },
+    });
+    const acp = await start(failing);
+    await expect(
+      acp.open({ cwd: "/work", systemPrompt: "", tools, load: "saved-1" }),
+    ).rejects.toThrow("Session not found: saved-1");
+    expect(failing.sent("session/new")).toEqual([]);
+    // Nothing holds the id: a later load may try again.
+    failing.sent("session/load").length = 0;
+    await expect(
+      acp.open({ cwd: "/work", systemPrompt: "", load: "saved-1" }),
+    ).rejects.toThrow("Session not found: saved-1");
+  });
+
+  it("refuses a system prompt it would have to send with session/new", async () => {
+    const harness = fakeHarness({
+      capabilities: {
+        ...LOADS,
+        sessionCapabilities: { close: {}, systemPrompt: {} },
+      },
+    });
+    const acp = await start(harness);
+    await expect(
+      acp.open({ cwd: "/work", systemPrompt: "Be Buzz.", load: "saved-1" }),
+    ).rejects.toThrow(
+      "This Harness cannot resume a session with its system prompt",
+    );
+    expect(harness.sent("session/load")).toEqual([]);
+  });
+
+  it("lets one open own a saved session at a time", async () => {
+    const harness = fakeHarness({ capabilities: LOADS });
+    const acp = await start(harness);
+    const loading = acp.open({
+      cwd: "/work",
+      systemPrompt: "",
+      load: "saved-1",
+    });
+    await expect(
+      acp.open({ cwd: "/work", systemPrompt: "", load: "saved-1" }),
+    ).rejects.toThrow("This Harness session is already open");
+    const session = await loading;
+    await expect(
+      acp.open({ cwd: "/work", systemPrompt: "", load: "saved-1" }),
+    ).rejects.toThrow("This Harness session is already open");
+    expect(harness.sent("session/load")).toHaveLength(1);
+    await acp.close(session);
+    await expect(
+      acp.open({ cwd: "/work", systemPrompt: "", load: "saved-1" }),
+    ).resolves.toMatchObject({ id: "saved-1" });
+  });
+
+  it("waits for the harness to acknowledge a close before loading it again", async () => {
+    const harness = fakeHarness({
+      capabilities: { ...LOADS, sessionCapabilities: {} },
+    });
+    const acp = await start(harness);
+    const session = await acp.open({
+      cwd: "/work",
+      systemPrompt: "",
+      load: "saved-1",
+    });
+    await acp.close(session);
+    await expect(
+      acp.open({ cwd: "/work", systemPrompt: "", load: "saved-1" }),
+    ).rejects.toThrow("This Harness session has not finished closing");
+    expect(harness.sent("session/load")).toHaveLength(1);
   });
 });
