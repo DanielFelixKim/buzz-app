@@ -2222,7 +2222,8 @@ export class AgentsService extends Service implements Agents {
         const feed = session.inboxFeed.snapshot();
         const sync = session.unread.sync();
         await Promise.all([
-          ...(sync.status === "error" ||
+          ...(sync.observationOwed ||
+          sync.status === "error" ||
           (sync.status === "stale" && sync.capability !== "unsupported")
             ? [session.unread.retrySync()]
             : []),
@@ -2271,6 +2272,7 @@ export class AgentsService extends Service implements Agents {
           roster.coverage === "partial" ||
           result.status !== "ready" ||
           result.freshness !== "observed" ||
+          readSync.observationOwed ||
           readSync.status === "loading" ||
           readSync.status === "error" ||
           (readSync.status === "stale" &&
