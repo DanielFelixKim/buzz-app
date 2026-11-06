@@ -260,3 +260,39 @@ it("keeps Jump to latest available in a byte-limited historical Huddle", () => {
   fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
   expect(retry).toHaveBeenCalledOnce();
 });
+
+it("resumes bottom following after Jump to latest from scrolled history", () => {
+  let value = { ...discussion("failed"), hasNewer: true };
+  const retry = vi.fn();
+  const row = value.rows[0];
+  assert.exists(row);
+  const view = () => (
+    <HuddleDiscussionView
+      discussion={value}
+      composer={null}
+      older={() => {}}
+      retry={retry}
+      recover={() => {}}
+    />
+  );
+  const mounted = render(view());
+  const log = screen.getByRole("log");
+  Object.defineProperties(log, {
+    scrollHeight: { value: 2000 },
+    clientHeight: { value: 500 },
+  });
+  fireEvent.scroll(log, { target: { scrollTop: 100 } });
+  vi.mocked(Element.prototype.scrollIntoView).mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+  value = { ...value, hasNewer: false, rows: [{ ...row, id: "latest" }] };
+  mounted.rerender(view());
+  expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+    block: "end",
+  });
+  vi.mocked(Element.prototype.scrollIntoView).mockClear();
+  value = { ...value, rows: [...value.rows, { ...row, id: "live" }] };
+  mounted.rerender(view());
+  expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+    block: "end",
+  });
+});

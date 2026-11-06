@@ -47,9 +47,9 @@ export function HuddleDiscussionView({
   const following = useRef(true);
   const newest = discussion.rows.at(-1)?.id;
   useEffect(() => {
-    if (newest && tab === "thread" && following.current)
+    if (newest && tab === "thread" && following.current && !discussion.hasNewer)
       tail.current?.scrollIntoView({ block: "end" });
-  }, [newest, tab]);
+  }, [newest, tab, discussion.hasNewer]);
   return (
     <div className={styles.discussion}>
       <div className={styles.tabs}>
@@ -105,7 +105,13 @@ export function HuddleDiscussionView({
             </Button>
           )}
           {discussion.hasNewer && (
-            <Button size="sm" onClick={retry}>
+            <Button
+              size="sm"
+              onClick={() => {
+                following.current = true;
+                retry();
+              }}
+            >
               Jump to latest
             </Button>
           )}

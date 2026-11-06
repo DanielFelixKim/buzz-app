@@ -55,6 +55,8 @@ struct Discussion {
     sending: bool,
     sent: u64,
     has_more: bool,
+    #[serde(default)]
+    has_newer: bool,
     rows: Vec<DiscussionRow>,
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -603,6 +605,7 @@ mod tests {
             sending: false,
             sent: 0,
             has_more: false,
+            has_newer: false,
             rows: vec![DiscussionRow {
                 id: "same-event".into(),
                 author_id: "ab".repeat(32),
@@ -687,6 +690,20 @@ mod tests {
         presentation.discussion.as_mut().unwrap().rows[0].attachments[0].kind = "image".into();
         presentation.discussion.as_mut().unwrap().rows[0].delivery = "invalid".into();
         assert!(validate(&presentation).is_err());
+    }
+    #[test]
+    fn detached_discussion_boundary_survives_the_native_dto() {
+        let mut value = serde_json::to_value(view("00000000-0000-4000-8000-000000000001")).unwrap();
+        value["discussion"] = serde_json::json!({
+            "version": 1, "historyLimited": false, "status": "ready", "error": null,
+            "writable": true, "sending": false, "sent": 0, "hasMore": true,
+            "hasNewer": true, "rows": []
+        });
+        let decoded: View = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap()["discussion"]["hasNewer"], true);
+        value["discussion"].as_object_mut().unwrap().remove("hasNewer");
+        let decoded: View = serde_json::from_value(value).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap()["discussion"]["hasNewer"], false);
     }
     #[test]
     fn native_completion_retires_only_its_own_presentation() {
