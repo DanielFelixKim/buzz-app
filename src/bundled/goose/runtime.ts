@@ -125,7 +125,9 @@ const TITLE_LIMIT = 80;
 /** A watch's or timer's prompt, after a context naming the agent as a
  * conversation's first prompt does, so its session is listed as the agent's. */
 export function standalonePrompt(agent: string, text: string) {
-  return `<context>\nScope: standalone\nAgent: ${agent}\n</context>\n\n${text}`;
+  return unforged(
+    `<context>\nScope: standalone\nAgent: ${agent}\n</context>\n\n${text}`,
+  );
 }
 
 /** A session's title in goose, as harness agents name theirs:

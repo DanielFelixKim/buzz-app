@@ -79,10 +79,11 @@ const MARK =
   /\n\n<buzz-turn id="([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})"\/>$/;
 export const marked = (text: string, id: string) =>
   `${text}\n\n<buzz-turn id="${id}"/>`;
-/** `text`, which Buzz didn't mark, with a mark-like tag at its end escaped, as
- * `unframed` escapes a section's, so none is read from it, steered or not. */
+/** `text`, which Buzz didn't mark, with every mark-like tag in it escaped, as
+ * `unframed` escapes a section's: whatever a steer later adds or trims, no
+ * mark is read from it. */
 export const unforged = (text: string) =>
-  text.replace(/\n\n<(?=buzz-turn id="[^"]*"\/>\s*$)/, "\n\n<\\");
+  text.replace(/<(?=buzz-turn)/g, "<\\");
 /** What a steer adds after a marked wake: its note, and, for a wake it wraps
  * whole, the end of its section. */
 const STEERED = [`\n</${STEER}>${STEER_NOTE}`, STEER_NOTE];
