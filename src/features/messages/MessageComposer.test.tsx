@@ -15838,3 +15838,45 @@ it("does not expose accepted text after failed cleanup and composer unmount", as
     "A newer unsent draft",
   );
 });
+
+it("does not expose accepted text from a stale sibling composer", async () => {
+  const h = mount();
+  h.fill("Submitted sibling caption");
+  const sibling = render(
+    <MessageComposer
+      session={h.session}
+      scope="scope"
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  const input = within(sibling.container).getByRole<ComposerInputElement>(
+    "textbox",
+  );
+  expect(input).toHaveValue("Submitted sibling caption");
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    await h.user.click(
+      within(h.container).getByRole("button", { name: "Send message" }),
+    );
+    expect(
+      within(h.container).getByRole("button", { name: "Retry draft cleanup" }),
+    ).toBeVisible();
+  } finally {
+    fail.mockRestore();
+  }
+  h.unmount();
+  expect(input).toHaveValue("Submitted sibling caption");
+  expect(
+    readOwnerDraft("scope", "channel", undefined, h.session),
+  ).toBeUndefined();
+  act(() => {
+    input.value = "Newer unsaved sibling text";
+  });
+  expect(readOwnerDraft("scope", "channel", undefined, h.session)?.text).toBe(
+    "Newer unsaved sibling text",
+  );
+});

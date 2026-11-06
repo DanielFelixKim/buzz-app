@@ -1,6 +1,9 @@
 import { composerSchema, projectComposerDocument } from "./composer-document";
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { recoveryFor } from "./composer-accepted";
+import { createRelaySession } from "../relay/session";
+import { mentionDraft } from "./mention-draft";
 import { writeView } from "../../shared/view-state";
 import { readOwnerDraft, registerComposerDraft } from "./draft-read";
 const scope = "https://community.test:owner";
@@ -134,5 +137,30 @@ it("detects conflicting rich links with identical displayed labels", () => {
   } finally {
     first();
     second();
+  }
+});
+
+it("suppresses accepted sibling snapshots while preserving newer live prose", () => {
+  const store = createRelaySession(null);
+  const sent = mentionDraft("Submitted caption");
+  writeView(scope, "draft:channel", sent);
+  recoveryFor(store.session).set(`${scope}:draft:channel`, {
+    next: mentionDraft(""),
+    revision: JSON.stringify(sent),
+    sent,
+  });
+  let current = sent;
+  const stop = registerComposerDraft(scope, "draft:channel", () => current);
+  try {
+    expect(
+      readOwnerDraft(scope, "channel", undefined, store.session)?.text ?? "",
+    ).toBe("");
+    current = mentionDraft("Newer unsaved caption");
+    expect(
+      readOwnerDraft(scope, "channel", undefined, store.session)?.text,
+    ).toBe(current.text);
+  } finally {
+    stop();
+    store.dispose();
   }
 });

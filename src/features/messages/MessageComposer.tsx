@@ -3041,7 +3041,11 @@ function Composer({
       // in memory, and any composer here, on any device, seeds them from the
       // sent message once it lands (see seedMentions).
       const followUp = next;
-      const pending = { next: mentionDraft(""), revision: savedRevision };
+      const pending = {
+        next: mentionDraft(""),
+        revision: savedRevision,
+        sent: captured,
+      };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       attachments.store.clear();

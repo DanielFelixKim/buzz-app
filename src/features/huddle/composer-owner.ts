@@ -289,7 +289,11 @@ export function createHuddleComposerOwner(
           const revision = viewRevision(scope, key);
           const next = mentionDraft("");
           if (!writeView(scope, key, next))
-            recoveryFor(session).set(`${scope}:${key}`, { next, revision });
+            recoveryFor(session).set(`${scope}:${key}`, {
+              next,
+              revision,
+              sent: mentionDraft(JSON.parse(draft)),
+            });
         }
         for (const file of files) release(file);
         return id;

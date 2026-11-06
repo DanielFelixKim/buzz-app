@@ -3,6 +3,7 @@ import type { ComposerSession } from "./composer-session";
 
 export type AcceptedDraft = {
   next: MentionDraft;
+  sent?: MentionDraft;
   revision: string | null | undefined;
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.

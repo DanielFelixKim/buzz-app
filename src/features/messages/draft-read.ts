@@ -56,11 +56,15 @@ export function readOwnerDraft(
     })),
     source,
   });
+  const accepted = session && acceptedComposerSend(session, `${scope}:${key}`);
+  const submitted = accepted?.sent && snapshot(accepted.sent, "composer");
   let live: OwnerDraft | undefined;
   for (const read of composers.get(coordinate(scope, key)) ?? []) {
     const draft = read();
     if (!draft) continue; // Sent-message edits are not unsent drafts.
     const next = snapshot(draft, "composer");
+    if (submitted && JSON.stringify(next) === JSON.stringify(submitted))
+      continue;
     if (live && JSON.stringify(live) !== JSON.stringify(next))
       throw new Error(
         "Multiple open composers have different drafts. Choose which draft to keep in Buzz first.",
@@ -70,7 +74,6 @@ export function readOwnerDraft(
   if (live) return live;
   const raw = viewRevision(scope, key);
   if (raw === undefined) throw new Error("Draft storage is unavailable.");
-  const accepted = session && acceptedComposerSend(session, `${scope}:${key}`);
   if (raw === null || (accepted && raw === accepted.revision)) return undefined;
   if (accepted && accepted.revision === undefined)
     throw new Error(
