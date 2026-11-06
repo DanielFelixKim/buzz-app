@@ -817,7 +817,6 @@ details:not([open]) > summary .sectionChevron {
   margin: var(--space-1) 0 0;
   color: var(--text-subtle);
 }
-/* The switch trails its description; an error spans the row below both. */
 .settingsId {
   overflow-wrap: anywhere;
 }
