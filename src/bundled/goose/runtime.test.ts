@@ -16,6 +16,7 @@ import { fakeSpawn, flush, gated } from "./goose-testing";
 import { REQUEST_TIMEOUT_MS } from "./goose";
 import { AcpSession } from "../../features/agent-harness/acp/session";
 import { AgentSessions, localSessions, SharedProcess } from "./sessions";
+import { SHARED_POOL } from "../../features/agent-harness/acp/agent-sessions";
 import type { ForwardNative } from "../../features/agents/gateway/forwarding";
 import { GatewayForwarding } from "../../features/agents/gateway/forwarding";
 import type { GatewayRoute } from "../../features/agents/gateway/route";
@@ -2160,7 +2161,7 @@ describe("goose turns through the agent gateway", () => {
   } as const;
   const { headers } = VECTOR_PROFILE;
   /** The shared opener over a native side and route the test controls. */
-  const gateway = (route: GatewayRoute = enabled) => {
+  const gateway = (route: GatewayRoute = enabled, closeError?: Error) => {
     const opens: ForwardOpen[] = [];
     const calls: string[] = [];
     const native: ForwardNative = {
@@ -2181,6 +2182,7 @@ describe("goose turns through the agent gateway", () => {
       seal: vi.fn(async (_owner, id) => void calls.push(`seal ${id}`)),
       close: vi.fn(async (_owner, id) => {
         calls.push(`close ${id}`);
+        if (closeError) throw closeError;
         opens[id - 1]?.onEvent({ type: "closed" });
       }),
     };
@@ -2386,7 +2388,7 @@ describe("goose turns through the agent gateway", () => {
     }
   });
 
-  it("runs a standalone turn on a binding of its own, saving nothing, and retiring the agent waits for it", async () => {
+  it("runs a standalone turn on a binding of its own, saving nothing, and the agent retires only once its goose has exited and closed", async () => {
     const g = gateway();
     const f = setup({ forwarding: g.forwarding, hold: true });
     try {
@@ -2415,15 +2417,223 @@ describe("goose turns through the agent gateway", () => {
       } finally {
         vi.useRealTimers();
       }
-      let retired = false;
-      const retiring = f.runtime.retire(self).then(() => (retired = true));
-      await flush(30);
-      expect(retired).toBe(false);
+      await expect(f.runtime.retire(self)).rejects.toThrow("didn't stop");
       expect(g.calls).not.toContain("close 1");
       goose?.exit(null);
-      await retiring;
-      expect(g.calls).toContain("close 1");
+      await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+      await f.runtime.retire(self);
       expect(localSessions(f.storage, self).list()).toEqual([]);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  /** A standalone forwarded turn of the agent's. */
+  const standalone = (f: ReturnType<typeof setup>) =>
+    f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        channelId: channel,
+        config: { ...DEFAULT_CONFIG, provider: "databricks" },
+        ...dispatched(),
+      },
+      key: "Timer",
+      signal: new AbortController().signal,
+      prompt: async () => "Check in",
+    } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
+  /** A spawn whose goose comes up only once released. */
+  const late = () => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const wrap =
+      (spawn: ReturnType<typeof fakeSpawn>["spawn"]): Host["spawn"] =>
+      async (id, options) => {
+        if (id === "goose") await released;
+        return spawn(id, options);
+      };
+    return { wrap, release };
+  };
+
+  it("ends a standalone turn still starting when the agent retires, and waits for its goose to exit and close", async () => {
+    const g = gateway();
+    const gate = late();
+    const f = setup({ forwarding: g.forwarding, wrap: gate.wrap });
+    const turn = standalone(f);
+    await vi.waitFor(() => expect(g.opens).toHaveLength(1));
+    let retired = false;
+    const retiring = f.runtime.retire(self).then(() => (retired = true));
+    await flush(30);
+    expect(retired).toBe(false);
+    gate.release();
+    await retiring;
+    expect(f.fake.geese[0]?.killed).toBe(true);
+    expect(f.fake.geese[0]?.opened).toEqual([]);
+    expect(g.calls).toEqual(["seal 1", "close 1"]);
+    await expect(turn).resolves.toEqual({ ok: true, undelivered: true });
+  });
+
+  it("ends a standalone turn's prompt when the agent retires, and waits for its goose to exit and close", async () => {
+    const g = gateway();
+    const f = setup({ forwarding: g.forwarding, hold: true });
+    const turn = standalone(f);
+    await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+    await f.runtime.retire(self);
+    expect(f.fake.geese[0]?.cancelled).toContain("session-1");
+    expect(f.fake.geese[0]?.killed).toBe(true);
+    expect(g.calls).toContain("close 1");
+    await expect(turn).resolves.toEqual({ ok: true, stopped: true });
+  });
+
+  it("stops a goose that comes up after the runtime was disposed", async () => {
+    const g = gateway();
+    const gate = late();
+    const f = setup({ forwarding: g.forwarding, wrap: gate.wrap });
+    const turn = standalone(f);
+    await vi.waitFor(() => expect(g.opens).toHaveLength(1));
+    f.runtime.dispose();
+    gate.release();
+    await expect(turn).resolves.toEqual({ ok: true, undelivered: true });
+    expect(f.fake.geese[0]?.killed).toBe(true);
+    expect(f.fake.geese[0]?.opened).toEqual([]);
+    expect(g.calls).toEqual(["seal 1", "close 1"]);
+  });
+
+  it("refuses to retire an agent until a conversation's goose that did not stop has exited and closed", async () => {
+    const g = gateway();
+    const f = setup({
+      forwarding: g.forwarding,
+      provider: "databricks",
+      hold: true,
+    });
+    await f.deliver(root, dispatched());
+    await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+    const [goose] = f.fake.geese;
+    if (goose) goose.holdExit = true;
+    vi.useFakeTimers();
+    try {
+      goose?.turns[0]?.finish();
+      await vi.advanceTimersByTimeAsync(10_000);
+    } finally {
+      vi.useRealTimers();
+    }
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
+    expect(f.published[0]?.content).toContain("didn't stop");
+    // Refused, never forgotten as clean: the entry and its barrier stay.
+    await expect(f.runtime.retire(self)).rejects.toThrow("didn't stop");
+    expect(g.calls).not.toContain("close 1");
+    goose?.exit(null);
+    await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+    await f.runtime.retire(self);
+    expect(g.calls).toEqual(["associate 1 session-1", "seal 1", "close 1"]);
+  });
+
+  it("keeps failing to retire an agent whose conversation's generation native could not close", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const g = gateway(enabled, new Error("close refused"));
+    const f = setup({ forwarding: g.forwarding, provider: "databricks" });
+    await f.deliver(root, dispatched());
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
+    expect(f.published[0]?.content).toContain("couldn't confirm");
+    await expect(f.runtime.retire(self)).rejects.toThrow("close refused");
+    // Never forgotten as clean: a later retirement fails the same way.
+    await expect(f.runtime.retire(self)).rejects.toThrow("close refused");
+    warned.mockRestore();
+  });
+
+  it("shows a resumed turn only what its saved session has not been shown", async () => {
+    const g = gateway();
+    const reply = (id: string, content: string) =>
+      message(id, content, {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+    const aside = reply("2", "An aside");
+    const again = reply("3", "Again");
+    const f = setup({
+      forwarding: g.forwarding,
+      provider: "databricks",
+      thread: [root, aside, again, reply("4", "Once more")],
+    });
+    try {
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+      await f.deliver(again, dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 2"));
+      expect(f.fake.geese[1]?.turns[0]?.text).toContain("An aside");
+      await f.deliver(reply("4", "Once more"), dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 3"));
+      const third = f.fake.geese[2]?.turns[0]?.text ?? "";
+      expect(promptMessage(promptSections(third)).text).toBe("Once more");
+      expect(third).not.toContain("An aside");
+      expect(third).not.toContain("Again");
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("holds a server in the shared pool for a forwarded turn's Buzz tools until it closes", async () => {
+    const g = gateway();
+    const f = setup({ forwarding: g.forwarding, hold: true });
+    const before = SHARED_POOL.size;
+    const turn = standalone(f);
+    await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+    expect(SHARED_POOL.size).toBe(before + 1);
+    f.fake.geese[0]?.turns[0]?.finish();
+    await turn;
+    await vi.waitFor(() => expect(SHARED_POOL.size).toBe(before));
+    f.runtime.dispose();
+  });
+
+  it("gives up a forwarded message still waiting for its conversation at its deadline", async () => {
+    const g = gateway();
+    const f = setup({ forwarding: g.forwarding, provider: "databricks" });
+    try {
+      // The agent's entry, from a first turn elsewhere.
+      await f.deliver(message("9", "Elsewhere"), dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+      const { agents } = f.runtime as unknown as {
+        agents: Map<string, { sessions: AgentSessions }>;
+      };
+      let release!: () => void;
+      const holding = agents
+        .get(self)
+        ?.sessions.exclusive(
+          key,
+          () => new Promise<void>((resolve) => (release = resolve)),
+        );
+      await flush(10);
+      const handover = new AbortController();
+      await f.deliver(root, { ...dispatched(), signal: handover.signal });
+      await flush(10);
+      handover.abort(new Error("Handover expired"));
+      await flush(10);
+      release();
+      await holding;
+      await flush(30);
+      expect(g.opens).toHaveLength(1);
+      expect(f.fake.geese).toHaveLength(1);
+      // As an ordinary message that waited too long says.
+      expect(f.published).toHaveLength(1);
+      expect(f.published[0]?.content).toContain("goose did not start in time");
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("acknowledges a forwarded message once goose has taken it", async () => {
+    const g = gateway();
+    const f = setup({ forwarding: g.forwarding, provider: "databricks" });
+    try {
+      const acknowledged = vi.fn();
+      await f.deliver(root, {
+        ...dispatched(),
+        step: vi.fn(),
+        acknowledged,
+      } as Partial<Delivery>);
+      await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+      expect(acknowledged).toHaveBeenCalledTimes(1);
     } finally {
       f.runtime.dispose();
     }

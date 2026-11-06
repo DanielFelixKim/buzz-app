@@ -16,6 +16,7 @@ import type {
   ActivityReceipt,
   Choice,
   ResolveDirectory,
+  ServeMcp,
   Settled,
   ToolServer,
 } from "./types";
@@ -210,6 +211,9 @@ export type Exclusive = Readonly<{
   /** Saves `id` as its newest session with `binding`, while the work holds
    * the conversation: whether the store then reads it back so. */
   keep(id: string, binding: unknown): boolean;
+  /** Notes what the session it runs in has been shown, as a message's
+   * delivery does, while the work holds the conversation. */
+  shown(seen: number): void;
   /** Aborts on `interrupt` or `dispose`. */
   signal: AbortSignal;
   /** A session the work opened outlives it until `done`, its process's
@@ -523,18 +527,22 @@ export class AgentSessions {
    * REQUEST_TIMEOUT_MS. A close that failed refuses the conversation while
    * the process runs. Saved sessions are never deleted. `work` retires
    * whatever session it opens before it settles, or says what it
-   * `outlives`, which messages and holds then wait for. */
+   * `outlives`, which messages and holds then wait for. Once `deadline`
+   * aborts, it stops waiting its turn, as `deliver` stops waiting for a
+   * session, and rejects with "<label> did not start in time"; work it has
+   * started runs on. */
   async exclusive<T>(
     key: string,
     work: (exclusive: Exclusive) => Promise<T>,
     signal?: AbortSignal,
+    deadline?: AbortSignal,
   ): Promise<T> {
     const controller = new AbortController();
     const follow = () => controller.abort(signal?.reason);
     if (signal?.aborted) follow();
     signal?.addEventListener("abort", follow, { once: true });
     try {
-      const { mine, release } = await this.reserve(key, controller);
+      const { mine, release } = await this.reserve(key, controller, deadline);
       try {
         return await this.handOff(key, mine, work);
       } finally {
@@ -552,8 +560,13 @@ export class AgentSessions {
    * nothing awaited after the last check. Each wait ends on `controller`'s
    * abort, which `interrupt` reaches from the start, or on `dispose`; both
    * reject with "<label> was stopped". A session left running that could
-   * not be confirmed ended refuses it. */
-  private async reserve(key: string, controller: AbortController) {
+   * not be confirmed ended refuses it. Once `deadline` aborts, a wait
+   * rejects with "<label> did not start in time". */
+  private async reserve(
+    key: string,
+    controller: AbortController,
+    deadline?: AbortSignal,
+  ) {
     const { label } = this.options;
     const waiting = this.waiting.get(key) ?? new Set<AbortController>();
     waiting.add(controller);
@@ -569,9 +582,12 @@ export class AgentSessions {
           this.held.get(key)?.done ??
           outliving?.settled;
         if (!busy) break;
+        if (deadline?.aborted) throw new Error(this.late.error);
         await abortable(
           Promise.race([busy.then(noop, noop), this.stopping]),
-          controller.signal,
+          deadline
+            ? AbortSignal.any([controller.signal, deadline])
+            : controller.signal,
         ).catch(noop);
       }
     } finally {
@@ -646,6 +662,10 @@ export class AgentSessions {
           console.warn(`${label} could not save a session`, error);
           return false;
         }
+      },
+      shown: (seen) => {
+        if (this.held.get(key) === mine)
+          this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));
       },
       signal: controller.signal,
       outlives: (done) => {
@@ -862,6 +882,25 @@ export class AgentSessions {
 
   private get pool() {
     return this.options.pool ?? SHARED_POOL;
+  }
+  /** `serve` for a session in a process of its own, outside these: each
+   * server it starts holds a busy slot in the pool, taken before it starts,
+   * making room as a session's does, until it has closed. */
+  pooled(serve: ServeMcp): ServeMcp {
+    return async (handler) => {
+      const { pool } = this;
+      const slot: Slot = { idle: () => false, evict: async () => undefined };
+      const released = () => pool.release(slot);
+      try {
+        await pool.take(slot);
+        const server = await serve(handler);
+        void server.closed.then(released, released);
+        return server;
+      } catch (error) {
+        released();
+        throw error;
+      }
+    };
   }
 
   /** Opened with old settings, which only a new session runs on. */

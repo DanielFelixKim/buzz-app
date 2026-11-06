@@ -153,8 +153,10 @@ type Entry = {
   sessions: AgentSessions;
   /** The Buzz tools its sessions serve, forwarded ones' included. */
   tools: ToolServer;
-  /** Forwarded one-off turns' retirements, which retiring it waits for. */
-  retiring: Set<Promise<void>>;
+  /** Forwarded turns, each from before it starts until it has retired,
+   * which retiring the agent ends and waits for; one whose retirement failed
+   * stays. */
+  retiring: Set<Owned>;
   config: Config;
   /** The team sections of the latest run; a change reopens idle sessions. */
   team: string;
@@ -259,11 +261,13 @@ export class GooseRuntime {
         } catch (error) {
           failure = { error };
         }
-        try {
-          await Promise.all(entry?.retiring ?? []);
-        } catch (error) {
-          failure ??= { error };
-        }
+        // Each forwarded turn ends, retiring in order, within its own
+        // timeouts; one whose process has yet to exit, or whose generation
+        // native did not close, keeps the agent from retiring.
+        const owned = [...(entry?.retiring ?? [])];
+        await Promise.allSettled(owned.map((turn) => turn.ended));
+        const left = owned.find((turn) => entry?.retiring.has(turn));
+        if (left) failure ??= { error: left.failed ?? new Error(NOT_RETIRED) };
         try {
           await entry?.stopping;
           await entry?.worker?.shutdown();
@@ -569,12 +573,12 @@ export class GooseRuntime {
               prompt: async (fresh) => {
                 if (current && !current()) return undefined;
                 // A wake is rebuilt as it is sent, as a refresh would be.
-                if (!fresh && !wake) return text;
-                return this.review(
-                  entry,
-                  (await prompt(fresh, key)).text,
-                  notes,
-                );
+                if (!fresh && !wake) return { text, shown };
+                const rebuilt = await prompt(fresh, key);
+                return {
+                  text: this.review(entry, rebuilt.text, notes),
+                  shown: rebuilt.shown,
+                };
               },
               title: sessionTitle(entry.name, place, key.split("/")[1]),
               ...(!deferred && !wait ? { signal } : {}),
@@ -696,7 +700,11 @@ export class GooseRuntime {
     if (delivery.gateway) {
       const { current, synced } = delivery;
       const done = this.forward(entry, agent.key, key, delivery.gateway, {
-        prompt: async () => (current && !current() ? undefined : standalone()),
+        prompt: async () => {
+          if (current && !current()) return undefined;
+          const text = await standalone();
+          return text === undefined ? undefined : { text };
+        },
         title: sessionTitle(entry.name, key),
         signal,
         ...(synced?.effort ? { kept: synced.effort } : {}),
@@ -723,14 +731,21 @@ export class GooseRuntime {
     gateway: Gateway,
     turn: ForwardTurn,
   ): Promise<Settled> {
+    // The delivery's deadline ends only its wait for the conversation, as
+    // an ordinary delivery's does; a turn that has it runs on.
     return entry.sessions
-      .exclusive(key, (held) =>
-        this.forward(entry, agent, key, gateway, turn, held),
+      .exclusive(
+        key,
+        (held) => this.forward(entry, agent, key, gateway, turn, held),
+        undefined,
+        turn.signal,
       )
       .catch((error: unknown) =>
         message(error) === STOPPED
           ? { ok: true, undelivered: true }
-          : { ok: false, error: message(error) },
+          : message(error) === LATE
+            ? { ok: false, error: LATE, undelivered: true }
+            : { ok: false, error: message(error) },
       );
   }
 
@@ -755,7 +770,7 @@ export class GooseRuntime {
       agent.key,
       key,
       { route, turn },
-      { prompt: async () => "/compact", signal },
+      { prompt: async () => ({ text: "/compact" }), signal },
       held,
     );
     // goose ends the turn either way, and says which in its text.
@@ -811,7 +826,17 @@ export class GooseRuntime {
     const { desktop } = this;
     const workspace = () =>
       absolute(desktop.resolveDirectory, entry.config.workspace);
-    return forwardedTurn(
+    // The agent owns the turn from here until its process has exited and
+    // native has closed its generation: retiring the agent ends it and waits
+    // for that. One that could not be confirmed stays, failing every
+    // retirement after.
+    const owned: Owned = { ended: Promise.resolve() };
+    entry.retiring.add(owned);
+    // What the prompt sent was built to have shown, noted once goose takes
+    // it, as an ordinary message is.
+    let shown: number | undefined;
+    const { activity } = turn;
+    const done = forwardedTurn(
       {
         open: (signal) =>
           forwarding.open(
@@ -826,7 +851,8 @@ export class GooseRuntime {
           GooseProcess.start(desktop.spawn, {
             cwd: await workspace(),
             env,
-            serve: (handler) => this.serve(handler),
+            // Its Buzz tools' server counts in the pool sessions share.
+            serve: entry.sessions.pooled((handler) => this.serve(handler)),
             onProcess,
           }),
         launch: async () => ({
@@ -838,23 +864,52 @@ export class GooseRuntime {
         conversation: key,
         ...(turn.title ? { title: turn.title } : {}),
         ...(held?.saved ? { load: held.saved } : {}),
-        prompt: turn.prompt,
+        prompt: async (fresh) => {
+          const prompt = await turn.prompt(fresh);
+          shown = prompt?.shown;
+          return prompt?.text;
+        },
         ...(held ? { keep: (id: string) => held.keep(id, binding) } : {}),
-        outlives: held
-          ? held.outlives
-          : (retired) => {
-              entry.retiring.add(retired);
-              const done = () => entry.retiring.delete(retired);
-              void retired.then(done, done);
+        outlives: (retirement) => {
+          // Before the turn ends: by then, one whose process exited is
+          // confirmed retired or failed.
+          owned.retiring = true;
+          void retirement.then(
+            () => entry.retiring.delete(owned),
+            (error: unknown) => {
+              owned.failed = error;
             },
-        signal: held?.signal ?? turn.signal ?? entry.lifetime.signal,
-        ...(turn.activity ? { activity: turn.activity } : {}),
+          );
+          held?.outlives(retirement);
+        },
+        signal: AbortSignal.any([
+          held?.signal ?? turn.signal ?? entry.lifetime.signal,
+          entry.lifetime.signal,
+        ]),
+        activity: {
+          ...activity,
+          delivered: () => {
+            if (shown !== undefined) held?.shown(shown);
+            activity?.delivered?.();
+          },
+        },
         ...(turn.model ? { model: turn.model } : {}),
         ...(turn.effort ? { effort: turn.effort } : {}),
         ...(turn.kept ? { kept: turn.kept } : {}),
       },
       CHANGED,
     );
+    owned.ended = done;
+    // Ended with nothing left running: nothing more to wait for.
+    void done.then(
+      () => {
+        if (!owned.retiring) entry.retiring.delete(owned);
+      },
+      (error: unknown) => {
+        owned.failed = error;
+      },
+    );
+    return done;
   }
 
   /** `text` with the notes plugins left for the turn and the Buzz tools'
@@ -1195,7 +1250,10 @@ export class GooseRuntime {
 type Gateway = Readonly<{ route: EligibleRoute; turn: TurnContext }>;
 /** What a forwarded turn runs, past what the gateway and its hold give it. */
 type ForwardTurn = Readonly<{
-  prompt(fresh: boolean): Promise<string | undefined>;
+  /** The turn's text, and the created_at of the newest event it shows. */
+  prompt(
+    fresh: boolean,
+  ): Promise<Readonly<{ text: string; shown?: number }> | undefined>;
   title?: string;
   /** The delivery's or control's: it ends the turn's open, and a one-off
    * turn whole. */
@@ -1215,6 +1273,17 @@ const NOT_COMPACTED =
   "Couldn't compact: this conversation's session ran through the agent gateway, which this agent's turns don't use now.";
 /** goose's error for held work it never ran. */
 const STOPPED = "goose was stopped";
+const LATE = "goose did not start in time";
+const NOT_RETIRED =
+  "goose didn't stop after a forwarded turn; the agent retires once it has.";
+/** A forwarded turn the agent owns, until its retirement is confirmed. */
+type Owned = {
+  /** Settles once the turn has, retiring as far as it could. */
+  ended: Promise<unknown>;
+  /** Told its retirement, which it then leaves with. */
+  retiring?: boolean;
+  failed?: unknown;
+};
 /** No binding, read as one: `bindSession` refuses it as malformed. */
 const MALFORMED = Object.freeze({});
 

@@ -1475,3 +1475,75 @@ it.each(["startup", "provider"] as const)(
     sessions.dispose();
   },
 );
+
+describe("AgentSessions held work", () => {
+  it("stops waiting its turn at its deadline, but never ends work it started", async () => {
+    const { sessions } = setup();
+    let release!: () => void;
+    const holding = sessions.exclusive(
+      "a",
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    await flush(10);
+    const deadline = new AbortController();
+    const ran = vi.fn(async () => undefined);
+    const waiting = sessions.exclusive("a", ran, undefined, deadline.signal);
+    await flush(10);
+    deadline.abort();
+    await expect(waiting).rejects.toThrow("goose did not start in time");
+    expect(ran).not.toHaveBeenCalled();
+    release();
+    await holding;
+    // Past its deadline once it holds the conversation: it runs on.
+    const late = new AbortController();
+    let finish!: () => void;
+    const running = sessions.exclusive(
+      "a",
+      async ({ signal }) => {
+        late.abort();
+        await new Promise<void>((resolve) => (finish = resolve));
+        return signal.aborted;
+      },
+      undefined,
+      late.signal,
+    );
+    await flush(10);
+    finish();
+    await expect(running).resolves.toBe(false);
+  });
+
+  it("notes what held work's session was shown only while it holds the conversation", async () => {
+    const { sessions } = setup();
+    let note!: (seen: number) => void;
+    await sessions.exclusive("a", async ({ shown }) => {
+      note = shown;
+      shown(5);
+      shown(3);
+    });
+    expect(sessions.seen("a")).toBe(5);
+    note(9);
+    expect(sessions.seen("a")).toBe(5);
+  });
+
+  it("holds a busy pooled server for a session outside its own, closing an idle one to make room", async () => {
+    const pool = new ServerPool(1);
+    const { fake, sessions } = setup({}, false, { pool });
+    await sessions.deliver("a", "one", 1);
+    const handler = async () => undefined;
+    const server = await sessions.pooled(fake.serve)(handler as never);
+    expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(pool.size).toBe(1);
+    // Busy until closed: the next session goes over rather than close it.
+    expect(pool.evict()).toBeUndefined();
+    await server.close();
+    await flush(10);
+    expect(pool.size).toBe(0);
+    // One that fails to start holds nothing.
+    await expect(
+      sessions.pooled(async () => {
+        throw new Error("Too many MCP servers are running");
+      })(handler as never),
+    ).rejects.toThrow("Too many");
+    expect(pool.size).toBe(0);
+  });
+});
