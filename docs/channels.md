@@ -1391,7 +1391,8 @@ It shows only while all four of these hold:
    profile set up just before the app opened, do not count. The answer is kept
    per device under `welcome-earlier-activity`, scoped by origin and viewer, so
    another identity on the same device asks for itself. The session reader and
-   the browser broker admit no other filter without kinds or IDs.
+   the browser broker admit this one filter without kinds or IDs, and only
+   about the viewer.
 4. The card has not been dismissed on this device: `welcome-dismissed:<channel
    id>`, scoped by origin alone. A new title or message from an admin never
    brings it back. A welcome moved to another channel is a new welcome: it can
@@ -1410,7 +1411,10 @@ channel that becomes the welcome channel, such as `#general`, sees the card
 once per device after the upgrade. Leaving or removing the community forgets T
 and the dismissals with the rest of its device state (see
 [Communities](communities.md)), so a rejoin starts over, with the read still
-classing a member with older events as existing.
+classing a member with older events as existing. Since T and the dismissals
+are shared by the identities on the device, one identity leaving clears them
+for all of them, and another identity that had dismissed the card may see it
+once more.
 
 A cached roster can display previously downloaded, reverified history for up to
 24 hours. It cannot authorize head/history reads, unread evidence, typing or
