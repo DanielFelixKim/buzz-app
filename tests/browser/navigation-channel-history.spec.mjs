@@ -221,13 +221,11 @@ test("Back between two links in one channel returns to the reader's place; the s
       .nth(index);
   await follow(page, link(0));
   await expectRevealed(page, first.id);
-  // Enter on the link is reading input in #Alpha's own timeline, so the
-  // reveal's scroll asks for the one older page beyond its 20-row head. Answer
-  // it, so no held read can time out under a later opening.
-  await expect.poll(() => app.pending.length).toBe(1);
-  app.pending.shift().release();
+  // Revealing a loaded target positions the reader without asking for older
+  // history. A later upward reading gesture owns that demand.
   await expectVerifiedAlpha(page, app);
   await settle(page);
+  expect(app.pending).toHaveLength(0);
   await end(page);
   await follow(page, link(1));
   await expectRevealed(page, second.id);
