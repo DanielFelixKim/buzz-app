@@ -93,7 +93,6 @@ pub(crate) struct Fixture {
     pub(crate) agent: AppAgent,
     pub(crate) key: Secret,
 }
-/// An owner signed in as `a@example.com` at `base`, and one agent.
 /// Tokens over `identity`, whose fixture community advertises NIP-FI.
 pub(crate) fn requiring(identity: FederatedIdentity, grants: Arc<MemoryGrants>) -> AgentTokens {
     let advertised = identity
@@ -107,6 +106,7 @@ pub(crate) fn requiring(identity: FederatedIdentity, grants: Arc<MemoryGrants>) 
     }
     AgentTokens::with_store(identity, grants)
 }
+/// An owner signed in as `a@example.com` at `base`, and one agent.
 pub(crate) fn fixture(base: String) -> Fixture {
     fixture_at(base, "relay.example")
 }
@@ -128,6 +128,7 @@ pub(crate) fn fixture_at(base: String, community: &str) -> Fixture {
         state.session = Some(session);
         state.account = Some(Some("a@example.com".into()));
     }
+    identity.discovered(&format!("wss://{community}"), true);
     let grants = Arc::new(MemoryGrants::default());
     let key = Secret::generate().unwrap();
     let agent = AppAgent {

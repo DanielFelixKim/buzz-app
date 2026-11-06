@@ -905,6 +905,7 @@ mod tests {
             dir.path().join("identities.json"),
             &agent,
             key,
+            crate::federated_identity::agent::AgentTokens::unconfigured(),
         );
         let host = IdentityHost::fixture();
         let call = Call {
