@@ -1,3 +1,5 @@
+@reference "../../shared/styles/globals.css";
+
 /* Floats over the end of the history, as a channel's join notice does; the
    page extends the history's end so its last messages scroll clear. */
 .pinned {
