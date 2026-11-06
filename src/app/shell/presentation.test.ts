@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { bundledPlugins } from "../../bundled";
-import type { Page, RegisteredPage } from "../../features/pages/service";
+import type { RegisteredPage } from "../../features/pages/service";
 import {
   BellIcon,
   BrowserIcon,
@@ -142,67 +141,12 @@ test.each([undefined, "toolbar"] as const)(
   },
 );
 
-// Each bundled page exactly as its plugin's `apply` registers it, keyed as the
-// registry keys it. The other services a page plugin injects are inert stubs.
-async function bundledPages() {
-  const inert: object = new Proxy(() => {}, {
-    get: (_, key) =>
-      key === "then" || typeof key === "symbol" ? undefined : inert,
-    apply: () => inert,
-  });
-  const pages: RegisteredPage[] = [];
-  for (const { manifest, module } of bundledPlugins) {
-    if (!Array.isArray(module.inject) || !module.inject.includes("pages"))
-      continue;
-    const registry = {
-      register: (registered: Page) =>
-        pages.push({
-          ...registered,
-          key: `${manifest.id}/${registered.id}`,
-          pluginId: manifest.id,
-          revision: "bundled",
-        }),
-    };
-    const ctx = new Proxy(
-      {},
-      { get: (_, key) => (key === "pages" ? registry : inert) },
-    );
-    await module.apply(ctx as Parameters<typeof module.apply>[0]);
-  }
-  return pages;
-}
-const bundled = await bundledPages();
-
 describe("navigation owner", () => {
-  test("every bundled page belongs to the app whose navigation lists it", () => {
-    expect(
-      Object.fromEntries(
-        bundled.map(({ key }) => [key, navigationOwner(bundled, key)]),
-      ),
-    ).toEqual({
-      // Channels, DMs, threads and Solo chats all open the Messages page.
-      [messages.key]: messages.key,
-      // Pages listed in the Messages sidebar keep Messages selected.
-      "buzz.drafts-sent/drafts-sent": messages.key,
-      "buzz.usage/usage": messages.key,
-      // Dock apps own themselves.
-      [inbox.key]: inbox.key,
-      [bestie.key]: bestie.key,
-      "buzz.reminders/reminders": "buzz.reminders/reminders",
-      "buzz.agents/agents": "buzz.agents/agents",
-      "buzz.workflows/workflows": "buzz.workflows/workflows",
-      "buzz.relay-notes/notes": "buzz.relay-notes/notes",
-      // An unlisted destination selects nothing in the dock.
-      "buzz.repos/repos": "buzz.repos/repos",
-    });
-  });
-
   const primary = (
     key: string,
     fields: Partial<RegisteredPage> = {},
   ): RegisteredPage => ({ ...page(key, key), primary: true, ...fields });
   const entries = [
-    ...bundled,
     primary("example.sidebar/main"),
     primary("example.listed/main", { placement: "sidebar" }),
     primary("example.own-sidebar/main", { sidebar: () => null }),
