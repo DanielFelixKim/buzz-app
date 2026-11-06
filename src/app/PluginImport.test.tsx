@@ -3257,3 +3257,12 @@ it.each([false, true])(
     expect(manager.installImport).not.toHaveBeenCalled();
   },
 );
+
+it("lets the owner check a changed saved folder explicitly", async () => {
+  const checkFolder = vi.fn(async () => "new");
+  render(<PluginImport {...savedFolderProps({ checkFolder })} />);
+  expect(checkFolder).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+  expect(await screen.findByRole("button", { name: "Update" })).toBeVisible();
+  expect(checkFolder).toHaveBeenCalledExactlyOnceWith(rememberedManifest.id);
+});

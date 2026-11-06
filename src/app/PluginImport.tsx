@@ -24,7 +24,7 @@ import {
   pluginAccessIncreases,
 } from "./PluginAccessReview";
 import {
-  createPluginUpdateChecks,
+  sharedPluginUpdateChecks,
   pluginUpdateCheck,
   type PluginUpdateChecks,
 } from "../plugins/update-checks";
@@ -142,7 +142,7 @@ export function PluginImport({
   );
   const savedSource = updateAction?.source ?? currentPlugin?.updateSource;
   const checks = useMemo(
-    () => updateChecks ?? createPluginUpdateChecks(imports),
+    () => updateChecks ?? sharedPluginUpdateChecks(imports),
     [updateChecks, imports],
   );
   const checkSnapshot = useSyncExternalStore(checks.subscribe, checks.snapshot);
@@ -622,15 +622,16 @@ export function PluginImport({
       void load(() => imports.previewFolder(updateId));
       return;
     }
-    checkSavedGit(false);
+    checkSavedSource(false);
   }
-  function checkSavedGit(checkOnly = true) {
+  function checkSavedSource(checkOnly = true) {
     const source = savedSource;
-    if (!imports || !source || !("repository" in source)) return;
+    if (!imports || !source) return;
     if (checkOnly) {
       if (currentPlugin) void checks.check(currentPlugin, authorizeGit);
       return;
     }
+    if (!("repository" in source)) return;
     const acquire = async () => {
       if (lifetime.current.token) {
         await imports.discard(lifetime.current.token);
@@ -811,13 +812,13 @@ export function PluginImport({
   const updateActions = (
     <>
       {!savedSource && !preview && !updateAvailable && addButton}
-      {savedSource && "repository" in savedSource && (
+      {savedSource && (
         <Button
           ref={checkAgain}
           variant="subtle"
           size="sm"
           disabled={blocked || checking}
-          onClick={() => checkSavedGit()}
+          onClick={() => checkSavedSource()}
         >
           Check for updates
         </Button>

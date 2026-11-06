@@ -404,10 +404,140 @@ it("checks saved folders under the background owner and retains their list resul
   const checks = sharedPluginUpdateChecks(f.manager.imports);
   await updates.check();
   expect(checkFolder).toHaveBeenCalledExactlyOnceWith(f.plugin.manifest.id);
-  expect(pluginUpdateAvailable(checks.snapshot(), f.plugin)).toBe(true);
+  await vi.waitFor(() =>
+    expect(pluginUpdateAvailable(checks.snapshot(), f.plugin)).toBe(true),
+  );
   expect(f.checkGit).not.toHaveBeenCalled();
   expect(f.imports.git).not.toHaveBeenCalled();
   await updates.check();
   expect(checkFolder).toHaveBeenCalledOnce();
   updates.dispose();
+});
+
+it("keeps newer explicit results when a sibling consumes an older repository snapshot", async () => {
+  const f = fixture();
+  const state = f.get();
+  if (state.status !== "ready") throw new Error("fixture catalog missing");
+  const slow = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "slow" },
+    updateSource: {
+      repository: "https://example.com/slow",
+      reference: "main",
+      path: ".",
+    },
+  };
+  const sibling = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "sibling" },
+  };
+  f.preview.candidates.push({ ...f.candidate, manifest: sibling.manifest });
+  f.set({
+    ...state,
+    catalog: { ...state.catalog, plugins: [f.plugin, slow, sibling] },
+  });
+  let release!: (preview: ImportPreview) => void;
+  f.checkGit.mockImplementation(async (repository?: string) =>
+    repository === "https://example.com/slow"
+      ? new Promise<ImportPreview>((resolve) => {
+          release = resolve;
+        })
+      : f.preview,
+  );
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  const pending = updates.check();
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const checks = sharedPluginUpdateChecks(f.manager.imports);
+  checks.observe(sibling)("newer");
+  release(f.preview);
+  await pending;
+  expect(checks.snapshot()[sibling.manifest.id]?.revision).toBe("newer");
+  updates.dispose();
+});
+
+it("does not reacquire unrelated Git sources when a saved-folder revision changes", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(0);
+  const f = fixture();
+  const state = f.get();
+  if (state.status !== "ready") throw new Error("fixture catalog missing");
+  const folder = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "folder" },
+    updateSource: { root: "/plugins", path: "." },
+  };
+  Object.assign(f.imports, { checkFolder: vi.fn(async () => "folder-new") });
+  f.set({
+    ...state,
+    catalog: { ...state.catalog, plugins: [folder, f.plugin] },
+  });
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  await updates.check();
+  vi.setSystemTime(1_000);
+  folder.revision = "folder-new";
+  f.set(f.get());
+  expect(await updates.check()).toBe(3_599_000);
+  expect(f.checkGit).toHaveBeenCalledOnce();
+  updates.dispose();
+});
+
+it("retires an error notice when a successful explicit check supersedes background recovery", async () => {
+  const f = fixture();
+  f.checkGit.mockRejectedValueOnce(new Error("offline"));
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  await updates.check();
+  expect(updates.snapshot()[0]?.error).toContain("offline");
+  let release!: (preview: ImportPreview) => void;
+  f.checkGit.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const pending = updates.check(true);
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  sharedPluginUpdateChecks(f.manager.imports).observe(f.plugin)(
+    f.plugin.revision,
+  );
+  expect(updates.snapshot()).toEqual([]);
+  release(f.preview);
+  await pending;
+  expect(updates.snapshot()).toEqual([]);
+  updates.dispose();
+});
+
+it("keeps Git discovery and later rounds independent of a stalled folder probe", async () => {
+  const f = fixture();
+  const state = f.get();
+  if (state.status !== "ready") throw new Error("fixture catalog missing");
+  const folder = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "folder" },
+    updateSource: { root: "/plugins", path: "." },
+  };
+  let release!: (revision: string) => void;
+  Object.assign(f.imports, {
+    checkFolder: vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    ),
+  });
+  f.set({
+    ...state,
+    catalog: { ...state.catalog, plugins: [folder, f.plugin] },
+  });
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  const pending = updates.check();
+  try {
+    await vi.waitFor(() => expect(f.checkGit).toHaveBeenCalledOnce());
+    await pending;
+    await updates.check(true);
+    expect(f.checkGit).toHaveBeenCalledTimes(2);
+  } finally {
+    release("new");
+    await pending;
+    updates.dispose();
+  }
 });

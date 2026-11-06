@@ -1,5 +1,9 @@
 import { managedBy } from "./managed";
-import { sharedPluginUpdateChecks } from "./update-checks";
+import {
+  sharedPluginUpdateChecks,
+  pluginUpdateCheck,
+  type PluginUpdateChecks,
+} from "./update-checks";
 import type { PluginManager } from "./manager";
 import type { ImportPreview, PluginInfo } from "./types";
 
@@ -65,10 +69,14 @@ export function createPluginUpdates(
   let closed = false;
   let pending: Promise<number | undefined> | undefined;
   let retry = false;
+  let forceNext = false;
+  const checked = new Map<string, { identity: string; at: number }>();
   let lastCheck: number | undefined;
   let lastSources = "";
   const dismissed = new Set<string>();
   const listeners = new Set<() => void>();
+  let observedChecks: PluginUpdateChecks | undefined;
+  let unsubscribeChecks = () => {};
   const key = (update: PluginUpdate) =>
     `${update.id}:${updateSourceKey(update.source)}:${update.candidate?.revision ?? update.error}`;
   const publish = (next: readonly PluginUpdate[]) => {
@@ -93,7 +101,20 @@ export function createPluginUpdates(
     );
   }
   const prune = () => {
-    const next = updates.filter(current);
+    const next = updates.filter((update) => {
+      if (!current(update)) return false;
+      const result = pluginUpdateCheck(
+        observedChecks?.snapshot() ?? {},
+        installed(update.id),
+      );
+      return (
+        !result ||
+        result.checking ||
+        (update.error
+          ? result.error === update.error
+          : !result.error && result.revision === update.candidate?.revision)
+      );
+    });
     if (next.length !== updates.length) publish(next);
   };
   const unsubscribe = plugins.subscribe(prune);
@@ -126,6 +147,27 @@ export function createPluginUpdates(
       return;
     lastCheck = now;
     lastSources = sources;
+    const checks = sharedPluginUpdateChecks(plugins.imports);
+    if (observedChecks !== checks) {
+      unsubscribeChecks();
+      observedChecks = checks;
+      unsubscribeChecks = checks.subscribe(prune);
+    }
+    // Reserve generations before acquiring a batch: siblings may reuse the
+    // same repository snapshot after a newer explicit check has completed.
+    const observations = new Map(
+      configuration.catalog.plugins.map((plugin) => [
+        plugin.manifest.id,
+        checks.observe(plugin),
+      ]),
+    );
+    for (const id of checked.keys())
+      if (
+        !configuration.catalog.plugins.some(
+          (plugin) => plugin.manifest.id === id,
+        )
+      )
+        checked.delete(id);
     const repositories = new Map<string, Promise<ImportPreview | null>>();
     const discover = (source: GitUpdateSource) => {
       const key = JSON.stringify([source.repository, source.reference]);
@@ -162,13 +204,29 @@ export function createPluginUpdates(
       if (closed) return;
       const id = plugin.manifest.id;
       const source = pluginUpdateSource(plugins, id);
-      const checks = sharedPluginUpdateChecks(plugins.imports);
+      const folder =
+        plugin.source === "external" &&
+        plugin.updateSource &&
+        "root" in plugin.updateSource &&
+        !managedBy(configuration.managed, id);
+      if (!source && !folder) {
+        checked.delete(id);
+        continue;
+      }
+      const identity = JSON.stringify([
+        plugin.revision,
+        source ?? plugin.updateSource,
+      ]);
+      const previous = checked.get(id);
+      if (
+        !force &&
+        previous?.identity === identity &&
+        now - previous.at < 3_600_000
+      )
+        continue;
+      checked.set(id, { identity, at: now });
       if (!source) {
-        if (
-          plugin.updateSource &&
-          "root" in plugin.updateSource &&
-          !managedBy(configuration.managed, id)
-        ) {
+        if (folder) {
           const eligible = () => {
             const live = installed(id);
             return (
@@ -178,11 +236,11 @@ export function createPluginUpdates(
                 JSON.stringify(plugin.updateSource)
             );
           };
-          await checks.check(plugin, authorizeGit, true, eligible);
+          void checks.check(plugin, authorizeGit, true, eligible);
         }
         continue;
       }
-      const observe = checks.observe(plugin);
+      const observe = observations.get(id);
       const update: PluginUpdate = {
         id,
         source,
@@ -211,18 +269,23 @@ export function createPluginUpdates(
         update.error =
           reason instanceof Error ? reason.message : String(reason);
       }
+      if (!current(update)) continue;
       if (
-        current(update) &&
-        observe(
+        !observe?.(
           update.candidate?.revision ?? plugin.revision,
           update.error ?? null,
         )
-      )
-        publish([
-          ...updates.filter((item) => item.id !== id),
-          ...(update.candidate || update.error ? [update] : []),
-        ]);
+      ) {
+        // A newer explicit result owns both the row and its retained notice.
+        prune();
+        continue;
+      }
+      publish([
+        ...updates.filter((item) => item.id !== id),
+        ...(update.candidate || update.error ? [update] : []),
+      ]);
     }
+    lastCheck = Math.min(now, ...[...checked.values()].map((item) => item.at));
   }
   return {
     snapshot: () => updates,
@@ -238,11 +301,13 @@ export function createPluginUpdates(
       publish([...updates]);
     },
     check(force = false): Promise<number | undefined> {
-      retry ||= force || (!!pending && sourceIdentity() !== lastSources);
+      retry ||= !!pending && (force || sourceIdentity() !== lastSources);
+      forceNext ||= force;
       pending ??= (async () => {
         do {
-          const forced = retry;
+          const forced = forceNext;
           retry = false;
+          forceNext = false;
           await run(forced);
         } while (retry && !closed);
         if (
@@ -260,6 +325,7 @@ export function createPluginUpdates(
     dispose() {
       closed = true;
       unsubscribe();
+      unsubscribeChecks();
       listeners.clear();
     },
   };
