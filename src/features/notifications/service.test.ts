@@ -353,6 +353,27 @@ it("plays the selected per-category sound once delivery is accepted", async () =
   await flush();
   expect(t.plays).toEqual(["ping", "flutter"]);
 });
+it("a plugin sound that is not installed plays the default and keeps the choice", async () => {
+  const t = setup();
+  t.service.updatePreferences({
+    sounds: {
+      mention: "example.sound-pack/chime",
+      direct: "unison",
+      thread: "doop",
+      agent: "silent",
+    },
+  });
+  await t.submit("one");
+  await flush();
+  expect(t.plays).toEqual(["flutter"]);
+  expect(t.service.snapshot().preferences.sounds.mention).toBe(
+    "example.sound-pack/chime",
+  );
+  // Solo chat completions share the same resolution.
+  t.service.playCategorySound("agent");
+  t.service.playCategorySound("thread");
+  expect(t.plays).toEqual(["flutter", "doop"]);
+});
 it("sound off delivers silently and a failed submission never plays", async () => {
   const t = setup();
   t.service.updatePreferences({ sound: false });

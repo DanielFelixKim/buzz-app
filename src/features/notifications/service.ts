@@ -13,7 +13,7 @@ import {
   type NotificationPermissionState,
 } from "./platform";
 import { afterPresentation } from "./presentation";
-import { resolveCategorySound, type SoundRef } from "./sound";
+import { DEFAULT_SOUND, resolveCategorySound, type SoundRef } from "./sound";
 import { createSoundRegistry } from "./sounds";
 import { pluginNotificationText, type NotificationText } from "./content";
 
@@ -262,6 +262,13 @@ export class NotificationsService extends Service implements Notifications {
       resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
     );
   }
+  /** Plays the category's saved sound, or the default while its plugin pack is
+   * unavailable; the saved choice is kept so re-enabling the pack restores it. */
+  playCategorySound(category: string) {
+    const ref = resolveCategorySound(this.state.preferences.sounds, category);
+    if (ref === "silent") return;
+    this.playSound(this.soundRegistry.isAvailable(ref) ? ref : DEFAULT_SOUND);
+  }
   /** Whether every registered gate lets this target alert. */
   gated(target: OpenTarget) {
     return this.gates.snapshot().every((gate) => {
@@ -502,9 +509,7 @@ export class NotificationsService extends Service implements Notifications {
         this.allowed(item) &&
         item.eligible() === true
       )
-        this.playSound(
-          resolveCategorySound(this.state.preferences.sounds, item.category),
-        );
+        this.playCategorySound(item.category);
     } catch (error) {
       this.pending.delete(item);
       this.reportError(error);
