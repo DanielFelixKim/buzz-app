@@ -2754,14 +2754,14 @@ it("does not answer a name search from the listing read for an empty query", asy
   );
   // The listing is a prefix of every query but is not a name search: a
   // member who joins or renames after it must still be found by name.
-  view.rerender(complete("mi"));
+  view.rerender(complete("mir"));
   expect(last()?.status).toBe("Searching community…");
   await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(people).toHaveBeenCalledTimes(2);
-  expect(people).toHaveBeenLastCalledWith("mi", 1, expect.any(AbortSignal));
+  expect(people).toHaveBeenLastCalledWith("mir", 1, expect.any(AbortSignal));
   expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]);
   // The finished name search still answers the queries extending it.
-  view.rerender(complete("mir"));
+  view.rerender(complete("mira"));
   expect(last()?.status).toBeUndefined();
   expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]);
   await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
@@ -2826,15 +2826,15 @@ it("scopes a retry to its query: later queries derive from a cached prefix page 
   await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(people).toHaveBeenCalledTimes(2);
   expect(last()?.status).toBe(failed);
-  // Other consumers of the session settle complete `lu` and `mira` pages and
+  // Other consumers of the session settle complete `luc` and `mira` pages and
   // then an empty `zed` search meanwhile (a read clears the refuted prefix,
   // so the empty search comes last).
   const signal = new AbortController().signal;
-  await fetchMentionDirectoryPage(session, "lu", signal);
+  await fetchMentionDirectoryPage(session, "luc", signal);
   await fetchMentionDirectoryPage(session, "mira", signal);
   await fetchMentionDirectoryPage(session, "zed", signal);
   expect(people).toHaveBeenCalledTimes(5);
-  // The retry was `mira e`'s. `lucy` is answered from the `lu` page on the
+  // The retry was `mira e`'s. `lucy` is answered from the `luc` page on the
   // keystroke, and `zedd` is refuted by the empty `zed` search; neither reads.
   view.rerender(complete("lucy"));
   expect(last()?.status).toBeUndefined();
