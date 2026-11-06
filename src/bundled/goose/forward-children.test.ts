@@ -106,3 +106,64 @@ it("surfaces a registration that throws instead of returning a promise", () => {
   expect(() => observe(completed("call-1"), true)).not.toThrow();
   expect(failed).toHaveBeenCalledExactlyOnceWith("Error: ipc unavailable");
 });
+
+describe("a failure reporter that throws", () => {
+  const throwing = () =>
+    vi.fn((_reason: string) => {
+      throw new Error("turn already ended");
+    });
+
+  it("is called once on a synchronous failure, and stops registration", () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const failed = throwing();
+      const register = vi.fn((_call: string, _child: string) => {
+        throw new Error("ipc unavailable");
+      });
+      const observe = forwardChildren({ register, failed });
+      observe(announced("call-1"), true);
+      expect(() => observe(completed("call-1"), true)).not.toThrow();
+      observe(announced("call-2"), true);
+      observe(completed("call-2"), true);
+      expect(failed).toHaveBeenCalledExactlyOnceWith("Error: ipc unavailable");
+      expect(register).toHaveBeenCalledOnce();
+      expect(logged).toHaveBeenCalledOnce();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it.each([
+    [
+      "a refusal",
+      async () => ({ type: "refused", reason: "child_cap" }) as const,
+      "child_cap",
+    ],
+    ["a rejection", () => Promise.reject("not associated"), "not associated"],
+  ] as const)(
+    "is called once on %s, leaving no promise unhandled",
+    async (_, outcome, reason) => {
+      const unhandled = vi.fn();
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      process.on("unhandledRejection", unhandled);
+      try {
+        const failed = throwing();
+        const register = vi.fn((_call: string, _child: string) => outcome());
+        const observe = forwardChildren({ register, failed });
+        observe(announced("call-1"), true);
+        observe(completed("call-1"), true);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        observe(announced("call-2"), true);
+        observe(completed("call-2"), true);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(failed).toHaveBeenCalledExactlyOnceWith(reason);
+        expect(register).toHaveBeenCalledOnce();
+        expect(logged).toHaveBeenCalledOnce();
+        expect(unhandled).not.toHaveBeenCalled();
+      } finally {
+        process.off("unhandledRejection", unhandled);
+        logged.mockRestore();
+      }
+    },
+  );
+});

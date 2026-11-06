@@ -1455,6 +1455,14 @@ async fn parked(forward: &HostForward, count: usize) {
 fn send(request: reqwest::RequestBuilder) -> tokio::task::JoinHandle<reqwest::Response> {
     tokio::spawn(async move { request.send().await.unwrap() })
 }
+/// A parked request's response, bounded well inside `patient`'s deadline so
+/// a lost wake fails the test in seconds instead of holding it for an hour.
+async fn answered(response: tokio::task::JoinHandle<reqwest::Response>) -> reqwest::Response {
+    tokio::time::timeout(Duration::from_secs(5), response)
+        .await
+        .expect("answered in time")
+        .unwrap()
+}
 
 #[tokio::test]
 async fn a_registered_child_is_admitted_under_its_own_session() {
@@ -1492,7 +1500,7 @@ async fn a_request_first_child_waits_dispatching_nothing_until_registered() {
         register(&forward, generation.id, "call-1", CHILD),
         Registered::Registered
     );
-    assert_eq!(early.await.unwrap().status(), StatusCode::OK);
+    assert_eq!(answered(early).await.status(), StatusCode::OK);
     assert_eq!(
         recv(&mut gateway.seen).await.headers["agent-session-id"],
         CHILD
@@ -1510,7 +1518,7 @@ async fn an_unregistered_child_is_refused_at_the_deadline() {
     // Only the outcome is asserted, never the brief parked state; the
     // request-first test proves parking.
     let started = std::time::Instant::now();
-    let response = invoke(&generation.url, CHILD).send().await.unwrap();
+    let response = answered(send(invoke(&generation.url, CHILD))).await;
     assert!(started.elapsed() >= forward.rendezvous);
     assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
     assert!(response
@@ -1527,10 +1535,8 @@ async fn an_unregistered_child_is_refused_at_the_deadline() {
     // A registration after expiry still admits a retry; expiry never did.
     register(&forward, generation.id, "call-1", CHILD);
     assert_eq!(
-        invoke(&generation.url, CHILD)
-            .send()
+        answered(send(invoke(&generation.url, CHILD)))
             .await
-            .unwrap()
             .status(),
         StatusCode::OK
     );
@@ -1545,7 +1551,7 @@ async fn parked_requests_are_capped_and_free_only_their_own_slot() {
         .map(|n| send(invoke(&generation.url, &format!("child-{n}"))))
         .collect();
     parked(&forward, PENDING_CAP).await;
-    let full = invoke(&generation.url, "child-x").send().await.unwrap();
+    let full = answered(send(invoke(&generation.url, "child-x"))).await;
     assert_eq!(full.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
         recv(&mut generation.events).await,
@@ -1560,9 +1566,9 @@ async fn parked_requests_are_capped_and_free_only_their_own_slot() {
     parked(&forward, PENDING_CAP).await;
     // Both requests for child-1 are woken by one registration.
     register(&forward, generation.id, "call-1", "child-1");
-    assert_eq!(again.await.unwrap().status(), StatusCode::OK);
+    assert_eq!(answered(again).await.status(), StatusCode::OK);
     assert_eq!(
-        waiting.next().unwrap().await.unwrap().status(),
+        answered(waiting.next().unwrap()).await.status(),
         StatusCode::OK
     );
     assert_eq!(pending(&forward), PENDING_CAP - 2);
@@ -1583,7 +1589,7 @@ async fn a_cancelled_request_leaves_its_same_child_sibling_parked() {
         register(&forward, generation.id, "call-1", CHILD),
         Registered::Registered
     );
-    assert_eq!(survivor.await.unwrap().status(), StatusCode::OK);
+    assert_eq!(answered(survivor).await.status(), StatusCode::OK);
     assert_eq!(
         recv(&mut gateway.seen).await.headers["agent-session-id"],
         CHILD
@@ -1600,16 +1606,14 @@ async fn seal_revocation_and_close_release_every_parked_request() {
     let early = send(invoke(&generation.url, CHILD));
     parked(&forward, 1).await;
     forward.seal(PLUGIN, generation.id).unwrap();
-    assert_eq!(early.await.unwrap().status(), StatusCode::GONE);
+    assert_eq!(answered(early).await.status(), StatusCode::GONE);
     assert_eq!(
         register(&forward, generation.id, "call-1", CHILD),
         refused("generation_ended")
     );
     assert_eq!(
-        invoke(&generation.url, CHILD)
-            .send()
+        answered(send(invoke(&generation.url, CHILD)))
             .await
-            .unwrap()
             .status(),
         StatusCode::GONE
     );
@@ -1620,7 +1624,7 @@ async fn seal_revocation_and_close_release_every_parked_request() {
     forward
         .push(forward.page(), PLUGIN, "route-a", 2, true)
         .unwrap();
-    let response = early.await.unwrap();
+    let response = answered(early).await;
     assert_eq!(response.status(), StatusCode::GONE);
     assert!(response
         .text()
@@ -1637,7 +1641,7 @@ async fn seal_revocation_and_close_release_every_parked_request() {
     let early = send(invoke(&closed.url, CHILD));
     parked(&forward, 1).await;
     forward.close(PLUGIN, closed.id).unwrap();
-    assert_eq!(early.await.unwrap().status(), StatusCode::GONE);
+    assert_eq!(answered(early).await.status(), StatusCode::GONE);
     assert_eq!(
         register(&forward, closed.id, "call-1", CHILD),
         refused("generation_ended")

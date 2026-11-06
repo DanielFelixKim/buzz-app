@@ -18,9 +18,24 @@ export type ForwardChildren = Readonly<{
  * `lease.rs`), and replayed or out-of-prompt updates are ignored. */
 export function forwardChildren({ register, failed }: ForwardChildren) {
   const delegates = new Set<string>();
-  let revoked = false;
+  let stopped = false;
+  // The turn's failure signal, called once per failure and never again from
+  // its own error. A reporter that throws stops registration too, so every
+  // later child's inference is refused (`child_unregistered`) instead of
+  // running unseen.
+  const report = (reason: string) => {
+    try {
+      failed(reason);
+    } catch (error) {
+      stopped = true;
+      console.error("A goose child registration failure went unreported", {
+        reason,
+        error,
+      });
+    }
+  };
   return (update: Record<string, unknown>, prompting: boolean) => {
-    if (!prompting || revoked) return;
+    if (!prompting || stopped) return;
     const call = update.toolCallId;
     if (typeof call !== "string") return;
     if (update.sessionUpdate === "tool_call") {
@@ -38,17 +53,20 @@ export function forwardChildren({ register, failed }: ForwardChildren) {
       return;
     // Nothing escapes the update: a throw, rejection or bad result fails
     // the turn visibly instead.
-    const fail = (error: unknown) => failed(String(error));
+    let registering: Promise<ForwardChildRegistered>;
     try {
-      register(call, child)
-        .then((registered) => {
-          if (registered.type === "registered") return;
-          if (registered.reason === "generation_revoked") revoked = true;
-          failed(registered.reason);
-        })
-        .catch(fail);
+      registering = register(call, child);
     } catch (error) {
-      fail(error);
+      report(String(error));
+      return;
     }
+    registering.then(
+      (registered) => {
+        if (registered.type === "registered") return;
+        if (registered.reason === "generation_revoked") stopped = true;
+        report(registered.reason);
+      },
+      (error) => report(String(error)),
+    );
   };
 }
