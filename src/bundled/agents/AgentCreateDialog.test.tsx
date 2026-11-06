@@ -603,6 +603,39 @@ it("pans and zooms an uploaded image, then saves the framed crop", async () => {
   );
 });
 
+it("cancels a framed save when the dialog closes while the image decodes", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/original.png",
+  );
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["image"], "image.png", { type: "image/png" })],
+    },
+  });
+  await within(dialog).findByRole("application", { name: "Image position" });
+  fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
+    target: { value: "2" },
+  });
+  let decoded = () => {};
+  vi.spyOn(HTMLImageElement.prototype, "decode").mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      decoded = resolve;
+    }),
+  );
+  const painted = vi.mocked(croppedAvatar).mock.calls.length;
+  await user.click(createButton());
+  cleanup();
+  await act(async () => decoded());
+  expect(vi.mocked(croppedAvatar).mock.calls).toHaveLength(painted);
+  expect(agents.create).not.toHaveBeenCalled();
+});
+
 it("moves focus from Zoom to the image frame on a mouse press", async () => {
   vi.mocked(uploadAvatar).mockResolvedValueOnce(
     "https://images.example/original.png",

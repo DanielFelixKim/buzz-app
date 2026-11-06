@@ -263,31 +263,32 @@ export function AgentAvatarPicker({
   useImperativeHandle(avatarRef, () => ({
     async prepare() {
       const image = cropImage.current;
-      // Default framing keeps the original upload.
-      if (cropping) await image?.decode().catch(() => {});
-      const framed =
-        cropping && image?.naturalWidth
-          ? avatarCropBox(image.naturalWidth / image.naturalHeight, crop).crop
-          : uncropped;
-      const paint =
-        selection.kind === "emoji"
-          ? () =>
-              emojiAvatar(
-                selection.emoji,
-                selection.color,
-                emojiAvatarScale * crop.zoom,
-                crop.y,
-                crop.x,
-              )
-          : image && (framed.zoom !== 1 || framed.x || framed.y)
-            ? () => croppedAvatar(image, crop)
-            : undefined;
-      if (!paint) return selection.kind === "emoji" ? "" : selection.picture;
-      if (!community)
-        throw new Error("Select a community to use an emoji avatar.");
       const request = new AbortController();
       pending.current = request;
       try {
+        // Default framing keeps the original upload.
+        if (cropping) await image?.decode().catch(() => {});
+        request.signal.throwIfAborted();
+        const framed =
+          cropping && image?.naturalWidth
+            ? avatarCropBox(image.naturalWidth / image.naturalHeight, crop).crop
+            : uncropped;
+        const paint =
+          selection.kind === "emoji"
+            ? () =>
+                emojiAvatar(
+                  selection.emoji,
+                  selection.color,
+                  emojiAvatarScale * crop.zoom,
+                  crop.y,
+                  crop.x,
+                )
+            : image && (framed.zoom !== 1 || framed.x || framed.y)
+              ? () => croppedAvatar(image, crop)
+              : undefined;
+        if (!paint) return selection.kind === "emoji" ? "" : selection.picture;
+        if (!community)
+          throw new Error("Select a community to use an emoji avatar.");
         const file = await paint();
         request.signal.throwIfAborted();
         return await uploadAvatar(file, community, request.signal);
