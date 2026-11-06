@@ -29,14 +29,14 @@ test("saves an emoji over a transparent background in a squircle", async ({
 }) => {
   await page.goto("/tests/fixtures/agent-avatar-picker.html");
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
-  const emoji = page.getByRole("button", { name: "Choose emoji" });
-  await expect(emoji.locator("[data-avatar-shape]")).toHaveAttribute(
-    "data-avatar-shape",
-    "squircle",
-  );
+  const artwork = page
+    .getByRole("button", { name: "Choose emoji" })
+    .locator("[data-avatar-shape]");
+  await expect(artwork).toHaveAttribute("data-avatar-shape", "squircle");
   await page
     .getByRole("button", { name: "Use transparent background" })
     .click();
+  await expect(artwork).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await page.screenshot({
     path: test.info().outputPath("agent-avatar-transparent.png"),
   });
