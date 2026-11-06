@@ -1084,6 +1084,7 @@ function fixture(
       readStateFloor: () => 0,
       outboxStorage: { load: () => [], save: () => {} },
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         async update(change) {
           if (hold) {
             saveStarted = true;

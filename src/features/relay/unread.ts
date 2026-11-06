@@ -2618,6 +2618,15 @@ export function createUnread({
               event.created_at,
               (journal) =>
                 valid(journal) && requireMessage(target, id) === event,
+              false,
+              undefined,
+              (state) =>
+                effectiveFrontier(
+                  state,
+                  targetKey(target),
+                  channelId,
+                  threadReference(event) ? root(event) : undefined,
+                ),
             );
             observed.add(id);
           }
