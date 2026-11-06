@@ -15772,6 +15772,37 @@ it("keeps the draft and an attachment added while a command runs, and sends neit
   await waitFor(() => expect(screen.getByText("notes.txt")).toBeVisible());
 });
 
+it("runs a command before asking about a mentioned nonmember, then sends its result to whoever the answer keeps", async () => {
+  const service = await commandService();
+  const h = mount({ extensions: service, slashCommands: true });
+  const add = vi.fn(async () => {});
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+  });
+  h.fill("/hold ");
+  act(() => service.composerTools()?.insertMention(first));
+  h.submit();
+  await waitFor(() => expect(service.held.runs).toBe(1));
+  expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+  await act(async () => service.held.result.resolve({ send: "done" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Invite" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(add).toHaveBeenCalledWith("channel", first.pubkey);
+  expect(h.messages.send.mock.calls[0]?.slice(1)).toEqual([
+    "done",
+    [first.pubkey],
+    [],
+  ]);
+});
+
 it("chooses a typeahead option by pointer without running it", async () => {
   const h = mount({ extensions: await commandService(), slashCommands: true });
   h.fill("/sh");

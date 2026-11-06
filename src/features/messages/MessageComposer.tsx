@@ -2732,6 +2732,48 @@ function Composer({
         );
         return;
       }
+      let body = composerMarkdown(captured);
+      if (command) {
+        setSending(true);
+        setError(undefined);
+        const release = () => {
+          if (sendAttempt.current !== attempt) return;
+          sendAttempt.current = null;
+          if (live.current) setSending(false);
+        };
+        attempt.signal.addEventListener("abort", release, { once: true });
+        let result: Awaited<ReturnType<typeof command.command.run>>;
+        try {
+          result = await command.command.run({
+            session,
+            scope,
+            channelId,
+            threadRootId,
+            args: command.args,
+            recipients: captured.recipients.map(({ pubkey, name }) => ({
+              pubkey,
+              name,
+            })),
+            signal: attempt.signal,
+          });
+        } finally {
+          attempt.signal.removeEventListener("abort", release);
+        }
+        attempt.signal.throwIfAborted();
+        if (
+          valueRef.current !== captured ||
+          !sameAttachmentSelection(
+            attachments.store.snapshot(),
+            capturedAttachments,
+          )
+        )
+          return;
+        if (viewRevision(scope, draftKey) !== savedRevision) {
+          setConflict(true);
+          return;
+        }
+        body = result.send;
+      }
       let references: readonly string[] = [];
       let recipients = capturedRecipients.map((item) => item.pubkey);
       let declinedImports: readonly string[] = [];
@@ -2834,48 +2876,6 @@ function Composer({
       if (viewRevision(scope, draftKey) !== savedRevision) {
         setConflict(true);
         return;
-      }
-      let body = composerMarkdown(captured);
-      if (command) {
-        setSending(true);
-        setError(undefined);
-        const release = () => {
-          if (sendAttempt.current !== attempt) return;
-          sendAttempt.current = null;
-          if (live.current) setSending(false);
-        };
-        attempt.signal.addEventListener("abort", release, { once: true });
-        let result: Awaited<ReturnType<typeof command.command.run>>;
-        try {
-          result = await command.command.run({
-            session,
-            scope,
-            channelId,
-            threadRootId,
-            args: command.args,
-            recipients: captured.recipients.map(({ pubkey, name }) => ({
-              pubkey,
-              name,
-            })),
-            signal: attempt.signal,
-          });
-        } finally {
-          attempt.signal.removeEventListener("abort", release);
-        }
-        attempt.signal.throwIfAborted();
-        if (
-          valueRef.current !== captured ||
-          !sameAttachmentSelection(
-            attachments.store.snapshot(),
-            capturedAttachments,
-          )
-        )
-          return;
-        if (viewRevision(scope, draftKey) !== savedRevision) {
-          setConflict(true);
-          return;
-        }
-        body = result.send;
       }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
