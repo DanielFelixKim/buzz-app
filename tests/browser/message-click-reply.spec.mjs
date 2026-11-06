@@ -125,6 +125,7 @@ test.describe("provisional reply cancellation", () => {
       "selection with pending arrivals",
       "scroll",
       "slow scroll",
+      "shallow scroll",
     ]) {
       if (cancellation === "slow scroll" && surface !== "channel") continue;
       if (
@@ -280,7 +281,12 @@ test.describe("provisional reply cancellation", () => {
               await wheel(page, -20, history);
               await expect.poll(bottomGap).toBeGreaterThan(0);
               await wheel(page, -330, history);
-            } else await wheel(page, -350, history);
+            } else
+              await wheel(
+                page,
+                cancellation === "shallow scroll" ? -20 : -350,
+                history,
+              );
           }
         } finally {
           await page.mouse.up();
@@ -298,6 +304,12 @@ test.describe("provisional reply cancellation", () => {
               }),
             )
             .toBe(true);
+        } else if (cancellation === "shallow scroll") {
+          // wheel() observes native scrollend before settling layout. Channels
+          // resume their existing <80px follow policy; threads retain the
+          // upward reading intent until downward input or Jump to latest.
+          await expect.poll(bottomGap).toBeGreaterThan(0);
+          await expect.poll(bottomGap).toBeLessThan(80);
         } else {
           await expect.poll(bottomGap).toBeGreaterThan(250);
         }
@@ -330,7 +342,10 @@ test.describe("provisional reply cancellation", () => {
         let latest;
         for (let index = 0; index < 3; index++) latest = append(index + 3);
         const arrival = history.locator(`[data-message-id="${latest.id}"]`);
-        if (selecting && !pendingArrivals) {
+        if (
+          (selecting && !pendingArrivals) ||
+          (cancellation === "shallow scroll" && surface === "channel")
+        ) {
           await expect(arrival).toBeInViewport();
           await settle(page, history);
           await expect.poll(bottomGap).toBeLessThan(4);

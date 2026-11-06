@@ -188,9 +188,10 @@ export type ChannelTimelineProps = {
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
-  /** One inline exact visit: focus the verified mounted row, without a page navigation. */
+  /** One inline exact visit: focus the verified mounted row, without a page
+   * navigation. `focus: false` marks it beside a reader that owns focus. */
   inlineTarget?:
-    | Readonly<{ messageId: string; signal: AbortSignal }>
+    | Readonly<{ messageId: string; signal: AbortSignal; focus?: false }>
     | undefined;
   /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
   transient?: boolean | undefined;
@@ -810,12 +811,14 @@ function Timeline({
       // replaces it. A temporarily unmounted row is still pending measurement.
       if (anchor && !renderedAnchor && position.anchor)
         restoredAnchor.current = undefined;
-      // A settled standalone row no longer needs correction. Membership groups
-      // retain the logical anchor even when their representative is in place.
+      // Allow one pixel of native/virtualizer rounding when retiring a settled
+      // standalone row. Membership groups retain the logical anchor even when
+      // their representative is in place.
       if (
         anchor &&
-        position.anchor?.id === renderedAnchor &&
-        position.anchor?.y === anchor.y &&
+        position.anchor &&
+        position.anchor.id === renderedAnchor &&
+        Math.abs(position.anchor.y - anchor.y) <= 1 &&
         element.scrollHeight - element.clientHeight - element.scrollTop > 1 &&
         !rows.some((row) =>
           row.membershipRows?.some((member) => member.id === anchor.id),
@@ -913,8 +916,16 @@ function Timeline({
     () => intent.current === targetIntent.current,
     [],
   );
+  // The visit last revealed or returned to. A relay rebind brings it back with
+  // a new signal, and a thread visit leaves it shown; neither moves the reader.
+  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
+    undefined,
+  );
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
+    // A reveal moves the reader off the visit last presented, even an inline
+    // one that presents none, so a return to that visit restores its place.
+    presentedVisit.current = undefined;
     targetIntent.current = ++intent.current;
     follow.current = false;
     upwardGesture.current = false;
@@ -953,11 +964,6 @@ function Timeline({
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
   // The row the last reveal focused; a return may take focus back from it.
   const revealedRow = useRef<string | undefined>(undefined);
-  // The visit last revealed or returned to. A relay rebind brings it back with
-  // a new signal, and a thread visit leaves it shown; neither moves the reader.
-  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
-    undefined,
-  );
   // The attempt that presented it; leaving records that visit's place.
   const [presented, setPresented] = useState<AbortSignal>();
   const present = useCallback((visit: PageNavigation) => {
@@ -986,14 +992,15 @@ function Timeline({
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
   }, [navigation, targetId, targetSignal, present]);
-  // A covering Members dialog owns focus.
+  // A covering Members dialog owns focus, and hides the target's mark.
   const focusesTarget = !(
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members"
   );
   useMessageReveal({
     scroller,
-    focus: focusesTarget,
+    focus: focusesTarget && inlineTarget?.focus !== false,
+    mark: focusesTarget,
     settled,
     messageId: targetId,
     signal: targetSignal,
