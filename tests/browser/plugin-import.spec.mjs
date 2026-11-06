@@ -26,6 +26,15 @@ async function openPlugins(page, origin) {
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
 }
+// Advance the existing background owner's hourly eligibility without running
+// unrelated repeating timers. Visibility is the owner's normal resume entry point.
+async function refreshBackground(page) {
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.setSystemTime(new Date(now + 3_600_001));
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
+}
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
 async function nativeImports(
   page,
@@ -750,8 +759,8 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page.evaluate(() => {
     window.importCategory = "productivity";
   });
-  await page.clock.runFor(5_000);
-  // The open pane detects folder changes without a manual check.
+  await refreshBackground(page);
+  // The background owner supplies the open pane without a manual check.
   await expect(button(page, "Update")).toBeEnabled();
   const updatingPane = page.getByRole("complementary", {
     name: "Example two details",
@@ -1500,6 +1509,7 @@ for (const source of ["folder", "git"]) {
     page,
     app,
   }) => {
+    await page.clock.install();
     const sample = {
       path: "dist",
       revision: "one",
@@ -1521,6 +1531,7 @@ for (const source of ["folder", "git"]) {
     if (source === "git") {
       await button(page, "Check for updates").click();
     } else {
+      await refreshBackground(page);
       await expect(button(page, "Update")).toBeVisible();
     }
     await page.evaluate(() => {
@@ -1720,64 +1731,104 @@ test("a linked preview can close during acquisition and a later link still opens
 
 // App wiring: list discovery must use the native storage adapter without acquiring
 // an installation preview, then hand the update to the existing consent dialog.
-test("Manage plugins discovers saved-source updates before opening details", async ({
-  page,
-  app,
-}) => {
-  await nativeImports(page, [
-    {
-      path: "dist",
-      revision: "one",
-      manifest: {
-        id: "example.refresh",
-        name: "Refresh example",
-        apiVersion: 1,
+for (const source of ["folder", "git"]) {
+  test(`background ${source} discovery updates Manage plugins before opening details`, async ({
+    page,
+    app,
+  }) => {
+    await page.clock.install();
+    await nativeImports(page, [
+      {
+        path: "dist",
+        revision: "one",
+        manifest: {
+          id: "example.refresh",
+          name: "Refresh example",
+          apiVersion: 1,
+          updates: { defaultEnabled: true },
+        },
       },
-    },
-  ]);
-  await openPlugins(page, app.origin);
-  await button(page, "Add").click();
-  await button(page, "Browse plugin folder").click();
-  await button(page, "Install plugin").click();
-  await expectOnlySettings(page);
-  await closeSettings(page);
-  await page.evaluate(() => {
-    window.importCategory = "productivity";
+    ]);
+    await openPlugins(page, app.origin);
+    await button(page, "Add").click();
+    if (source === "git") {
+      await page.getByLabel("Git or GitHub repository").fill("example/plugins");
+      await button(page, "Find plugins").click();
+    } else await button(page, "Browse plugin folder").click();
+    await button(page, "Install plugin").click();
+    await expectOnlySettings(page);
+    // Observe initial discovery before changing the source. This also proves
+    // the real app mounted the background owner, independently of Settings.
+    const sourceReads = () =>
+      page.evaluate(
+        (source) =>
+          window.importCalls.filter(({ command, args }) =>
+            source === "folder"
+              ? command === "plugin_update_check"
+              : command === "plugin_import_git" && args?.checkOnly,
+          ).length,
+        source,
+      );
+    await expect.poll(sourceReads).toBe(1);
+    await closeSettings(page);
+    await page.evaluate(() => {
+      window.importCategory = "productivity";
+    });
+    await refreshBackground(page);
+    await expect.poll(sourceReads).toBe(2);
+    if (source === "git")
+      await expect(
+        page.getByRole("dialog", {
+          name: "Update Refresh example",
+          exact: true,
+        }),
+      ).toBeVisible();
+    const readsBeforeOpen = await sourceReads();
+    await openSettings(page);
+    await selectSettingsSection(page, "Manage plugins");
+    await expect(button(page, "Update Refresh example")).toBeVisible();
+    await expect(
+      button(page, "View Refresh example details")
+        .locator("xpath=ancestor::article/..")
+        .locator(".buzz-loading-region"),
+    ).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    expect(await sourceReads()).toBe(readsBeforeOpen);
+    await expect(
+      page.getByRole("complementary", { name: "Refresh example details" }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(
+        () =>
+          window.importCalls.filter(
+            ({ command }) => command === "plugin_import_install",
+          ).length,
+      ),
+    ).toBe(1);
+    if (source === "git")
+      await button(page, "Dismiss plugin update notice").click();
+    await button(page, "Update Refresh example").click();
+    await expect(
+      page.getByRole("dialog", { name: "Update Refresh example", exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () =>
+          window.importCalls.filter(
+            ({ command }) => command === "plugin_import_install",
+          ).length,
+      ),
+    ).toBe(1);
   });
-  await openSettings(page);
-  await selectSettingsSection(page, "Manage plugins");
-  await expect(button(page, "Update Refresh example")).toBeVisible();
-  await expect(
-    page.getByRole("complementary", { name: "Refresh example details" }),
-  ).toHaveCount(0);
-  expect(
-    await page.evaluate(
-      () =>
-        window.importCalls.filter(
-          ({ command }) => command === "plugin_import_install",
-        ).length,
-    ),
-  ).toBe(1);
-  await button(page, "Update Refresh example").click();
-  await expect(
-    page.getByRole("dialog", { name: "Update Refresh example", exact: true }),
-  ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () =>
-        window.importCalls.filter(
-          ({ command }) => command === "plugin_import_install",
-        ).length,
-    ),
-  ).toBe(1);
-});
+}
 
 // App wiring: refreshed source revisions cross Settings' detail host and the
 // native adapter without waiting for a second manual check in the pane.
-test("a focused Git update refreshes an already open details pane", async ({
+test("a background Git update refreshes an already open details pane", async ({
   page,
   app,
 }) => {
+  await page.clock.install();
   await nativeImports(page, [
     {
       path: "dist",
@@ -1807,6 +1858,10 @@ test("a focused Git update refreshes an already open details pane", async ({
     window.importCategory = "productivity";
     window.dispatchEvent(new Event("focus"));
   });
+  await expect(
+    pane.getByRole("button", { name: "Update", exact: true }),
+  ).toHaveCount(0);
+  await refreshBackground(page);
   await expect(
     pane.getByRole("button", { name: "Update", exact: true }),
   ).toBeVisible();
