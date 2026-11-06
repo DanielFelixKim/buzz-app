@@ -868,6 +868,7 @@ export function createChannelStore(
           rows: EMPTY_ROWS,
           error: describe(error),
           loadingOlder: false,
+          loadingNewer: undefined,
         });
       }
       setList(

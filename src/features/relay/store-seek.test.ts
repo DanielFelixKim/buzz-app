@@ -571,6 +571,7 @@ it("purges retained channel rows when forward paging is denied", async () => {
   await vi.waitFor(() => expect(h.window().error).toBeDefined());
   expect(h.window().rows).toEqual([]);
   expect(h.window().status).toBe("error");
+  expect(h.window().loadingNewer).toBeFalsy();
 });
 
 it("releases cancelled forward paging after reconnect without losing the reader", async () => {
