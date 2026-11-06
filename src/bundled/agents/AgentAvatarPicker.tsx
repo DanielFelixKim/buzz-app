@@ -284,7 +284,10 @@ export function AgentAvatarPicker({
         style={
           mode === "emoji"
             ? {
-                backgroundColor: `color-mix(in srgb, ${color} 14%, var(--surface-panel))`,
+                backgroundColor:
+                  color === "transparent"
+                    ? "var(--surface-panel)"
+                    : `color-mix(in srgb, ${color} 14%, var(--surface-panel))`,
               }
             : undefined
         }
