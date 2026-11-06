@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createEmojiDirectory } from "./emoji-directory";
 import {
   EMOJI_SET,
+  contentEmojiTags,
   emojiTags,
   referencedEmoji,
   suggestShortcode,
@@ -81,6 +82,49 @@ it("normalizes first-wins scheme-agnostic emoji tags and leaves URL fragments ou
       ":PARTY: :party: https://a.test/:link: http://localhost:3000/:dev: :other:",
     ),
   ).toEqual(["party", "other"]);
+});
+it.each(["loading", "error"])(
+  "sends timestamp prose while the emoji catalog is %s",
+  async (status) => {
+    const h = session(`timestamp-${status}`);
+    const loading = h.session.emoji.ensure();
+    const catalog = h.wire.next();
+    if (status === "error") {
+      catalog.fail(new Error("catalog offline"));
+      await loading;
+    }
+    const content = "STATUS ~19:25Z: DRAFT. NEXT: check again at 14:30:00.";
+    try {
+      const id = h.session.messages.send("c", content);
+      await flush();
+      const event = h.session.outbox
+        ?.snapshot()
+        .find((entry) => entry.event.id === id)?.event;
+      expect(event?.content).toBe(content);
+      expect(event?.tags.some(([name]) => name === "emoji")).toBe(false);
+      expect(h.publish).toHaveBeenCalledTimes(1);
+      expect(h.session.emoji.snapshot().status).toBe(status);
+    } finally {
+      if (status === "loading") {
+        catalog.respond([]);
+        await loading;
+      }
+    }
+  },
+);
+it("keeps embedded prose literal while recognizing standalone, chained and overlapping codes", () => {
+  const prose = "~19:25Z: DRAFT 14:30:00 word:party:";
+  expect(referencedEmoji(prose)).toEqual([]);
+  expect(
+    contentEmojiTags(prose, [
+      { shortcode: "25z", url },
+      { shortcode: "30", url },
+      { shortcode: "party", url },
+    ]),
+  ).toEqual([]);
+  expect(
+    referencedEmoji(":party: (:25Z:) :party::wave: :unknown:party:"),
+  ).toEqual(["party", "25z", "wave", "unknown"]);
 });
 it("unions latest complete member sets; empty replacements and ties survive stale reads", async () => {
   const h = session();

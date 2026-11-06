@@ -82,13 +82,25 @@ export function emojiTags(event: {
 export const messageParts = (content: string) =>
   content.split(/(https?:\/\/[^\s<>"`]+)/g);
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
-const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
+/** Colons inside words and timestamps are text; complete codes may share a colon. */
+function* shortcodeMatches(content: string) {
+  let end = 0;
+  for (const match of content.matchAll(/(?=(:([a-zA-Z0-9_-]{1,64}):))/g)) {
+    if (
+      match.index !== end - 1 &&
+      /[\p{L}\p{N}_]/u.test(content[match.index - 1] ?? "")
+    )
+      continue;
+    end = match.index + (match[1]?.length ?? 0);
+    yield match;
+  }
+}
 export function* emojiMatches(
   content: string,
   entries: readonly CustomEmoji[],
 ) {
   let end = 0;
-  for (const match of content.matchAll(shortcodePattern())) {
+  for (const match of shortcodeMatches(content)) {
     if (match.index < end) continue;
     const emoji = entries.find(
       (entry) => entry.shortcode === match[2]?.toLowerCase(),
@@ -140,9 +152,7 @@ export function referencedEmoji(content: string): string[] {
       messageParts(content).flatMap((part) =>
         linkPart(part)
           ? []
-          : [...part.matchAll(shortcodePattern())].map((m) =>
-              (m[2] ?? "").toLowerCase(),
-            ),
+          : [...shortcodeMatches(part)].map((m) => (m[2] ?? "").toLowerCase()),
       ),
     ),
   ];

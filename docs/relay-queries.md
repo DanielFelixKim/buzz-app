@@ -170,7 +170,8 @@ older broker.
 
 `session.messages.send`, `reply`, `edit`, and `react` resolve referenced `:shortcodes:`
 into original-URL emoji tags **before** the outbox assigns identity or signs. Text
-without shortcode candidates does not wait. A catalog that has not loaded yet,
+without shortcode candidates does not wait. Colons embedded in words or timestamps
+(such as `19:25Z:`) are literal text, not shortcode candidates. A catalog that has not loaded yet,
 or failed before loading, throws synchronously, so a composer retains its draft.
 A refused send after a failed read starts one shared retry; mounts and pickers do
 not, and overflow waits for an explicit retry. Plugins can await `ensure()` or
