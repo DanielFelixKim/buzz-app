@@ -144,6 +144,9 @@ sessions. Leave asks for confirmation, then sends a signed NIP-43 leave request
 answers end the membership here. The relay accepting, or answering that the
 viewer is not a member, removes the community and clears its drafts, reading
 positions and other device state, since the relay holds nothing to go back to.
+That includes the welcome record the device keeps per community for all of its
+identities (when it first opened it and which welcomes were dismissed), so a
+rejoin by any identity here starts it afresh.
 The relay answering that the viewer is banned also removes the community and
 disposes its session, but keeps that device state: the relay still holds the
 membership while a ban lasts (bans can be timed or lifted), and the data is

@@ -751,7 +751,7 @@ export function validChannelActivityFilters(filters) {
     )
   );
 }
-export function validFilters(filters) {
+export function validFilters(filters, viewer) {
   return (
     Array.isArray(filters) &&
     filters.length >= 1 &&
@@ -770,7 +770,7 @@ export function validFilters(filters) {
           (filter.kinds === undefined &&
             Array.isArray(filter.ids) &&
             filter.ids.length > 0) ||
-          isEarlierActivityFilter(filter)) &&
+          isEarlierActivityFilter(filter, viewer)) &&
         Number.isInteger(filter.limit) &&
         filter.limit >= 1 &&
         filter.limit <= MAX_LIMIT,
@@ -3114,7 +3114,7 @@ export function relayBrokerPlugin({
             !readPublishing &&
             !snapshot &&
             !channelActivity &&
-            !validFilters(filters)
+            !validFilters(filters, viewer)
           )
             return json(res, 400, { error: "Read filter rejected" });
           if (publishing || readPublishing) {

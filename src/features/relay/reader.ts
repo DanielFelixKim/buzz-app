@@ -279,7 +279,7 @@ export function createRelayReader(
               )
             ) &&
             !(filter.kinds === undefined && filter.ids?.length) &&
-            !isEarlierActivityFilter(filter)
+            !isEarlierActivityFilter(filter, transport.viewer)
           )
             throw new Error("Relay reads need valid kinds or event IDs");
           if (

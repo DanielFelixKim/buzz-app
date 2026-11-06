@@ -8,13 +8,27 @@
   display: flex;
   justify-content: center;
   padding: var(--space-3);
+  /* Unlike a preview, this channel has a composer, and "X is typing" floats a
+     caption pill (padding space-1, raised space-half) just above it, in this
+     same corner (TypingIndicator.module.css). Leave that lane below the card,
+     and the reported height carries it to the history's end. */
+  padding-block-end: calc(
+    var(--space-3) +
+    var(--space-half) +
+    2 *
+    var(--space-1) +
+    var(--text-caption) *
+    var(--text-caption--line-height)
+  );
   pointer-events: none;
 }
 .card {
   @apply floating-surface;
+  /* Content padding: keep nested corners concentric (DESIGN.md, Floating surfaces). */
+  --floating-inset: var(--space-3);
   pointer-events: auto;
   width: min(100%, 40rem);
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  padding: var(--floating-inset) var(--space-4) var(--space-4);
   color: var(--text-standard);
   text-align: start;
 }

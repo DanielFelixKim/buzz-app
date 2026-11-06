@@ -3,6 +3,7 @@ import type { SnapshotRead } from "../agents/agent-config-artifacts";
 import { earlierActivityFilter } from "../relay/earlier-activity";
 import { splitPartition } from "../relay/partition";
 import {
+  clearViewScope,
   readView,
   replaceView,
   subscribeView,
@@ -18,9 +19,12 @@ export const WELCOME_FIRST_OPEN_KEY = "welcome-first-open";
 /** View key, scoped by relay and viewer: whether the relay had an event by the
  * viewer from before {@link WELCOME_FIRST_OPEN_KEY} less the grace period. */
 export const WELCOME_EARLIER_ACTIVITY_KEY = "welcome-earlier-activity";
-/** View key, scoped by relay alone: this welcome channel's card was dismissed. */
+/** View key, scoped by relay alone: this welcome channel's card was dismissed.
+ * A welcome moved to another channel is a new welcome, with its own key. */
 export const welcomeDismissedKey = (channelId: string) =>
   `welcome-dismissed:${channelId}`;
+/** Every welcome key scoped by relay alone starts with this. */
+const WELCOME_KEY_PREFIX = "welcome-";
 
 const origin = (scope: string) => splitPartition(scope)?.communityOrigin;
 const unscoped = () => () => {};
@@ -32,6 +36,14 @@ export function recordWelcomeFirstOpen(scope: string, now = Date.now()) {
   const relay = origin(scope);
   if (relay)
     replaceView(relay, WELCOME_FIRST_OPEN_KEY, null, Math.floor(now / 1000));
+}
+
+/** Forgets the welcome state this device keeps for the community at `origin`
+ * across its identities: the first open and every dismissal. A later rejoin
+ * records a fresh first open; the relay's answer still classes a member with
+ * older events as existing. */
+export function forgetWelcome(origin: string) {
+  clearViewScope(origin, WELCOME_KEY_PREFIX);
 }
 
 /**
@@ -76,20 +88,32 @@ export function usePinnedWelcome({
   );
   // Hides at once even if storage cannot keep the dismissal.
   const [closed, setClosed] = useState<string>();
-  const [answer, setAnswer] = useState<{ scope: string; earlier: boolean }>();
   const asking =
     member && !!channelId && !dismissed && closed !== channelId && !!relay;
+  // A kept answer is read during render, so a card it allows is in the first
+  // commit with the channel, not one commit after it painted.
+  const kept = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => subscribeView(scope, listener),
+      [scope],
+    ),
+    () => {
+      if (!asking) return undefined;
+      const value = readView<unknown>(
+        scope,
+        WELCOME_EARLIER_ACTIVITY_KEY,
+        undefined,
+      );
+      return typeof value === "boolean" ? value : undefined;
+    },
+  );
+  // The relay's answer when storage could not keep it.
+  const [answer, setAnswer] = useState<{ scope: string; earlier: boolean }>();
+  const earlier =
+    kept ?? (answer?.scope === scope ? answer.earlier : undefined);
+  const answered = earlier !== undefined;
   useEffect(() => {
-    if (!asking || !relay || !viewer) return;
-    const cached = readView<unknown>(
-      scope,
-      WELCOME_EARLIER_ACTIVITY_KEY,
-      undefined,
-    );
-    if (typeof cached === "boolean") {
-      setAnswer({ scope, earlier: cached });
-      return;
-    }
+    if (!asking || answered || !relay || !viewer) return;
     const firstOpen = readView<unknown>(relay, WELCOME_FIRST_OPEN_KEY, null);
     if (
       !read ||
@@ -112,14 +136,14 @@ export function usePinnedWelcome({
       },
     );
     return () => controller.abort();
-  }, [asking, relay, scope, viewer, read]);
+  }, [asking, answered, relay, scope, viewer, read]);
   const dismiss = useCallback(() => {
     if (!relay || !dismissKey || !channelId) return;
     setClosed(channelId);
     writeView(relay, dismissKey, true);
   }, [relay, dismissKey, channelId]);
   return {
-    shown: asking && answer?.scope === scope && !answer.earlier,
+    shown: asking && earlier === false,
     dismiss,
   };
 }

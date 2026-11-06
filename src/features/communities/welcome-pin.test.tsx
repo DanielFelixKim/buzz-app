@@ -21,6 +21,7 @@ const me = "a".repeat(64);
 const other = "b".repeat(64);
 const scope = `${origin}:${me}`;
 const channel = "11111111-1111-4111-8111-111111111111";
+const moved = "22222222-2222-4222-8222-222222222222";
 /** When this device first opened the community. */
 const T = 1_788_810_000;
 
@@ -85,20 +86,26 @@ function fakeRelay(events: RelayEvent[] = []) {
 function Slot({
   relay,
   viewer = me,
+  channelId = channel,
   title,
   message = "Say hi",
+  onRender,
 }: {
   relay: ReturnType<typeof fakeRelay> | undefined;
   viewer?: string;
+  channelId?: string;
   title?: string;
   message?: string;
+  /** Sees what each render decided, in order. */
+  onRender?: (shown: boolean) => void;
 }) {
   const welcome = usePinnedWelcome({
     session: { viewer, snapshotRead: relay?.snapshotRead },
     scope: `${origin}:${viewer}`,
-    channelId: channel,
+    channelId,
     member: true,
   });
+  onRender?.(welcome.shown);
   return welcome.shown ? (
     <PinnedWelcome
       scope={`${origin}:${viewer}`}
@@ -172,14 +179,29 @@ it("counts an event from the ten minutes before the first open as new, with one 
   expect(screen.getByRole("region", { name: "Welcome" })).toBeVisible();
 });
 
-it("keeps nothing from a failed read and asks again on the next open", async () => {
+it("shows a kept answer in the first commit, without asking again", () => {
+  writeView(origin, WELCOME_FIRST_OPEN_KEY, T);
+  writeView(scope, WELCOME_EARLIER_ACTIVITY_KEY, false);
+  const relay = fakeRelay();
+  const renders: boolean[] = [];
+  render(<Slot relay={relay} onRender={(shown) => renders.push(shown)} />);
+  expect(renders[0]).toBe(true);
+  expect(screen.getByRole("region", { name: "Welcome" })).toBeVisible();
+  expect(relay.reads).toHaveLength(0);
+});
+
+it("keeps nothing from a failed read and asks again on the next open, not in the same one", async () => {
   writeView(origin, WELCOME_FIRST_OPEN_KEY, T);
   const relay = fakeRelay();
-  const { unmount } = render(<Slot relay={relay} />);
+  const { rerender, unmount } = render(<Slot relay={relay} />);
   await waitFor(() => expect(relay.reads).toHaveLength(1));
   await relay.reads[0]?.fail();
   expect(screen.queryByRole("region")).toBeNull();
   expect(viewRevision(scope, WELCOME_EARLIER_ACTIVITY_KEY)).toBeNull();
+  // Rendering again is not a new open: the same mount never retries.
+  rerender(<Slot relay={relay} />);
+  await act(async () => {});
+  expect(relay.reads).toHaveLength(1);
   unmount();
   render(<Slot relay={relay} />);
   await waitFor(() => expect(relay.reads).toHaveLength(2));
@@ -234,4 +256,30 @@ it("stays dismissed when an admin changes the welcome afterwards", async () => {
   await act(async () => {});
   expect(screen.queryByRole("region")).toBeNull();
   expect(screen.queryByText("Edited")).toBeNull();
+});
+
+it("shows the welcome once more in a channel it moves to, and never again where it was dismissed", async () => {
+  writeView(origin, WELCOME_FIRST_OPEN_KEY, T);
+  const relay = fakeRelay();
+  const { rerender, unmount } = render(<Slot relay={relay} />);
+  await waitFor(() => expect(relay.reads).toHaveLength(1));
+  await relay.reads[0]?.answer();
+  await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.queryByRole("region")).toBeNull();
+  // An admin moves the welcome to another channel: a new welcome, served by
+  // the kept answer without another read.
+  rerender(<Slot relay={relay} channelId={moved} />);
+  expect(screen.getByRole("region", { name: "Welcome" })).toBeVisible();
+  expect(relay.reads).toHaveLength(1);
+  expect(
+    readView(origin, welcomeDismissedKey(moved), undefined),
+  ).toBeUndefined();
+  // Moved back, it stays dismissed there, on this and the next open.
+  rerender(<Slot relay={relay} channelId={channel} />);
+  expect(screen.queryByRole("region")).toBeNull();
+  unmount();
+  render(<Slot relay={relay} channelId={channel} />);
+  await act(async () => {});
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(relay.reads).toHaveLength(1);
 });

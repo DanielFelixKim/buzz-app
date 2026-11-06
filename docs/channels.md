@@ -1384,15 +1384,19 @@ It shows only while all four of these hold:
    read, through the session's snapshot read (the HTTP `/query` bridge on both
    hosts), asks `{ "authors": [viewer], "until": T - 600, "limit": 1 }`, with no
    kinds and no `#h`, so any kind in any channel the relay lets the viewer read
-   counts, profiles and preferences included. An event means an existing member.
+   counts. Replaceable events such as profiles and preferences count only if
+   last updated before then, since a relay keeps only their newest version. An
+   event means an existing member.
    Because of the ten minutes, a newcomer's own events from joining, such as a
    profile set up just before the app opened, do not count. The answer is kept
    per device under `welcome-earlier-activity`, scoped by origin and viewer, so
    another identity on the same device asks for itself. The session reader and
    the browser broker admit no other filter without kinds or IDs.
 4. The card has not been dismissed on this device: `welcome-dismissed:<channel
-   id>`, scoped by origin alone. A new title or message from an admin does not
-   bring it back.
+   id>`, scoped by origin alone. A new title or message from an admin never
+   brings it back. A welcome moved to another channel is a new welcome: it can
+   show once more there, to a member this device still classes as new, and the
+   channel it left stays dismissed.
 
 Nothing shows while the read is pending. A read that fails, whether refused,
 timed out, offline or without a session, is no answer: nothing is kept and the
@@ -1403,7 +1407,10 @@ These are accepted trade-offs. Someone with no events at all, such as a lurker,
 looks new on each new device and sees the card once there. Dismissal is per
 device, and shared by the identities on it, as T is. A lurker already in a
 channel that becomes the welcome channel, such as `#general`, sees the card
-once per device after the upgrade.
+once per device after the upgrade. Leaving or removing the community forgets T
+and the dismissals with the rest of its device state (see
+[Communities](communities.md)), so a rejoin starts over, with the read still
+classing a member with older events as existing.
 
 A cached roster can display previously downloaded, reverified history for up to
 24 hours. It cannot authorize head/history reads, unread evidence, typing or

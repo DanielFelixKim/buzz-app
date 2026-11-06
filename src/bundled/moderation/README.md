@@ -23,7 +23,9 @@ toolbar and saves Markdown; pasted channel and
 message links show with the same link presentation as in messages, through
 the conversation's link renderers. Saving moves the welcome to the chosen
 channel; people already in the community keep their channels. Editing the
-welcome does not show the card again to anyone who dismissed it.
+title or message never shows the card again to anyone who dismissed it;
+moving the welcome to another channel is a new welcome, which can show once
+more there.
 
 Below that, **Also add new members to** lists the starter channels, which new
 members join too: **Add a channel** searches other open channels, and **Remove**
