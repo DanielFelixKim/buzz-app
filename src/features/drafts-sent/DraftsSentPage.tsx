@@ -311,6 +311,7 @@ function ScopedPage({
   const entries: (Entry & {
     placeholder?: boolean;
     mentions?: readonly string[];
+    markdown?: string;
   })[] = [...drafts.entries];
   if (selected?.draft && currentIndex < 0)
     entries.splice(selectedIndex.current, 0, {
@@ -444,7 +445,7 @@ function ScopedPage({
               channelId: entry.channelId,
               authorId: viewer,
               createdAt: entry.createdAt ?? 0,
-              content: entry.text,
+              content: entry.markdown ?? entry.text,
               mentions: entry.mentions ?? [],
               attachments: [],
               participants: [],

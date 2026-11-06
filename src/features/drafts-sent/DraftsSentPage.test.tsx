@@ -1011,9 +1011,32 @@ it("shows a sent message as its timeline row, named by its plain text", async ()
 
 it("shows a draft with its formatting and mentions, named by its plain text", () => {
   const ada = "6".repeat(64);
+  // The editor keeps formatting as marks, not Markdown in its text.
   saved("draft:team", {
-    text: "**Ship** it, @Ada",
-    recipients: [{ pubkey: ada, name: "Ada", start: 13, end: 17 }],
+    text: "Ship it, @Ada",
+    recipients: [{ pubkey: ada, name: "Ada", start: 9, end: 13 }],
+    document: {
+      version: 1,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "Ship", marks: [{ type: "bold" }] },
+              { type: "text", text: " it, " },
+              {
+                type: "text",
+                text: "@Ada",
+                marks: [
+                  { type: "recipient", attrs: { pubkey: ada, name: "Ada" } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
   });
   const h = harness();
   const Page = h.page.component;

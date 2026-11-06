@@ -5,6 +5,7 @@ import {
   subscribeAttachmentDraftCounts,
 } from "../../features/messages/attachment-draft";
 import { draftCounts } from "../../features/messages/draft-places";
+import { composerMarkdown } from "../../features/messages/composer-markdown";
 import { mentionDraft } from "../../features/messages/mention-draft";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -20,6 +21,8 @@ export type DraftEntry = Entry & {
   placeholder?: true;
   /** The people the draft's text mentions. */
   mentions?: readonly string[];
+  /** The text as Markdown, with the editor's formatting, as sending publishes it. */
+  markdown?: string;
   signature: string;
 };
 export type DraftSnapshot = Readonly<{
@@ -118,7 +121,15 @@ export function readDrafts(
         (count
           ? `${count} attached file${count === 1 ? "" : "s"}`
           : "Attached chat or GIF"),
-      ...(text ? {} : { placeholder: true as const }),
+      ...(text
+        ? {
+            markdown: composerMarkdown({
+              text: draft.text,
+              recipients: draft.recipients,
+              ...(draft.document ? { document: draft.document } : {}),
+            }).trim(),
+          }
+        : { placeholder: true as const }),
       ...(draft.recipients.length
         ? { mentions: draft.recipients.map((recipient) => recipient.pubkey) }
         : {}),
