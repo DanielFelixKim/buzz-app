@@ -45,6 +45,8 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
   const ensure = vi.fn();
   const loadOlder = vi.fn();
   let hasMore = true;
+  let hasNewer = false;
+  const attach = vi.fn();
   let historyError: string | undefined;
   const profiles = new Map<string, { name: string; picture: string }>();
   const session = {
@@ -76,6 +78,7 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
       resolve: async () => {},
       ensure,
       loadOlder,
+      attach,
       subscribeWindow: (_id: string, fn: () => void) => {
         listeners.add(fn);
         return () => {
@@ -88,6 +91,7 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
         rows,
         loadingOlder: false,
         hasMore,
+        hasNewer,
         error: historyError,
       }),
     },
@@ -101,6 +105,10 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     ensure,
     discussion,
     loadOlder,
+    attach,
+    hasNewer: (value: boolean) => {
+      hasNewer = value;
+    },
     historyError: (value: string) => {
       historyError = value;
     },
@@ -546,6 +554,19 @@ it("retries a failed older page instead of reloading metadata", async () => {
     h.historyError("Page unavailable");
     h.discussion.retry();
     expect(h.loadOlder).toHaveBeenCalledOnce();
+  } finally {
+    h.dispose();
+  }
+});
+
+it("offers attachment when the shared byte budget detaches a small Huddle reader", async () => {
+  const h = harness();
+  try {
+    await vi.waitFor(() => expect(h.discussion.snapshot().writable).toBe(true));
+    h.hasNewer(true);
+    expect(h.discussion.snapshot()).toMatchObject({ hasNewer: true });
+    h.discussion.retry();
+    expect(h.attach).toHaveBeenCalledWith("room");
   } finally {
     h.dispose();
   }

@@ -104,6 +104,11 @@ export function HuddleDiscussionView({
               Load earlier messages
             </Button>
           )}
+          {discussion.hasNewer && (
+            <Button size="sm" onClick={retry}>
+              Jump to latest
+            </Button>
+          )}
           {!discussion.rows.length &&
             (discussion.status === "loading" ? (
               <p className={styles.empty} role="status">

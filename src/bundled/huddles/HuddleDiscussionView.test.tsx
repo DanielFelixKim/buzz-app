@@ -244,3 +244,19 @@ it("routes internal links and signed mentions while leaving unbound or edited na
   mounted.rerender(view());
   expect(screen.queryByText("Taylor")).toBeNull();
 });
+
+it("keeps Jump to latest available in a byte-limited historical Huddle", () => {
+  const value = { ...discussion("failed"), hasNewer: true };
+  const retry = vi.fn();
+  render(
+    <HuddleDiscussionView
+      discussion={value}
+      composer={null}
+      older={() => {}}
+      retry={retry}
+      recover={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+  expect(retry).toHaveBeenCalledOnce();
+});
