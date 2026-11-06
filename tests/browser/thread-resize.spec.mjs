@@ -458,11 +458,15 @@ test.describe("exact history resize ownership", () => {
         anchor = history.locator(`[data-message-id="${id}"]`);
       }
       if (shift === "contraction after reading") {
+        // Above the virtual list, whose rows resize only once Virtua measures
+        // them: content there shrinks within the reply's commit.
         await anchor.evaluate((el) => {
           const spacer = document.createElement("div");
           spacer.dataset.contraction = "";
           spacer.style.height = "700px";
-          el.before(spacer);
+          el.closest("[data-thread-rows]")
+            .querySelector(":scope > ol")
+            .before(spacer);
         });
         await settle(page, history);
       }

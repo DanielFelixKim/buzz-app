@@ -39,6 +39,9 @@ import type {
 } from "../relay/contracts";
 import { formatPublicKey } from "../../shared/identity/public-key";
 
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("./virtua.testing"));
+
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
 // Activity rendering/subscriptions have their own mounted integration suite.
