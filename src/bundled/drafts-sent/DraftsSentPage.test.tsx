@@ -302,6 +302,18 @@ it("shows archived conversations' drafts on request, labeled and clearable, with
   expect(screen.queryByRole("button", { name: /archived/i })).toBeNull();
 });
 
+it("scopes the empty Drafts message when only archived drafts are saved", () => {
+  saved("draft:old", "Stranded note");
+  const Page = harness().page.component;
+  render(<Page />);
+  expect(
+    screen.getByText("No drafts outside archived conversations."),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Show archived (1)" }),
+  ).toBeInTheDocument();
+});
+
 it("lists drafts first and continues a thread draft at its root", async () => {
   saved(`draft:team:thread:${root}`, { text: "Finish launch reply" });
   saved("draft:dm", "Lunch tomorrow?");

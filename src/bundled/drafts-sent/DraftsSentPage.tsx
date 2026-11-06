@@ -705,7 +705,9 @@ function ScopedPage({
             <p className="text-body-sm text-subtle">
               {search && shownDrafts.length
                 ? `No drafts match “${search.trim()}”.`
-                : "No drafts. Messages you start and don’t send wait here."}
+                : archivedDrafts.length
+                  ? "No drafts outside archived conversations."
+                  : "No drafts. Messages you start and don’t send wait here."}
             </p>
           )}
           {archivedDrafts.length > 0 && (
