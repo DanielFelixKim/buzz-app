@@ -1023,6 +1023,7 @@ function ChannelWorkspace({
     currentId ?? "",
     contextRoot,
     contextVisit.current.request,
+    queries.read,
   );
   const contextRouted = !!routedThread;
   const contextSignal = navigation?.signal;

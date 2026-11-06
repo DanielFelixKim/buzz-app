@@ -1708,3 +1708,31 @@ it("admits the oldest replacement head row after a replayed deletion", async () 
   expect(h.window().rows.some((row) => row.id === h.history[0]?.id)).toBe(true);
   expect(h.window().hasMore).toBe(false);
 });
+
+it("revalidates a missing exact target within a retained boundary second", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  const pair = [
+    message(h.alice, "c", "boundary one", T0 + 79 * HOUR),
+    message(h.alice, "c", "boundary two", T0 + 79 * HOUR),
+  ].sort(newestFirst);
+  const target = pair[0],
+    boundary = pair[1];
+  assert.exists(target);
+  assert.exists(boundary);
+  h.history[79] = boundary;
+  await h.open();
+  for (let step = 0; step < 2; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  h.history.push(target);
+  expect(h.window().hasNewer).toBe(true);
+  expect(h.window().rows.some((row) => row.id === target.id)).toBe(false);
+  await h.channels.seek?.(
+    "c",
+    target.created_at,
+    new AbortController().signal,
+    target.id,
+  );
+  expect(h.window().rows.some((row) => row.id === target.id)).toBe(true);
+});

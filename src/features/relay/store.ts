@@ -3748,6 +3748,7 @@ export function createChannelStore(
       // at or after it or end at the head.
       if (
         state.snapshot.freshness !== "cached" &&
+        (!fromId || rows.some((row) => row.id === fromId)) &&
         (!state.snapshot.hasMore || rows.some((row) => row.createdAt < from)) &&
         (state.ceiling === undefined ||
           rows.some((row) => row.createdAt >= from))

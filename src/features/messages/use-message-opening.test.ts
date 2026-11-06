@@ -7,6 +7,7 @@ import type {
   ChannelWindow,
 } from "../relay/contracts";
 import { ReadError } from "../relay/errors";
+import type { RelaySession } from "../relay/session";
 import type { LiveCallbacks } from "../relay/live";
 import { createRelaySession } from "../relay/session";
 import {
@@ -632,5 +633,87 @@ it.each(["unmount", "target"])(
     if (retirement === "unmount") view.unmount();
     else view.rerender({ target: "another" });
     expect(signal.aborted).toBe(true);
+  },
+);
+
+it("opens a missing older target without discarding its retained search edge", async () => {
+  const target = message(keypair(), "c", "target", 10);
+  const c = channel([[target.id], ["retained"]]);
+  const attach = vi.fn(() =>
+    c.set({ rows: [], hasMore: false, hasNewer: false }),
+  );
+  const read = vi.fn(async () => [target]);
+  const seek = vi.fn(async () => {
+    c.set({ rows: [{ id: target.id } as ChannelMessage], hasNewer: true });
+    return target.id;
+  });
+  c.head();
+  c.set({ hasNewer: true });
+  const queries = { ...c.queries, attach, seek };
+  const view = renderHook(() =>
+    useMessageOpening(queries, "c", target.id, undefined, read),
+  );
+  await act(flush);
+  if (c.loadOlder.mock.calls.length) c.deliver();
+  expect(view.result.current).toBe(true);
+  expect(attach).not.toHaveBeenCalled();
+});
+
+it.each(["unmount", "target"])(
+  "cancels a missing target read on %s retirement",
+  async (retirement) => {
+    const target = message(keypair(), "c", "target", 10);
+    const c = channel([[target.id], ["retained"]]);
+    c.head();
+    c.set({ hasNewer: true });
+    let signal!: AbortSignal;
+    let release!: (events: readonly (typeof target)[]) => void;
+    const read = vi.fn<RelaySession["read"]>((_filters, options) => {
+      assert.exists(options?.signal);
+      signal = options.signal;
+      return new Promise<readonly (typeof target)[]>((resolve) => {
+        release = resolve;
+      });
+    });
+    const seek = vi.fn();
+    const queries = { ...c.queries, attach: vi.fn(), seek };
+    const view = renderHook(
+      ({ id }) => useMessageOpening(queries, "c", id, undefined, read),
+      { initialProps: { id: target.id } },
+    );
+    expect(read).toHaveBeenCalledOnce();
+    expect(signal.aborted).toBe(false);
+    const pending = { signal, release };
+    if (retirement === "unmount") view.unmount();
+    else view.rerender({ id: "another" });
+    // Keep the old operation's resolver even if the replacement starts a read.
+    expect(pending.signal.aborted).toBe(true);
+    await act(async () => {
+      pending.release([target]);
+      await flush();
+    });
+    expect(seek).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["missing", "failed"])(
+  "settles a %s signed target read without replacing retained history",
+  async (outcome) => {
+    const c = channel([["old"], ["retained"]]);
+    c.head();
+    c.set({ hasNewer: true });
+    const read = vi.fn(async () => {
+      if (outcome === "failed") throw new Error("offline");
+      return [];
+    });
+    const queries = { ...c.queries, attach: vi.fn(), seek: vi.fn() };
+    const view = renderHook(() =>
+      useMessageOpening(queries, "c", "target", undefined, read),
+    );
+    await act(flush);
+    expect(view.result.current).toBe(false);
+    expect(queries.attach).not.toHaveBeenCalled();
+    expect(queries.seek).not.toHaveBeenCalled();
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual(["retained"]);
   },
 );
