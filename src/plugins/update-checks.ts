@@ -187,3 +187,15 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
   };
 }
 export type PluginUpdateChecks = ReturnType<typeof createPluginUpdateChecks>;
+
+// The imports adapter belongs to the plugin manager, which outlives Settings visits.
+const sharedChecks = new WeakMap<PluginImports, PluginUpdateChecks>();
+export function sharedPluginUpdateChecks(imports: PluginImports | undefined) {
+  if (!imports) return createPluginUpdateChecks(imports);
+  let checks = sharedChecks.get(imports);
+  if (!checks) {
+    checks = createPluginUpdateChecks(imports);
+    sharedChecks.set(imports, checks);
+  }
+  return checks;
+}

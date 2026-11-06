@@ -795,9 +795,11 @@ function reviewPluginFixture(
     }),
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
   const { cards } = registry([]);
-  render(<Settings {...host} cards={cards} plugins={manager} {...extra} />);
+  const view = render(
+    <Settings {...host} cards={cards} plugins={manager} {...extra} />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
-  return { external, snapshot, publish, manager };
+  return { external, snapshot, publish, manager, view };
 }
 
 it("keeps bundled plugins free of manual-plugin menus in rows and details", () => {
@@ -2866,6 +2868,59 @@ it("refreshes a finished folder while another source is still checking", async (
   } finally {
     await act(async () => finish(gitCheckResult("current")));
   }
+});
+
+it("shares pending Git reads and their limit across Settings remounts", async () => {
+  const fixture = reviewPluginFixture();
+  const plugins = [0, 1, 2].map((index) => ({
+    ...fixture.external,
+    manifest: {
+      ...fixture.external.manifest,
+      id: `example.git${index}`,
+      name: `Git ${index}`,
+    },
+    updateSource: {
+      ...savedGitSource,
+      repository: `https://example.com/${index}`,
+    },
+  }));
+  fixture.snapshot.configuration.catalog.plugins = plugins;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const checkGit = vi.fn(async () => {
+    await gate;
+    return {
+      ...gitCheckResult("new"),
+      candidates: plugins.map((plugin) => ({
+        path: plugin.updateSource.path,
+        revision: "new",
+        manifest: plugin.manifest,
+      })),
+    };
+  });
+  Object.assign(fixture.manager, { imports: { checkGit } });
+  act(fixture.publish);
+  try {
+    await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
+    fixture.view.unmount();
+    const { cards } = registry([]);
+    render(<Settings {...host} cards={cards} plugins={fixture.manager} />);
+    fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+    await act(async () => {});
+    expect(checkGit).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => release());
+  }
+  for (const plugin of plugins) {
+    expect(
+      await screen.findByRole("button", {
+        name: `Update ${plugin.manifest.name}`,
+      }),
+    ).toBeVisible();
+  }
+  expect(checkGit).toHaveBeenCalledTimes(3);
 });
 
 it("reuses an in-flight source read after leaving and reopening Manage plugins", async () => {

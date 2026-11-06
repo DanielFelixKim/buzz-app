@@ -52,7 +52,7 @@ import {
   SidebarRightIcon,
 } from "../shared/design-system/icons/index";
 import {
-  createPluginUpdateChecks,
+  sharedPluginUpdateChecks,
   pluginUpdateAvailable,
   pluginUpdateCheck,
   type PluginUpdateChecks,
@@ -864,7 +864,7 @@ export function Settings({
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const imports = plugins.imports;
   const updateChecks = useMemo(
-    () => createPluginUpdateChecks(imports),
+    () => sharedPluginUpdateChecks(imports),
     [imports],
   );
   const updateSnapshot = useSyncExternalStore(
