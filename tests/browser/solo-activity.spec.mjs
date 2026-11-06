@@ -1,5 +1,12 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage, sendOnlyTo } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+  sendOnlyTo,
+} from "./navigation.mjs";
+import { setPluginEnabled } from "./plugin-settings.mjs";
 
 const chat = "33333333-3333-4333-8333-333333333333";
 const agent =
@@ -53,11 +60,22 @@ test("Solo follow-ups share one agent Activity row", async ({
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
     .toBe(2);
+  const activity = page.locator("[data-conversation-activity]");
+  // Live message bubbles own the working cue. Without that plugin, the host
+  // fallback still groups continuous Solo work into one actionable row.
+  await expect(
+    page.getByRole("button", { name: /^View agent activity:/ }).first(),
+  ).toBeVisible();
+  await expect(activity).toHaveCount(0);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
   await page
-    .getByRole("button", {
-      name: "Activity: Local tester working",
-      exact: true,
-    })
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
+  await setPluginEnabled(page, "Agent Activity", false);
+  await closeSettings(page);
+  await activity
+    .getByRole("button", { name: "Reading notes.txt", exact: true })
     .click();
   const stop = page.getByRole("button", {
     name: "Stop Local tester",
