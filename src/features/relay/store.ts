@@ -4098,13 +4098,29 @@ export function createChannelStore(
         }
       }
       if (state.joining) {
-        // Incoming-page roots may only be known through another reader. Keep
-        // their accepted overlays until the page identifies its roots too.
+        const joiningRoots = [...state.joining.values()]
+          .filter((event) => channelRowKind(event.kind))
+          .sort(newestFirst);
+        const newest = joiningRoots[0],
+          oldest = joiningRoots.at(-1);
+        const known = new Set(
+          (tails.peek(state.channelId)?.events ?? []).map((event) => event.id),
+        );
+        // The backup owns accepted live roots inside its contiguous interval,
+        // and overlays whose roots another reader already identified here.
         for (const event of events)
           if (
-            [40003, 5, 9005, 7, 39005].includes(event.kind) &&
+            ([40003, 5, 9005, 7, 39005].includes(event.kind) ||
+              (live &&
+                channelRowKind(event.kind) &&
+                newest &&
+                oldest &&
+                newestFirst(newest, event) <= 0 &&
+                newestFirst(event, oldest) <= 0)) &&
             event.tags.some(
-              ([name, id]) => name === "h" && id === state.channelId,
+              ([name, id]) =>
+                (name === "h" && id === state.channelId) ||
+                (name === "e" && known.has(id ?? "")),
             )
           )
             state.joining.set(event.id, event);
