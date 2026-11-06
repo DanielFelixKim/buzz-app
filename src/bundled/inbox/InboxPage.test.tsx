@@ -4167,7 +4167,14 @@ function threadLayout() {
       : getClientRects.call(this);
   });
   return async (reader: HTMLElement, read: () => void) => {
-    windowFocus.mockReturnValue(true);
+    // Finish real-clock positioning before taking ownership of dwell timers.
+    await waitFor(() => expect(reader).toHaveAttribute("aria-busy", "false"));
+    // Reveal completes reading readiness in the native frame after placement.
+    await act(async () => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+    });
     vi.useFakeTimers({
       toFake: [
         "setTimeout",
@@ -4177,7 +4184,11 @@ function threadLayout() {
       ],
     });
     try {
-      await act(async () => reader.focus());
+      windowFocus.mockReturnValue(true);
+      await act(async () => {
+        reader.focus();
+        fireEvent.focus(window);
+      });
       for (let elapsed = 50; ; elapsed += 50) {
         await act(() => vi.advanceTimersByTimeAsync(50));
         try {
