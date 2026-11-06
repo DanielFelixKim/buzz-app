@@ -762,3 +762,71 @@ test("escaping a side panel over the conversation returns focus to its launcher"
   await expect(conversation).not.toHaveAttribute("inert");
   await expect(launcher).toBeFocused();
 });
+
+// Panes that stay open keep focus in the dock, in page order: closing Todos
+// under the companion hands focus to the companion, and a thread tab above the
+// companion takes it first.
+test.extend({ companionFixture: true, readState: true, threadUnread: true })(
+  "a dock that still covers the conversation keeps focus in page order",
+  async ({ page, app }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "buzzodz.plugins.v1",
+        JSON.stringify({ version: 2, enabled: { "buzz.todos": true } }),
+      );
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, app);
+    const conversation = page.locator('article[aria-label="Conversation"]');
+    const composer = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    await page
+      .getByRole("button", { name: "Toggle channel todos", exact: true })
+      .click();
+    const todos = page.getByRole("region", {
+      name: "Todos panel",
+      exact: true,
+    });
+    await expect(todos).toBeVisible();
+    await page
+      .getByRole("button", { name: "Companion fixture", exact: true })
+      .click();
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
+      exact: true,
+    });
+    await expect(companion).toBeVisible();
+    await expect(todos).toBeVisible();
+    await composer.click();
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(todos).toBeFocused();
+    await expect(conversation).toHaveAttribute("inert", "");
+    // The companion still covers Todos' launcher, so it takes focus.
+    await page.keyboard.press("Escape");
+    await expect(todos).toHaveCount(0);
+    await expect(conversation).toHaveAttribute("inert", "");
+    await expect(companion).toBeFocused();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(conversation).not.toHaveAttribute("inert");
+    const root = app.histories
+      .get("primary/alpha")
+      .find((event) => event.content === "Thread root 1");
+    await clickRow(
+      page,
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ }),
+    );
+    const tab = page
+      .locator("[data-panel-workspace]")
+      .getByRole("tab", { name: "Thread root 1", exact: true });
+    await expect(tab).toBeVisible();
+    await expect(companion).toBeVisible();
+    await composer.click();
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(tab).toBeFocused();
+  },
+);
