@@ -133,6 +133,44 @@ it("sends literal shortcodes while the cold emoji catalog is still loading", asy
     await loading;
   }
 });
+it("preserves the latest displayed emoji mapping when editing before the catalog loads", async () => {
+  const h = session("cold-edit", true);
+  const original = message(viewer, "c", "original :party:", 1, [
+    ["emoji", "party", url],
+  ]);
+  const editedUrl = "https://edited.test/party.png";
+  const previous = signed(viewer, {
+    kind: 40003,
+    created_at: 2,
+    content: "previous :party:",
+    tags: [
+      ["h", "c"],
+      ["e", original.id],
+      ["emoji", "party", editedUrl],
+    ],
+  });
+  h.live.receive([original, previous]);
+  await flush();
+  const loading = h.session.emoji.ensure();
+  const catalog = h.wire.next();
+  try {
+    h.session.messages.edit(original.id, "cold revised :party:", original.id);
+    await flush();
+    const published = h.publish.mock.calls[0]?.[0];
+    expect(published).toBeDefined();
+    const row = foldMessages("c", relay.pubkey, [
+      original,
+      previous,
+      ...(published ? [published] : []),
+    ])[0];
+    expect(row?.content).toBe("cold revised :party:");
+    expect(row?.emoji).toEqual([{ shortcode: "party", url: editedUrl }]);
+    expect(h.session.emoji.snapshot().status).toBe("loading");
+  } finally {
+    catalog.respond([]);
+    await loading;
+  }
+});
 it("A/B sends, replies and signed retries pin original URLs", async () => {
   const a = session("a"),
     b = session("b");
@@ -643,7 +681,7 @@ it("fold preserves historical message/edit mappings and per-reaction URLs withou
     { shortcode: "party", url: "https://edited.test/p" },
   ]);
   expect(fold(tagged, edit(viewer, 3, []))?.emoji).toEqual([
-    { shortcode: "party", url },
+    { shortcode: "party", url: "https://edited.test/p" },
   ]);
   expect(
     fold(edit(member, 4, [["emoji", "party", "https://spoof.test/p"]]))?.emoji,

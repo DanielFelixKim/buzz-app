@@ -505,7 +505,8 @@ export function foldMessages(
           parseAttachments(attachmentEvent, projected.urls, attachmentNames),
         ),
         emoji: emojiTags(
-          edits[0]?.tags.some(([name]) => name === "emoji") ? edits[0] : event,
+          edits.find((edit) => edit.tags.some(([name]) => name === "emoji")) ??
+            event,
         ),
         reactions: groupReactions(
           aux.filter((item) => item.kind === 7),

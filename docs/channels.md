@@ -1644,7 +1644,7 @@ stays usable for sending and in the picker while it refreshes, such as after a
 reconnect, and when that refresh fails. Only one picker owns
 Emoji Mart's global dictionary at a time; scoped custom IDs and disposal prevent
 old community entries leaking into search or Frequent. Historical messages and
-existing reactions keep their signed emoji URLs after catalog changes.
+existing reactions keep their signed emoji URLs after catalog changes. An edit without new emoji tags keeps the most recent explicit mapping on that message.
 Emoji-only messages stay at the large 42px size regardless of count; normal text
 returns the message to its usual size. Long runs wrap instead of shrinking.
 Selecting and copying custom emoji preserves their `:shortcode:` in plain text,
