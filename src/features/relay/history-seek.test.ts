@@ -238,6 +238,26 @@ it("keeps future-dated dense-second rows above the sliding boundary", async () =
   ).toBe(true);
 });
 
+it("includes a future-dated head burst above a present sliding boundary", async () => {
+  const { rows, read } = relay([
+    T0,
+    ...Array.from({ length: 450 }, () => T0 + 60),
+  ]);
+  const located = await locate(read, T0, T0, true, rows.at(-1)?.id);
+  assert.equal(located.kind, "segment");
+  if (located.kind !== "segment") return;
+  assert.isNotNull(located.ceiling);
+  expect(located.ceiling).toBeGreaterThan(T0 + 1);
+  const next = await locate(
+    read,
+    located.ceiling ?? T0,
+    T0,
+    true,
+    rows.at(-1)?.id,
+  );
+  expect(rowsOf(next)).toContain(T0 + 60);
+});
+
 it("reaches a retained segment in a ten-thousand-row second within the existing budget", async () => {
   const { rows, read, calls } = relay(Array.from({ length: 10000 }, () => T0));
   const boundary = rows[7600];

@@ -65,11 +65,16 @@ export async function locate(
 ): Promise<Located> {
   let reads = 0;
   let limit = SEEK_PAGE;
+  let newest = Math.max(now, from);
   const get = async (cursor: WindowCursor | null, full: boolean) => {
     for (;;) {
       if (++reads > SEEK_READS) throw new SeekLimitError();
       try {
-        return await read(cursor, full, limit);
+        const page = await read(cursor, full, limit);
+        for (const event of page.events)
+          if (WINDOW_KINDS.includes(event.kind))
+            newest = Math.max(newest, event.created_at);
+        return page;
       } catch (error) {
         if (!isReadBudgetError(error) || limit === 1) throw error;
         limit = Math.max(1, Math.floor(limit / 2));
@@ -102,7 +107,7 @@ export async function locate(
   }
   for (;;) {
     while (found === undefined) {
-      const top = hi ?? Math.max(now, from) + 1;
+      const top = hi ?? newest + 1;
       // More than a page of rows share one second.
       if (top - lo <= 1) {
         if (!fromId) throw new SeekLimitError();
