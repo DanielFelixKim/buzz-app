@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useEffectEvent, type RefObject } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ReadingHandle } from "../relay/unread";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -12,6 +12,8 @@ type Reading = {
   session: RelaySession;
   channelId: string;
   latestMessageId?: string | undefined;
+  /** The thread this list shows: its bottom catches up that thread, and its
+   * DM reads stop before unread messages it does not show. */
   rootId?: string | undefined;
   scroller: RefObject<HTMLElement | null>;
   settled: RefObject<boolean>;
@@ -45,6 +47,9 @@ export function useReading({
   atHead = true,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
+  // Read at measurement time: a new latest message mutates the list, which
+  // already remeasures in the next frame, so it must not restart observation.
+  const latestId = useEffectEvent(() => latestMessageId);
   useEffect(() => {
     if (!enabled || !scroller.current) return;
     const element: HTMLElement = scroller.current;
@@ -149,16 +154,17 @@ export function useReading({
       return !!row && shown(row, element.getBoundingClientRect());
     };
     function bottomId() {
+      const latest = latestId();
       if (
         !atHead ||
-        !latestMessageId ||
+        !latest ||
         element.scrollHeight - element.clientHeight - element.scrollTop > 1
       )
         return;
       const viewport = element.getBoundingClientRect();
       const row = [
         ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-      ].find((row) => row.dataset.messageId === latestMessageId);
+      ].find((row) => row.dataset.messageId === latest);
       const bounds = row?.getBoundingClientRect();
       return bounds &&
         bounds.height > 0 &&
@@ -167,7 +173,7 @@ export function useReading({
         bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) &&
         bounds.left >= Math.max(viewport.left, 0) &&
         bounds.right <= Math.min(viewport.right, window.innerWidth)
-        ? latestMessageId
+        ? latest
         : undefined;
     }
     // A discrete action (focus, pointer, key, visibility, settling) starts
@@ -204,7 +210,7 @@ export function useReading({
     }
     function acquire() {
       try {
-        return session.unread.reading(channelId);
+        return session.unread.reading(channelId, rootId);
       } catch {
         return undefined; // Membership may disappear between commit and observation.
       }
@@ -256,7 +262,7 @@ export function useReading({
           // A view-only lease keeps that evidence until the next cancellation.
           observed.view([], () => false);
           try {
-            handle = session.unread.reading(channelId);
+            handle = session.unread.reading(channelId, rootId);
             handle.view([...visible], viewing);
           } catch {
             handle = undefined;
@@ -321,7 +327,6 @@ export function useReading({
   }, [
     session,
     channelId,
-    latestMessageId,
     atHead,
     rootId,
     scroller,

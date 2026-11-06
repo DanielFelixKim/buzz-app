@@ -88,6 +88,7 @@ import {
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useVerifiedNames } from "../../features/profiles/useVerifiedNames";
+import { verifiedLabel } from "../../features/profiles/name-preference";
 import { sortParticipantNames } from "../../features/identity-names/participant-order";
 
 function conversationName(
@@ -236,7 +237,7 @@ export function SearchResults({
       ),
     [list.channels, scopedChannelId],
   );
-  // A DM hidden from the sidebar (Remove from Team, or Hide conversation) has
+  // A DM hidden from the sidebar (Close conversation, or Hide conversation) has
   // no row here either. Its messages still match, and choosing the person
   // opens it again through the confirmed open, which restores its sidebar row.
   const dmVisibility = useSyncExternalStore(
@@ -837,7 +838,7 @@ export function SearchResults({
       sources.set(
         person.pubkey,
         found
-          ? { ...source, name: found.displayName, username: found.username }
+          ? { ...source, name: verifiedLabel(found), username: found.username }
           : source,
       );
     }

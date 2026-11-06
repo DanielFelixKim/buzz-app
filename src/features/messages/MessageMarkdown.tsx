@@ -51,9 +51,11 @@ import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
 import { safeLinkUrl, visibleHtmlSource } from "../relay/message-content";
 import styles from "./Messages.module.css";
-import { profileMentionParts } from "./profile-mentions";
+import { profileMentionNames, profileMentionParts } from "./profile-mentions";
 import {
   isLiteralMarkdownContext,
+  isPlainProse,
+  plainProseTree,
   prepareMarkdown,
   type LiteralRange,
   type PreparedMarkdown,
@@ -236,7 +238,10 @@ function inlineProtectionKey(
   agents: typeof emptyReferenceDirectory.agents,
 ) {
   const identities = [...row.mentions, ...(row.mentionReferences ?? [])];
-  const mentions = identities.map((id) => [id, profiles?.get(id)?.name]);
+  const mentions = identities.map((id) => [
+    id,
+    ...profileMentionNames(profiles?.get(id)),
+  ]);
   const mentioned = new Set(identities);
   const agentNames = agents
     .filter((agent) => mentioned.has(agent.pubkey))
@@ -869,6 +874,11 @@ const parsedBodies = recentResults<ReactElement>(
   (key, body) => 2 + elementCount(body) + Math.ceil(key.length / 500),
 );
 
+/** Plain prose skips micromark: the same tree, then the same plugins. */
+function remarkPlainProse(this: { parser?: unknown }) {
+  this.parser = plainProseTree;
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
@@ -884,6 +894,9 @@ const MarkdownBody = memo(function MarkdownBody({
     () =>
       Markdown({
         remarkPlugins: [
+          // Protection only inserts placeholders isPlainProse rejects, so this
+          // agrees with prepareMarkdown's check on the raw content.
+          ...(isPlainProse(protectedContent.content) ? [remarkPlainProse] : []),
           remarkGfm,
           [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,
