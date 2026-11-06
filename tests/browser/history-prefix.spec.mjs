@@ -213,46 +213,65 @@ test("newer-page scroll correction does not request an older page", async ({
   }
 });
 
-test("byte-bounded same-second history keeps advancing after handing off its anchor", async ({
-  page,
-}) => {
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/history-prefix.html?sliding&dense`,
-  );
-  const snapshot = page.locator("[data-oldest]");
-  await expect(snapshot).toHaveAttribute("data-count", "60");
-  const ids = () => snapshot.getAttribute("data-ids");
-  const before = await ids();
-  const seen = new Set(before.split(","));
-  await settle(page);
-  await page.evaluate(() => window.holdSlidingPage());
-  expect((await anchor(page)).id).toBe(
-    await snapshot.getAttribute("data-anchor"),
-  );
-  await edge(page, -1);
-  await expect.poll(() => page.evaluate(() => window.slidingHeldReads)).toBe(1);
-  expect((await anchor(page)).id).toBe(
-    await snapshot.getAttribute("data-anchor"),
-  );
-  expect(await page.evaluate(() => window.lastSlidingAnchor)).toBe(
-    await snapshot.getAttribute("data-anchor"),
-  );
-  await page.evaluate(() => window.releaseSlidingPage());
-  await expect(snapshot).toHaveAttribute("data-loading", "false");
-  await expect.poll(ids).not.toBe(before);
-  for (const id of (await ids()).split(",")) seen.add(id);
-  await expect(snapshot).toHaveAttribute("data-has-more", "false");
-  expect(seen.size).toBe(80);
-  for (
-    let step = 0;
-    (await snapshot.getAttribute("data-has-newer")) === "true" && step < 5;
-    step++
-  ) {
-    await page
-      .getByRole("button", { name: "Load newer messages", exact: true })
-      .click();
+for (const compact of [false, true]) {
+  test(`byte-bounded same-second history keeps advancing after handing off its anchor (compact: ${compact})`, async ({
+    page,
+  }) => {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/history-prefix.html?sliding&dense${compact ? "&compact" : ""}`,
+    );
+    const snapshot = page.locator("[data-oldest]");
+    await expect(snapshot).toHaveAttribute("data-count", "60");
+    const ids = () => snapshot.getAttribute("data-ids");
+    const before = await ids();
+    const seen = new Set(before.split(","));
+    await settle(page);
+    await page.evaluate(() => window.holdSlidingPage());
+    if (!compact) {
+      expect((await anchor(page)).id).toBe(
+        await snapshot.getAttribute("data-anchor"),
+      );
+    }
+    await edge(page, -1);
+    await expect
+      .poll(() => page.evaluate(() => window.slidingHeldReads))
+      .toBe(1);
+    if (!compact) {
+      expect((await anchor(page)).id).toBe(
+        await snapshot.getAttribute("data-anchor"),
+      );
+    }
+    if (!compact) {
+      expect(await page.evaluate(() => window.lastSlidingAnchor)).toBe(
+        await snapshot.getAttribute("data-anchor"),
+      );
+    }
+    await page.evaluate(() => window.releaseSlidingPage());
     await expect(snapshot).toHaveAttribute("data-loading", "false");
-    await expect(page.getByRole("alert")).toHaveCount(0);
-  }
-  await expect(snapshot).toHaveAttribute("data-has-newer", "false");
-});
+    await expect.poll(ids).not.toBe(before);
+    for (const id of (await ids()).split(",")) seen.add(id);
+    await expect(snapshot).toHaveAttribute("data-has-more", "false");
+    expect(seen.size).toBe(80);
+    for (
+      let step = 0;
+      (await snapshot.getAttribute("data-has-newer")) === "true" &&
+      step < (compact ? 20 : 5);
+      step++
+    ) {
+      if (compact) {
+        await page
+          .getByRole("region", { name: "Channel message history" })
+          .hover();
+        await page.mouse.wheel(0, 600);
+      } else {
+        await page
+          .getByRole("button", { name: "Load newer messages", exact: true })
+          .click();
+      }
+      await settle(page);
+      await expect(snapshot).toHaveAttribute("data-loading", "false");
+      await expect(page.getByRole("alert")).toHaveCount(0);
+    }
+    await expect(snapshot).toHaveAttribute("data-has-newer", "false");
+  });
+}

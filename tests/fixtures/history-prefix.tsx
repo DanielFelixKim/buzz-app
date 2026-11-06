@@ -88,7 +88,7 @@ const dense = new URLSearchParams(location.search).has("dense");
 const secret = new Uint8Array(32).fill(1);
 const denseAuthor = { secret, pubkey: getPublicKey(secret) };
 const densePayload = "x".repeat(128 * 1024);
-const denseBody = "History remains readable. ".repeat(40);
+const denseBody = "History remains readable. ".repeat(compact ? 0 : 40);
 const slidingEvents = (
   dense
     ? [

@@ -795,6 +795,13 @@ function Timeline({
   // reader input. Its own end alignment and Virtua's offset corrections can
   // scroll upward before rows re-measure; only reader input may cancel follow.
   const layoutCorrection = useRef(false);
+  const hadNewer = useRef(window.hasNewer);
+  useLayoutEffect(() => {
+    // Removing the forward control can clamp the scrollport upward at the head.
+    if (hadNewer.current && !window.hasNewer) layoutCorrection.current = true;
+    hadNewer.current = window.hasNewer;
+  }, [window.hasNewer]);
+
   // A held pointer can drag the scrollbar without directional input events.
   const pointerHeld = useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
