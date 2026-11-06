@@ -1208,13 +1208,36 @@ export function createChannelStore(
     ceilingId?: string,
     targetId?: string,
   ) {
-    const bounded = { ...state, events: [], traffic: new Map() };
-    const retained = trimWindow(bounded, page.events, "newest", targetId);
-    if (listByteSize(retained) > maxHistoryBytes)
-      throw new Error("Message exceeds the history window budget");
-    const roots = page.events
+    const bounded = {
+      ...state,
+      events: [],
+      traffic: new Map(),
+      ceiling: ceiling ?? undefined,
+      ceilingId,
+    };
+    const candidates = new Map(page.events.map((event) => [event.id, event]));
+    for (const event of state.traffic.values()) {
+      const cursor = page.cursor;
+      if (
+        !channelRowKind(event.kind) ||
+        (belowCeiling(bounded, event) &&
+          (!cursor ||
+            event.created_at > cursor.createdAt ||
+            (event.created_at === cursor.createdAt &&
+              event.id <= cursor.eventId)))
+      )
+        candidates.set(event.id, event);
+    }
+    const roots = [...candidates.values()]
       .filter((event) => channelRowKind(event.kind))
       .sort(newestFirst);
+    const admitted = relatedEvents(
+      [...candidates.values()],
+      new Set(roots.map((event) => event.id)),
+    );
+    const retained = trimWindow(bounded, admitted, "newest", targetId);
+    if (listByteSize(retained) > maxHistoryBytes)
+      throw new Error("Message exceeds the history window budget");
     const kept = retained
       .filter((event) => channelRowKind(event.kind))
       .sort(newestFirst);
@@ -1233,6 +1256,7 @@ export function createChannelStore(
     state.controller = undefined;
     state.generation++;
     state.events = retained;
+    state.traffic.clear();
     state.atHead = ceiling === null;
     state.sliding = false;
     state.ceiling = ceiling ?? undefined;

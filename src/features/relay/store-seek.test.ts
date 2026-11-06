@@ -1624,3 +1624,36 @@ it.each([40003, 5])(
   },
 );
 
+it("includes retained live roots in cached seek row admission", async () => {
+  const h = setup({ count: 160, spacing: 0, maxHistoryRows: 40 });
+  await h.open();
+  for (let step = 0; step < 3; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const ids = h
+    .window()
+    .rows.map((row) => row.id)
+    .sort();
+  const lower = ids.at(-2),
+    upper = ids.at(-1),
+    target = ids[0];
+  assert.exists(lower);
+  assert.exists(upper);
+  assert.exists(target);
+  let traffic!: RelayEvent;
+  for (
+    let nonce = 0;
+    !traffic || traffic.id <= lower || traffic.id >= upper;
+    nonce++
+  )
+    traffic = message(h.alice, "c", `retained live ${nonce}`, T0);
+  h.history.push(traffic);
+  h.live.receive([traffic], { channelId: "c", phase: "live" });
+  expect(h.window().rows.some((row) => row.id === traffic.id)).toBe(true);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.state({ status: "retrying", routes: [] });
+  await h.channels.seek?.("c", T0, new AbortController().signal, target);
+  expect(h.window().rows.some((row) => row.id === target)).toBe(true);
+  expect(h.window().rows.length).toBeLessThanOrEqual(40);
+});
