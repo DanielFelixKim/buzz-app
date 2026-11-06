@@ -15,7 +15,12 @@ import { XIcon } from "../icons";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 
-const ToastHost = createContext({ id: "", active: true });
+type ToastHostState = {
+  id: string;
+  active: boolean;
+  parent: ToastHostState | undefined;
+};
+const ToastHost = createContext<ToastHostState | undefined>(undefined);
 type Tone = "error" | "warning" | "info" | "success";
 
 /** Mount once in the host. Sonner owns announcements, expiry and swiping. */
@@ -27,7 +32,8 @@ export function ToastProvider({
   portalContainer?: HTMLElement | undefined;
 }) {
   const id = useId();
-  const [host] = useState(() => ({ id, active: true }));
+  const parent = useContext(ToastHost);
+  const [host] = useState(() => ({ id, active: true, parent }));
   useEffect(() => {
     // Sonner's global hotkey must not bypass the host's modal focus boundary.
     const guardModal = (event: KeyboardEvent) => {
@@ -191,7 +197,7 @@ export function ToastNotice({
   navigation?: ToastCardProps["navigation"];
 }) {
   const id = useId();
-  const { id: toasterId } = useContext(ToastHost);
+  const toasterId = useContext(ToastHost)?.id ?? "";
   const [source] = useState(() =>
     noticeContent({ title, description, tone, children }),
   );
@@ -260,7 +266,7 @@ export function useToastDismiss() {
   return toast.dismiss;
 }
 
-/** Completed actions outlive their originating row, but not their host. */
+/** Completed actions use the nearest surviving host after their source closes. */
 export function useToastNotification() {
   const host = useContext(ToastHost);
   return (
@@ -268,7 +274,10 @@ export function useToastNotification() {
     tone: "success" | "error" | "info",
     action?: { label: string; onClick(): void; timeout?: number },
   ) => {
-    if (!host.active) return "";
+    let destination = host;
+    while (destination && !destination.active) destination = destination.parent;
+    // A closed provider tree has no destination; an unscoped caller keeps Sonner's default.
+    if (host && !destination) return "";
     return String(
       toast.custom(
         (id) => (
@@ -294,7 +303,7 @@ export function useToastNotification() {
         ),
         {
           id: crypto.randomUUID(),
-          toasterId: host.id,
+          toasterId: destination?.id ?? "",
           duration: action ? (action.timeout ?? 8000) : 4000,
         },
       ),

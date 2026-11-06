@@ -9,6 +9,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -418,3 +419,64 @@ it("keeps effect-driven feedback through StrictMode host replay", async () => {
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(screen.getByRole("dialog", { name: "Replay feedback" })).toBeVisible();
 });
+
+it.each(["success", "error"] as const)(
+  "routes late %s feedback to the nearest mounted enclosing host",
+  async (tone) => {
+    let notify!: ReturnType<typeof useToastNotification>;
+    function Action() {
+      notify = useToastNotification();
+      return null;
+    }
+    const outer = document.createElement("div");
+    const inner = document.createElement("div");
+    document.body.append(outer, inner);
+    const view = render(
+      <StrictMode>
+        <ToastProvider portalContainer={outer}>
+          <ToastProvider portalContainer={inner}>
+            <Action />
+          </ToastProvider>
+        </ToastProvider>
+      </StrictMode>,
+    );
+    try {
+      act(() => {
+        notify("Viewer feedback", tone);
+      });
+      expect(inner).toContainElement(
+        await screen.findByRole("dialog", { name: "Viewer feedback" }),
+      );
+      view.rerender(
+        <StrictMode>
+          <ToastProvider portalContainer={outer}>{null}</ToastProvider>
+        </StrictMode>,
+      );
+      act(() => {
+        notify("Completed after close", tone);
+      });
+      const feedback = await screen.findByRole("dialog", {
+        name: "Completed after close",
+      });
+      expect(outer).toContainElement(feedback);
+      expect(inner).toBeEmptyDOMElement();
+      expect(
+        screen.queryByRole("dialog", { name: "Viewer feedback" }),
+      ).toBeNull();
+      fireEvent.click(
+        within(feedback).getByRole("button", { name: "Dismiss notification" }),
+      );
+      await waitFor(() => expect(feedback).not.toBeInTheDocument());
+      view.unmount();
+      const custom = vi.spyOn(toast, "custom");
+      act(() => {
+        notify("All hosts closed", tone);
+      });
+      expect(custom).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      outer.remove();
+      inner.remove();
+    }
+  },
+);

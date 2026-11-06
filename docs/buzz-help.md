@@ -370,7 +370,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Fullscreen media** temporarily hides background notices, including ready
   updates. Close the viewer to use a ready update notice again. Actions inside
   the viewer, including copying comment code and native image/video menu
-  downloads, show their result inside the open viewer.
+  downloads, show their result inside the open viewer. Comment actions such as
+  Stop and copying code report results in the app if the viewer closes first.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.
