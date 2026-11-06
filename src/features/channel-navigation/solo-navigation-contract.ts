@@ -64,11 +64,7 @@ export type ParticipantPolicy = Readonly<{
 }>;
 /** A session skill the task source offers for a `/` query; the host makes the
  * chip, with the query's target. */
-export type TaskSkillCandidate = Readonly<{
-  id: string;
-  label: string;
-  detail?: string;
-}>;
+export type TaskSkillCandidate = Readonly<{ id: string; label: string }>;
 /** `/` in a task chat. `target` is the message's one tagged agent, else the
  * task primary. */
 export type TaskSkills = Readonly<{
@@ -92,6 +88,15 @@ export type TaskSkills = Readonly<{
       id: string;
     }>,
   ): boolean;
+  /** A chosen chip's details from the current report, for display only. */
+  describe?(
+    input: Readonly<{
+      binding: SoloRegionBinding;
+      channelId: string;
+      target: string;
+      id: string;
+    }>,
+  ): Readonly<{ description?: string; location?: string }> | undefined;
 }>;
 export type SoloTaskMode = Readonly<{
   prepare(draft: TaskDraft, signal: AbortSignal): Promise<TaskPrepareResult>;

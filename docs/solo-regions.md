@@ -89,4 +89,7 @@ on an informational notice, or with a skill whose target is not a recipient.
 the target: the message's one tagged agent, else the task primary. It shows
 "Tag one agent per message" for more than one. It calls `load` once per query,
 makes each `nexus.skill` chip with that target, and asks `selectable` again
-when the user chooses one. A task draft shows that skills need a started task.
+when the user chooses one. Rows show only the skill name. Choosing a chip opens
+its details in a popover: its name, and the description and location that the
+optional `describe` returns from the current report. A task draft shows that
+skills need a started task.

@@ -245,6 +245,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   folder (**Local settings**); choosing one adds it to the message as a chip
   for the task agent. In a task chat, **/** lists the skills its session
   reported for the tagged agent, or the task's primary agent if none is tagged.
+  Select a skill chip to see its description and where its file is.
   Without Nexus, chat creation remains available in the global **+** menu,
   Solo and each workspace; creating a workspace opens a chat draft filed there.
   Folders are optional unless **Work in a new worktree** is on. In that mode,

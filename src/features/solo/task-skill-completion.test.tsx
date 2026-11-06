@@ -95,8 +95,15 @@ async function fixture(skills?: TaskSkills) {
 
 it("offers a task chat's skills for its one tagged agent or primary and rechecks them on selection", async () => {
   let selectable = true;
+  // An older source's row detail is not shown: a row is the skill's name.
   const load = vi.fn<TaskSkills["load"]>(async ({ target }) => ({
-    items: [{ id: `{"path":"/${target}/SKILL.md"}`, label: "Review" }],
+    items: [
+      {
+        id: `{"path":"/${target}/SKILL.md"}`,
+        label: "Review",
+        detail: `/${target}/SKILL.md · reported · reference only`,
+      } as never,
+    ],
   }));
   const f = await fixture({ load, selectable: () => selectable });
 
@@ -104,6 +111,7 @@ it("offers a task chat's skills for its one tagged agent or primary and rechecks
   expect(primary.last()?.status).toBe("Loading skills…");
   await waitFor(() => expect(primary.last()?.items).toHaveLength(1));
   const [row] = primary.last()?.items ?? [];
+  expect(row).not.toHaveProperty("detail");
   expect(row).toMatchObject({
     label: "Review",
     edit: {

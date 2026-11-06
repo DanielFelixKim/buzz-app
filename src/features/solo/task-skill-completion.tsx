@@ -83,7 +83,6 @@ export function TaskSkillCompletion({
               items: result.items.map((item) => ({
                 id: `nexus.skill:${item.id}`,
                 label: item.label,
-                ...(item.detail ? { detail: item.detail } : {}),
                 edit: {
                   token: {
                     kind: "nexus.skill" as const,
