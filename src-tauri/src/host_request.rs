@@ -401,6 +401,7 @@ async fn send_byte_upload(
         bytes,
     )?;
     let client = reqwest::Client::builder()
+        .user_agent(crate::relay::user_agent())
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
         .timeout(DEADLINE)

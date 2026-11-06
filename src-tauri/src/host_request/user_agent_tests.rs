@@ -1,7 +1,7 @@
 use super::*;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-async fn server() -> (reqwest::Url, tokio::task::JoinHandle<Vec<String>>) {
+async fn server(method: &'static str) -> (reqwest::Url, tokio::task::JoinHandle<Vec<String>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url =
         reqwest::Url::parse(&format!("http://{}/test", listener.local_addr().unwrap())).unwrap();
@@ -14,7 +14,16 @@ async fn server() -> (reqwest::Url, tokio::task::JoinHandle<Vec<String>>) {
                 request.push(socket.read_u8().await.unwrap());
             }
             let request = String::from_utf8(request).unwrap();
-            assert!(request.starts_with("GET /test HTTP/1.1\r\n"));
+            assert!(request.starts_with(&format!("{method} /test HTTP/1.1\r\n")));
+            let length = request
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .map_or(0, |(_, value)| value.trim().parse::<usize>().unwrap());
+            assert!(length <= MAX_HEADER_BYTES);
+            // Consume the multipart body before closing, avoiding a TCP reset.
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).await.unwrap();
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
                 .await
@@ -52,7 +61,7 @@ async fn ordinary_and_protected_requests_default_user_agent_and_preserve_overrid
                 input.headers.insert(name.into(), value.into());
             }
             let (_, method, headers) = validate_request(&input).unwrap();
-            let (url, server) = server().await;
+            let (url, server) = server("GET").await;
             let response = send_request_with_policy(
                 url,
                 method,
@@ -72,7 +81,7 @@ async fn ordinary_and_protected_requests_default_user_agent_and_preserve_overrid
 
 #[tokio::test]
 async fn byte_download_sends_default_user_agent() {
-    let (url, server) = server().await;
+    let (url, server) = server("GET").await;
     // Match plugin_host_request_bytes: use the shared production client.
     let (status, _, bytes) = read_bytes(
         client(false)
@@ -85,5 +94,23 @@ async fn byte_download_sends_default_user_agent() {
     .unwrap();
     assert_eq!(status, 200);
     assert_eq!(bytes, b"{}");
+    assert_eq!(server.await.unwrap(), [crate::relay::user_agent()]);
+}
+
+#[tokio::test]
+async fn one_shot_byte_upload_sends_default_user_agent() {
+    let (url, server) = server("POST").await;
+    let upload = ByteUpload {
+        url: url.to_string(),
+        field: "image".into(),
+        name: "example.png".into(),
+        content_type: "image/png".into(),
+        fields: BTreeMap::new(),
+    };
+    let response = send_byte_upload(url, &upload, b"\x89PNG\r\n\x1a\n")
+        .await
+        .unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, "{}");
     assert_eq!(server.await.unwrap(), [crate::relay::user_agent()]);
 }
