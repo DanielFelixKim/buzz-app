@@ -59,9 +59,6 @@ test("frames an uploaded agent avatar in a squircle", async ({ page }) => {
     ),
   });
   await expect(
-    page
-      .getByRole("img", { name: "Selected avatar" })
-      .locator("[data-avatar-shape]")
-      .first(),
+    page.getByRole("img", { name: "Selected avatar" }),
   ).toHaveAttribute("data-avatar-shape", "squircle");
 });
