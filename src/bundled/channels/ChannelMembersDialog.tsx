@@ -79,6 +79,7 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
@@ -101,6 +102,7 @@ import {
   useMemberAdministration,
   memberAccessLabel,
 } from "./MemberAdministration";
+import type { MemberRole } from "../../features/channel-members/administration-protocol";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
@@ -112,6 +114,13 @@ import { writeClipboardText } from "../../shared/clipboard";
 
 const INVITATION_GROUP_SIZE = 4;
 const MEMBER_PAGE_SIZE = 50;
+const accessFilterNames = (["owner", "admin", "member", "guest"] as const).map(
+  memberAccessLabel,
+);
+const accessFilterLabel = (role: MemberRole | undefined) =>
+  role === undefined || role === "unknown"
+    ? undefined
+    : memberAccessLabel(role);
 
 const additionRoles = [
   {
@@ -647,7 +656,8 @@ export function ChannelMembersDialog({
   });
   const lifetime = useRef<AbortController>(undefined);
   const [query, setQuery] = useState("");
-  const [selectedRole, setSelectedRole] = useState("All");
+  const [selectedIdentity, setSelectedIdentity] = useState("All");
+  const [selectedAccess, setSelectedAccess] = useState("All");
   const [soloAdditions, setSoloAdditions] = useState<
     Record<string, { pending: boolean; error?: string }>
   >({});
@@ -968,6 +978,27 @@ export function ChannelMembersDialog({
     (a, b) =>
       memberLabel(a).localeCompare(memberLabel(b)) || a.localeCompare(b),
   );
+  const accessOf = (key: string) =>
+    accessFilterLabel(administration.authority.roles[key]);
+  const accessGroups = accessFilterNames
+    .map((name) => ({
+      name,
+      count: currentMembers.filter((key) => accessOf(key) === name).length,
+    }))
+    .filter((group) => group.count > 0);
+  const accessFilter =
+    query.length === 0 &&
+    (administration.status === "loading" ||
+      (accessGroups.length > 1 &&
+        accessGroups.some((group) => group.name === selectedAccess)))
+      ? selectedAccess
+      : "All";
+  if (
+    !initialLoading &&
+    administration.status !== "loading" &&
+    selectedAccess !== accessFilter
+  )
+    setSelectedAccess(accessFilter);
   const currentGroups = ["People", "Agents"].map((name) => {
     const keys = currentMembers.filter((key) => {
       const group =
@@ -1025,33 +1056,48 @@ export function ChannelMembersDialog({
     });
   const groups = (largeRoster ? orderedGroups : currentGroups).map((group) => ({
     ...group,
-    keys: group.keys.filter((key) => matches(key, memberLabel(key))),
+    keys: group.keys.filter(
+      (key) =>
+        matches(key, memberLabel(key)) &&
+        (accessFilter === "All" || accessOf(key) === accessFilter),
+    ),
   }));
+  const narrowed = text.length > 0 || accessFilter !== "All";
   const presentGroups = groups.filter((group) => group.count > 0);
-  const roleFilter =
+  const identityFilter =
     query.length === 0 &&
     presentGroups.length > 1 &&
-    presentGroups.some((group) => group.name === selectedRole)
-      ? selectedRole
+    presentGroups.some((group) => group.name === selectedIdentity)
+      ? selectedIdentity
       : "All";
   if (
     !initialLoading &&
     administration.status !== "loading" &&
-    selectedRole !== roleFilter
+    selectedIdentity !== identityFilter
   )
-    setSelectedRole(roleFilter);
+    setSelectedIdentity(identityFilter);
+  const identityChoices = presentGroups.length > 1;
+  const accessChoices =
+    administration.status === "ready" && accessGroups.length > 1;
+  const filterSummary =
+    [identityFilter, accessFilter]
+      .filter((name) => name !== "All")
+      .join(", ") || "All";
   const filteredGroups = groups.filter(
     (group) =>
-      (roleFilter === "All" || group.name === roleFilter) &&
+      (identityFilter === "All" || group.name === identityFilter) &&
       group.keys.length > 0,
   );
   const [memberPages, setMemberPages] = useState({
     text,
-    roleFilter,
+    identityFilter,
+    accessFilter,
     pages: {} as Record<string, number>,
   });
   let pages =
-    memberPages.text === text && memberPages.roleFilter === roleFilter
+    memberPages.text === text &&
+    memberPages.identityFilter === identityFilter &&
+    memberPages.accessFilter === accessFilter
       ? memberPages.pages
       : {};
   for (const group of groups) {
@@ -1062,7 +1108,8 @@ export function ChannelMembersDialog({
     if ((pages[group.name] ?? 0) > lastPage)
       pages = { ...pages, [group.name]: lastPage };
   }
-  if (pages !== memberPages.pages) setMemberPages({ text, roleFilter, pages });
+  if (pages !== memberPages.pages)
+    setMemberPages({ text, identityFilter, accessFilter, pages });
   const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {
     const group = pendingMemberPage.current;
@@ -1076,7 +1123,8 @@ export function ChannelMembersDialog({
     pendingMemberPage.current = group;
     setMemberPages({
       text,
-      roleFilter,
+      identityFilter,
+      accessFilter,
       pages: { ...pages, [group]: page },
     });
   };
@@ -1190,7 +1238,7 @@ export function ChannelMembersDialog({
   const offering =
     !initialLoading &&
     canAdd &&
-    roleFilter === "All" &&
+    identityFilter === "All" &&
     (!!text ||
       (members.size === 1 &&
         members.has(session.viewer ?? "") &&
@@ -1202,7 +1250,7 @@ export function ChannelMembersDialog({
     "Your other agents",
   ].map((name, index) => {
     const people =
-      roleFilter === "All"
+      identityFilter === "All"
         ? available.filter((person) => candidateGroup(person) === index)
         : [];
     const ranked = rankPeople(
@@ -1427,7 +1475,8 @@ export function ChannelMembersDialog({
           if (direct) {
             setSoloAdditions((old) => ({ ...old, [key]: { pending: false } }));
             setQuery("");
-            setSelectedRole("All");
+            setSelectedIdentity("All");
+            setSelectedAccess("All");
           }
           setNotice(
             `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? session.agentChoices.snapshot().identities.find((agent) => agent.pubkey === key)?.name ?? formatPublicKey(key) ?? "Unknown member")}${direct ? " added." : ` is in the ${place}.`}`,
@@ -1748,44 +1797,85 @@ export function ChannelMembersDialog({
         disabled={solo && share.busy}
         onValueChange={(value) => {
           setQuery(value);
-          if (value.length > 0) setSelectedRole("All");
+          if (value.length > 0) {
+            setSelectedIdentity("All");
+            setSelectedAccess("All");
+          }
         }}
         onKeyDown={(event) => {
           highlight.keyDown(event);
         }}
         trailing={
-          !initialLoading && presentGroups.length > 1 && query.length === 0 ? (
+          !initialLoading &&
+          query.length === 0 &&
+          (identityChoices || accessChoices) ? (
             <MenuRoot>
               <MenuTrigger
                 render={
                   <IconButton
-                    aria-label={`Filter people and agents: ${roleFilter}`}
-                    title={`Filter people and agents: ${roleFilter}`}
-                    variant={roleFilter === "All" ? "ghost" : "prominent"}
+                    aria-label={`Filter members: ${filterSummary}`}
+                    title={`Filter members: ${filterSummary}`}
+                    variant={filterSummary === "All" ? "ghost" : "prominent"}
                     icon={<Filter2Icon size={16} aria-hidden="true" />}
                   />
                 }
               />
               <MenuPopup align="end">
-                <MenuRadioGroup
-                  value={roleFilter}
-                  onValueChange={(value) => {
-                    setSelectedRole(value);
-                    if (scrollport.current) scrollport.current.scrollTop = 0;
-                  }}
-                >
-                  {[{ name: "All", count: members.size }, ...presentGroups].map(
-                    (group) => (
-                      <MenuRadioItem
-                        key={group.name}
-                        value={group.name}
-                        closeOnClick
-                      >
-                        {`${group.name} · ${group.count}`}
-                      </MenuRadioItem>
-                    ),
-                  )}
-                </MenuRadioGroup>
+                {identityChoices && (
+                  <MenuGroup>
+                    <MenuGroupLabel>People and agents</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={identityFilter}
+                      onValueChange={(value) => {
+                        setSelectedIdentity(value);
+                        if (scrollport.current)
+                          scrollport.current.scrollTop = 0;
+                      }}
+                    >
+                      {[
+                        { name: "All", count: members.size },
+                        ...presentGroups,
+                      ].map((group) => (
+                        <MenuRadioItem
+                          key={group.name}
+                          value={group.name}
+                          closeOnClick
+                        >
+                          {`${group.name} · ${group.count}`}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                )}
+                {identityChoices && accessChoices && <MenuSeparator />}
+                {accessChoices && (
+                  <MenuGroup>
+                    <MenuGroupLabel>Access</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={accessFilter}
+                      onValueChange={(value) => {
+                        setSelectedAccess(value);
+                        if (scrollport.current)
+                          scrollport.current.scrollTop = 0;
+                      }}
+                    >
+                      {[
+                        { name: "All", count: members.size },
+                        ...accessGroups,
+                      ].map((group) => (
+                        <MenuRadioItem
+                          key={group.name}
+                          value={group.name}
+                          closeOnClick
+                        >
+                          {group.name === "All"
+                            ? `Any access · ${group.count}`
+                            : `${group.name} · ${group.count}`}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                )}
               </MenuPopup>
             </MenuRoot>
           ) : undefined
@@ -2057,7 +2147,8 @@ export function ChannelMembersDialog({
                         tabIndex={-1}
                         className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
                       >
-                        {group.name} · {text ? group.keys.length : group.count}
+                        {group.name} ·{" "}
+                        {narrowed ? group.keys.length : group.count}
                       </h3>
                       <ul aria-busy={refreshing}>
                         {group.keys
@@ -2113,7 +2204,9 @@ export function ChannelMembersDialog({
                     <p className="px-control-inset text-body-sm text-subtle">
                       {query
                         ? "No members match your search."
-                        : "No members to show."}
+                        : accessFilter !== "All"
+                          ? "No members match this filter."
+                          : "No members to show."}
                     </p>
                   )}
               </>
