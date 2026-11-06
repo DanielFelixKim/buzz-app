@@ -90,6 +90,15 @@ const defaultEmojiColor = backgrounds[0];
 // The emoji's center stays inside the frame.
 const emojiCenter = (value: number) => Math.min(0.5, Math.max(-0.5, value));
 
+/** Whether this browser can paint the image. */
+const decodes = (src: string) =>
+  Object.assign(new Image(), { src })
+    .decode()
+    .then(
+      () => true,
+      () => false,
+    );
+
 export function AgentAvatarPicker({
   name,
   selection,
@@ -130,7 +139,7 @@ export function AgentAvatarPicker({
   // The chosen file shows at once; it stays the artwork after its upload lands.
   type Local = {
     url: string;
-    animated?: boolean;
+    fixed?: boolean;
     picture?: string;
     progress?: number;
   };
@@ -250,13 +259,11 @@ export function AgentAvatarPicker({
     [],
   );
   const shown = local?.picture === picture ? local?.url : undefined;
-  // Painting would keep only an animation's first frame, so those upload as chosen.
-  const cropping = shown && !local?.animated ? shown : undefined;
+  const cropping = shown && !local?.fixed ? shown : undefined;
   useImperativeHandle(avatarRef, () => ({
     async prepare() {
       const image = cropImage.current;
-      // Default framing keeps the original upload, as does artwork this
-      // browser can't decode (HEIC outside WebKit), which the host converts.
+      // Default framing keeps the original upload.
       if (cropping) await image?.decode().catch(() => {});
       const framed =
         cropping && image?.naturalWidth
@@ -308,11 +315,15 @@ export function AgentAvatarPicker({
             setLocal({ url, progress: sent / total });
         },
       );
-      const animated = await animatedImage(file).catch(() => true);
+      // Uploads stay as chosen when painting would keep only an animation's
+      // first frame, or when this browser can't decode them (HEIC outside
+      // WebKit, which the host converts).
+      const fixed =
+        (await animatedImage(file).catch(() => true)) || !(await decodes(url));
       if (request.signal.aborted) return;
       if (kept.current) URL.revokeObjectURL(kept.current.url);
       kept.current = null;
-      setLocal({ url, animated, picture: value });
+      setLocal({ url, fixed, picture: value });
       onChange({ kind: "image", picture: value });
     } catch (reason) {
       if (request.signal.aborted) return;

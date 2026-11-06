@@ -603,6 +603,46 @@ it("pans and zooms an uploaded image, then saves the framed crop", async () => {
   );
 });
 
+it("moves focus from Zoom to the image frame on a mouse press", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/original.png",
+  );
+  const { dialog, user } = setup([echo], undefined, "https://a.example");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["image"], "image.png", { type: "image/png" })],
+    },
+  });
+  const frame = await within(dialog).findByRole("application", {
+    name: "Image position",
+  });
+  within(dialog).getByRole("slider", { name: "Zoom" }).focus();
+  fireEvent.pointerDown(frame, { pointerType: "mouse", pointerId: 1 });
+  expect(frame).toHaveFocus();
+});
+
+it("offers no framing for an upload this browser can't decode", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/converted.png",
+  );
+  vi.spyOn(HTMLImageElement.prototype, "decode").mockRejectedValueOnce(
+    new Error("EncodingError"),
+  );
+  const { dialog, user } = setup([echo], undefined, "https://a.example");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["heic"], "image.heic", { type: "image/heic" })],
+    },
+  });
+  await within(dialog).findByRole("img", { name: "Selected avatar" });
+  expect(
+    within(dialog).queryByRole("application", { name: "Image position" }),
+  ).toBeNull();
+  expect(within(dialog).queryByRole("slider", { name: "Zoom" })).toBeNull();
+});
+
 it("keeps the framed image when its replacement fails to upload", async () => {
   const cropped = new File(["crop"], "avatar.png", { type: "image/png" });
   vi.mocked(croppedAvatar).mockResolvedValueOnce(cropped);
