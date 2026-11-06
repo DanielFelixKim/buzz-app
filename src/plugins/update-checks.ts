@@ -40,6 +40,8 @@ export function pluginUpdateAvailable(snapshot: Snapshot, plugin: PluginInfo) {
 export function createPluginUpdateChecks(imports: PluginImports | undefined) {
   let snapshot: Snapshot = {};
   let sequence = 0;
+  let gitReads = 0;
+  const gitQueue: Array<() => void> = [];
   const installations = new Map<string, string>();
   const listeners = new Set<() => void>();
   const pending = new Map<
@@ -91,13 +93,23 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
       const consumers = new Set([active]);
       const promise = (async () => {
         if ("root" in source) return imports.checkFolder(id);
-        const signed = await authorize?.(source.repository);
-        if (![...consumers.values()].some((active) => active())) return null;
-        return imports.checkGit(
-          signed?.repository ?? source.repository,
-          source.reference,
-          signed?.token,
-        );
+        if (gitReads >= 2)
+          await new Promise<void>((resolve) => gitQueue.push(resolve));
+        else gitReads++;
+        try {
+          if (![...consumers].some((active) => active())) return null;
+          const signed = await authorize?.(source.repository);
+          if (![...consumers].some((active) => active())) return null;
+          return await imports.checkGit(
+            signed?.repository ?? source.repository,
+            source.reference,
+            signed?.token,
+          );
+        } finally {
+          const next = gitQueue.shift();
+          if (next) next();
+          else gitReads--;
+        }
       })().finally(() => pending.delete(key));
       request = { sequence: ++sequence, revisions: {}, consumers, promise };
       pending.set(key, request);

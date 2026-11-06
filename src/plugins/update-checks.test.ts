@@ -32,6 +32,109 @@ const preview = (revision: string) => ({
   })),
 });
 
+it.each([false, true])(
+  "bounds distinct Git reads and drains after failure=%s",
+  async (fail) => {
+    const finishes: Array<(failed?: boolean) => void> = [];
+    const checkGit = vi.fn(
+      () =>
+        new Promise((resolve, reject) => {
+          finishes.push((failed) =>
+            failed
+              ? reject(new Error("offline"))
+              : resolve({
+                  ...preview("new"),
+                  candidates: plugins.map((item) => ({
+                    path: item.updateSource.path,
+                    manifest: item.manifest,
+                    revision: "new",
+                  })),
+                }),
+          );
+        }),
+    );
+    const checkFolder = vi.fn(async () => "folder-new");
+    const checks = createPluginUpdateChecks({
+      checkGit,
+      checkFolder,
+    } as unknown as PluginImports);
+    const plugins = [0, 1, 2, 3].map((index) => ({
+      ...plugin(`example.${index}`),
+      updateSource: {
+        ...plugin().updateSource,
+        repository: `https://example.com/${index}`,
+      },
+    }));
+    const reads = plugins.map((item) => checks.check(item));
+    const duplicates = plugins.map((item) => checks.check(item));
+    const folder = {
+      ...plugin("example.folder"),
+      updateSource: { root: "/plugins", path: "." },
+    };
+    await checks.check(folder);
+    expect(pluginUpdateCheck(checks.snapshot(), folder)?.revision).toBe(
+      "folder-new",
+    );
+    expect(checkGit).toHaveBeenCalledTimes(2);
+    finishes[0]?.(fail);
+    await vi.waitFor(() => expect(checkGit).toHaveBeenCalledTimes(3));
+    finishes[1]?.();
+    await vi.waitFor(() => expect(checkGit).toHaveBeenCalledTimes(4));
+    finishes[2]?.();
+    finishes[3]?.();
+    await Promise.all([...reads, ...duplicates]);
+    expect(pluginUpdateCheck(checks.snapshot(), plugins[0])?.error).toBe(
+      fail ? "Error: offline" : null,
+    );
+    expect(
+      plugins.every(
+        (item) => !pluginUpdateCheck(checks.snapshot(), item)?.checking,
+      ),
+    ).toBe(true);
+  },
+);
+
+it("skips authorization for a distinct queued source after opting out", async () => {
+  const finishes: Array<(value: ReturnType<typeof preview>) => void> = [];
+  const checkGit = vi.fn(
+    () => new Promise((resolve) => finishes.push(resolve)),
+  );
+  const authorize = vi.fn(async () => null);
+  const checks = createPluginUpdateChecks({
+    checkGit,
+  } as unknown as PluginImports);
+  let eligible = true;
+  const reads = [0, 1, 2].map((index) =>
+    checks.check(
+      {
+        ...plugin(`example.${index}`),
+        updateSource: {
+          ...plugin().updateSource,
+          repository: `https://example.com/${index}`,
+        },
+      },
+      authorize,
+      true,
+      () => eligible,
+    ),
+  );
+  await vi.waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
+  eligible = false;
+  for (const finish of finishes) finish(preview("new"));
+  await Promise.all(reads);
+  expect(authorize).toHaveBeenCalledTimes(2);
+  expect(checkGit).toHaveBeenCalledTimes(2);
+  expect(
+    pluginUpdateCheck(checks.snapshot(), {
+      ...plugin("example.2"),
+      updateSource: {
+        ...plugin().updateSource,
+        repository: "https://example.com/2",
+      },
+    })?.checking,
+  ).toBe(false);
+});
+
 it("shares one acquisition and generation across repeated checks and sibling paths", async () => {
   let finish!: (value: ReturnType<typeof preview>) => void;
   const checkGit = vi.fn(
