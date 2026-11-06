@@ -318,18 +318,17 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
 }
-/* Your reactions keep their tint and ring after the pointer leaves. */
+/* Your reactions keep their tint and ring after the pointer leaves. The ring is
+   an inset outline: an inset box-shadow cost hover frames on macOS. */
 .reactionItem[data-mine] {
   background: var(--reaction-self-surface, var(--affordance-reaction-self));
-  box-shadow: inset 0 0 0 1px
-    var(--reaction-self-border, var(--border-reaction-self));
+  outline: 1px solid var(--reaction-self-border, var(--border-reaction-self));
+  outline-offset: -1px;
 }
-/* Forced colors drop the shadow and replace the tint, so a system-color
-   outline keeps the same inset ring. */
+/* Forced colors replace the tint, so a system-color ring keeps it marked. */
 @media (forced-colors: active) {
   .reactionItem[data-mine] {
-    outline: 1px solid Highlight;
-    outline-offset: -1px;
+    outline-color: Highlight;
   }
 }
 .reactionGlyph {
@@ -779,6 +778,29 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composer .composerInput [data-placeholder]::before {
   color: var(--text-metadata);
 }
+/* Stands in for the editor's text placeholder, and shows only while it would. */
+.channelPlaceholder {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--space-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-metadata);
+  pointer-events: none;
+}
+.channelPlaceholder::before {
+  content: attr(data-lead) " ";
+}
+.channelPlaceholder::after {
+  content: attr(data-name);
+}
+.composerInput:has(> .channelPlaceholder) [data-placeholder]::before {
+  visibility: hidden;
+}
+.composerInput:not(:has([data-placeholder])) > .channelPlaceholder {
+  display: none;
+}
 .composerActions {
   display: flex;
   flex-wrap: wrap;
@@ -889,6 +911,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--text-standard);
+}
+.threadDraft {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-subtle);
 }
 .threadWorking {
   margin-inline-start: var(--space-1);
