@@ -835,6 +835,7 @@ export class GooseRuntime {
     // What the prompt sent was built to have shown, noted once goose takes
     // it, as an ordinary message is.
     let shown: number | undefined;
+    let systemPrompt = "";
     const { activity } = turn;
     const done = forwardedTurn(
       {
@@ -855,10 +856,10 @@ export class GooseRuntime {
             serve: entry.sessions.pooled((handler) => this.serve(handler)),
             onProcess,
           }),
-        launch: async () => ({
-          cwd: await workspace(),
-          systemPrompt: (await this.launch(agent, entry)).systemPrompt,
-        }),
+        launch: async () => {
+          ({ systemPrompt } = await this.launch(agent, entry));
+          return { cwd: await workspace(), systemPrompt };
+        },
         tools: entry.tools,
         choice: () => this.choice(entry),
         conversation: key,
@@ -870,6 +871,17 @@ export class GooseRuntime {
           return prompt?.text;
         },
         ...(held ? { keep: (id: string) => held.keep(id, binding) } : {}),
+        // Kept as an ordinary new session's is, for the Prompts tab.
+        started: (id) =>
+          void this.prompts(agent).save(
+            id,
+            [{ label: "", text: systemPrompt }],
+            {
+              at: Date.now(),
+              title: turn.title ?? "",
+              conversation: held ? key : null,
+            },
+          ),
         outlives: (retirement) => {
           // Before the turn ends: by then, one whose process exited is
           // confirmed retired or failed.
@@ -905,6 +917,8 @@ export class GooseRuntime {
       () => {
         if (!owned.retiring) entry.retiring.delete(owned);
       },
+      // Unreached: it settles, unless `held.outlives` refused a hold
+      // already released, which work it holds cannot see.
       (error: unknown) => {
         owned.failed = error;
       },

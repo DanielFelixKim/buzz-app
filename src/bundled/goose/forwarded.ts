@@ -48,6 +48,8 @@ export type ForwardedTurn = Readonly<{
   prompt(fresh: boolean): Promise<string | undefined>;
   /** Saves the session before its first prompt: whether it was. */
   keep?(session: string): boolean;
+  /** Told of a new session once it is kept, before its first prompt. */
+  started?(session: string): void;
   /** Told the turn's retirement before it ends: it settles once the process
    * has exited and native has closed the generation. */
   outlives(retired: Promise<void>): void;
@@ -135,6 +137,7 @@ export async function forwardedTurn(
     outcome = await (async (open: AcpSession): Promise<Settled> => {
       if (turn.keep && !turn.keep(open.id))
         return { ok: false, error: NOT_KEPT };
+      if (turn.load === undefined) turn.started?.(open.id);
       await abortable(generation.associate(open.id), halt.signal);
       const children = forwardChildren({
         register: (call, child) => generation.registerChild(call, child),

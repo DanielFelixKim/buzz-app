@@ -115,8 +115,11 @@ afterEach(() => {
 
 describe("a forwarded goose turn", () => {
   it("runs one prompt in a new session of its own goose on the generation, then retires both in order", async () => {
-    const { fake, native, order, retirements, run } = setup();
+    const started = vi.fn();
+    const { fake, native, order, retirements, run } = setup({}, { started });
     await expect(run()).resolves.toMatchObject({ ok: true });
+    // A new session's prompt is recorded once it is kept.
+    expect(started).toHaveBeenCalledExactlyOnceWith("session-1");
     const [goose] = fake.geese;
     expect(fake.geese).toHaveLength(1);
     expect(goose?.env).toMatchObject({
@@ -141,10 +144,13 @@ describe("a forwarded goose turn", () => {
   });
 
   it("resumes the saved session it is given, never a new one", async () => {
-    const { fake, order, run } = setup({}, { load: "s-saved" });
+    const started = vi.fn();
+    const { fake, order, run } = setup({}, { load: "s-saved", started });
     await expect(run()).resolves.toMatchObject({ ok: true });
     const [goose] = fake.geese;
     expect(goose?.loaded).toEqual(["s-saved"]);
+    // A resumed session's prompt was recorded when it was new.
+    expect(started).not.toHaveBeenCalled();
     expect(goose?.opened).toEqual([]);
     expect(goose?.prompts.get("s-saved")).toBe("prompt");
     expect(order.slice(0, 3)).toEqual([
@@ -171,14 +177,17 @@ describe("a forwarded goose turn", () => {
     expect(native.value.close).toHaveBeenCalledOnce();
   });
 
-  it("refuses to prompt a session it could not save", async () => {
+  it("refuses to prompt a session it could not save, recording no prompt", async () => {
+    const started = vi.fn();
     const { fake, order, run } = setup(
       {},
       {
         keep: () => false,
+        started,
       },
     );
     await expect(run()).resolves.toEqual({ ok: false, error: NOT_KEPT });
+    expect(started).not.toHaveBeenCalled();
     expect(fake.geese[0]?.turns).toEqual([]);
     expect(order).toEqual(["seal", "close"]);
   });

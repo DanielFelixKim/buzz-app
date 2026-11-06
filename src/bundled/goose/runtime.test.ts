@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BuzzClient, Memories } from "../../buzz-mcp/client";
 import { callTool, memoryVersion } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
+import { localStore } from "../../features/agents/store";
 import {
   promptMessage,
   promptSections,
@@ -199,7 +200,7 @@ function setup(
     storage,
     undefined,
     options.repositories,
-    undefined,
+    localStore(storage),
     options.forwarding,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
@@ -2250,6 +2251,21 @@ describe("goose turns through the agent gateway", () => {
       ]);
       expect(first?.killed && second?.killed).toBe(true);
       expect(f.published).toEqual([]);
+      // The new session's prompt is kept once; the resumed one adds none.
+      const prompts = f.runtime.prompts(self);
+      await vi.waitFor(() =>
+        expect(prompts.sessions()).toEqual([
+          {
+            id: "session-1",
+            at: expect.any(Number),
+            title: expect.any(String),
+            conversation: key,
+          },
+        ]),
+      );
+      expect(prompts.get("session-1")).toEqual([
+        { label: "", text: expect.stringContaining("Buzz") },
+      ]);
     } finally {
       f.runtime.dispose();
     }
@@ -2423,6 +2439,9 @@ describe("goose turns through the agent gateway", () => {
       await vi.waitFor(() => expect(g.calls).toContain("close 1"));
       await f.runtime.retire(self);
       expect(localSessions(f.storage, self).list()).toEqual([]);
+      expect(f.runtime.prompts(self).sessions()).toMatchObject([
+        { id: "session-1", conversation: null },
+      ]);
     } finally {
       f.runtime.dispose();
     }
