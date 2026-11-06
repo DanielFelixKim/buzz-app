@@ -1,3 +1,4 @@
+import { recoveryFor } from "../messages/composer-accepted";
 import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices } from "./choices";
@@ -15369,6 +15370,13 @@ describe("Owner draft reads", () => {
     expect(getItem).toHaveBeenLastCalledWith(
       `buzz-view.v1:${JSON.stringify([`https://relay.example.test:${viewer}`, `draft:${channel}`])}`,
     );
+    const recoveryKey = `https://relay.example.test:${viewer}:draft:${channel}`;
+    recoveryFor(f.session).set(recoveryKey, {
+      next: { text: "", recipients: [] },
+      revision: JSON.stringify("Owner prose"),
+    });
+    expect(agent.readDraft?.(channel)).toBeUndefined();
+    recoveryFor(f.session).delete(recoveryKey);
     expect(f.plugin.agents.handle(bot)).not.toHaveProperty("readDraft");
     expect(() => agent.readDraft?.("missing")).toThrow("channel");
     expect(() => agent.readDraft?.("saved")).toThrow("channel");

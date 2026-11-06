@@ -2184,7 +2184,12 @@ export class AgentsService extends Service implements Agents {
             throw new Error(
               "The draft's channel is not available to your owner.",
             );
-          return readOwnerDraft(binding.scope, channel, thread);
+          return readOwnerDraft(
+            binding.scope,
+            channel,
+            thread,
+            binding.session,
+          );
         };
       },
       settings: () => this.deviceSettings,

@@ -15534,6 +15534,8 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
     const { join } = await import("node:path");
     const { CodexRuntime } = await import("../../bundled/codex/runtime");
     const edit = !!process.env.BUZZ_DRAFT_LIVE_EDIT;
+    const submitted = !!process.env.BUZZ_DRAFT_LIVE_ACCEPTED;
+    if (edit && submitted) throw new Error("Choose one acceptance mode");
     const h = edit ? archiveToastFixture() : mount();
     const draftScope = edit ? "archive-toast" : "scope";
     const prose = `Unsent fixture draft ${crypto.randomUUID()}`;
@@ -15547,6 +15549,23 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
       onTestFinished(() => writes.mockRestore());
     }
     h.fill(prose);
+    if (submitted) {
+      if (!("user" in h))
+        throw new Error("Accepted mode needs the normal composer");
+      const fail = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(() => {
+          throw Error("full");
+        });
+      try {
+        await h.user.click(
+          screen.getByRole("button", { name: "Send message" }),
+        );
+      } finally {
+        fail.mockRestore();
+      }
+      h.unmount();
+    }
     if ("edit" in h) {
       h.edit();
       h.fill("Private sent-message edit");
@@ -15675,8 +15694,9 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
             pubkey: owner,
             kind: 9,
             created_at: Math.floor(Date.now() / 1000),
-            content:
-              "Call buzz.draft_get with channel channel. Then send the exact draft text back using buzz.send with final true. Use no shell, file, or delegation tools.",
+            content: submitted
+              ? "Call buzz.draft_get with channel channel. Reply NO_DRAFT if draft is null; otherwise reply with its exact text. Send your answer using buzz.send with final true. Use no shell, file, or delegation tools."
+              : "Call buzz.draft_get with channel channel. Then send the exact draft text back using buzz.send with final true. Use no shell, file, or delegation tools.",
             tags: [["h", "channel"]],
             sig: "",
           } as RelayEvent,
@@ -15689,7 +15709,12 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
           name: "Draft reader",
           relay: "wss://fixture.test",
           readDraft: (channel: string, thread?: string) =>
-            readOwnerDraft(draftScope, channel, thread),
+            readOwnerDraft(
+              draftScope,
+              channel,
+              thread,
+              "session" in h ? h.session : undefined,
+            ),
           query: async () => [],
           publish: async (event: Parameters<AgentHandle["publish"]>[0]) => {
             published.push(event);
@@ -15719,11 +15744,15 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
         interval: 100,
       });
       expect(reads).toBeGreaterThan(0);
-      expect(published[0]?.content).toContain(prose);
-      expect(screen.getByRole("textbox")).toHaveValue(
-        edit ? "Private sent-message edit" : prose,
-      );
-      if ("onSend" in h) expect(h.onSend).not.toHaveBeenCalled();
+      expect(published[0]?.content).toContain(submitted ? "NO_DRAFT" : prose);
+      if (!submitted)
+        expect(screen.getByRole("textbox")).toHaveValue(
+          edit ? "Private sent-message edit" : prose,
+        );
+      if ("onSend" in h) {
+        if (submitted) expect(h.onSend).toHaveBeenCalledOnce();
+        else expect(h.onSend).not.toHaveBeenCalled();
+      }
       console.log(
         "PASS real Codex read unique live draft via external draft_get and left composer unchanged",
       );
@@ -15753,4 +15782,29 @@ it("reads the preserved unsent draft while editing a sent message after storage 
     source: "composer",
   });
   expect(h.input()).toHaveValue("Private sent-message edit");
+});
+
+it("does not expose accepted text after failed cleanup and composer unmount", async () => {
+  const h = mount();
+  h.fill("Already accepted text");
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(
+      screen.getByRole("button", { name: "Retry draft cleanup" }),
+    ).toBeVisible();
+  } finally {
+    fail.mockRestore();
+  }
+  const session = h.session;
+  h.unmount();
+  expect(
+    readOwnerDraft("scope", "channel", undefined, session),
+  ).toBeUndefined();
+  writeView("scope", "draft:channel", "A newer unsent draft");
+  expect(readOwnerDraft("scope", "channel", undefined, session)?.text).toBe(
+    "A newer unsent draft",
+  );
 });

@@ -1,3 +1,4 @@
+import { recoveryFor, type AcceptedDraft } from "./composer-accepted";
 import {
   soloModelPicksKey,
   parseSoloModelPicks,
@@ -174,16 +175,6 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
 };
 const noSubscription = () => () => {};
 
-type AcceptedDraft = {
-  next: MentionDraft;
-  revision: string | null | undefined;
-};
-// Failed post-acceptance cleanup survives composer remounts within this session.
-// This is recovery evidence only, not another persistent draft inventory.
-const acceptedDrafts = new WeakMap<
-  ComposerSession,
-  Map<string, AcceptedDraft>
->();
 type RecoveredSend = {
   draft: MentionDraft;
   picks?: DraftPicks;
@@ -269,14 +260,6 @@ function subscribeRecovery(
     listeners.delete(listener);
     if (!listeners.size) byKey.delete(key);
   };
-}
-function recoveryFor(session: ComposerSession) {
-  let recovery = acceptedDrafts.get(session);
-  if (!recovery) {
-    recovery = new Map();
-    acceptedDrafts.set(session, recovery);
-  }
-  return recovery;
 }
 
 export type MessageComposerProps = {

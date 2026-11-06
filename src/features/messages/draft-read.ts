@@ -1,5 +1,6 @@
 // Read snapshots from the composer owner, never a parallel draft store.
 import { draftCoordinates, viewRevision } from "../../shared/view-state";
+import { acceptedComposerSend } from "./composer-accepted";
 import { mentionDraft, type MentionDraft } from "./mention-draft";
 
 export type OwnerDraft = Readonly<{
@@ -32,6 +33,7 @@ export function readOwnerDraft(
   scope: string,
   channel: string,
   thread?: string,
+  session?: object,
 ): OwnerDraft | undefined {
   const key = `draft:${channel}${thread === undefined ? "" : `:thread:${thread}`}`;
   const target = draftCoordinates(key);
@@ -64,7 +66,12 @@ export function readOwnerDraft(
   if (live) return live;
   const raw = viewRevision(scope, key);
   if (raw === undefined) throw new Error("Draft storage is unavailable.");
-  if (raw === null) return undefined;
+  const accepted = session && acceptedComposerSend(session, `${scope}:${key}`);
+  if (raw === null || (accepted && raw === accepted.revision)) return undefined;
+  if (accepted && accepted.revision === undefined)
+    throw new Error(
+      "Accepted-message cleanup could not verify this draft. Open its composer before reading it.",
+    );
   if (raw.length > 8 * 1024 * 1024)
     throw new Error("The saved draft is too large to read.");
   let value: unknown;
