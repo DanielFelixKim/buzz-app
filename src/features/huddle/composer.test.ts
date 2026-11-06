@@ -782,3 +782,39 @@ it("keeps accepted Huddle text out of saved draft reads after failed cleanup and
   h.owner.dispose();
   expect(readOwnerDraft(h.scope, "room", undefined, h.session)).toBeUndefined();
 });
+
+it("retires main-session acceptance after companion cleanup before the same caption is composed again", async () => {
+  const h = harness();
+  const { remote, client } = await h.connect();
+  const draft = typedDraft(mentionDraft("Same caption again"));
+  writeView(h.scope, "draft:room", draft);
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    await expect(remote.messages.send("room", draft.text)).resolves.toBe(
+      "accepted-id",
+    );
+  } finally {
+    fail.mockRestore();
+  }
+  // A companion's successful cleanup reaches the owner through its storage listener.
+  const key = `buzz-view.v1:${JSON.stringify([h.scope, "draft:room"])}`;
+  const revision = JSON.stringify(draft);
+  const cleaned = JSON.stringify(mentionDraft(""));
+  localStorage.setItem(key, cleaned);
+  localStorage.setItem(key, revision);
+  window.dispatchEvent(
+    new StorageEvent("storage", {
+      storageArea: localStorage,
+      key,
+      oldValue: revision,
+      newValue: cleaned,
+    }),
+  );
+  client.dispose();
+  h.owner.dispose();
+  expect(readOwnerDraft(h.scope, "room", undefined, h.session)?.text).toBe(
+    draft.text,
+  );
+});

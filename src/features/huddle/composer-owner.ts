@@ -473,7 +473,23 @@ export function createHuddleComposerOwner(
       send(response);
     })();
   };
+  const draftStorageKey = `buzz-view.v1:${JSON.stringify([session.scope, `draft:${room}`])}`;
+  const retireDraft = (event: StorageEvent) => {
+    if (event.storageArea !== localStorage || event.key !== draftStorageKey)
+      return;
+    const recovery = recoveryFor(session);
+    const key = `${session.scope}:draft:${room}`;
+    const pending = recovery.get(key);
+    if (
+      pending &&
+      event.oldValue === pending.revision &&
+      event.newValue !== pending.revision
+    )
+      recovery.delete(key);
+  };
+  window.addEventListener("storage", retireDraft);
   const stops = [
+    () => window.removeEventListener("storage", retireDraft),
     agents?.subscribe(() => {
       modelRevision += 1;
       publish();
