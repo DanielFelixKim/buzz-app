@@ -88,8 +88,11 @@ Clients such as Nexus request `scope=agent` for full access to the selected
 agent's Buzz tools, including tools from enabled plugins. This scope must appear
 alone. Buzz shows the requested full access before the owner approves it, and uses
 the ordinary Buzz tool dispatcher, channel access checks and tool confirmations.
-Runtime harness hooks do not run through this connection. Local file and memory
-reads remain unavailable, as on legacy connections. Repository tools can return
+Runtime harness hooks do not run through this connection. Buzz’s built-in file
+and memory reads remain unavailable, as on legacy connections. Enabled plugin
+tools retain their approved host permissions, including any local file or process
+access; they can use their own host capabilities without the external client's
+file and memory callbacks. Repository tools can return
 short-lived Git credentials for repositories the selected agent can access;
 private identity keys remain in Buzz. The owner sees these limits in consent.
 Its catalog reports `["agent"]` in `buzz/grantedScopes`, `buzz/supportedScopes`
@@ -160,8 +163,9 @@ the linked message's channel and thread; it cannot combine with `channel` or
 `send` needs `channel`, `text`, and `audience`;
 `reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept
 `mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.
-Unknown fields are rejected. File access, commands, Git credentials, and plugin
-tools are unavailable. Connection credentials must stay out of logs and messages.
+Unknown fields are rejected. For legacy grants, file access, commands, Git
+credentials, and plugin tools are unavailable. Connection credentials must stay
+out of logs and messages.
 
 ### Durable external approval
 

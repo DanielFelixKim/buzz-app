@@ -145,7 +145,10 @@ it.each([
       expect(access).toHaveTextContent("tool confirmations still apply");
       expect(access).toHaveTextContent("short-lived Git credentials");
       expect(access).toHaveTextContent(
-        "Local file and memory reads remain unavailable",
+        "Buzz’s built-in file and memory reads remain unavailable",
+      );
+      expect(access).toHaveTextContent(
+        "Enabled plugin tools keep their approved access",
       );
     }
     if (requestedAction === "Create")

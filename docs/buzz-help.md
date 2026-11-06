@@ -151,8 +151,9 @@ the Buzz copy that runs it.
 Nexus requests full access to the selected agent's Buzz tools, including tools
 from enabled plugins. Buzz’s channel access checks and tool confirmations still
 apply. Repository tools can provide short-lived Git credentials for repositories
-the agent can access. Local file and memory reads remain unavailable. Check this
-in the approval dialog. Older limited approvals do not gain full access without
+the agent can access. Buzz’s built-in file and memory reads remain unavailable.
+Enabled plugin tools keep their approved access, which may include local files
+and running commands. Check this in the approval dialog. Older limited approvals do not gain full access without
 a new approval.
 
 Use **Settings → External apps → Revoke access** to stop it. Changing community

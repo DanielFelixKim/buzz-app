@@ -145,7 +145,7 @@ export async function respondExternal(
   if (scopes.length === 1 && scopes[0] === "agent") {
     const reply = await respond(client, {}, input, added, {
       instructions:
-        "Act as the agent selected by the owner in Buzz. Buzz enforces channel access and tool confirmations. Supply explicit destinations. Local file and memory reads are unavailable. Private identity keys stay in Buzz; repository tools may return short-lived Git credentials. Never save those credentials. Never repeat a write after a lost response; read its destination first.",
+        "Act as the agent selected by the owner in Buzz. Buzz enforces channel access and tool confirmations. Supply explicit destinations. Buzz’s built-in file and memory reads are unavailable; plugin tools retain their approved host permissions, which may include local files and commands. Private identity keys stay in Buzz; repository tools may return short-lived Git credentials. Never save those credentials. Never repeat a write after a lost response; read its destination first.",
       tool: ({ load: _, ...tool }) => ({
         ...tool,
         _meta: { "buzz/requiredScopes": ["agent"] },

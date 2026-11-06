@@ -13366,6 +13366,12 @@ it.each([
       ) => {
         if (args.kind === "file") await client.read("/fixture.txt");
         if (args.kind === "memory") await client.memories();
+        if (args.kind === "plugin-local") {
+          const host = f.plugin.host;
+          if (!host?.readFile) throw new Error("Missing plugin file access");
+          const bytes = await host.readFile("/plugin-fixture.txt");
+          return `plugin read ${bytes[0]}`;
+        }
         return "plugin reached";
       },
     );
@@ -13450,6 +13456,19 @@ it.each([
     }
     expect(readFile).not.toHaveBeenCalled();
     expect(readMemory).not.toHaveBeenCalled();
+    if (full) {
+      expect(await plugin("plugin-local")).toHaveProperty(
+        "result.content.0.text",
+        "plugin read 42",
+      );
+      expect(readFile).toHaveBeenCalledExactlyOnceWith("/plugin-fixture.txt");
+    } else {
+      expect(await plugin("plugin-local")).toHaveProperty(
+        "result.isError",
+        true,
+      );
+      expect(readFile).not.toHaveBeenCalled();
+    }
     const post = {
       id: 2,
       method: "tools/call",
