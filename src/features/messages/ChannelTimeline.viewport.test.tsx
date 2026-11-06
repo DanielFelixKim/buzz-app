@@ -1144,25 +1144,23 @@ it.each(["scroll", "button"] as const)(
       expect(
         screen.queryByRole("button", {
           name: "Load newer messages",
-          exact: true,
         }) !== null,
       ).toBe(historyControl === "button");
       view.rerender(show(true));
       if (historyControl === "scroll") {
         expect(screen.getByRole("status")).toHaveTextContent("Loading newer…");
         expect(
-          screen.queryByRole("button", { name: "Loading newer…", exact: true }),
+          screen.queryByRole("button", { name: "Loading newer…" }),
         ).toBeNull();
       } else {
         expect(
-          screen.getByRole("button", { name: "Loading newer…", exact: true }),
+          screen.getByRole("button", { name: "Loading newer…" }),
         ).toBeDisabled();
       }
       view.rerender(show(false, "Read failed"));
       fireEvent.click(
         screen.getByRole("button", {
           name: "Retry newer messages",
-          exact: true,
         }),
       );
       expect(loadNewer).toHaveBeenCalledTimes(1);
