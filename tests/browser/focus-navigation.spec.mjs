@@ -240,20 +240,24 @@ test.extend({ companionFixture: true })(
       name: "Search Buzz",
       exact: true,
     });
-    // Beside the pane, main is live and the PC binding cycles from it to side.
-    if (!keys.apple) {
-      await page.setViewportSize({ width: 1440, height: 900 });
-      await expect(conversation).not.toHaveAttribute("inert");
-      await members.focus();
-      await expect(members).toBeFocused();
-      await page.keyboard.press(keys.side);
-      await expect(tab).toBeFocused();
-    }
-    for (const mode of ["light", "dark"]) {
-      await page.evaluate((mode) => {
-        document.documentElement.dataset.colorMode = mode;
-        document.documentElement.style.setProperty("--buzz-text-scale", "2");
-      }, mode);
+    // Normal text puts the pane over main at full width and as a card at 900,
+    // and beside it at 1440. Enlarged text floats it over main at every width.
+    const coverage = new Set();
+    for (const [mode, scale] of [
+      ["light", "1"],
+      ["light", "2"],
+      ["dark", "2"],
+    ]) {
+      await page.evaluate(
+        ([mode, scale]) => {
+          document.documentElement.dataset.colorMode = mode;
+          document.documentElement.style.setProperty(
+            "--buzz-text-scale",
+            scale,
+          );
+        },
+        [mode, scale],
+      );
       for (const width of [600, 900, 1440]) {
         await page.setViewportSize({ width, height: 900 });
         await tab.click();
@@ -275,6 +279,7 @@ test.extend({ companionFixture: true })(
             Math.min(pane.y + pane.height, main.y + main.height) -
               Math.max(pane.y, main.y) >
               1;
+          coverage.add(covered);
           if (covered) await expect(conversation).toHaveAttribute("inert", "");
           else await expect(conversation).not.toHaveAttribute("inert");
           const start = covered ? search : members;
@@ -291,10 +296,12 @@ test.extend({ companionFixture: true })(
         await expect(tab).toHaveCSS("outline-width", "2px");
         if (testInfo.project.name === "chromium")
           await page.screenshot({
-            path: testInfo.outputPath(`focus-${mode}-${width}.png`),
+            path: testInfo.outputPath(`focus-${mode}-${scale}x-${width}.png`),
           });
       }
     }
+    // Both branches ran: from main beside the pane, and from Search over it.
+    if (!keys.apple) expect([...coverage].sort()).toEqual([false, true]);
   },
 );
 
@@ -721,3 +728,37 @@ test.extend({ companionFixture: true })(
     await expect(closeCompanion).not.toBeFocused();
   },
 );
+
+// A side panel's launcher sits in the conversation the panel covers at narrow
+// widths, so Escape returns focus to it once the close uncovers it.
+test("escaping a side panel over the conversation returns focus to its launcher", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "buzzodz.plugins.v1",
+      JSON.stringify({ version: 2, enabled: { "buzz.todos": true } }),
+    );
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, app);
+  const conversation = page.locator('article[aria-label="Conversation"]');
+  const launcher = page.getByRole("button", {
+    name: "Toggle channel todos",
+    exact: true,
+  });
+  await launcher.click();
+  const todos = page.getByRole("region", { name: "Todos panel", exact: true });
+  await expect(todos).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .click();
+  await page.setViewportSize({ width: 600, height: 900 });
+  await expect(todos).toBeFocused();
+  await expect(conversation).toHaveAttribute("inert", "");
+  await page.keyboard.press("Escape");
+  await expect(todos).toHaveCount(0);
+  await expect(conversation).not.toHaveAttribute("inert");
+  await expect(launcher).toBeFocused();
+});

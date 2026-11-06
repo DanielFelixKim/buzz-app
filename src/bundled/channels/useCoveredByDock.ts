@@ -4,21 +4,20 @@ const live = (element: HTMLElement) =>
   !element.closest("[hidden], [inert]") && element.getClientRects().length > 0;
 
 /**
- * Focus the board's dock where a typed key does nothing: a visible panel's own
- * landing, as PanelCard's when it opened, else the selected tab. Never a
+ * Focus the board's dock where Space and Enter do nothing: the first live, in
+ * document order, of a panel's own landing (as PanelCard's when it opened) or
+ * a selected tab, so a stacked dock starts at its top pane. The tab is a Base
+ * UI `<button role="tab">`; Delete closes it when it can close. Never a plain
  * button, which Space or Enter would press.
  */
 export function focusDock(board: Element | null | undefined) {
-  const find = (selector: string) =>
-    Array.from(
-      board?.querySelectorAll<HTMLElement>(
-        `:scope > [data-panel-dock] ${selector}`,
-      ) ?? [],
-    ).find(live);
-  (
-    find('> * > [tabindex="-1"][aria-label]') ??
-    find('[role="tab"][aria-selected="true"]')
-  )?.focus({ preventScroll: true });
+  Array.from(
+    board?.querySelectorAll<HTMLElement>(
+      ':scope > [data-panel-dock] > * > [tabindex="-1"][aria-label], :scope > [data-panel-dock] [role="tab"][aria-selected="true"]',
+    ) ?? [],
+  )
+    .find(live)
+    ?.focus({ preventScroll: true });
 }
 
 /**
