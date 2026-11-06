@@ -647,3 +647,27 @@ it("cancels pending sound permanently when the conversation becomes silent durin
   );
   expect(t.service.snapshot().preferencesError).toBeTruthy();
 });
+
+it("rechecks durable quiet policy before skipping a repeated setting from another window", () => {
+  const t = setup(() => true);
+  const target = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "quiet-chat",
+  } as const;
+  t.service.setConversationSound(target, "silent");
+  const key = `buzz-notification-preferences.v1:${viewer}`;
+  const saved = JSON.parse(t.values.get(key) ?? "null");
+  t.values.set(key, JSON.stringify({ ...saved, quietConversations: [] }));
+  t.service.setConversationSound(target, "silent");
+  expect(
+    JSON.parse(t.values.get(key) ?? "null").quietConversations,
+  ).toHaveLength(1);
+  vi.spyOn(t.host.localStorage, "getItem").mockImplementationOnce(() => {
+    throw new Error("Storage unavailable");
+  });
+  expect(() => t.service.setConversationSound(target, "silent")).toThrow(
+    "Could not load",
+  );
+});

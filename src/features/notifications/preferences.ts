@@ -1,3 +1,4 @@
+import type { OpenTarget } from "../navigation/targets";
 import { relayOrigin } from "../communities/destination";
 import {
   DEFAULT_CATEGORY_SOUNDS,
@@ -203,3 +204,18 @@ export function createNotificationPreferences(
 export type NotificationPreferencesService = ReturnType<
   typeof createNotificationPreferences
 >;
+
+/** Both desktop delivery and foreground completions use this account-local policy. */
+export function isQuietConversation(
+  preferences: NotificationPreferences,
+  target: OpenTarget,
+) {
+  return (
+    target.kind === "conversation" &&
+    !!preferences.quietConversations?.some(
+      (entry) =>
+        entry.communityOrigin === target.scope.communityOrigin &&
+        entry.channelId === target.channelId,
+    )
+  );
+}

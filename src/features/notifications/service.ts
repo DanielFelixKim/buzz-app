@@ -5,6 +5,7 @@ import { parseOpenTarget, type OpenTarget } from "../navigation/targets";
 import type { Navigation } from "../navigation/controller";
 import {
   createNotificationPreferences,
+  isQuietConversation,
   type NotificationPreferences,
 } from "./preferences";
 import {
@@ -219,6 +220,12 @@ export class NotificationsService extends Service implements Notifications {
       (sound !== "default" && sound !== "silent")
     )
       throw new Error("Cannot change sound for this conversation");
+    // Another window may have written a different policy before its storage event arrives.
+    this.preferences.reload();
+    if (this.state.preferencesError)
+      throw new Error(
+        "Could not load conversation sound settings. Retry before starting background work.",
+      );
     const quiet = this.state.preferences.quietConversations ?? [];
     const matches = (entry: (typeof quiet)[number]) =>
       entry.communityOrigin === parsed.scope.communityOrigin &&
@@ -295,16 +302,7 @@ export class NotificationsService extends Service implements Notifications {
     );
   }
   private soundEnabled(item: Candidate) {
-    const target = item.target;
-    if (
-      target.kind === "conversation" &&
-      this.state.preferences.quietConversations?.some(
-        (entry) =>
-          entry.communityOrigin === target.scope.communityOrigin &&
-          entry.channelId === target.channelId,
-      )
-    )
-      return false;
+    if (isQuietConversation(this.state.preferences, item.target)) return false;
     return (
       this.state.preferences.sound &&
       resolveCategorySound(this.state.preferences.sounds, item.category) !==
