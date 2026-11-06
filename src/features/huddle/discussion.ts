@@ -282,12 +282,11 @@ export function createHuddleDiscussion(
         });
       else if (writable()) session.outbox?.retry(id, writable);
     },
+    latest: () => {
+      if (available()) session.channels.attach?.(room);
+    },
     retry: () => {
       const window = session.channels.window(room);
-      if (available() && window.hasNewer) {
-        session.channels.attach?.(room);
-        return;
-      }
       if (available() && window.status === "ready" && window.error) {
         session.channels.loadOlder(room);
         return;

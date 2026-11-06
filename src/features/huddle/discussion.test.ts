@@ -552,8 +552,10 @@ it("retries a failed older page instead of reloading metadata", async () => {
   try {
     await vi.waitFor(() => expect(h.ensure).toHaveBeenCalled());
     h.historyError("Page unavailable");
+    h.hasNewer(true);
     h.discussion.retry();
     expect(h.loadOlder).toHaveBeenCalledOnce();
+    expect(h.attach).not.toHaveBeenCalled();
   } finally {
     h.dispose();
   }
@@ -565,8 +567,10 @@ it("offers attachment when the shared byte budget detaches a small Huddle reader
     await vi.waitFor(() => expect(h.discussion.snapshot().writable).toBe(true));
     h.hasNewer(true);
     expect(h.discussion.snapshot()).toMatchObject({ hasNewer: true });
-    h.discussion.retry();
+    h.historyError("Page unavailable");
+    h.discussion.latest();
     expect(h.attach).toHaveBeenCalledWith("room");
+    expect(h.loadOlder).not.toHaveBeenCalled();
   } finally {
     h.dispose();
   }

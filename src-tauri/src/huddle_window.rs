@@ -150,6 +150,7 @@ pub(crate) enum Action {
     Thread,
     Send,
     Older,
+    Latest,
     Retry,
     RetryMessage,
     DiscardMessage,
@@ -794,6 +795,10 @@ mod tests {
                 { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://*" }, { "url": "http://*" }] }
             ])
         );
+        assert!(matches!(
+            serde_json::from_str::<Action>("\"latest\"").unwrap(),
+            Action::Latest
+        ));
         assert!(serde_json::from_str::<Action>("\"start\"").is_err());
         assert!(validate(&view("bad-id")).is_err());
     }

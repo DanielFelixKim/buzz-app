@@ -680,3 +680,54 @@ it("releases discussion subscriptions when reopening the companion fails", async
     await h.dispose();
   }
 });
+
+it("routes historical Retry and Jump to latest independently from the current native window", async () => {
+  const h = harness();
+  const room = "00000000-0000-4000-8000-000000000002";
+  const loadOlder = vi.fn();
+  const attach = vi.fn();
+  Object.assign(h.connection.session.channels, {
+    get: () => ({
+      id: room,
+      name: "Huddle",
+      huddle: true,
+      parentChannelId: "channel",
+    }),
+    resolve: async () => {},
+    ensure: () => {},
+    loadOlder,
+    attach,
+    window: () => ({
+      channelId: room,
+      status: "ready",
+      rows: [],
+      hasMore: true,
+      hasNewer: true,
+      loadingOlder: false,
+      error: "Page unavailable",
+    }),
+  });
+  try {
+    h.set({ ...h.call.snapshot(), room });
+    h.release();
+    await h.companion.open();
+    const id = h.call.snapshot().id;
+    assert.exists(id);
+    h.action(id, "thread");
+    await vi.waitFor(() =>
+      expect(
+        vi.mocked(h.bridge.update).mock.lastCall?.[1]?.discussion?.hasNewer,
+      ).toBe(true),
+    );
+    h.action(id, "retry");
+    expect(loadOlder).toHaveBeenCalledWith(room);
+    expect(attach).not.toHaveBeenCalled();
+    h.action("stale-window", "latest");
+    expect(attach).not.toHaveBeenCalled();
+    h.action(id, "latest");
+    expect(attach).toHaveBeenCalledWith(room);
+    expect(loadOlder).toHaveBeenCalledOnce();
+  } finally {
+    await h.dispose();
+  }
+});

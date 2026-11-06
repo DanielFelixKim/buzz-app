@@ -15,6 +15,7 @@ export function HuddleDiscussionView({
   discussion,
   composer,
   older,
+  latest,
   retry,
   recover,
   openLink,
@@ -25,6 +26,7 @@ export function HuddleDiscussionView({
   composer: ReactNode;
   openLink?: ((target: string) => boolean) | undefined;
   older(): void;
+  latest(): void;
   retry(): void;
   recover(id: string, dismiss?: boolean): void;
 }) {
@@ -109,7 +111,7 @@ export function HuddleDiscussionView({
               size="sm"
               onClick={() => {
                 following.current = true;
-                retry();
+                latest();
               }}
             >
               Jump to latest
