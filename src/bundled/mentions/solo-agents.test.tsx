@@ -3854,6 +3854,35 @@ it("Space selects someone outside the channel by a pasted npub once the director
     h.dispose();
   }
 });
+it("Space selects a nameless owner by a pasted npub in the chooser and the pending resolver", async () => {
+  const query = npubEncode(outsideJose);
+  const h = spaceFixture("Jose", {}, { query });
+  // A kind:0 without a name: the key is the only thing to go on.
+  const nameless = {
+    pubkey: outsideJose,
+    name: outsideJose.slice(0, 10),
+    nameIsFallback: true as const,
+  };
+  try {
+    await waitFor(() =>
+      expect(h.people).toHaveBeenCalledWith(query, 1, expect.anything()),
+    );
+    await h.finish({ people: [nameless], hasMore: false });
+    await waitFor(() => expect(h.result()?.spaceId).toBe(outsideJose));
+    expect(h.canSpace(outsideJose)).toBe(true);
+    // The resolver reads the same cached page.
+    await expect(
+      resolveSpaceMention(
+        h.session,
+        { channelId: "parent", selected: [] },
+        query,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ pubkey: outsideJose });
+  } finally {
+    h.dispose();
+  }
+});
 it.each([
   { name: "Jose", namesake: false, space: true },
   { name: "Jose", namesake: true, space: true },

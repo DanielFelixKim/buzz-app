@@ -507,7 +507,7 @@ export function useMentionChoices(
     !directory.error &&
     !directory.more &&
     !directory.tooShort &&
-    !hasUnnamed(searched);
+    !hasUnnamed(searched, query);
   return useMemo(() => {
     const evidence = { pending, missingNames, complete };
     const live = byKey(candidates);

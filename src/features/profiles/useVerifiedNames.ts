@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { PROFILE_CACHE_BASE } from "../relay/budget";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import type { ProfileQueries } from "../relay/profile-directory";
 import {
   type NamePreference,
@@ -238,14 +239,19 @@ export function withVerifiedNames<
   return changed ? named : people;
 }
 
-/** Whether a named page still holds someone found by a verified name alone
- * whose name is unknown: they may be anyone's namesake, so the page cannot
- * decide a name. */
+/** Whether a named page for `query` still holds someone found by a verified
+ * name alone whose name is unknown: they may be anyone's namesake, so the page
+ * cannot decide a name. A pasted key names one person and has no namesakes,
+ * so its page always decides. */
 export function hasUnnamed(
   people: readonly {
     nameIsFallback?: true | undefined;
     profileNames?: readonly string[] | undefined;
   }[],
+  query: string,
 ) {
-  return people.some((person) => person.nameIsFallback && !person.profileNames);
+  return (
+    !typedPublicKey(query) &&
+    people.some((person) => person.nameIsFallback && !person.profileNames)
+  );
 }

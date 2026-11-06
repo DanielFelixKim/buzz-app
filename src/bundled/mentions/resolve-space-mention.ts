@@ -36,6 +36,7 @@ import {
 async function namedPeople(
   session: ComposerSession,
   people: MentionDirectoryPage["people"],
+  query: string,
   signal: AbortSignal,
 ) {
   const authority = session.profiles.verifiedAuthority?.();
@@ -53,7 +54,7 @@ async function namedPeople(
     }),
   );
   const named = withVerifiedNames(people, page, session.profiles.snapshot());
-  return hasUnnamed(named) ? undefined : named;
+  return hasUnnamed(named, query) ? undefined : named;
 }
 
 /** What the chooser knew about its destination when Space was typed. */
@@ -258,7 +259,7 @@ async function resolve(
   const page = await fetchMentionDirectoryPage(session, name, signal);
   // A truncated page may hide a namesake, as it does for Space in the chooser.
   if (signal.aborted || page.more) return null;
-  const people = await namedPeople(session, page.people, signal);
+  const people = await namedPeople(session, page.people, name, signal);
   if (signal.aborted || !people) return null;
   return decide(people, true, name);
 }
