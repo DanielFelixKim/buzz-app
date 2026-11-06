@@ -2344,6 +2344,7 @@ export function createUnread({
             : `activity:${channelId}`;
           // A historical window is not the live bottom. Check retained evidence
           // at invocation, not after a later arrival queues behind this intent.
+          // Copy it: a live arrival extends the index in place during the save.
           indexEvidence();
           const rows = [...(byChannel.get(channelId) ?? [])];
           const newer = rows.some(

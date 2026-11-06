@@ -157,7 +157,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
 ## Connect an external app
 
 External apps are available only in communities enabled for this build.
-Desktop preview releases enable bb-block only. Other communities cannot grant access.
+Other communities cannot grant access.
 
 Start setup in the external app. Buzz desktop shows an **Authorize app**
 dialog. Select a community and an agent, then select **Authorize**. The app
@@ -290,7 +290,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
   nothing typed lists up to six of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead
-  of reopening where you left it. Muted
+  of reopening where you left it. A conversation unread only through thread
+  replies previews its newest unread reply and opens it in its thread. Muted
   conversations are left out. Turn this off with **Show unread first in
   search** in Settings → Appearance → Conversations.
 - **Activity** threads name their channel above the original message. Select that
@@ -355,7 +356,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Join** in a View only chat or channel adds you as a viewer, with a sidebar
   entry and normal unread tracking. Notifications follow your existing settings
   and mention/thread rules. You appear in People as **Viewing only**; you still
-  cannot post or react. Reading without joining stays available.
+  cannot post, react, or change Canvas or Todos. Reading without joining
+  stays available.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
   or are removed in People.
@@ -431,9 +433,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
 - **Message density**: **Settings → Appearance → Message density → Compact**
-  shows conversations as a flat, left-aligned list without bubbles, across the
-  window's full width, to fit more on screen. Text size stays with **Interface
-  size**. The choice applies on this device only.
+  shows conversations, including threads, as a flat, left-aligned list without
+  bubbles, across the window's full width, to fit more on screen. Hover or focus
+  a row to show its timestamp; grouped messages show it in the left gutter.
+  Text size stays with **Interface size**.
+  Hover a row to highlight it and show message actions at the right
+  edge. The choice applies on this device only.
 - **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
   24-hour times. System, the default, follows the desktop app's operating
   system: the 24-hour time setting on macOS, the short time format on Windows,
@@ -521,14 +526,22 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Drafts & sent** is part of Messages. Opening it keeps the conversation
   sidebar available, so you can switch straight back to a chat. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
-  Rows use Activity’s message layout, with recipient identities in Sent. It lists
+  Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
   sidebar, and your latest 100 sent messages in this community, grouped by
   day. A sent message shows who replied after you ("2 after you") or that you
   were last ("You're last"); a channel post shows its reply count. Select a
-  draft to continue it in its conversation, or a sent message to jump to it.
-  Search matches the conversation name and what you wrote. It reads only this
+  draft to edit and send in a conversation preview beside the list; **Open
+  conversation** opens its original destination. Narrow windows show the preview
+  with **Back to drafts**. After confirmed delivery the preview closes; failed
+  sends stay in its message history with Retry. Select a sent message to preview
+  it in context and reply in place; Sent previews stay open after sending. Both
+  previews use the conversation’s saved draft, if one exists. Archived or read-only
+  Sent destinations show the conversation without a composer, with an archived
+  or read-only notice and Join when available. The popout icon
+  opens the original conversation.
+  Search above the list matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
   attached files without opening the conversation. The same drafts show where
   you left them: a pencil at the right edge of a channel or DM's sidebar row
@@ -590,6 +603,11 @@ available rather than silently discarding it.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
+- In communities where your build restricts workflows, workflow messages do
+  not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
+  have one act on a workflow result, send it a direct request explaining what
+  to do with that result. Other communities still let a workflow you or your
+  agents created mention your agents.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
@@ -732,19 +750,23 @@ available rather than silently discarding it.
   **Load older** fetches more history. Reverting one track saves
   a new revision without changing the other track.
 - **Activity**, where the agent type provides it, shows sessions and their
-  transcripts in the agent's profile. A turn's **Thread** or **Channel** label
+  transcripts in the agent's profile. An open transcript updates by itself
+  while the agent works; **Refresh transcript** stays at the top as you scroll.
+  A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that
   conversation's transcript. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary
-  still shows when an agent is working there. Dots remain at the end of the
-  conversation while agents work, alongside current step details when available.
-  With Reduce Motion enabled, the dots stay still. Open the live indicator or
-  expand recorded work to view the agent’s activity or **Stop** the running
-  request. The live indicator keeps its controls while recorded updates are
-  visible. Stop availability depends on the agent type.
+  still shows when an agent is working there. While the activity under your
+  message shows an agent working, it is that agent's only working indicator.
+  Otherwise dots remain at the end of the conversation while agents work,
+  alongside current step details when available. With Reduce Motion enabled,
+  the dots stay still. Open the live indicator or expand recorded work to view
+  the agent’s activity or **Stop** the running request. The live indicator
+  keeps its controls while recorded updates are visible. Stop availability
+  depends on the agent type.
 - Agent-to-agent messages stay in the conversation as collapsed history after
   work finishes or you reopen a thread. Expand them to read dispatches, handoffs,
   and results. The working indicator shows current activity separately.
@@ -776,7 +798,7 @@ available rather than silently discarding it.
   no switch to turn on. A change shows as not saved when it is active but
   could not be saved on this device.
 
-- Where a preview build enables it (bb-block), an agent running on this
+- In communities where your build enables it, an agent running on this
   device with a built-in harness can list your channels, including private and
   archived ones, DMs and Solo chats it is not in, and see a channel's details
   and members, read with your access. It cannot change anything this way, and
@@ -788,7 +810,7 @@ mention picker. Select a team to insert its members as individual mentions.
 Typing its name alone does not notify it. Empty teams, teams with more than 32
 members, and teams with unavailable members cannot be selected; edit the team or
 refresh the choices. Adding people to a channel still requires the normal send
-confirmation.
+confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 
 ## Optional features and limits
 
@@ -885,7 +907,10 @@ confirmation.
   “Runs in” names its execution conversation; its instructions can specify a
   different place to report. A
   mention can still wake an agent when Attention is off; turning Attention on does not grant new access.
-  On macOS and Linux, watched commands stop when their Buzz process exits.
+  An event watch hears the channels its agent may read, including public channels
+  the agent has not joined. A watch's delivery channel must be one the agent is
+  a member of; the relay decides where the agent may post. On macOS and Linux,
+  watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.
 - **Shared compute** is off by default; enable it in Settings → Plugins, then
