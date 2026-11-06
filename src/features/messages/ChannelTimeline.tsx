@@ -1821,6 +1821,7 @@ function Timeline({
         // Virtual rows can finish measuring after the last scroll event,
         // especially at the top where reflow cannot change scrollTop.
         const element = event.currentTarget;
+        upwardGesture.current = false;
         if (
           settled.current &&
           edge.current?.clientWidth === size.width &&
