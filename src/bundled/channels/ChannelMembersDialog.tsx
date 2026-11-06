@@ -33,6 +33,12 @@ import { splitPartition } from "../../features/relay/partition";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
+import {
+  otherVerifiedName,
+  useNamePreference,
+  verifiedLabel,
+} from "../../features/profiles/name-preference";
+import type { VerifiedProfile } from "../../features/relay/verified-profile";
 import { peopleRelationships } from "../../features/profiles/relationships";
 import { personKey, rankPeople } from "../../features/search/people-rank";
 import {
@@ -57,6 +63,7 @@ import { soloChatLink } from "../../features/solo/share";
 import {
   formatPublicKey,
   publicKeyLabels,
+  typedPublicKey,
 } from "../../shared/identity/public-key";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -169,7 +176,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   place,
   pubkey,
   name,
-  fullName,
+  otherName,
   keyLabel,
   qualified,
   adding,
@@ -204,8 +211,8 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   place: "chat" | "channel";
   pubkey: string;
   name: string;
-  /** A community-verified full name, shown beside the name. */
-  fullName: string | undefined;
+  /** The verified name `name` is not, shown beside it. */
+  otherName: string | undefined;
   keyLabel: string | undefined;
   /** Another shown row has the same name; show the key so Add picks the right one. */
   qualified: boolean;
@@ -293,9 +300,9 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
               {name}
               {pubkey === session.viewer ? " (you)" : ""}
             </span>
-            {fullName && fullName !== name && (
+            {otherName && (
               <span className="min-w-0 truncate text-caption text-subtle">
-                {fullName}
+                {otherName}
               </span>
             )}
             {qualified && keyLabel && (
@@ -893,21 +900,34 @@ export function ChannelMembersDialog({
     key: query,
     settled: !search.loading,
   });
+  const preference = useNamePreference();
   const searchPeople = useMemo(
-    () => withVerifiedNames(search.people, searchVerified, profiles),
-    [search.people, searchVerified, profiles],
+    () =>
+      withVerifiedNames(search.people, searchVerified, profiles, preference),
+    [search.people, searchVerified, profiles, preference],
   );
   const searchProfiles = new Map(
     searchPeople.map((person) => [person.pubkey, person]),
   );
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
+  const verifiedOf = (key: string): VerifiedProfile | undefined =>
+    profiles.get(key)?.verified ?? searchVerified.get(key);
+  const pageLabel = (verified: VerifiedProfile | undefined) =>
+    verified && verifiedLabel(verified, preference);
+  const otherName = (key: string) => {
+    const verified = verifiedOf(key);
+    return (
+      verified &&
+      otherVerifiedName(verifiedLabel(verified, preference), verified)
+    );
+  };
+  const pageVerified = (key: string) =>
+    profiles.get(key)?.verified ? undefined : searchVerified.get(key);
   const label = (key: string, fallback?: string) =>
     // A name verified for this search is the label where the shared profiles
     // show another, so the row reads as Command-K and mentions do.
-    (profiles.get(key)?.verified
-      ? undefined
-      : searchVerified.get(key)?.displayName) ??
+    pageLabel(pageVerified(key)) ??
     resolveName(
       key,
       profiles.get(key)?.name ??
@@ -917,29 +937,26 @@ export function ChannelMembersDialog({
         formatPublicKey(key) ??
         "Unknown member",
     );
+  // A whole key or npub, with or without `nostr:`, finds its owner.
+  const typedKey = typedPublicKey(text);
   // Filters every roster identity using its currently available label.
   const matches = (key: string, name: string) =>
     !text ||
+    key === typedKey ||
     [
       searchProfiles.get(key)?.name,
       searchProfiles.get(key)?.username,
-      searchProfiles.get(key)?.fullName ??
-        profiles.get(key)?.verified?.fullName,
+      verifiedOf(key)?.displayName,
+      verifiedOf(key)?.username,
+      verifiedOf(key)?.fullName,
       ...(searchProfiles.get(key)?.profileNames ?? []),
     ].some((name) => name && matchPerson(name, query)) ||
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
-  // People to add use the shared name rule, like the relay's people page; a
-  // whole key or npub finds its owner.
-  const addable = (key: string, ...names: (string | undefined)[]) => {
-    const typed = query.trim().toLowerCase();
-    return (
-      names.some((name) => name && matchPerson(name, query)) ||
-      typed === key ||
-      typed === npubEncode(key)
-    );
-  };
+  // People to add use the shared name rule, like the relay's people page.
+  const addable = (key: string, ...names: (string | undefined)[]) =>
+    key === typedKey || names.some((name) => name && matchPerson(name, query));
   // Label once per member: a fallback label bech32-encodes the key, too costly
   // to repeat for every member of a large roster on each render.
   const memberLabels = new Map([...members].map((key) => [key, label(key)]));
@@ -1206,8 +1223,8 @@ export function ChannelMembersDialog({
       usage,
       picked,
     ).map(({ person }) => person);
-    // Name ranking must not discard exact-key lookups or other relay matches
-    // (for example a profile's NIP-05). Keep those after the shared name matches.
+    // Name ranking lists an exact-key match first but drops other relay
+    // matches (for example a profile's NIP-05). Keep those after its rows.
     const rankedKeys = new Set(ranked.map((person) => person.pubkey));
     const ordered = [
       ...ranked,
@@ -1575,10 +1592,7 @@ export function ChannelMembersDialog({
         place={place}
         pubkey={key}
         name={name}
-        fullName={
-          profiles.get(key)?.verified?.fullName ??
-          searchProfiles.get(key)?.fullName
-        }
+        otherName={otherName(key)}
         keyLabel={keys.get(key)}
         qualified={(shownNames.get(name) ?? 0) > 1}
         adding={adding}

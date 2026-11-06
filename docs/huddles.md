@@ -211,8 +211,12 @@ cards use the existing relay protocol; no server changes are part of this slice.
   v2 wire format, Opus sender, and per-peer jitter buffer; it does not pull in the
   v0 desktop app or speech models. Receivers drain 10 ms frames and reset on peer
   removal/reassignment. Frames from multiple devices belonging to the same
-  pubkey are mixed once per tick and clipped after summing. Signing stays in the
-  existing IdentityHost. Commands are available only to the main application webview.
+  pubkey are mixed once per tick and clipped after summing. Socket writes go
+  through their own queue (five messages, newest dropped when full), so a stalled
+  send never blocks receive or playout. Microphone PCM uses a serial sender: at
+  most four waiting 20 ms frames plus one in flight, oldest waiting frame dropped
+  on overflow; mute discards waiting frames. Signing stays in the existing
+  IdentityHost. Commands are available only to the main application webview.
 
 This is a client-only implementation. It uses the existing private ephemeral
 channel creation event (9007, TTL 3600), parent announcement (48100), authenticated
@@ -247,11 +251,9 @@ read-only and archived room projections cannot seat agents. Parent membership
 alone does not qualify. Multiple agents can sit independently; owner calls on
 other devices do not create seats here.
 
-Microphones and agent voices share a serial PCM sender: at most four waiting
-20 ms frames plus one in flight; overflow discards the oldest waiting frame.
-Mute discards waiting microphone frames, and leaving discards all waiting sends.
-Frames already submitted to native cannot be recalled. This bounds retained
-media duration, not wall-clock delivery latency.
+Agent voices use the microphones' serial PCM sender, with the same limits;
+leaving discards all waiting sends. Frames already submitted to native cannot be
+recalled. This bounds retained media duration, not wall-clock delivery latency.
 
 Native delivers only the owner's peer audio to each seat. This does not identify
 people speaking near the owner's microphone. Eligibility loss or plugin shutdown

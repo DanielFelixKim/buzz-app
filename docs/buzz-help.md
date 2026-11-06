@@ -34,7 +34,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
 ## Identity and getting connected
 
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
-  **Sign in with Builderlab**. **Other options** reveals a **Community URL** field
+  **Create account** and **Sign in**, which open the Builderlab account page;
+  once this computer was set up through Builderlab, **Sign in** comes first.
+  **Other options** reveals a **Community URL** field
   for an address or invite link; desktop does not offer QR scanning.
   With no communities yet, **Join** advances through full-page access and profile
   steps. Before joining, **Back** returns to the entered link; after admission,
@@ -44,10 +46,19 @@ mention anyone. Explicit agent watches on that room can still receive them.
   On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
   skips it, and pressing a key finishes it immediately.
   The key-import field masks your key. Use the eye inside the field to reveal
-  or hide it. Check the signed-in email before choosing **Set me up**, which
-  creates a key.
-  Setup then creates a new key or takes an existing private key, and may link
-  it to the signed-in account. Builderlab setup backs the key up automatically;
+  or hide it.
+  After Builderlab sign-in, an account with no linked key is set up
+  automatically: Buzz creates a key (or uses the one already on this device)
+  and links it to the signed-in account. A device set up through Builderlab asks
+  you to sign in again on relaunch; **Continue without signing in** opens Buzz
+  without it. An existing private key can be entered from **Welcome back**.
+  Its **Use a different account** signs Buzz out of that account; the next
+  sign-in asks the browser to sign in again rather than reuse the account it
+  remembers. Signing in to a different account than the one saved on this
+  computer replaces it: Buzz restarts and signs you in again by itself. When
+  the saved account may not be backed up, Buzz asks first, and **Cancel**
+  leaves it in place.
+  Builderlab setup backs the key up automatically;
   if backup fails temporarily, retry to complete setup. If backup is not supported
   by the build or account, choose **Continue without backup** to finish setup.
   Independent-community key imports
@@ -69,9 +80,20 @@ mention anyone. Explicit agent watches on that room can still receive them.
   brings that identity over without signing in; **Not now** keeps the welcome
   screen, and the offer returns after signing out. Use the options actually
   shown; do not invent a setup sequence.
-- The **public key** identifies someone and is safe to share. The **private
-  key**, shown as an `nsec`, lets someone act as that identity. Never ask anyone
-  to paste a private key into a conversation or send it to you.
+- The **public key** identifies someone and is safe to share. Pasting
+  someone's `npub` (with or without `nostr:`) or hex key finds them in New
+  message, in ⌘K search's People results (Ctrl+K on Windows and Linux), in
+  **Add people** and after `@` in a message. The **private key**, shown as an
+  `nsec`, lets someone act as that identity. Never ask anyone to paste a
+  private key into a conversation or send it to you.
+- In native desktop builds, **Settings → Buzz → Identity → Authorize external identity** creates an
+  ownership proof for an application such as Nexus that holds its own agent key.
+  Enter that application's public key in hex, select **Authorize identity**,
+  review the exact identity and permission in the confirmation, then select
+  **Authorize this key** and copy the proof into its owner attestation field.
+  This lets the key direct your Buzz coding agents to run commands as you.
+  Authorize only keys you recognize: the proof has no time or event-kind limits. Your private key stays
+  in Buzz. This does not join the agent to a community or sign it in to an organization.
 - **Settings → Buzz → Identity → Copy private key** lets someone make their own
   backup, for example in a password manager. They should handle it privately.
   When Builderlab backup is on, the same page shows the account's linked key
@@ -171,7 +193,7 @@ revokes all of them, and a pairing unused for 30 days expires.
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
-  or removes your reaction.
+  or removes your reaction. Capsules you reacted with are tinted and outlined.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it
@@ -231,6 +253,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
   activity clears the loading error.
+  A DM row whose unread messages are all in one thread opens that thread; later DM messages outside it stay
+  unread until you open the whole DM, which its row then does.
   **Reactions** shows recent reactions to your messages, with shared emoji grouped together per message and each person’s remaining emoji in their own row; selecting it turns Unread off.
   Reactions have no unread state or badge count. Clicking one opens your exact message in its conversation or thread.
   New reactions from updated clients appear; older unaddressed reactions are not backfilled.
@@ -259,6 +283,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   of reopening where you left it. Muted
   conversations are left out. Turn this off with **Show unread first in
   search** in Settings → Appearance → Conversations.
+- **Activity** threads name their channel above the original message. Select that
+  name, or **Open in channel** in the thread tab's menu, to open the thread in
+  Channels beside its original message, which the channel history shows and
+  highlights.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.
@@ -343,10 +371,18 @@ revokes all of them, and a pairing unused for 30 days expires.
   empty composer with either choice.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
-  members. If an upload fails, its attachment shows the reason, **Retry**, and
+  members. If some of the files you pick, paste or drop can't be attached, such
+  as an empty file or any past 10 per message, the rest still attach and a
+  notice says how many were left out and why, naming the first few.
+  If an upload fails, its attachment shows the reason, **Retry**, and
   **Remove**. Follow the error's guidance before retrying, or remove the attachment
-  to unblock Send; your typed message stays in the composer. Do not promise
-  support for every file type or size.
+  to unblock Send; your typed message stays in the composer. In the main window,
+  files still uploading when you press **Send** finish in the background: the
+  upload bar names the conversation they are going to, and **Cancel** stops the
+  send it names. If a background send fails, its notice names that conversation
+  and, when you are elsewhere, can open it (except a huddle). Your message and
+  files are back in that conversation's composer. Do not
+  promise support for every file type or size.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.
@@ -458,6 +494,10 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
   fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
   host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.
+- **Approving a Builderlab tool app**: the first time a tool app asks for
+  approval, Buzz opens the approval page in your default browser, where you
+  are signed in to Builderlab. Approve it there, return to Buzz and click
+  **Reload** to open the app.
 - **Drafts & sent** lists the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
   sidebar, and your latest 100 sent messages in this community, grouped by
@@ -465,7 +505,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   were last ("You're last"); a channel post shows its reply count. Select a
   draft to continue it in its conversation, or a sent message to jump to it.
   Search matches the conversation name and what you wrote. It reads only this
-  device's saved drafts and never changes them.
+  device's saved drafts; a draft's trash button clears that draft and its
+  attached files without opening the conversation.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
@@ -651,9 +692,17 @@ available rather than silently discarding it.
   sessions**, which searches goose's local history and can take a while. Watch
   and timer turns from before this version aren't listed, and **Search older
   sessions** doesn't find them, because it only matches channel conversations.
-- When a request to an agent running on this device fails, the activity under
-  the message offers **Retry**, which asks the agent again, and **Dismiss**,
-  which hides the failure.
+- Failed requests show **Couldn’t finish**, cancelled requests **Stopped**, and
+  unconfirmed outcomes **Status unavailable**. Choose **Details** for status
+  information. For your remote agents, Buzz checks again automatically when no
+  final result is available yet, or after a temporary lookup failure, while you
+  stay signed in and connected. Requests sent to several agents keep each
+  agent's stopped outcome visible alongside another agent's failure.
+- Automatic failure replies appear below their request as a compact status line;
+  **Details** expands the explanation inline. Failures of channel requests also
+  appear in the channel.
+- For agents running on this device, **Details** can offer **Retry** to ask again
+  and **Dismiss** to hide the failure.
 - Any agent running on this device can read and change some Buzz settings
   here when you ask it to: appearance mode, interface size, accent color,
   vibe level, where new threads open, Solo follow-up behavior, automatic
@@ -695,6 +744,10 @@ confirmation.
 - **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
   their previous state, including when no choice was saved. Enable or disable
   them in **Manage plugins**; saved choices persist.
+- A plugin's details in Manage plugins link to the Settings sections that hold
+  its settings: sections it adds, such as GitHub comment authors, and Decisions
+  API for a decision provider, such as TypeSafe. Only sections the Settings
+  sidebar currently shows are linked.
 - Some plugins let the person's other agents on this computer, such as Claude
   Code, Codex or Pi, use their tools while Buzz is open. Those agents run the
   helper Buzz installs, for example
@@ -786,7 +839,7 @@ even when no session is connected. Added access requires new approval.
 
 ### Reconnecting an old agent in a DM
 
-On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose a harness if the old type is unavailable; settings that were not saved use the selected type’s defaults. Review the inline controls, complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you mention an eligible agent you own. Only you see it, once per agent in the loaded conversation. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
+On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose another harness if the old type is unavailable or does not support inline connection setup; settings that were not saved use the selected type’s defaults. Review the inline controls; **Connect** stays disabled until the harness has a resolved model and provider, including usable defaults. If a saved Codex model is unavailable, choose another model or harness to continue. Complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you send a new mention of an eligible agent you own while that conversation is open. Loading older mentions does not show cards, and known-archived agents are excluded. Only you see it, once per agent in the loaded conversation. Choose the **X** in the card’s top-right corner to hide that agent’s card in this conversation; the dismissal survives reopening and reloads. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
 
 ## Deleting an agent’s workflow
 
