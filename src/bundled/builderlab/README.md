@@ -42,12 +42,11 @@ between everyone in the owner's workspace and only the owner, and
 `apps_community` grants or revokes a Buzz community at the grant revision it just
 read. `apps_visibility` keeps existing viewers and community grants.
 
-BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
-boundary: the server must grant Builderlab access to the current workspace/account.
-Existing workspace early-preview enablement can provide that access; these tools
-do not enable a workspace or bypass its policy. A denied request preserves the
-server's permission error. Check the contract before choosing a profile because
-BBPublic need not support static hosting.
+Every tenant uses the same authenticated control-plane boundary: the server must
+grant Builderlab access to the current workspace/account. These tools do not
+enable a workspace or bypass its policy. A denied request preserves the server's
+permission error. Check the contract before choosing a profile because a tenant
+need not support static hosting.
 
 After an accepted deployment, readiness errors preserve its app, version,
 deployment and rollout IDs. `apps_status` checks those exact IDs without uploading
