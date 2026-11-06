@@ -1,10 +1,13 @@
 // Read snapshots from the composer owner, never a parallel draft store.
 import { draftCoordinates, viewRevision } from "../../shared/view-state";
+import { composerMarkdown } from "./composer-markdown";
 import { acceptedComposerSend } from "./composer-accepted";
 import { mentionDraft, type MentionDraft } from "./mention-draft";
 
 export type OwnerDraft = Readonly<{
   text: string;
+  markdown: string;
+  /** Recipient offsets refer to displayed text, not serialized Markdown. */
   recipients: MentionDraft["recipients"];
   source: "composer" | "saved";
 }>;
@@ -44,6 +47,7 @@ export function readOwnerDraft(
     source: OwnerDraft["source"],
   ): OwnerDraft => ({
     text: draft.text,
+    markdown: composerMarkdown(draft),
     recipients: draft.recipients.map(({ pubkey, name, start, end }) => ({
       pubkey,
       name,

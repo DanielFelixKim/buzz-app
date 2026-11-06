@@ -15364,6 +15364,7 @@ describe("Owner draft reads", () => {
     const { f, agent } = await running();
     expect(agent.readDraft?.(channel)).toEqual({
       text: "Owner prose",
+      markdown: "Owner prose",
       recipients: [],
       source: "saved",
     });

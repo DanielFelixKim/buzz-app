@@ -4,7 +4,7 @@ export function apply(ctx) {
   ctx.agents.addTool({
     name: "draft_get",
     description:
-      "Read your owner's unsent draft on this device for one channel and optional thread. source says whether it is the live composer or saved draft. Does not send or change it. Attached files are not included.",
+      "Read your owner's unsent draft on this device for one channel and optional thread. Includes displayed text, Markdown with links, and recipient offsets into text. source identifies the live composer or saved draft. Does not send or change it; file bytes are excluded.",
     inputSchema: {
       type: "object",
       properties: {

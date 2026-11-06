@@ -1,3 +1,4 @@
+import { composerSchema, projectComposerDocument } from "./composer-document";
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { writeView } from "../../shared/view-state";
@@ -16,6 +17,7 @@ it("reads only one owner/community/channel/thread coordinate without writes", ()
   const writes = vi.spyOn(Storage.prototype, "setItem");
   expect(readOwnerDraft(scope, "channel")).toEqual({
     text: "Top level",
+    markdown: "Top level",
     recipients: [],
     source: "saved",
   });
@@ -95,4 +97,42 @@ it("reports storage failure and corrupt saved drafts separately from absence", (
     "invalid JSON",
   );
   expect(() => readOwnerDraft(scope, "channel")).toThrow("cannot be read");
+});
+
+function linkedDraft(href: string) {
+  const doc = composerSchema.node("doc", null, [
+    composerSchema.node("paragraph", null, [
+      composerSchema.text("docs", [composerSchema.marks.link.create({ href })]),
+      composerSchema.text(" "),
+      composerSchema.text("@Ada", [
+        composerSchema.marks.recipient.create({
+          pubkey: "b".repeat(64),
+          name: "Ada",
+        }),
+      ]),
+    ]),
+  ]);
+  return projectComposerDocument(doc).draft;
+}
+it("preserves rich-link destinations without shifting text recipient offsets", () => {
+  writeView(scope, "draft:channel", linkedDraft("https://example.com/docs"));
+  expect(readOwnerDraft(scope, "channel")).toMatchObject({
+    text: "docs @Ada",
+    markdown: "[docs](https://example.com/docs) @Ada",
+    recipients: [{ pubkey: "b".repeat(64), name: "Ada", start: 5, end: 9 }],
+  });
+});
+it("detects conflicting rich links with identical displayed labels", () => {
+  const first = registerComposerDraft(scope, "draft:channel", () =>
+    linkedDraft("https://example.com/one"),
+  );
+  const second = registerComposerDraft(scope, "draft:channel", () =>
+    linkedDraft("https://example.com/two"),
+  );
+  try {
+    expect(() => readOwnerDraft(scope, "channel")).toThrow("different drafts");
+  } finally {
+    first();
+    second();
+  }
 });
