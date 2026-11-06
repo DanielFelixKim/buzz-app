@@ -1029,3 +1029,53 @@ it("skips the queued lookups of attended channels no watch wants any more, so a 
   );
   next();
 });
+
+it("keeps explicit agent metadata admission out of viewer provenance", async () => {
+  const h = harness();
+  await h.discover();
+  const resolving = h.owner.session.channels.resolve?.([OPEN], {
+    viewerLookup: false,
+  });
+  assert(resolving);
+  await vi.waitFor(() =>
+    expect(h.wire.pending.some((entry) => asks(entry.filters, OPEN))).toBe(
+      true,
+    ),
+  );
+  h.wire.pending
+    .splice(
+      h.wire.pending.findIndex((entry) => asks(entry.filters, OPEN)),
+      1,
+    )[0]
+    ?.respond(channel(OPEN, "public") as RelayEvent[]);
+  await resolving;
+  h.owner.session.attend([OPEN]);
+  expect(h.owner.session.unattended(OPEN, false)).toBe(false);
+});
+
+it.each(["loading", "error"] as const)(
+  "refuses agent metadata admission while discovery is %s",
+  async (status) => {
+    const h = harness();
+    h.connect();
+    await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+    if (status === "error") h.wire.next().fail(new Error("Discovery failed"));
+    await vi.waitFor(() =>
+      expect(h.owner.session.channels.list().status).toBe(status),
+    );
+    const before = h.owner.session.channels.list();
+    const resolving = h.owner.session.channels.resolve?.([OPEN], {
+      viewerLookup: false,
+    });
+    assert(resolving);
+    const outcome = resolving.then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+    await flush();
+    const exact = h.wire.pending.find((entry) => asks(entry.filters, OPEN));
+    exact?.respond(channel(OPEN, "public") as RelayEvent[]);
+    expect(await outcome).toMatch(/not discovered/i);
+    expect(h.owner.session.channels.list()).toEqual(before);
+  },
+);

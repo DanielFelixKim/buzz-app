@@ -11387,7 +11387,10 @@ it("resolves an unopened public listening channel before admission and delivers 
     kinds: [9],
     since: 1,
   });
-  expect(resolve).toHaveBeenCalledOnce();
+  expect(resolve).toHaveBeenCalledWith(
+    [target],
+    expect.objectContaining({ viewerLookup: false }),
+  );
   const called = run.mock.calls.length;
   emit({ events: [event("unopened-event", { tags: [["h", target]] })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(called + 1));

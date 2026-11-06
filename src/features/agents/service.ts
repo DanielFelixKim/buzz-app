@@ -1943,7 +1943,8 @@ export class AgentsService extends Service implements Agents {
         const unknown = ids.filter(
           (id) => !this.channelOf(agent, { tags: [["h", id]] }),
         );
-        if (unknown.length) await channels?.resolve?.(unknown, { signal });
+        if (unknown.length)
+          await channels?.resolve?.(unknown, { signal, viewerLookup: false });
       },
       dm: (agent, event) => this.dm(agent, event),
       unattended: (agent, event, live) => {
