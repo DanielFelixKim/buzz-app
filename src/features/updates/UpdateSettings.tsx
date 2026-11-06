@@ -57,7 +57,9 @@ export function UpdateSettings({
     error: "",
   };
   const label =
-    status.state === "ready" || status.state === "installing"
+    status.state === "ready" ||
+    status.state === "scheduled" ||
+    status.state === "installing"
       ? "Update now"
       : status.state === "error"
         ? "Retry"
@@ -80,17 +82,29 @@ export function UpdateSettings({
           </span>
         }
         action={
-          <Button
-            type="button"
-            loading={pending}
-            onClick={() =>
-              void (status.state === "ready"
-                ? updates.installAndRelaunch()
-                : updates.checkForUpdate())
-            }
-          >
-            {label}
-          </Button>
+          <>
+            <Button
+              type="button"
+              loading={pending}
+              onClick={() =>
+                void (status.state === "ready" || status.state === "scheduled"
+                  ? updates.installAndRelaunch()
+                  : updates.checkForUpdate())
+              }
+            >
+              {label}
+            </Button>
+            {status.state === "ready" && updates.idleOptionAvailable() && (
+              <Button type="button" onClick={updates.installWhenIdle}>
+                Update when agents are idle
+              </Button>
+            )}
+            {status.state === "scheduled" && (
+              <Button type="button" onClick={updates.cancelScheduled}>
+                Cancel
+              </Button>
+            )}
+          </>
         }
       />
     </section>
