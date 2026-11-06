@@ -474,7 +474,7 @@ it("previews an upload in place with progress and cancel, keeping Name editable"
   });
   expect(
     await within(dialog).findByRole("img", { name: "Uploading avatar" }),
-  ).toBeInTheDocument();
+  ).toHaveAttribute("data-avatar-shape", "squircle");
   expect(URL.createObjectURL).toHaveBeenCalledWith(file);
   const ring = within(dialog).getByRole("progressbar", {
     name: "Uploading image",
