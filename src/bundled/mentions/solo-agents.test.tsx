@@ -4195,36 +4195,76 @@ it("the resolver reads a page the chooser already settled from the shared cache"
     h.dispose();
   }
 });
+const zelda = "c".repeat(64);
+const verifiedJose = {
+  displayName: "Jose",
+  username: "jose",
+  issuerLabel: "Example",
+  verifiedAt: 1,
+  status: "checked" as const,
+  multipleIssuers: false,
+};
 it.each([
-  ["selects them by it", true],
-  ["returns to prose while it is unknown", false],
-])(
-  "the resolver reads the verified name of a person found by it alone, and %s",
-  async (_case, answers) => {
-    const h = spaceFixture("Member");
+  ["selects them by it", [outsideJose], {}, true],
+  ["returns to prose while it is unknown", [], {}, false],
+  // Zelda has a profile but is verified as Jose too: a namesake.
+  [
+    "keeps a namesake with a profile ambiguous",
+    [outsideJose, zelda],
+    {},
+    false,
+  ],
+  [
+    "lets a newer shared head that withdrew it win",
+    [outsideJose],
+    { held: true },
+    false,
+  ],
+  [
+    "lets a shared head that arrives during the read win",
+    [outsideJose],
+    { arrives: true },
+    false,
+  ],
+] as [
+  string,
+  readonly string[],
+  { held?: boolean; arrives?: boolean },
+  boolean,
+][])(
+  "the resolver looks up the verified names on its page, and %s",
+  async (_case, answered, { held = false, arrives = false }, selects) => {
+    // The chooser is on other text, so only the resolver names this page.
+    const h = spaceFixture("Member", {}, { query: "xyz" });
     try {
-      const verified = vi.fn(async (pubkeys: readonly string[]) => ({
-        authority: { pubkey: "8".repeat(64), multipleIssuers: false },
-        profiles: new Map(
-          answers
-            ? pubkeys.map((pubkey) => [
-                pubkey,
-                {
-                  displayName: "Jose",
-                  username: "jose",
-                  issuerLabel: "Example",
-                  verifiedAt: 1,
-                  status: "checked" as const,
-                  multipleIssuers: false,
-                },
-              ])
-            : [],
-        ),
-      }));
+      const authority = { pubkey: "8".repeat(64), multipleIssuers: false };
+      let revision = 0;
+      let landed = false;
+      const verified = vi.fn(async (pubkeys: readonly string[]) => {
+        if (arrives) {
+          revision += 1;
+          landed = true;
+        }
+        return {
+          authority,
+          profiles: new Map(
+            pubkeys
+              .filter((pubkey) => answered.includes(pubkey))
+              .map((pubkey) => [pubkey, verifiedJose]),
+          ),
+        };
+      });
+      Object.assign(h.session.profiles, {
+        verifiedAuthority: () => authority,
+        verifiedRevision: () => revision,
+        verifiedHeld: (pubkey: string) => pubkey === outsideJose && held,
+        verifiedSince: (pubkey: string, since: number) =>
+          pubkey === outsideJose && landed && revision > since,
+      });
       Object.assign(h.session.directMessages, { verified });
       await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
-      // Space is pressed before the chooser names the row.
       const pending = resolver(h);
+      await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
       await h.finish({
         people: [
           {
@@ -4232,12 +4272,12 @@ it.each([
             name: outsideJose.slice(0, 10),
             nameIsFallback: true,
           },
+          { pubkey: zelda, name: "Zelda" },
         ],
         hasMore: false,
       });
       const outcome = await pending;
-      expect(verified).toHaveBeenCalledWith([outsideJose], expect.anything());
-      if (answers)
+      if (selects)
         expect(outcome).toMatchObject({ pubkey: outsideJose, name: "Jose" });
       else expect(outcome).toBeNull();
     } finally {

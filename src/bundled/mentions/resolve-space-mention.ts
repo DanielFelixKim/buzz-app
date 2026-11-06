@@ -21,34 +21,33 @@ import {
   type MentionDirectoryPage,
 } from "./useMentionDirectory";
 import {
+  lookUpVerifiedNames,
   verifiedName,
   withVerifiedNames,
 } from "../../features/profiles/useVerifiedNames";
 
 /**
- * `people` named as the chooser would name them. A person the search found by
- * a verified name alone has no other name, so their verified name is read
- * first, from the authority that checked it; one still unnamed is left out.
+ * `people` named as the chooser names them: their verified names are looked
+ * up through the same lookups and rules, then read back. A person found by a
+ * verified name alone who is still unnamed is left out.
  */
 async function namedPeople(
   session: ComposerSession,
   people: MentionDirectoryPage["people"],
   signal: AbortSignal,
 ) {
-  const unnamed = people.flatMap((person) =>
-    person.nameIsFallback && !verifiedName(session.profiles, person.pubkey)
-      ? [person.pubkey]
-      : [],
-  );
-  const read = unnamed.length
-    ? await session.directMessages.verified?.(unnamed, signal)
-    : undefined;
+  const authority = session.profiles.verifiedAuthority?.();
+  if (authority)
+    await lookUpVerifiedNames(
+      session,
+      authority,
+      people.flatMap(({ pubkey, isAgent }) => (isAgent ? [] : [pubkey])),
+      signal,
+    );
   const page = new Map(
-    people.flatMap((person) => {
-      const verified =
-        read?.profiles.get(person.pubkey) ??
-        verifiedName(session.profiles, person.pubkey);
-      return verified ? [[person.pubkey, verified] as const] : [];
+    people.flatMap(({ pubkey }) => {
+      const verified = verifiedName(session.profiles, pubkey);
+      return verified ? [[pubkey, verified] as const] : [];
     }),
   );
   return withVerifiedNames(
