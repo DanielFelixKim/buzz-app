@@ -21,6 +21,7 @@ import {
   type MentionDirectoryPage,
 } from "./useMentionDirectory";
 import {
+  hasUnnamed,
   lookUpVerifiedNames,
   verifiedName,
   withVerifiedNames,
@@ -51,12 +52,8 @@ async function namedPeople(
       return verified ? [[pubkey, verified] as const] : [];
     }),
   );
-  // Someone still unnamed may be a namesake: the page cannot decide.
-  if (
-    people.some((person) => person.nameIsFallback && !page.has(person.pubkey))
-  )
-    return undefined;
-  return withVerifiedNames(people, page, session.profiles.snapshot());
+  const named = withVerifiedNames(people, page, session.profiles.snapshot());
+  return hasUnnamed(named) ? undefined : named;
 }
 
 /** What the chooser knew about its destination when Space was typed. */

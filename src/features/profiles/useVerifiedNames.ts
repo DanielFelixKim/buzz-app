@@ -237,3 +237,15 @@ export function withVerifiedNames<
   });
   return changed ? named : people;
 }
+
+/** Whether a named page still holds someone found by a verified name alone
+ * whose name is unknown: they may be anyone's namesake, so the page cannot
+ * decide a name. */
+export function hasUnnamed(
+  people: readonly {
+    nameIsFallback?: true | undefined;
+    profileNames?: readonly string[] | undefined;
+  }[],
+) {
+  return people.some((person) => person.nameIsFallback && !person.profileNames);
+}

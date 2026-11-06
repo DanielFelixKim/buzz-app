@@ -4309,6 +4309,51 @@ it.each([
     }
   },
 );
+it.each([
+  ["selects a lone exact name", "none", false],
+  ["keeps Space undecided while a read is pending", "pending", true],
+  ["keeps Space undecided when a read fails", "fails", true],
+] as const)(
+  "the chooser, with someone found by a verified name alone on its page, %s",
+  async (_case, read, unnamedOnPage) => {
+    const h = spaceFixture("Member");
+    try {
+      const authority = { pubkey: "8".repeat(64), multipleIssuers: false };
+      Object.assign(h.session.profiles, {
+        verifiedAuthority: () => authority,
+      });
+      Object.assign(h.session.directMessages, {
+        verified: vi.fn(() =>
+          read === "fails"
+            ? Promise.reject(new Error("offline"))
+            : new Promise<never>(() => {}),
+        ),
+      });
+      await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+      await h.finish({
+        people: [
+          ...(unnamedOnPage
+            ? [
+                {
+                  pubkey: outsideJose,
+                  name: outsideJose.slice(0, 10),
+                  nameIsFallback: true as const,
+                },
+              ]
+            : []),
+          { pubkey: zelda, name: "Jose" },
+        ],
+        hasMore: false,
+      });
+      await waitFor(() =>
+        expect(h.result()?.items.some((item) => item.id === zelda)).toBe(true),
+      );
+      expect(h.canSpace(zelda)).toBe(!unnamedOnPage);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 it("the resolver reads a longer name's page out of the complete page for its prefix without another read", async () => {
   const h = spaceFixture("Member");
   try {
