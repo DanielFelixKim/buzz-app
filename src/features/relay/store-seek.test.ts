@@ -1683,3 +1683,28 @@ it("keeps accepted overlap roots when an older read restores its joining snapsho
   }
   expect(h.window().rows.some((row) => row.id === root.id)).toBe(true);
 });
+
+it("admits the oldest replacement head row after a replayed deletion", async () => {
+  const h = setup({ count: 21, maxHistoryRows: 40 });
+  await h.open();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.state({ status: "retrying", routes: [] });
+  const target = h.history.pop();
+  assert.exists(target);
+  const deletion = signed(h.alice, {
+    kind: 5,
+    created_at: T0 + 22 * HOUR,
+    tags: [
+      ["h", "c"],
+      ["e", target.id],
+    ],
+    content: "",
+  });
+  h.live.receive([deletion], { channelId: "c", phase: "replay" });
+  h.gate.aux = [deletion];
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() => expect(h.window().freshness).toBe("verified"));
+  expect(h.window().rows.some((row) => row.id === h.history[0]?.id)).toBe(true);
+  expect(h.window().hasMore).toBe(false);
+});

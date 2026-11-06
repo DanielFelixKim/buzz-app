@@ -4610,7 +4610,7 @@ export function createChannelStore(
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
         retained.restored = false;
-        accept(head.events);
+        accept(head.events, true);
         page = head;
         const reached = (last: Page) =>
           !last.hasMore ||
