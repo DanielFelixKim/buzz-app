@@ -1250,7 +1250,10 @@ function ThreadMessages({
     // A hidden reader can also lose its offset under display: none in WebKit;
     // restore it when shown rather than treating that reset as reader input.
     const reading = resizePosition.current;
-    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    const maxScrollTop = Math.max(
+      0,
+      element.scrollHeight - element.clientHeight,
+    );
     const clamped =
       reading !== undefined &&
       reading.scrollTop > maxScrollTop &&
@@ -1441,7 +1444,10 @@ function ThreadMessages({
         previous.contentHeight === element.scrollHeight
       )
         return;
-      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const maxScrollTop = Math.max(
+        0,
+        element.scrollHeight - element.clientHeight,
+      );
       const clamped =
         previous.scrollTop > maxScrollTop &&
         Math.abs(element.scrollTop - maxScrollTop) <= 1;
