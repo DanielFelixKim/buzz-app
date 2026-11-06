@@ -640,7 +640,7 @@ export class AgentRunners {
   private readonly stopped: Interrupted;
   /** The agents whose `left` the owner chose to resume. */
   private resuming = new Set<string>();
-  private workingNow = false;
+  private workingCountNow = 0;
   private readonly workingListeners = new Set<() => void>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
@@ -649,18 +649,23 @@ export class AgentRunners {
 
   /** Whether any agent has a job in a lane or a turn still working. */
   isWorking() {
-    return this.workingNow;
+    return this.workingCountNow > 0;
   }
+  /** How many agents have a job in a lane or a turn still working. */
+  workingCount() {
+    return this.workingCountNow;
+  }
+  /** Called whenever `workingCount` changes. */
   subscribeWorking(listener: () => void) {
     this.workingListeners.add(listener);
     return () => void this.workingListeners.delete(listener);
   }
   private noteWorking() {
-    const working = [...this.runners.values()].some(
-      (runner) => runner.busy.size > 0 || runner.working > 0,
-    );
-    if (working === this.workingNow) return;
-    this.workingNow = working;
+    let count = 0;
+    for (const runner of this.runners.values())
+      if (runner.busy.size > 0 || runner.working > 0) count++;
+    if (count === this.workingCountNow) return;
+    this.workingCountNow = count;
     for (const listener of this.workingListeners) listener();
   }
 

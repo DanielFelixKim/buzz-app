@@ -1591,6 +1591,44 @@ it("keeps the Mac awake while a turn works and for the chosen time after it", as
   }
 });
 
+it("counts agents working, for the update notice to wait on", async () => {
+  const { service, run, emit } = await setup();
+  const changed = vi.fn();
+  const stop = service.work.subscribeWorking(changed);
+  let finish = () => {};
+  try {
+    expect(service.work.isWorking()).toBe(false);
+    expect(service.work.workingCount()).toBe(0);
+    await service.create({ type: "example/echo", name: "Echo" });
+    const turn = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() => expect(service.work.workingCount()).toBe(1));
+    expect(service.work.isWorking()).toBe(true);
+    expect(changed).toHaveBeenCalled();
+    changed.mockClear();
+    finish();
+    await vi.waitFor(() => expect(service.work.workingCount()).toBe(0));
+    expect(service.work.isWorking()).toBe(false);
+    expect(changed).toHaveBeenCalled();
+  } finally {
+    finish();
+    stop();
+  }
+});
+
 it.each([
   [{ ok: true, stopped: true }, "stopped"],
   [{ ok: false, error: "Broke", stopped: true }, "error"],
