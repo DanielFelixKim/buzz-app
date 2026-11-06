@@ -17,6 +17,7 @@ import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloSuccessor } from "../../features/channel-navigation/solo-successor";
 import { historyPanel, useConversationTabs } from "./useConversationTabs";
+import { useCoveredByDock } from "./useCoveredByDock";
 import tabStyles from "./ChannelTabs.module.css";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -1873,6 +1874,10 @@ function ChannelWorkspace({
     companion ? COMPANION_SPLIT.defaultWidth : undefined,
     companion ? COMPANION_SPLIT.min : undefined,
   );
+  const docked = !!showingPanel && !showingMediaReview;
+  // A floating dock covers the conversation, even the strip beside a card:
+  // keep focus, typing, reading and assistive technology out of it.
+  const covered = useCoveredByDock(split.ref, docked);
   // A routed thread can mount behind a collapsed pane, where it cannot take
   // focus, or already be selected, so its pane does not move focus. Once its
   // tab shows, hand it focus nothing else took.
@@ -2174,6 +2179,8 @@ function ChannelWorkspace({
         aria-label="Conversation"
         data-overlay-boundary=""
         data-solo-focus-pane={solo ? "" : undefined}
+        inert={covered}
+        aria-hidden={covered || undefined}
       >
         <div
           className={`${styles.conversation}${solo ? ` ${styles.soloConversation}` : ""}`}
@@ -2492,7 +2499,7 @@ function ChannelWorkspace({
         {secondary.announcement}
       </p>
       <PanelDock
-        open={!!showingPanel && !showingMediaReview}
+        open={docked}
         keepMounted={
           tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
         }

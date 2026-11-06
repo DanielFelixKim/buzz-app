@@ -1,6 +1,10 @@
 import { test, expect } from "./fixture.mjs";
-import { closeSettings, settleShellToggle } from "./navigation.mjs";
-import { open } from "./timeline.mjs";
+import {
+  closeSettings,
+  settlePanelMotion,
+  settleShellToggle,
+} from "./navigation.mjs";
+import { clickRow, open } from "./timeline.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({
@@ -166,9 +170,17 @@ test.extend({ companionFixture: true })(
     await open(page, app);
     const keys = await focusKeys(page);
     const main = page.locator("[data-main-workspace]");
+    // The covered conversation leaves the accessibility tree; these checks
+    // still read it.
     const composer = main.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
+      includeHidden: true,
+    });
+    const members = main.getByRole("button", {
+      name: "Manage members of Alpha",
+      exact: true,
+      includeHidden: true,
     });
     await composer.fill("Alpha draft");
     await page
@@ -179,13 +191,7 @@ test.extend({ companionFixture: true })(
       exact: true,
     });
     await expect(companion).toBeVisible();
-    for (const target of [
-      composer,
-      main.getByRole("button", {
-        name: "Manage members of Alpha",
-        exact: true,
-      }),
-    ]) {
+    for (const target of [composer, members]) {
       await expect
         .poll(() =>
           target.evaluate((element) => {
@@ -236,13 +242,7 @@ test.extend({ companionFixture: true })(
         await page.setViewportSize({ width, height: 900 });
         await tab.click();
         // The PC binding cycles: start in main so its next destination is side.
-        if (!keys.apple)
-          await main
-            .getByRole("button", {
-              name: "Manage members of Alpha",
-              exact: true,
-            })
-            .focus();
+        if (!keys.apple) await members.focus();
         await expect(page.locator("html")).not.toHaveAttribute(
           "data-keyboard-navigation",
           "",
@@ -267,9 +267,12 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
   await open(page, app);
   const keys = await focusKeys(page);
   const main = page.locator("[data-main-workspace], [data-solo-focus-pane]");
+  // The covered conversation leaves the accessibility tree; these checks
+  // still read it.
   const alpha = main.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
+    includeHidden: true,
   });
   await alpha.fill("Alpha draft");
   const link = app.append(
@@ -382,6 +385,7 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
   const mainTab = main.getByRole("button", {
     name: "Manage members of Alpha",
     exact: true,
+    includeHidden: true,
   });
   await mainTab.evaluate((tab) => {
     const bounds = tab.getBoundingClientRect();
@@ -413,3 +417,86 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
     notices.getByText("Could not attach file", { exact: true }),
   ).toBeVisible();
 });
+
+// Media and container queries decide whether a pane floats over the
+// conversation, and jsdom evaluates neither. Covered content must leave the
+// tab order, typing and the accessibility tree, as a card and at full width.
+test.extend({ readState: true, threadUnread: true })(
+  "a thread covering the conversation keeps typing out of it",
+  async ({ page, app }) => {
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await open(page, app);
+    const conversation = page.locator('article[aria-label="Conversation"]');
+    const composer = conversation.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+      includeHidden: true,
+    });
+    await composer.fill("Alpha draft");
+    const root = app.histories
+      .get("primary/alpha")
+      .find((event) => event.content === "Thread root 1");
+    const chip = page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/, includeHidden: true });
+    await clickRow(page, chip);
+    const side = page.locator("[data-panel-workspace]");
+    const tab = side.getByRole("tab", { name: "Thread root 1", exact: true });
+    await expect(tab).toBeVisible();
+    // Beside the thread, the conversation stays live.
+    await expect(conversation).not.toHaveAttribute("inert");
+    await composer.click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" wide");
+    await expect(composer).toHaveText("Alpha draft wide");
+
+    // Narrowing while typing leaves the composer it covers; the draft stays.
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(composer).not.toBeFocused();
+    await page.keyboard.type("x");
+    await expect(composer).toHaveText("Alpha draft wide");
+
+    const dock = page.locator("[data-channel-workspace] > [data-panel-dock]");
+    for (const width of [600, 900]) {
+      await page.setViewportSize({ width, height: 900 });
+      await settleShellToggle(page);
+      await settlePanelMotion(page);
+      if (width === 900) {
+        // The sidebar leaves room for a card, with part of the composer
+        // still showing beside it.
+        const [card, editor] = await Promise.all([
+          dock.boundingBox(),
+          composer.boundingBox(),
+        ]);
+        expect(card.width).toBeLessThan(width / 2);
+        expect(editor.x).toBeLessThan(card.x);
+      }
+      await expect(conversation).toHaveAttribute("inert", "");
+      await expect(conversation).toHaveAttribute("aria-hidden", "true");
+      await expect(
+        page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+      ).toHaveCount(0);
+      await tab.focus();
+      for (let press = 0; press < 8; press++) {
+        await page.keyboard.press("Shift+Tab");
+        expect(
+          await conversation.evaluate((element) =>
+            element.contains(document.activeElement),
+          ),
+        ).toBe(false);
+      }
+      await page.keyboard.type("y");
+      await expect(composer).toHaveText("Alpha draft wide");
+    }
+
+    await side
+      .getByRole("button", { name: "Close Thread root 1 tab", exact: true })
+      .click();
+    await expect(conversation).not.toHaveAttribute("inert");
+    await expect(chip).toBeFocused();
+    await composer.click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("!");
+    await expect(composer).toHaveText("Alpha draft wide!");
+  },
+);

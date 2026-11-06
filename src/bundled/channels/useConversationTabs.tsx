@@ -163,8 +163,12 @@ export function useConversationTabs({
   );
   const splitTrigger = useRef<HTMLButtonElement>(null);
   const focusSplit = useRef(false);
+  // An opener under a floating pane is inert until the close commits.
+  const focusUncovered = useRef<HTMLElement>(undefined);
   // The opening control remounts in the main header when the pane closes.
   useLayoutEffect(() => {
+    focusUncovered.current?.focus({ preventScroll: true });
+    focusUncovered.current = undefined;
     if (focusSplit.current) {
       const target = splitTrigger.current ?? fallbackFocus?.current;
       target?.focus({ preventScroll: true });
@@ -514,7 +518,8 @@ export function useConversationTabs({
     );
     if (!remaining.length) {
       const target = trigger?.isConnected ? trigger : fallbackFocus?.current;
-      if (target) target.focus({ preventScroll: true });
+      if (target?.closest("[inert]")) focusUncovered.current = target;
+      else if (target) target.focus({ preventScroll: true });
       else focusSplit.current = true;
     }
   };
