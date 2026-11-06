@@ -1699,13 +1699,7 @@ it("retries folder diagnostics and ignores late read-only checks after unmount",
         }),
     );
   const imports = { checkFolder, previewFolder: vi.fn(), discard: vi.fn() };
-  const changed = vi.fn();
-  const view = render(
-    <PluginImport
-      {...savedFolderProps(imports)}
-      onUpdateAvailableChange={changed}
-    />,
-  );
+  const view = render(<PluginImport {...savedFolderProps(imports)} />);
   try {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "dist: plugin.js is missing",
@@ -1716,7 +1710,6 @@ it("retries folder diagnostics and ignores late read-only checks after unmount",
     expect(checkFolder).toHaveBeenCalledTimes(2);
     view.unmount();
     await act(async () => finish("new"));
-    expect(changed).toHaveBeenLastCalledWith(false);
     expect(imports.previewFolder).not.toHaveBeenCalled();
     expect(imports.discard).not.toHaveBeenCalled();
   } finally {
@@ -1776,10 +1769,8 @@ it("retains known Git updates on reopen and reacquires before review", async () 
     },
     initialUpdateAvailable: true,
   };
-  const changed = vi.fn();
-  render(<PluginImport {...props} onUpdateAvailableChange={changed} />);
+  render(<PluginImport {...props} />);
   expect(screen.getByRole("button", { name: "Update" })).toBeVisible();
-  expect(changed).not.toHaveBeenCalled();
   expect(git).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Update" }));
   await screen.findByRole("dialog", { name: "Update Remembered" });
@@ -1799,23 +1790,15 @@ it("refreshes a stale known update from the newly acquired package", async () =>
     })),
     discard: vi.fn(async () => {}),
   };
-  const changed = vi.fn();
-  render(
-    <PluginImport
-      {...savedFolderProps(imports)}
-      onUpdateAvailableChange={changed}
-    />,
-  );
+  render(<PluginImport {...savedFolderProps(imports)} />);
   fireEvent.click(await screen.findByRole("button", { name: "Update" }));
   fireEvent.click(await screen.findByRole("button", { name: "Done" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
-  expect(changed).toHaveBeenLastCalledWith(false);
   expect(imports.discard).toHaveBeenCalledExactlyOnceWith("remembered");
 });
 
 it("clears a retained update action after the saved source check fails", async () => {
-  const changed = vi.fn();
   render(
     <PluginImport
       {...savedFolderProps({
@@ -1824,11 +1807,9 @@ it("clears a retained update action after the saved source check fails", async (
         }),
       })}
       initialUpdateAvailable
-      onUpdateAvailableChange={changed}
     />,
   );
   await screen.findByRole("alert");
-  await waitFor(() => expect(changed).toHaveBeenLastCalledWith(false));
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
 });
 

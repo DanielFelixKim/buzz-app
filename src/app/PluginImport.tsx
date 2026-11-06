@@ -90,7 +90,6 @@ export function PluginImport({
   updateId,
   onClosed,
   onOpenInstalled,
-  onUpdateAvailableChange,
   reviewRequested = false,
   onReviewHandled,
   returnFocus,
@@ -114,7 +113,6 @@ export function PluginImport({
   updateId?: string;
   onClosed?: () => void;
   onOpenInstalled?: (id: string) => void;
-  onUpdateAvailableChange?: (available: boolean) => void;
   reviewRequested?: boolean;
   onReviewHandled?: () => void;
   returnFocus?: () => HTMLElement | null;
@@ -393,13 +391,6 @@ export function PluginImport({
       : checkedRevision !== undefined
         ? checkedRevision !== currentPlugin?.revision
         : initialUpdateAvailable);
-  const notifyUpdateAvailable = useEffectEvent((available: boolean) =>
-    onUpdateAvailableChange?.(available),
-  );
-  useEffect(() => {
-    if (error || checkError || preview || checkedRevision !== undefined)
-      notifyUpdateAvailable(updateAvailable);
-  }, [updateAvailable, checkedRevision, preview, error, checkError]);
   useEffect(() => {
     if (!reviewRequested || loading) return;
     if (error) {
