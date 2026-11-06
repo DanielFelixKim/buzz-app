@@ -9,6 +9,7 @@ import { MessageComposer } from "./MessageComposer";
 import { MessageRow } from "./MessageRow";
 import { lastEditableMessage } from "./useMessageEdit";
 import type { ComposerTool } from "../conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import {
   act,
   cleanup,
@@ -937,7 +938,7 @@ it.each([9, 45001, 45003])(
       ).toBeNull(),
     );
     const none: never[] = [];
-    const tools: ComposerTool[] = [
+    const tools: Contribution<ComposerTool>[] = [
       {
         key: "forum-test-picker",
         pluginId: "forum-test-picker",
