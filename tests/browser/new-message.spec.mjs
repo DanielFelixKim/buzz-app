@@ -15,6 +15,7 @@ import { watchPageErrors } from "./page-errors.mjs";
 const test = base.extend({
   developmentReact: [false, { scope: "worker" }],
   builderlabLogin: [false, { scope: "worker" }],
+  federatedIdentity: [false, { scope: "worker" }],
   pluginFixtures: [false, { scope: "worker" }],
   companionFixture: [false, { scope: "worker" }],
   pairingFixture: [false, { scope: "worker" }],
@@ -317,6 +318,7 @@ const test = base.extend({
   },
 });
 async function startNewMessage(page) {
+  await openPage(page, "Messages");
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const messages = sidebar.locator('[data-sidebar-section="dms"] summary');
   await messages.hover();
@@ -650,7 +652,10 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   const mentions = page.getByRole("dialog", {
     name: "Mention a member or agent",
   });
-  const averyMention = mentions.getByRole("button", { name: /^Avery Chen / });
+  const averyMention = mentions.getByRole("button", {
+    name: "Avery Chen",
+    exact: true,
+  });
   await expect(mentions.getByRole("button")).toHaveCount(1);
   await averyMention.click();
   await expect(composer).toHaveText("@Avery Chen ");
@@ -665,7 +670,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   });
   await expect(suggestions.getByRole("option")).toHaveCount(1);
   await expect(
-    suggestions.getByRole("option", { name: /^Avery Chen / }),
+    suggestions.getByRole("option", { name: "Avery Chen", exact: true }),
   ).toBeVisible();
   expect(app.commands).toHaveLength(0);
   await composer.press("Enter");

@@ -81,6 +81,22 @@ catch-up (including a message taller than the viewport):
   advances the DM's channel frontier through the newest retained verified message
   (replies included) and ends a local manual unread on the DM. It writes no
   `activity:` or per-message marks. Like catch-up, it never uses wall time.
+  A thread reader (`reading(channelId, rootId)`) shows only its thread, so its
+  dwell stops the frontier just before the earliest message outside that thread
+  that the frontier still leaves unread: a top-level message or a reply in
+  another thread. A reply belongs to the thread its marked root names, even when
+  that root is not retained. That message stays unread, and so do the thread's
+  replies from it on, since one frontier cannot skip a message; a whole-DM read
+  covers them. A thread view opened at a reply whose original it cannot load
+  shows only that reply, so that reply alone is its thread: the thread's other
+  replies, hidden there, count as outside it and stay unread. A message kept
+  unread by Mark unread does not stop it, since
+  advancing the frontier leaves that message unread. An Inbox DM row opened as a
+  thread reads the same way on click, through retained evidence rather than the
+  click time. A message outside the thread that this client receives only after
+  such a read, but dated at or before its cut (sender clock skew, a message sent
+  in the same second as a thread reply, or an outbox retry that keeps its
+  original time), is covered without being shown.
 
 This intentionally relaxes the old individual-row-only policy for the channel
 timeline and the thread being read, without reading unopened threads' replies.
@@ -172,7 +188,9 @@ retains its dot without bolding a caught-up, unmuted channel. Confirmed-muted ch
 suppress ordinary automatic unread styling and offscreen cues without clearing
 unread evidence; explicit manual unread can still strengthen the label.
 Pending or failed mute changes do not suppress these cues. Muted DMs also suppress
-automatic unread bolding; “N unread” offscreen counts and avatar previews remain. Muted
+automatic unread bolding. Confirmed-muted destinations, including DMs and Solo chats,
+do not contribute to “N unread” offscreen counts or avatar previews, even for
+mentions, manual unread or thread replies. Muted
 channel and DM sidebar rows show a crossed-out bell immediately after their names,
 even with no unread activity. They hide all unread dots, including
 thread activity dots. Thread activity remains available through the row's activity popover,
@@ -267,8 +285,9 @@ everyone. It never counts toward channel or thread counts, never earns attention
 appears as an Inbox item or thread activity, and never queues a conversation
 lookup. This is the rule the [notification pipeline](notifications.md#running-app-behavior)
 already applies. The row stays in evidence, so it is still `latestMessage` and
-the live bottom that catch-up reads through, and explicit **Mark unread** still
-applies to it. The tag is self-declared by the sender. Older clients, mobile and
+the live bottom that catch-up reads through. Unread intent does not change the
+rule: the message has no **Mark read** / **Mark unread** action, and channel or
+thread **Mark unread** leaves it read. The tag is self-declared by the sender. Older clients, mobile and
 the relay's read-state and push rules do not apply the exemption yet.
 
 **Follow thread** / **Unfollow thread** in a message's menu records an explicit

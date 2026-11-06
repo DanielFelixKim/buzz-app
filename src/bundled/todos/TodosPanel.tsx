@@ -304,6 +304,7 @@ export function TodosPanel({
         context.channelId,
         next.content,
         next.base ?? undefined,
+        { preserveApproval: true },
       );
       if (!active() || generation !== operation.current) return;
       savedAt.current = head.created_at;

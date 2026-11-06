@@ -36,6 +36,7 @@ import {
   type ComposerSession,
 } from "../messages/composer-session";
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
+import { safeLinkUrl } from "../relay/message-content";
 import {
   LinkChannelPrivateContext,
   LinkDescriptionContext,
@@ -126,7 +127,8 @@ export function MessageLink({
   const trigger = useRef<HTMLAnchorElement>(null);
   // Entering the card hides the row's actions; keep its lift while it's open.
   const lift = useRef(previewGap);
-  const internal = isBuzzLink(url);
+  const panelTarget = !safeLinkUrl(url) && !isBuzzLink(url) && !!canOpenLink;
+  const internal = isBuzzLink(url) || panelTarget;
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination = parsed?.format === "legacy" ? parsed : undefined;
   const host = fullSession(session);
@@ -231,7 +233,7 @@ export function MessageLink({
   const openInternal = () => {
     if (trigger.current?.isConnected)
       trigger.current.focus({ preventScroll: true });
-    const opened = onOpenLink(url);
+    const opened = (!panelTarget || !!canOpenLink?.(url)) && onOpenLink(url);
     setUnavailable(!opened);
     if (opened) setPreviewOpen(false);
   };
@@ -337,6 +339,7 @@ export function MessageLink({
             : description
         }
         data-link-label={label ?? ""}
+        data-panel-target={panelTarget ? url : undefined}
         data-solo-link={chatChip ? "" : undefined}
         title={
           chatLabel
