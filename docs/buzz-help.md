@@ -399,9 +399,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
 - **Message density**: **Settings → Appearance → Message density → Compact**
-  shows conversations as a flat, left-aligned list without bubbles, across the
-  window's full width, to fit more on screen. Text size stays with **Interface
-  size**. The choice applies on this device only.
+  shows conversations, including threads, as a flat, left-aligned list without
+  bubbles, across the window's full width, to fit more on screen. Hover or focus
+  a row to show its timestamp; grouped messages show it in the left gutter.
+  Text size stays with **Interface size**.
+  Hover a row to highlight it and show message actions at the right
+  edge. The choice applies on this device only.
 - **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
   24-hour times. System, the default, follows the desktop app's operating
   system: the 24-hour time setting on macOS, the short time format on Windows,

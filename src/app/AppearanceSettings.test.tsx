@@ -488,9 +488,25 @@ it("switches message density, restores it, and retries a failed save", async () 
   );
   const user = userEvent.setup();
   const density = screen.getByRole("combobox", { name: "Message density" });
+  const preview = screen.getByRole("figure", { name: "Appearance preview" });
+  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
+    "data-message-density",
+    "default",
+  );
   expect(density).toHaveTextContent("Default");
   await user.click(density);
   await user.click(await screen.findByRole("option", { name: "Compact" }));
+  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
+    "data-message-density",
+    "compact",
+  );
+  expect(preview.querySelector("[data-message-width]")).toHaveAttribute(
+    "data-message-width",
+    "wide",
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Message width" }),
+  ).toBeDisabled();
   expect(document.documentElement.dataset.messageDensity).toBe("compact");
   expect(localStorage.getItem("buzz-message-density.v1")).toBe("compact");
   const restored = createAppearance();

@@ -3015,6 +3015,7 @@ it.each(["timeline", "thread", "continuation"] as const)(
   async (layout) => {
     const props = {
       layout,
+      compactAvatar: true,
       row: { ...row, authorId: "ab".repeat(32) },
       viewer: "ab".repeat(32),
       profile: { name: "author" },
@@ -3033,6 +3034,10 @@ it.each(["timeline", "thread", "continuation"] as const)(
       );
       expect(container.querySelector("[data-own]")).toBeNull();
       expect(container.querySelector("[data-viewer-message]")).toBeNull();
+      expect(container.querySelector(".buzz-avatar")).toHaveAttribute(
+        "data-size",
+        "default",
+      );
       expect(
         screen.getByRole("button", { name: "View author profile" }),
       ).toBeInTheDocument();
@@ -3040,6 +3045,10 @@ it.each(["timeline", "thread", "continuation"] as const)(
       expect(
         screen.queryByRole("button", { name: "View author profile" }),
       ).toBeNull();
+      expect(container.querySelectorAll("time")).toHaveLength(1);
+      expect(
+        container.querySelector('time > [aria-hidden="true"]'),
+      ).toHaveTextContent(/\d+:\d+/);
       // Choosing Default while mounted restores bubbles without a remount.
       rerender(<MessageRow {...props} stackPrevious={false} />);
       act(() => {
@@ -3051,6 +3060,10 @@ it.each(["timeline", "thread", "continuation"] as const)(
         ).toHaveTextContent("Root"),
       );
       expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+      expect(container.querySelector(".buzz-avatar")).toHaveAttribute(
+        "data-size",
+        "tiny",
+      );
       expect(
         screen.getByRole("button", { name: "View author profile" }),
       ).toBeInTheDocument();
