@@ -33,6 +33,9 @@ test("saves an emoji over a transparent background in a squircle", async ({
     .getByRole("button", { name: "Choose emoji" })
     .locator("[data-avatar-shape]");
   await expect(artwork).toHaveAttribute("data-avatar-shape", "squircle");
+  await page.screenshot({
+    path: test.info().outputPath("agent-avatar-squircle.png"),
+  });
   await page
     .getByRole("button", { name: "Use transparent background" })
     .click();
