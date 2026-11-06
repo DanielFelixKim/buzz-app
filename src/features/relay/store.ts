@@ -136,6 +136,11 @@ export type ChannelStoreOptions = {
   notifyListener?: (listener: () => void) => void;
 };
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
+
+const sameKeys = (a?: readonly string[], b?: readonly string[]) =>
+  a === b ||
+  (a?.length === b?.length &&
+    (a ?? []).every((key, index) => key === b?.[index]));
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
 /** Channels one creator-proof filter names. Each has one creation, so a limit
@@ -412,16 +417,9 @@ export function createChannelStore(
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&
         old.pending === channel.pending &&
-        (old.members === channel.members ||
-          (old.members?.length === channel.members?.length &&
-            (old.members ?? []).every(
-              (id, index) => id === channel.members?.[index],
-            ))) &&
-        (old.participants === channel.participants ||
-          (old.participants?.length === channel.participants?.length &&
-            (old.participants ?? []).every(
-              (id, index) => id === channel.participants?.[index],
-            )))
+        sameKeys(old.members, channel.members) &&
+        sameKeys(old.owners, channel.owners) &&
+        sameKeys(old.participants, channel.participants)
         ? old
         : Object.freeze({ ...channel, metadataPending: pending, preview });
     });
@@ -1024,7 +1022,7 @@ export function createChannelStore(
       );
       if (
         rows.length > maxHistoryRows ||
-        byteSize(retained) > maxHistoryBytes
+        listByteSize(retained) > maxHistoryBytes
       ) {
         setWindow(state, {
           loadingOlder: false,
@@ -1617,8 +1615,10 @@ export function createChannelStore(
       ...heads.keys(),
       ...tails.keys(),
     ]);
+    let revoked = false;
     for (const id of known)
       if (!authorized(id)) {
+        revoked = true;
         accessVersions.set(id, (accessVersions.get(id) ?? 0) + 1);
         void persistence?.remove(id).catch(() => {});
       }
@@ -1660,7 +1660,10 @@ export function createChannelStore(
       if (current === id) queries.ensure(id);
     }
     if (!cached) {
-      saveDiscovery();
+      // Catch-up delivers many batches: coalesce them into one snapshot write,
+      // except revocation, which must not leave denied content on disk.
+      if (revoked) saveDiscovery();
+      else discoverySave ??= setTimeout(saveDiscovery, 500);
       for (const channel of confirmed) {
         // Disk rows were display-only during hydration. Fresh membership now
         // makes that verified evidence usable for explicit read intent too.
