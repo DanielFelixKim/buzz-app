@@ -33,3 +33,9 @@ it("shows activity excerpts as the prose their Markdown renders, capped at 280 c
   ).toBe("The fix at fd5498b7c is done, [Spoiler].…");
   expect(activityPreviewText("🙂".repeat(281))).toBe(`${"🙂".repeat(279)}…`);
 });
+
+it("keeps the source when its Markdown renders no prose, so the line is never blank", () => {
+  expect(activityPreviewText("[1]: https://example.com")).toBe(
+    "[1]: https://example.com",
+  );
+});

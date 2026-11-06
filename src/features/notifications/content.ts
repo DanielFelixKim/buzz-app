@@ -12,7 +12,7 @@ export type NotificationText = Readonly<{ title: string; body: string }>;
 const loneSurrogate =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-function shortText(value: string, limit: number) {
+export function shortText(value: string, limit: number) {
   const points = Array.from(
     value
       .replace(loneSurrogate, "\uFFFD")

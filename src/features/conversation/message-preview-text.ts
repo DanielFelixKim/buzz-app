@@ -1,4 +1,4 @@
-import { plainText } from "../notifications/content";
+import { plainText, shortText } from "../notifications/content";
 
 /** A compact excerpt: stop before an empty paragraph rather than clamping a blank line. */
 export function messagePreviewText(content: string): string {
@@ -9,6 +9,9 @@ export function messagePreviewText(content: string): string {
     : text;
 }
 
-/** The excerpt's rendered prose on one line: no Markdown syntax or spoiler text. */
-export const activityPreviewText = (content: string) =>
-  plainText(messagePreviewText(content), { limit: 280 });
+/** The excerpt's rendered prose on one line: no Markdown syntax or spoiler
+ * text. Source that renders no prose stays visible rather than blank. */
+export function activityPreviewText(content: string) {
+  const excerpt = messagePreviewText(content);
+  return plainText(excerpt, { limit: 280 }) || shortText(excerpt, 280);
+}
