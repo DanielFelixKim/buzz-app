@@ -28,7 +28,6 @@ import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Tabs } from "../shared/design-system/ui/Tabs";
 import { SearchField } from "../shared/design-system/ui/SearchField";
-import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
 import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import {
   type ReactNode,
@@ -36,7 +35,6 @@ import {
   type RefObject,
   useCallback,
   useEffect,
-  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -54,11 +52,9 @@ import {
 import {
   sharedPluginUpdateChecks,
   pluginUpdateAvailable,
-  pluginUpdateCheck,
   type PluginUpdateChecks,
 } from "../plugins/update-checks";
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
-import { pluginUpdateSource } from "../plugins/updates";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
@@ -1008,7 +1004,6 @@ export function Settings({
               const failure =
                 plugin.error ??
                 (running?.revision === plugin.revision ? running.error : null);
-              const sourceCheck = pluginUpdateCheck(updateSnapshot, plugin);
               const updateAvailable =
                 !!plugins.imports &&
                 !managedBy(managed, id) &&
@@ -1213,21 +1208,6 @@ export function Settings({
                       />
                     </div>
                   </article>
-                  {sourceCheck && (
-                    <LoadingRegion
-                      pending={sourceCheck.checking}
-                      label="Checking for updates…"
-                      feedback={
-                        sourceCheck.error ? (
-                          <p role="alert" className="error text-body-sm">
-                            Update check failed. {sourceCheck.error}
-                          </p>
-                        ) : undefined
-                      }
-                    >
-                      {null}
-                    </LoadingRegion>
-                  )}
                   {accessReason && (
                     <p id={`plugin-access-${id}`} className="sr-only">
                       {accessReason}
@@ -1267,77 +1247,6 @@ export function Settings({
     },
     [communities.relay],
   );
-  const pendingSourceRefresh = useRef(false);
-  const refreshPluginSources = useCallback(
-    (force: boolean) => {
-      if (
-        selected !== "plugins" ||
-        !catalog ||
-        document.visibilityState === "hidden"
-      )
-        return;
-      if (busy) {
-        pendingSourceRefresh.current ||= force;
-        return;
-      }
-      force ||= pendingSourceRefresh.current;
-      pendingSourceRefresh.current = false;
-      for (const plugin of catalog.plugins) {
-        const source = plugin.updateSource;
-        if (
-          !source ||
-          managedBy(managed, plugin.manifest.id) ||
-          (!("root" in source) &&
-            !pluginUpdateSource(plugins, plugin.manifest.id))
-        )
-          continue;
-        const eligible = () => {
-          const { configuration } = plugins.snapshot();
-          if (configuration.status !== "ready") return false;
-          const live = configuration.catalog.plugins.find(
-            (item) => item.manifest.id === plugin.manifest.id,
-          );
-          return (
-            live?.revision === plugin.revision &&
-            JSON.stringify(live.updateSource) === JSON.stringify(source) &&
-            !managedBy(configuration.managed, plugin.manifest.id) &&
-            ("root" in source ||
-              !!pluginUpdateSource(plugins, plugin.manifest.id))
-          );
-        };
-        void updateChecks.check(plugin, authorizePluginGit, force, eligible);
-      }
-    },
-    [
-      selected,
-      catalog,
-      busy,
-      managed,
-      updateChecks,
-      authorizePluginGit,
-      plugins,
-    ],
-  );
-  const refreshOnFocus = useEffectEvent(() => refreshPluginSources(true));
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each navigation visit must refresh even when the Plugins section stays mounted.
-  useEffect(() => {
-    if (selected !== "plugins") return;
-    let active = true;
-    const refresh = () => {
-      if (active) refreshOnFocus();
-    };
-    queueMicrotask(refresh);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      active = false;
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [selected, navigation?.entryId]);
-  useEffect(() => {
-    refreshPluginSources(false);
-  }, [refreshPluginSources]);
   // Keep announcements outside filtered rows and the covered narrow catalog.
   const announcement = (
     <div

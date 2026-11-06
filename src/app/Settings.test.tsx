@@ -11,6 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { PluginUpdates } from "./PluginUpdates";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
@@ -27,7 +28,16 @@ import type { Contribution } from "../plugins/contributions";
 import { createPluginInstallRequests } from "../plugins/installer";
 import { createPluginRequests } from "../plugins/requests";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+function refreshBackground() {
+  const now = Date.now();
+  vi.spyOn(Date, "now").mockReturnValue(now + 3_600_001);
+  fireEvent(document, new Event("visibilitychange"));
+}
 // Settings reads agent plugin requests from every plugin manager.
 const noRequests = createPluginRequests({
   catalog: () => undefined,
@@ -795,11 +805,28 @@ function reviewPluginFixture(
     }),
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
   const { cards } = registry([]);
-  const view = render(
-    <Settings {...host} cards={cards} plugins={manager} {...extra} />,
+  const backgroundRelay = { snapshot: () => ({ session: {} }) } as Parameters<
+    typeof PluginUpdates
+  >[0]["relay"];
+  const installRequests = createPluginInstallRequests();
+  const content = (show = true) => (
+    <ToastProvider>
+      <PluginUpdates
+        plugins={manager}
+        relay={backgroundRelay}
+        navigation={{ open: vi.fn() }}
+        installRequests={installRequests}
+      >
+        {show && (
+          <Settings {...host} cards={cards} plugins={manager} {...extra} />
+        )}
+      </PluginUpdates>
+    </ToastProvider>
   );
+  const view = render(content());
+  const showSettings = (show: boolean) => view.rerender(content(show));
   fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
-  return { external, snapshot, publish, manager, view };
+  return { external, snapshot, publish, manager, view, showSettings };
 }
 
 it("keeps bundled plugins free of manual-plugin menus in rows and details", () => {
@@ -2515,7 +2542,11 @@ it("routes a managed plugin's updates through the managed review instead of the 
     undefined,
     pinned,
   );
-  expect(checkGit).not.toHaveBeenCalled();
+  expect(checkGit).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/plugins",
+    "v1",
+    undefined,
+  );
 });
 
 function installRequestFixture(imports: object | undefined) {
@@ -2633,7 +2664,7 @@ it("leaves a confirmed install's request to the install when Settings closes", a
   await expect(outcome).resolves.toBe("installed");
 });
 
-it("discovers installed source updates from the list and refreshes on focus", async () => {
+it("discovers installed source updates from the list and uses the hourly background result", async () => {
   const fixture = reviewPluginFixture();
   const plugin = fixture.external;
   Object.assign(plugin, { updateSource: { root: "/plugins", path: "." } });
@@ -2658,7 +2689,7 @@ it("discovers installed source updates from the list and refreshes on focus", as
   ).toBeNull();
   expect(imports.install).not.toHaveBeenCalled();
   revision = "current";
-  fireEvent.focus(window);
+  refreshBackground();
   await waitFor(() =>
     expect(
       screen.queryByRole("button", { name: "Update Zebra external" }),
@@ -2668,7 +2699,7 @@ it("discovers installed source updates from the list and refreshes on focus", as
 });
 
 it.each(["updated", "failed"])(
-  "shows a pending list check before its %s result without opening details",
+  "keeps background checks silent before their %s result without opening details",
   async (outcome) => {
     const fixture = reviewPluginFixture();
     Object.assign(fixture.external, { updateSource: savedGitSource });
@@ -2686,8 +2717,8 @@ it.each(["updated", "failed"])(
     try {
       await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
       expect(
-        await screen.findByText("Checking for updates…", {}, { timeout: 2500 }),
-      ).toBeVisible();
+        fixture.view.container.querySelector(".buzz-loading-region"),
+      ).toBeNull();
       expect(
         screen.getByRole("button", { name: "Disable Zebra external" }),
       ).toBeEnabled();
@@ -2705,10 +2736,7 @@ it.each(["updated", "failed"])(
       expect(
         await screen.findByRole("button", { name: "Update Zebra external" }),
       ).toBeVisible();
-    else
-      expect(
-        screen.getByText("Update check failed. Error: repository offline"),
-      ).toBeVisible();
+    else expect(screen.queryByText(/Update check failed/)).toBeNull();
     expect(checkGit).toHaveBeenCalledOnce();
     expect(
       screen.queryByRole("complementary", { name: "Zebra external details" }),
@@ -2830,7 +2858,7 @@ const savedGitSource = {
   path: "dist",
 };
 
-it("refreshes a finished folder while another source is still checking", async () => {
+it("keeps folder and Git discovery under the background owner", async () => {
   const fixture = reviewPluginFixture();
   Object.assign(fixture.external, {
     updateSource: { root: "/plugins", path: "." },
@@ -2860,14 +2888,19 @@ it("refreshes a finished folder while another source is still checking", async (
     await act(async () => {});
     revision = "updated";
     fireEvent.focus(window);
+    await act(async () => {});
     expect(
-      await screen.findByRole("button", { name: "Update Zebra external" }),
-    ).toBeVisible();
-    expect(checkFolder).toHaveBeenCalledTimes(2);
+      screen.queryByRole("button", { name: "Update Zebra external" }),
+    ).toBeNull();
+    expect(checkFolder).toHaveBeenCalledOnce();
     expect(checkGit).toHaveBeenCalledOnce();
   } finally {
     await act(async () => finish(gitCheckResult("current")));
   }
+  refreshBackground();
+  expect(
+    await screen.findByRole("button", { name: "Update Zebra external" }),
+  ).toBeVisible();
 });
 
 it("shares pending Git reads and their limit across Settings remounts", async () => {
@@ -2903,13 +2936,12 @@ it("shares pending Git reads and their limit across Settings remounts", async ()
   Object.assign(fixture.manager, { imports: { checkGit } });
   act(fixture.publish);
   try {
-    await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
-    fixture.view.unmount();
-    const { cards } = registry([]);
-    render(<Settings {...host} cards={cards} plugins={fixture.manager} />);
+    await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+    fixture.showSettings(false);
+    fixture.showSettings(true);
     fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
     await act(async () => {});
-    expect(checkGit).toHaveBeenCalledTimes(2);
+    expect(checkGit).toHaveBeenCalledOnce();
   } finally {
     await act(async () => release());
   }
@@ -2986,7 +3018,7 @@ it("shares a Git acquisition for installed plugins at different paths", async ()
   expect(checkGit).toHaveBeenCalledOnce();
 });
 
-it("updates the open Git pane after a focus check finds a new revision", async () => {
+it("updates the open Git pane after a background check finds a new revision", async () => {
   const fixture = reviewPluginFixture();
   Object.assign(fixture.external, { updateSource: savedGitSource });
   let revision = "current";
@@ -3005,7 +3037,7 @@ it("updates the open Git pane after a focus check finds a new revision", async (
   );
   expect(await within(pane).findByText("Up to date")).toBeVisible();
   revision = "new";
-  fireEvent.focus(window);
+  refreshBackground();
   await waitFor(() =>
     expect(
       within(pane).getByRole("button", { name: /^Update$/ }),
@@ -3036,7 +3068,7 @@ it("shares the pending automatic Git read with the open pane", async () => {
     });
     expect(
       within(pane).getByRole("button", { name: "Check for updates" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     fireEvent.focus(window);
     await act(async () => {});
     expect(checkGit).toHaveBeenCalledOnce();
@@ -3049,7 +3081,7 @@ it("shares the pending automatic Git read with the open pane", async () => {
   ).toBeVisible();
 });
 
-it("does not let opening cached details discard a pending focus result", async () => {
+it("does not let opening cached details discard a pending background result", async () => {
   const fixture = reviewPluginFixture();
   Object.assign(fixture.external, { updateSource: savedGitSource });
   let finish!: (result: ReturnType<typeof gitCheckResult>) => void;
@@ -3066,7 +3098,7 @@ it("does not let opening cached details discard a pending focus result", async (
   act(fixture.publish);
   await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
   await act(async () => {});
-  fireEvent.focus(window);
+  refreshBackground();
   await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
   try {
     fireEvent.click(
@@ -3086,7 +3118,7 @@ it("does not let opening cached details discard a pending focus result", async (
   );
 });
 
-it("shows a failed focus check in the open Git pane", async () => {
+it("shows a failed background check in the open Git pane", async () => {
   const fixture = reviewPluginFixture();
   Object.assign(fixture.external, { updateSource: savedGitSource });
   const checkGit = vi
@@ -3107,7 +3139,7 @@ it("shows a failed focus check in the open Git pane", async () => {
       within(pane).getByRole("button", { name: /^Update$/ }),
     ).toBeVisible(),
   );
-  fireEvent.focus(window);
+  refreshBackground();
   await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
   await waitFor(() =>
     expect(within(pane).getByRole("alert")).toHaveTextContent(
@@ -3133,11 +3165,10 @@ it("uses the latest source result after an update review closes", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "Update Zebra external" }),
   );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Update Zebra external",
-  });
+  const close = await screen.findByRole("button", { name: "Close" });
+  const dialog = close.closest('[role="dialog"]') as HTMLElement;
   revision = "current";
-  fireEvent.focus(window);
+  refreshBackground();
   await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
   await act(async () => {});
   fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
@@ -3174,7 +3205,7 @@ it.each(["saved", "default", "undeclared"])(
       fixture.publish();
     });
     await act(async () => {
-      fireEvent.focus(window);
+      refreshBackground();
     });
     expect(checkGit).not.toHaveBeenCalled();
     fireEvent.click(
@@ -3210,11 +3241,11 @@ it("does not reacquire unchanged Git sources after management actions", async ()
     fixture.publish();
   });
   expect(checkGit).toHaveBeenCalledOnce();
-  fireEvent.focus(window);
+  refreshBackground();
   await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
 });
 
-it("replays a forced focus refresh once management becomes idle", async () => {
+it("does not start another source read on focus or idle management", async () => {
   const fixture = reviewPluginFixture();
   Object.assign(fixture.external, { updateSource: savedGitSource });
   const checkGit = vi
@@ -3236,9 +3267,9 @@ it("replays a forced focus refresh once management becomes idle", async () => {
     fixture.publish();
   });
   expect(
-    await screen.findByRole("button", { name: "Update Zebra external" }),
-  ).toBeVisible();
-  expect(checkGit).toHaveBeenCalledTimes(2);
+    screen.queryByRole("button", { name: "Update Zebra external" }),
+  ).toBeNull();
+  expect(checkGit).toHaveBeenCalledOnce();
 });
 
 it.each(["opt-out", "removal"])(
@@ -3304,7 +3335,7 @@ it("restores an explicit pane check after opting out during automatic discovery"
   });
   expect(
     within(pane).getByRole("button", { name: "Check for updates" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   Object.assign(fixture.external, { updateChecks: false });
   await act(async () => fixture.publish());
   await act(async () => finish(gitCheckResult("new")));
@@ -3337,7 +3368,7 @@ it("keeps keyboard focus on the row action when discovery finds an update", asyn
   ).toHaveFocus();
 });
 
-it("refreshes a new Manage plugins visit while the section stays mounted", async () => {
+it("does not reacquire on a new Manage plugins visit while the section stays mounted", async () => {
   const navigation = {
     entryId: "first",
     target: { version: 1, kind: "settings", section: "plugins" },
@@ -3353,8 +3384,30 @@ it("refreshes a new Manage plugins visit while the section stays mounted", async
   revision = "new";
   Object.assign(navigation, { entryId: "second" });
   act(fixture.publish);
+  await act(async () => {});
   expect(
-    await screen.findByRole("button", { name: "Update Zebra external" }),
+    screen.queryByRole("button", { name: "Update Zebra external" }),
+  ).toBeNull();
+  expect(checkGit).toHaveBeenCalledOnce();
+});
+
+it("shows the background notice's update immediately on opening Manage plugins without another read", async () => {
+  const fixture = reviewPluginFixture();
+  fireEvent.click(screen.getByRole("button", { name: "Profile" }));
+  await act(async () => {});
+  Object.assign(fixture.external, { updateSource: savedGitSource });
+  const checkGit = vi.fn(async () => gitCheckResult("new"));
+  Object.assign(fixture.manager, { imports: { checkGit } });
+  await act(async () => fixture.publish());
+  await screen.findByText("Update Zebra external");
+  expect(checkGit).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  expect(
+    screen.getByRole("button", { name: "Update Zebra external" }),
   ).toBeVisible();
-  expect(checkGit).toHaveBeenCalledTimes(2);
+  expect(
+    fixture.view.container.querySelector(".buzz-loading-region"),
+  ).toBeNull();
+  await act(async () => fireEvent.focus(window));
+  expect(checkGit).toHaveBeenCalledOnce();
 });

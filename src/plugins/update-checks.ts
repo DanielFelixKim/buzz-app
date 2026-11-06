@@ -173,7 +173,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
           installations.get(plugin.manifest.id) !== installed ||
           (snapshot[plugin.manifest.id]?.sequence ?? 0) > started
         )
-          return;
+          return false;
         publish(plugin.manifest.id, {
           installedRevision: plugin.revision,
           source: identity(plugin),
@@ -182,6 +182,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
           revision,
           error,
         });
+        return true;
       };
     },
   };

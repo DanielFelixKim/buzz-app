@@ -1,4 +1,5 @@
 import { managedBy } from "./managed";
+import { sharedPluginUpdateChecks } from "./update-checks";
 import type { PluginManager } from "./manager";
 import type { ImportPreview, PluginInfo } from "./types";
 
@@ -96,17 +97,26 @@ export function createPluginUpdates(
     if (next.length !== updates.length) publish(next);
   };
   const unsubscribe = plugins.subscribe(prune);
+  function sourceIdentity() {
+    const { configuration } = plugins.snapshot();
+    if (configuration.status !== "ready") return "";
+    return JSON.stringify(
+      configuration.catalog.plugins.map((plugin) => [
+        plugin.manifest.id,
+        plugin.revision,
+        pluginUpdateSource(plugins, plugin.manifest.id) ??
+          (plugin.updateSource && "root" in plugin.updateSource
+            ? plugin.updateSource
+            : undefined),
+      ]),
+    );
+  }
   async function run(force: boolean) {
     if (closed || !plugins.imports) return;
     const { configuration } = plugins.snapshot();
     if (configuration.status !== "ready") return;
     const now = Date.now();
-    const sources = JSON.stringify(
-      configuration.catalog.plugins.map((plugin) => [
-        plugin.manifest.id,
-        pluginUpdateSource(plugins, plugin.manifest.id),
-      ]),
-    );
+    const sources = sourceIdentity();
     if (
       !force &&
       sources === lastSources &&
@@ -152,7 +162,27 @@ export function createPluginUpdates(
       if (closed) return;
       const id = plugin.manifest.id;
       const source = pluginUpdateSource(plugins, id);
-      if (!source) continue;
+      const checks = sharedPluginUpdateChecks(plugins.imports);
+      if (!source) {
+        if (
+          plugin.updateSource &&
+          "root" in plugin.updateSource &&
+          !managedBy(configuration.managed, id)
+        ) {
+          const eligible = () => {
+            const live = installed(id);
+            return (
+              !closed &&
+              live?.revision === plugin.revision &&
+              JSON.stringify(live.updateSource) ===
+                JSON.stringify(plugin.updateSource)
+            );
+          };
+          await checks.check(plugin, authorizeGit, true, eligible);
+        }
+        continue;
+      }
+      const observe = checks.observe(plugin);
       const update: PluginUpdate = {
         id,
         source,
@@ -181,7 +211,13 @@ export function createPluginUpdates(
         update.error =
           reason instanceof Error ? reason.message : String(reason);
       }
-      if (current(update))
+      if (
+        current(update) &&
+        observe(
+          update.candidate?.revision ?? plugin.revision,
+          update.error ?? null,
+        )
+      )
         publish([
           ...updates.filter((item) => item.id !== id),
           ...(update.candidate || update.error ? [update] : []),
@@ -202,7 +238,7 @@ export function createPluginUpdates(
       publish([...updates]);
     },
     check(force = false): Promise<number | undefined> {
-      retry ||= force;
+      retry ||= force || (!!pending && sourceIdentity() !== lastSources);
       pending ??= (async () => {
         do {
           const forced = retry;

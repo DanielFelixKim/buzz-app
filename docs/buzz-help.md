@@ -502,7 +502,7 @@ confirmation.
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
-  them. Do not assume a particular optional plugin is on. Manage plugins checks saved folder sources and Git plugins with automatic checks enabled when opened and when the window regains focus. Git plugins need to declare update support; you can still check explicitly in their details. The list shows progress for slow checks and reports source errors. An **Update** button opens the review before anything is installed.
+  them. Do not assume a particular optional plugin is on. Manage plugins uses the background checker’s retained results and shows **Update** when a newer version is available. Opening the list or returning to the window does not start a separate check. Git plugins need to declare update support; you can still check explicitly in their details. An **Update** button opens the review before anything is installed.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.
   A saved plugin sort can briefly wait for its plugin at startup, within the
@@ -511,8 +511,7 @@ confirmation.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without
-  update support keep their existing manual import flow. Buzz checks eligible Git
-  sources at startup and once per hour while the app is visible. Checks do not
+  update support keep their existing manual import flow. Buzz checks saved folder sources and eligible Git sources silently at startup and once per hour while the app is visible. Checks do not
   install or reload plugins. A notice
   offers **Update and reload**, or **Review permissions** when access increases.
   Click the notice body to open that plugin’s update checkbox in Manage plugins.

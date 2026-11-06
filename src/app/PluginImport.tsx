@@ -295,46 +295,15 @@ export function PluginImport({
     setRepository("");
     setReference("");
   }
-  const startSavedFolder = useEffectEvent((initial = false) => {
-    if (initial && sourceCheck) return;
-    if (
-      imports &&
-      savedSource &&
-      "root" in savedSource &&
-      updateId &&
-      !open &&
-      !busy &&
-      document.visibilityState !== "hidden"
-    )
-      if (currentPlugin) void checks.check(currentPlugin, authorizeGit);
-  });
   useEffect(() => {
     const current = { active: true, token: "", installing: false };
     lifetime.current = current;
-    // Defer until effects settle so Strict Mode's retired mount never acquires.
-    queueMicrotask(() => {
-      if (current.active) startSavedFolder(true);
-    });
     return () => {
       current.active = false;
       if (current.token && !current.installing)
         void imports?.discard(current.token).catch(() => {});
     };
   }, [imports]);
-
-  const localFolder = !!savedSource && "root" in savedSource;
-  useEffect(() => {
-    if (!localFolder) return;
-    const timer = setInterval(() => startSavedFolder(), 5_000);
-    const resume = () => startSavedFolder();
-    document.addEventListener("visibilitychange", resume);
-    window.addEventListener("focus", resume);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", resume);
-      window.removeEventListener("focus", resume);
-    };
-  }, [localFolder]);
 
   const candidate = preview?.candidates.find((p) => p.path === selected);
   const updating = !!existing;

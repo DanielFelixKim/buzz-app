@@ -2,6 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { PluginManager } from "./manager";
 import type { ImportPreview, PluginInfo, StorageResult } from "./types";
 import { createPluginUpdates } from "./updates";
+import {
+  sharedPluginUpdateChecks,
+  pluginUpdateAvailable,
+} from "./update-checks";
 
 afterEach(() => vi.useRealTimers());
 
@@ -371,5 +375,39 @@ it("reuses discovery for plugins in the same repository and reference", async ()
   ).toEqual(["new", "other-new", "stable-new"]);
   expect(f.checkGit).toHaveBeenCalledTimes(2);
   expect(f.authorize).toHaveBeenCalledTimes(2);
+  updates.dispose();
+});
+
+it("publishes the same discovered Git update to background notices and the plugin list", async () => {
+  const f = fixture();
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  try {
+    await updates.check();
+    expect(updates.snapshot()[0]?.candidate?.revision).toBe("new");
+    expect(
+      pluginUpdateAvailable(
+        sharedPluginUpdateChecks(f.manager.imports).snapshot(),
+        f.plugin,
+      ),
+    ).toBe(true);
+  } finally {
+    updates.dispose();
+  }
+});
+
+it("checks saved folders under the background owner and retains their list result", async () => {
+  const f = fixture();
+  f.plugin.updateSource = { root: "/plugins/notes", path: "." };
+  const checkFolder = vi.fn(async () => "new");
+  Object.assign(f.imports, { checkFolder });
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  const checks = sharedPluginUpdateChecks(f.manager.imports);
+  await updates.check();
+  expect(checkFolder).toHaveBeenCalledExactlyOnceWith(f.plugin.manifest.id);
+  expect(pluginUpdateAvailable(checks.snapshot(), f.plugin)).toBe(true);
+  expect(f.checkGit).not.toHaveBeenCalled();
+  expect(f.imports.git).not.toHaveBeenCalled();
+  await updates.check();
+  expect(checkFolder).toHaveBeenCalledOnce();
   updates.dispose();
 });
