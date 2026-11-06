@@ -124,7 +124,9 @@ test.describe("provisional reply cancellation", () => {
       "selection",
       "selection with pending arrivals",
       "scroll",
+      "slow scroll",
     ]) {
+      if (cancellation === "slow scroll" && surface !== "channel") continue;
       if (
         surface === "paged thread" &&
         cancellation !== "selection with pending arrivals"
@@ -274,7 +276,11 @@ test.describe("provisional reply cancellation", () => {
             await expect(
               page.getByRole("button", { name: "Cancel reply target" }),
             ).toBeVisible();
-            await wheel(page, -350, history);
+            if (cancellation === "slow scroll") {
+              await wheel(page, -20, history);
+              await expect.poll(bottomGap).toBeGreaterThan(0);
+              await wheel(page, -330, history);
+            } else await wheel(page, -350, history);
           }
         } finally {
           await page.mouse.up();
