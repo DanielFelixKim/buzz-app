@@ -66,8 +66,11 @@ function current(events: readonly ReadEvent[], viewer: string) {
   // A deleted edit no longer counts, so the message falls back to its previous text.
   for (const edit of updates)
     if (edit.kind === 40003 && !deleted.has(edit.id))
-      for (const target of targetsOf(edit))
-        edits.set(target, [...(edits.get(target) ?? []), edit]);
+      for (const target of targetsOf(edit)) {
+        const own = edits.get(target);
+        if (own) own.push(edit);
+        else edits.set(target, [edit]);
+      }
   return (event: ReadEvent) => {
     if (deleted.has(event.id)) return undefined;
     const own = edits.get(event.id) ?? [];

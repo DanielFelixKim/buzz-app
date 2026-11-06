@@ -52,7 +52,7 @@ import {
   type Activity,
   type Shape,
 } from "./context";
-import { clearDraft, useDrafts } from "./drafts";
+import { clearDraft, useDrafts, type DraftEntry } from "./drafts";
 import {
   SENT_LIMIT,
   clockTime,
@@ -308,14 +308,12 @@ function ScopedPage({
   useLayoutEffect(() => {
     if (currentIndex >= 0) selectedIndex.current = currentIndex;
   }, [currentIndex]);
-  const entries: (Entry & {
-    placeholder?: boolean;
-    mentions?: readonly string[];
-    markdown?: string;
-  })[] = [...drafts.entries];
+  const entries: Omit<DraftEntry, "signature">[] = [...drafts.entries];
+  // The emptied draft drops the body it was selected with.
   if (selected?.draft && currentIndex < 0)
     entries.splice(selectedIndex.current, 0, {
       ...selected.entry,
+      row: undefined,
       text: "Empty draft",
       placeholder: true,
     });
@@ -445,7 +443,7 @@ function ScopedPage({
               channelId: entry.channelId,
               authorId: viewer,
               createdAt: entry.createdAt ?? 0,
-              content: entry.markdown ?? entry.text,
+              content: entry.markdown || entry.text,
               mentions: entry.mentions ?? [],
               attachments: [],
               participants: [],
@@ -481,12 +479,11 @@ function ScopedPage({
   // Everyone shown in a row, so their names and pictures load.
   const people = new Set<string>();
   for (const row of [...draftRows, ...sentRows])
-    for (const key of row.activity?.people.slice(0, 4) ??
-      row.place.members.slice(0, 3))
-      people.add(key);
-  // And the people your messages mention.
-  for (const { entry } of [...draftRows, ...sentRows])
-    for (const key of entry.row ? rowProfileIds(entry.row) : [])
+    for (const key of [
+      ...(row.activity?.people.slice(0, 4) ?? row.place.members.slice(0, 3)),
+      // And the people the message mentions.
+      ...(row.entry.row ? rowProfileIds(row.entry.row) : []),
+    ])
       people.add(key);
   const missing = [...people]
     .sort()
