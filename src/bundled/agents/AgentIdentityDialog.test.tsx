@@ -38,9 +38,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("saves a reframed upload of the agent's current picture", async () => {
-  const picture = "https://images.example/current.png";
-  const cropped = new File(["crop"], "avatar.png", { type: "image/png" });
+const picture = "https://images.example/current.png";
+
+// Uploads are content-addressed, so re-uploading returns the current URL.
+const reupload = (...later: string[]) => {
   vi.stubGlobal(
     "URL",
     Object.assign(URL, {
@@ -48,11 +49,8 @@ it("saves a reframed upload of the agent's current picture", async () => {
       revokeObjectURL: vi.fn(),
     }),
   );
-  vi.mocked(croppedAvatar).mockResolvedValueOnce(cropped);
-  // Uploads are content-addressed, so the same file returns its current URL.
-  vi.mocked(uploadAvatar)
-    .mockResolvedValueOnce(picture)
-    .mockResolvedValueOnce("https://images.example/cropped.png");
+  for (const url of [picture, ...later])
+    vi.mocked(uploadAvatar).mockResolvedValueOnce(url);
   const agents = {
     save: vi.fn(async () => {}),
     subscribe: () => () => {},
@@ -81,6 +79,13 @@ it("saves a reframed upload of the agent's current picture", async () => {
       files: [new File(["image"], "image.png", { type: "image/png" })],
     },
   });
+  return { agents, onClose };
+};
+
+it("saves a reframed upload of the agent's current picture", async () => {
+  const cropped = new File(["crop"], "avatar.png", { type: "image/png" });
+  vi.mocked(croppedAvatar).mockResolvedValueOnce(cropped);
+  const { agents, onClose } = reupload("https://images.example/cropped.png");
   const save = screen.getByRole("button", { name: "Save changes" });
   fireEvent.change(await screen.findByRole("slider", { name: "Zoom" }), {
     target: { value: "2" },
@@ -93,4 +98,19 @@ it("saves a reframed upload of the agent's current picture", async () => {
     }),
   );
   expect(onClose).toHaveBeenCalledOnce();
+});
+
+it("keeps Save off when the framing returns to the original", async () => {
+  reupload();
+  const save = screen.getByRole("button", { name: "Save changes" });
+  const zoom = await screen.findByRole("slider", { name: "Zoom" });
+  const frame = screen.getByRole("application", { name: "Image position" });
+  // A square image at full size has no room to pan.
+  fireEvent.keyDown(frame, { key: "ArrowRight" });
+  expect(save).toBeDisabled();
+  fireEvent.change(zoom, { target: { value: "2" } });
+  fireEvent.keyDown(frame, { key: "ArrowRight" });
+  expect(save).toBeEnabled();
+  fireEvent.change(zoom, { target: { value: "1" } });
+  expect(save).toBeDisabled();
 });

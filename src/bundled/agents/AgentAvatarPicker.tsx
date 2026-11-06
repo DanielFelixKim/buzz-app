@@ -149,11 +149,20 @@ export function AgentAvatarPicker({
   const kept = useRef<Local | null>(null);
   // The crop lives in the selection so its owner can tell a reframe is a change.
   const crop = (selection.kind !== "gloopie" && selection.crop) || uncropped;
-  const setCrop = (value: AvatarCrop) =>
-    selection.kind === "emoji"
-      ? setEmoji({ crop: value })
-      : onChange({ kind: "image", picture, crop: value });
   const cropImage = useRef<HTMLImageElement>(null);
+  // An image keeps only the framing it shows, so zooming back out restores
+  // the original.
+  const setCrop = (value: AvatarCrop) => {
+    if (selection.kind === "emoji") return setEmoji({ crop: value });
+    const image = cropImage.current;
+    onChange({
+      kind: "image",
+      picture,
+      crop: image?.naturalWidth
+        ? avatarCropBox(image.naturalWidth / image.naturalHeight, value).crop
+        : value,
+    });
+  };
   const uploading = local && local.picture === undefined ? local : null;
   const busy = !!uploading;
   const localUrl = local?.url;
