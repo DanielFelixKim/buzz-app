@@ -1038,10 +1038,10 @@ describe("holding a conversation", () => {
     ).rejects.toThrow("Harness was stopped");
   });
 
-  it("refuses the conversation while a session its work opened outlives it", async () => {
+  it("blocks the conversation, not others, until a session its work left running exits", async () => {
     const harness = fakeHarness({ capabilities: CLOSES });
     const { sessions } = held(harness, await start(harness));
-    const exited = deferred();
+    const exited = deferred<number | null>();
     await sessions.exclusive("chat", async ({ outlives }) => {
       outlives(exited.promise);
     });
@@ -1049,11 +1049,74 @@ describe("holding a conversation", () => {
     await expect(sessions.exclusive("chat", work)).rejects.toThrow(
       "Harness has not retired this conversation's session",
     );
-    expect(work).not.toHaveBeenCalled();
-    exited.resolve();
+    const waiting = sessions.deliver("chat", "after", 1);
+    await expect(
+      sessions.deliver("other", "meanwhile", 1),
+    ).resolves.toMatchObject({ ok: true });
     await flush();
+    expect(sessions.active("chat")).toBe(true);
+    expect(harness.turns.map((turn) => turn.text)).toEqual(["meanwhile"]);
+    exited.resolve(0);
+    await expect(waiting).resolves.toMatchObject({ ok: true });
+    expect(harness.turns.map((turn) => turn.text)).toEqual([
+      "meanwhile",
+      "after",
+    ]);
     await sessions.exclusive("chat", work);
     expect(work).toHaveBeenCalledOnce();
+  });
+
+  it("keeps both paths refused when a left-running session's exit cannot be observed", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const harness = fakeHarness({ capabilities: CLOSES });
+      const { sessions } = held(harness, await start(harness));
+      const exited = deferred<number | null>();
+      await sessions.exclusive("chat", async ({ outlives }) => {
+        outlives(exited.promise);
+      });
+      const waiting = sessions.deliver("chat", "after", 1);
+      exited.reject(new Error("exit unobservable"));
+      await expect(waiting).resolves.toMatchObject({
+        ok: false,
+        error: "Harness could not confirm this conversation's session ended",
+        undelivered: true,
+      });
+      const work = vi.fn(async () => undefined);
+      await expect(sessions.exclusive("chat", work)).rejects.toThrow(
+        "Harness has not retired this conversation's session",
+      );
+      expect(work).not.toHaveBeenCalled();
+      expect(harness.turns).toEqual([]);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("lets a message waiting on a left-running session give up, or stop", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions } = held(harness, await start(harness));
+    await sessions.exclusive("chat", async ({ outlives }) => {
+      outlives(new Promise(() => {}));
+    });
+    const giving = new AbortController();
+    const given = sessions.deliver("chat", "abandoned", 1, {
+      signal: giving.signal,
+    });
+    const stopped = sessions.deliver("chat", "stopped", 1);
+    await flush();
+    giving.abort();
+    await expect(given).resolves.toMatchObject({
+      ok: false,
+      undelivered: true,
+    });
+    sessions.dispose();
+    await expect(stopped).resolves.toMatchObject({
+      ok: false,
+      error: "Harness was stopped",
+      undelivered: true,
+    });
+    expect(harness.turns).toEqual([]);
   });
 
   it("counts as the conversation's session for the next message", async () => {

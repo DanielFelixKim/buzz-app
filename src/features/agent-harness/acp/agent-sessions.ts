@@ -167,10 +167,15 @@ export type Exclusive = Readonly<{
   keep(id: string): void;
   /** Aborts on `interrupt` or `dispose`. */
   signal: AbortSignal;
-  /** A session the work opened outlives it until `done`: until then the
-   * conversation cannot be held again. */
+  /** A session the work opened outlives it until `done`, its process's
+   * `exited`: until then the conversation cannot be held again and its
+   * messages wait. Should `done` reject, its owner is unknown, and both
+   * fail from then on. */
   outlives(done: Promise<unknown>): void;
 }>;
+
+/** A session left running by held work, until its process has exited. */
+type Outliving = { settled: Promise<void>; failed: boolean };
 
 type Live = {
   session: AcpSession;
@@ -201,7 +206,10 @@ export class AgentSessions {
   /** Conversations `exclusive` holds, which messages wait for. */
   private readonly held = new Map<string, Held>();
   /** Conversations whose last held work left a session not yet retired. */
-  private readonly outliving = new Map<string, Promise<unknown>>();
+  private readonly outliving = new Map<string, Outliving>();
+  /** Resolves on `dispose`, ending waits on a session left running. */
+  private readonly stopping: Promise<void>;
+  private stop!: () => void;
   /** created_at of the newest event each conversation's session was shown. */
   private readonly shown = new Map<string, number>();
   /** Conversations that have had a session, whose next new one may have been
@@ -213,6 +221,7 @@ export class AgentSessions {
   private readonly late: Settled;
 
   constructor(private readonly options: SessionsOptions) {
+    this.stopping = new Promise((resolve) => (this.stop = resolve));
     this.stopped = { ok: false, error: `${options.label} was stopped` };
     this.late = {
       ok: false,
@@ -229,6 +238,7 @@ export class AgentSessions {
     return (
       this.opening.has(key) ||
       this.held.has(key) ||
+      this.outliving.has(key) ||
       !!this.live.get(key)?.session.working
     );
   }
@@ -304,6 +314,25 @@ export class AgentSessions {
       if (held) {
         try {
           await abortable(held.done, signal);
+        } catch {
+          return this.late;
+        }
+        continue;
+      }
+      // Or while a session held work left running has yet to exit.
+      const outliving = this.outliving.get(key);
+      if (outliving) {
+        if (outliving.failed)
+          return {
+            ok: false,
+            error: `${this.options.label} could not confirm this conversation's session ended`,
+            undelivered: true,
+          };
+        try {
+          await abortable(
+            Promise.race([outliving.settled, this.stopping]),
+            signal,
+          );
         } catch {
           return this.late;
         }
@@ -439,7 +468,7 @@ export class AgentSessions {
    * REQUEST_TIMEOUT_MS. A close that failed refuses the conversation while
    * the process runs. Saved sessions are never deleted. `work` retires
    * whatever session it opens before it settles, or says what it
-   * `outlives`. */
+   * `outlives`, which messages then wait for and holds are refused. */
   async exclusive<T>(
     key: string,
     work: (exclusive: Exclusive) => Promise<T>,
@@ -485,11 +514,25 @@ export class AgentSessions {
         },
         signal: controller.signal,
         outlives: (done) => {
-          this.outliving.set(key, done);
-          const retired = () => {
-            if (this.outliving.get(key) === done) this.outliving.delete(key);
+          const outliving: Outliving = {
+            failed: false,
+            settled: done.then(
+              () => {
+                if (this.outliving.get(key) !== outliving) return;
+                this.outliving.delete(key);
+                this.options.onChange?.();
+              },
+              (error: unknown) => {
+                // Only an exit retires it: an unknown owner stays blocking.
+                outliving.failed = true;
+                console.warn(
+                  `${label} could not confirm a session ended`,
+                  error,
+                );
+              },
+            ),
           };
-          done.then(retired, retired);
+          this.outliving.set(key, outliving);
         },
       });
     } finally {
@@ -617,6 +660,7 @@ export class AgentSessions {
    * agents. */
   dispose() {
     this.disposed = true;
+    this.stop();
     for (const held of this.held.values()) held.controller.abort();
     for (const [key, live] of this.live) this.drop(key, live);
     for (const live of this.once.values()) if (live) void this.close(live);
