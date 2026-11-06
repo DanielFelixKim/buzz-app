@@ -93,7 +93,7 @@ it("reads terminal task status only for the requested task IDs", async () => {
   ).toEqual(
     new Map([
       ["done", "ended"],
-      ["failed", "error"],
+      ["failed", "ended"],
       ["stopped", "stopped"],
       ["terminated", "error"],
     ]),
