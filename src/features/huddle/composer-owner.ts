@@ -6,7 +6,7 @@ import {
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
 import { mentionDraft } from "../messages/mention-draft";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import { viewRevision, writeView } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
 import { prepareAttachment } from "../messages/prepare-attachment";
@@ -294,10 +294,10 @@ export function createHuddleComposerOwner(
         // outbox. The stub is what the composer saves for every send; it
         // keeps the remembered agents in memory (see seedMentions).
         retireSubmittedDrafts();
-        if (JSON.stringify(readView(scope, key, null)) === draft) {
-          const revision = viewRevision(scope, key);
+        const revision = viewRevision(scope, key);
+        if (revision === undefined || revision === draft) {
           const next = mentionDraft("");
-          if (!writeView(scope, key, next))
+          if (revision === undefined || !writeView(scope, key, next))
             recoveryFor(session).set(`${scope}:${key}`, {
               next,
               revision,

@@ -818,3 +818,31 @@ it("retires main-session acceptance after companion cleanup before the same capt
     draft.text,
   );
 });
+
+it("refuses stale saved Huddle intent after acceptance with unreadable storage", async () => {
+  const h = harness();
+  const { remote, client } = await h.connect();
+  writeView(h.scope, "draft:room", {
+    text: "Unreadable accepted caption",
+    recipients: [],
+  });
+  const fail = vi.spyOn(Storage.prototype, "getItem");
+  h.send.mockImplementation(() => {
+    fail.mockImplementation(() => {
+      throw Error("unavailable");
+    });
+    return "accepted-id";
+  });
+  try {
+    await expect(
+      remote.messages.send("room", "Unreadable accepted caption"),
+    ).resolves.toBe("accepted-id");
+  } finally {
+    fail.mockRestore();
+  }
+  client.dispose();
+  h.owner.dispose();
+  expect(() => readOwnerDraft(h.scope, "room", undefined, h.session)).toThrow(
+    "could not verify",
+  );
+});
