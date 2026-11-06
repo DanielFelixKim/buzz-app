@@ -121,7 +121,9 @@ export function validateLifecycleTemplate(event: EventTemplate): void {
   lifecycleChannelId(event.tags[0]?.[1] ?? "");
   if (event.kind === 9002 && event.tags.length > 2) {
     if (!landingCommand(event.tags))
-      throw new Error("Only the welcome channel and its welcome may be set here");
+      throw new Error(
+        "Only the welcome channel and its welcome may be set here",
+      );
     return;
   }
   if (
