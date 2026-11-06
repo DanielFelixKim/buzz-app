@@ -773,6 +773,34 @@ it.each([false, true])(
   },
 );
 
+it("keeps unrevalidated retained history cached after an older page succeeds", async () => {
+  const h = setup({ count: 200, spacing: 2 * HOUR, maxHistoryRows: 40 });
+  await h.open();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() => expect(h.window().freshness).toBe("verified"));
+  for (let step = 0; step < 8; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const retained = h.window().rows.map((row) => row.id);
+  expect(h.window().hasMore).toBe(true);
+  h.live.state({ status: "retrying", routes: [] });
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+      channelId: "c",
+      state: "verified",
+    }),
+  );
+  expect(h.window().freshness).toBe("cached");
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.some((row) => retained.includes(row.id))).toBe(true);
+  expect(h.window().freshness).toBe("cached");
+});
+
 it("traverses omitted dense-second pages when a newer page fits the allowance", async () => {
   const h = setup({ count: 1000, spacing: 0, maxHistoryRows: 600 });
   await h.open();

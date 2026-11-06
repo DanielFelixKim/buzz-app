@@ -1101,7 +1101,10 @@ export function createChannelStore(
         loadingOlder: false,
         historyLimited: false,
         error: undefined,
-        freshness: "verified",
+        freshness:
+          cursor && state.snapshot.freshness === "cached"
+            ? "cached"
+            : "verified",
       });
       void fillNotices(state, !cursor);
       void fetchProfiles(rows);
