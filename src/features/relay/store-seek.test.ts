@@ -1436,3 +1436,25 @@ it("cancels a joining snapshot whose accepted overlays exceed its byte allowance
     await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
   }
 });
+
+it("does not choose an isolated live root as a clipped older page cursor", async () => {
+  const h = setup({ count: 160, spacing: 0, maxHistoryBytes: 12000 });
+  h.history.splice(
+    0,
+    h.history.length,
+    ...[...h.history].sort(newestFirst).slice(0, 80),
+  );
+  await h.open();
+  const last = [...h.history].sort(newestFirst).at(-1);
+  assert.exists(last);
+  let event!: RelayEvent;
+  for (let nonce = 0; !event || event.id <= last.id; nonce++)
+    event = message(h.alice, "c", `isolated ${nonce}${"x".repeat(7000)}`, T0);
+  h.live.receive([event], { channelId: "c", phase: "live" });
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.reads.at(-1)?.before_id).not.toBe(event.id);
+  expect(h.window().hasMore).toBe(true);
+});

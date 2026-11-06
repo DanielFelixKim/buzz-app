@@ -1076,8 +1076,11 @@ export function createChannelStore(
         (event) => channelRowKind(event.kind) && !retainedIds.has(event.id),
       );
       const oldest = clipped
-        ? retained
-            .filter((event) => channelRowKind(event.kind))
+        ? page.events
+            .filter(
+              (event) =>
+                channelRowKind(event.kind) && retainedIds.has(event.id),
+            )
             .sort(newestFirst)
             .at(-1)
         : undefined;
@@ -1085,7 +1088,9 @@ export function createChannelStore(
         state,
         oldest
           ? { createdAt: oldest.created_at, eventId: oldest.id }
-          : page.cursor,
+          : clipped
+            ? cursor
+            : page.cursor,
       );
       state.restored = false;
       if (dropped && !cursor) state.kept = rowIds(state);
