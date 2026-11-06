@@ -33,6 +33,9 @@ const expectCueHidden = async (page, edge) => {
 };
 const row = (page, id) =>
   list(page).locator(`button[data-channel-id="${id.toLowerCase()}"]`);
+// The shell's first startup stage, so a poll from goto need not also cover it.
+const switcher = (page) =>
+  page.getByRole("button", { name: /^Community switcher:/ });
 const removeDm = async (page, id) => {
   const dm = row(page, id);
   await dm.click({ button: "right" });
@@ -147,6 +150,12 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   app.relay.holdUnread();
   const opening = open(page, app);
   try {
+    // Give each startup stage its own budget, as `open()` does: the shell,
+    // then the sidebar. The roster that reveals it also starts the unread
+    // repair (`useSidebarStartup`); with unread held, the rows reveal
+    // SIDEBAR_REVEAL_BUDGET_MS after it. The poll below covers only the repair.
+    await expect(switcher(page)).toBeVisible();
+    await expect(row(page, "alpha")).toHaveCount(1);
     // Per-channel windows, several requests in flight, all held. Two requests
     // are in flight at once and either may be recorded first; wait until the
     // one carrying Alpha's window is held before establishing the channel.
@@ -213,6 +222,10 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
     );
   const opening = open(page, app);
   try {
+    // The shell has its own budget; the poll covers the roster and the head.
+    // Not the sidebar's rows: they can follow the head, and Alpha's EOSE must
+    // be released as soon as the head is sent.
+    await expect(switcher(page)).toBeVisible();
     await expect.poll(() => alphaHeads().length).toBe(1);
     app.relay.releaseEose("alpha");
     await expect.poll(() => alphaHeads().length).toBe(2);
