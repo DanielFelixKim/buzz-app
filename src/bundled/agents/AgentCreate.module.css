@@ -352,6 +352,10 @@
   width: 100%;
   height: 100%;
 }
+/* Round focus ring, as IconButton's avatar variant; only the artwork is masked. */
+.emojiAvatarButton {
+  border-radius: var(--radius-pill);
+}
 @media (prefers-reduced-motion: no-preference) {
   .avatarSurface[data-color-transition],
   .avatarSurface[data-color-transition] .emojiAvatarArtwork {
