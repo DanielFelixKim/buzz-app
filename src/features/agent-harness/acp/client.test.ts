@@ -466,6 +466,30 @@ describe("a session with a steering hook", () => {
 });
 
 describe("a session without hooks", () => {
+  it("lets an observer see each update and whether a prompt is in flight", async () => {
+    const harness = fakeHarness({ hold: true });
+    const acp = await start(harness);
+    const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+    const seen: [unknown, boolean][] = [];
+    // The fake harness also announces its runs.
+    session.observe = (update, prompting) => {
+      if (update.sessionUpdate !== "run")
+        seen.push([update.sessionUpdate, prompting]);
+    };
+    // Outside a prompt, as a replay would arrive.
+    session.update({ sessionUpdate: "tool_call_update" });
+    const turn = session.send("first");
+    await flush();
+    session.update({ sessionUpdate: "tool_call" });
+    harness.turns[0]?.finish();
+    await turn;
+    session.update({ sessionUpdate: "tool_call_update" });
+    expect(seen).toEqual([
+      ["tool_call_update", false],
+      ["tool_call", true],
+      ["tool_call_update", false],
+    ]);
+  });
   it("leads the first prompt with the instructions, once, when ACP's systemPrompt is not advertised", async () => {
     const harness = fakeHarness();
     const acp = await start(harness);
