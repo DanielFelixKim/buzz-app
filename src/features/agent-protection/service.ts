@@ -18,11 +18,6 @@ import {
   type TextSource,
 } from "./json-stream";
 
-// Compatibility only: providers implementing checkEvidence receive a pull-driven
-// source with no whole-evidence byte cap. Older object providers retain their contract.
-const LEGACY_ACTION_BYTES = 256 * 1024;
-const LEGACY_PROMPT_BYTES = 768 * 1024;
-
 export type ProtectionBinding = Readonly<{ provider: string; policy: unknown }>;
 export type ProtectionAction = Readonly<{
   kind: "context" | "tool" | "tool-result";
@@ -50,17 +45,12 @@ export type ProtectionDenial = Readonly<{ allowed: false; reason: string }>;
 export type ProtectionProvider = Readonly<{
   /** Streaming admission. No total size limit is imposed by Buzz. The provider
    * must consume the complete JSON evidence before approving. */
-  checkEvidence?(
+  checkEvidence(
     request: Omit<ProtectionRequest, "content">,
     evidence: TextSource,
     signal: AbortSignal,
   ): Promise<boolean | ProtectionDenial>;
   phases?(policy: unknown): ProtectionPhases;
-  /** Checks one immutable action. Failure, removal and cancellation deny it. */
-  check(
-    request: ProtectionRequest,
-    signal: AbortSignal,
-  ): Promise<boolean | ProtectionDenial>;
   processProtection: ProcessProtection;
   /** Runtime owner to a process declared by this protection plugin. */
   runtimeProcesses?: Readonly<Record<string, string>>;
@@ -76,7 +66,7 @@ export type AgentProtection = Readonly<{
   spawn: ProtectedSpawn;
   assertAvailable(): void;
   check(action: ProtectionAction, signal: AbortSignal): Promise<void>;
-  checkEvidence?(
+  checkEvidence(
     action: Omit<ProtectionAction, "content">,
     evidence: TextSource,
     signal: AbortSignal,
@@ -127,7 +117,6 @@ const blank = (): ProtectionDefaults => ({ revision: 0, defaults: null });
 export class AgentProtectionService extends Service {
   readonly available = true;
   readonly version = 3;
-  readonly evidenceVersion = 1;
   readonly writeJSON = writeJSON;
   readonly encodeJSON = jsonPieces;
   private providers = new Map<
@@ -248,17 +237,6 @@ export class AgentProtectionService extends Service {
     )
       throw new Error("Invalid model completion prompt");
     const protection = this.providers.get(caller);
-    if (isTextSource(prompt.input) && provider.streaming !== true)
-      throw new Error(
-        "The selected review runtime does not support streamed evidence",
-      );
-    if (
-      !isTextSource(prompt.input) &&
-      !protection?.value.checkEvidence &&
-      new TextEncoder().encode(JSON.stringify(prompt)).length >
-        LEGACY_PROMPT_BYTES
-    )
-      throw new Error("Legacy model completion context is too large");
     // The same spawn for every review, so the runtime can keep its worker;
     // revoking the provider kills it.
     let spawn = protection?.reviewers.get(model.runtime);
@@ -332,7 +310,7 @@ export class AgentProtectionService extends Service {
   register(value: ProtectionProvider) {
     const id = this.plugin();
     if (
-      typeof value.check !== "function" ||
+      typeof value.checkEvidence !== "function" ||
       !value.processProtection ||
       !Array.isArray(value.processProtection.readOnlyPaths) ||
       !Array.isArray(value.processProtection.hiddenPaths)
@@ -487,22 +465,7 @@ export class AgentProtectionService extends Service {
         relay: agent.relay,
         runtime: agent.type,
       });
-      const streaming = provider.value.checkEvidence;
-      if (input && !streaming)
-        throw new Error(
-          "The protection plugin does not support streamed evidence",
-        );
-      const owned = input
-        ? undefined
-        : streaming
-          ? snapshotJSON(content)
-          : copy(content);
-      if (
-        !streaming &&
-        new TextEncoder().encode(JSON.stringify({ ...request, content: owned }))
-          .length > LEGACY_ACTION_BYTES
-      )
-        throw new Error("Legacy protected action is too large");
+      const owned = input ? undefined : snapshotJSON(content);
       let consumed = false,
         reading = false;
       const evidence: TextSource = {
@@ -537,9 +500,7 @@ export class AgentProtectionService extends Service {
       );
       try {
         allowed = await Promise.race([
-          streaming
-            ? streaming(request, evidence, signal)
-            : provider.value.check({ ...request, content: owned }, signal),
+          provider.value.checkEvidence(request, evidence, signal),
           cancelled,
         ]);
         reason = explanation(allowed);
@@ -550,8 +511,7 @@ export class AgentProtectionService extends Service {
         signal.removeEventListener("abort", stop);
       }
       signal.throwIfAborted();
-      if (allowed !== true || (streaming && !consumed))
-        throw new ProtectionDenied(reason);
+      if (allowed !== true || !consumed) throw new ProtectionDenied(reason);
     };
     return Object.freeze({
       key,

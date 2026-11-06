@@ -394,7 +394,6 @@ it("enforces a plugin’s captured-file budget before review or publication", as
     .extend({ pluginOwner: { id: "security.test", revision: "one" } })
     .agentProtection.register({
       processProtection: { readOnlyPaths: [], hiddenPaths: [] },
-      check,
       checkEvidence: async (_metadata, evidence) => {
         let size = 0;
         for await (const part of evidence.read())

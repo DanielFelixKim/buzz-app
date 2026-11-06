@@ -30,14 +30,40 @@ async function fixture(
       },
       assertAvailable() {},
       check,
+      checkEvidence: async (action, evidence, signal) => {
+        let content = "";
+        for await (const part of evidence.read()) content += part;
+        await check({ ...action, content: JSON.parse(content) }, signal);
+      },
       ...extra,
     },
   );
-  return { bridge, handler, close, closed };
+  const send = async (call: {
+    id: string;
+    params: Record<string, unknown>;
+  }) => {
+    const { content, ...metadata } = call.params;
+    const opened = (await handler(evidenceCall("begin", metadata))) as {
+      result: { id: string };
+    };
+    const id = opened.result.id;
+    const data = new TextEncoder().encode(JSON.stringify(content));
+    await handler(
+      evidenceCall("chunk", {
+        id,
+        sequence: 0,
+        data: btoa(String.fromCharCode(...data)),
+      }),
+    );
+    const result = (await handler(
+      evidenceCall("finish", { id, sequence: 1, bytes: data.length }),
+    )) as { result: unknown };
+    return { jsonrpc: "2.0", id: call.id, result: result.result };
+  };
+  return { bridge, handler, send, close, closed };
 }
 const call = {
   id: "native-1",
-  method: "buzz/security/check",
   params: {
     kind: "tool",
     session: "native-session",
@@ -55,15 +81,15 @@ it("uses native transport authority and preserves the exact evidence", async () 
     BUZZ_SECURITY_URL: "http://127.0.0.1:1234/mcp",
     BUZZ_SECURITY_TOKEN: "native-owned",
   });
-  expect(await f.handler(call)).toEqual({
+  expect(await f.send(call)).toEqual({
     jsonrpc: "2.0",
     id: "native-1",
     result: { allowed: true },
   });
   expect(check.mock.calls[0]?.[0]).toEqual(call.params);
   await expect(
-    f.handler({ ...call, params: { ...call.params, policy: {} } }),
-  ).rejects.toThrow("Invalid native security request");
+    f.send({ ...call, params: { ...call.params, policy: {} } }),
+  ).rejects.toThrow("Invalid evidence admission");
   await f.bridge.close();
 });
 
@@ -80,7 +106,7 @@ it("denies checker failures and cancels held approvals when the server closes", 
       }),
     );
   });
-  const pending = f.handler(call);
+  const pending = f.send(call);
   await started;
   await f.bridge.close();
   expect(await pending).toEqual({
@@ -93,9 +119,12 @@ it("denies checker failures and cancels held approvals when the server closes", 
 it("preserves optional command evidence and rejects invalid or extra fields", async () => {
   const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
   const f = await fixture(check);
-  const params = { ...call.params, command: "echo approved" };
+  const params = {
+    ...call.params,
+    content: { ...call.params.content, command: "echo approved" },
+  };
   try {
-    expect(await f.handler({ ...call, params })).toMatchObject({
+    expect(await f.send({ ...call, params })).toMatchObject({
       result: { allowed: true },
     });
     expect(check.mock.calls[0]?.[0]).toEqual(params);
@@ -106,8 +135,8 @@ it("preserves optional command evidence and rejects invalid or extra fields", as
       { ...params, policy: {} },
       { ...params, agent: "another-agent" },
     ]) {
-      await expect(f.handler({ ...call, params: invalid })).rejects.toThrow(
-        "Invalid native security request",
+      await expect(f.send({ ...call, params: invalid })).rejects.toThrow(
+        "Invalid evidence admission",
       );
     }
     expect(check).toHaveBeenCalledTimes(1);
@@ -124,26 +153,21 @@ it("rejects saturation instead of admitting unchecked native actions", async () 
       }),
     );
   });
-  const pending = Array.from({ length: 16 }, (_, i) =>
-    f.handler({ ...call, id: String(i) }),
-  );
-  await expect(f.handler({ ...call, id: "overflow" })).rejects.toThrow(
-    "Invalid native security request",
-  );
+  for (let i = 0; i < 16; i++)
+    await f.handler(
+      evidenceCall("begin", { kind: "tool", session: String(i) }),
+    );
+  await expect(
+    f.handler(evidenceCall("begin", { kind: "tool", session: "overflow" })),
+  ).rejects.toThrow("Invalid evidence admission");
   await f.bridge.close();
-  expect(
-    (await Promise.all(pending)).every(
-      (row) =>
-        (row as { result: { allowed: boolean } }).result.allowed === false,
-    ),
-  ).toBe(true);
 });
 
 it("keeps an explained model-input denial for Buzz, never for the runtime", async () => {
   const check = vi.fn<AgentProtection["check"]>();
   const f = await fixture(check);
   const ask = (kind: string, session = "native-session") =>
-    f.handler({ ...call, params: { ...call.params, kind, session } });
+    f.send({ ...call, params: { ...call.params, kind, session } });
   const deny = (reason?: string) =>
     check.mockRejectedValueOnce(new ProtectionDenied(reason));
   const turn = f.bridge.explainer("native-session");
@@ -184,7 +208,7 @@ it("explains a turn only by a refusal of a check that turn started", async () =>
   const check = vi.fn<AgentProtection["check"]>();
   const f = await fixture(check);
   const ask = () =>
-    f.handler({ ...call, params: { ...call.params, kind: "context" } });
+    f.send({ ...call, params: { ...call.params, kind: "context" } });
   // A check from an interrupted turn is still with its reviewer.
   const hold = () => {
     let release!: () => void;
@@ -199,7 +223,7 @@ it("explains a turn only by a refusal of a check that turn started", async () =>
   };
   let release = hold();
   const earlier = ask();
-  expect(check).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(1));
   const turn = f.bridge.explainer("native-session");
   check.mockRejectedValueOnce(new ProtectionDenied("This turn's refusal."));
   await ask();
@@ -210,7 +234,7 @@ it("explains a turn only by a refusal of a check that turn started", async () =>
   // Nor does it explain a turn that ends for another reason.
   release = hold();
   const stale = ask();
-  expect(check).toHaveBeenCalledTimes(3);
+  await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(3));
   const next = f.bridge.explainer("native-session");
   release();
   await stale;

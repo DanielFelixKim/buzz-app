@@ -39,7 +39,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       : undefined;
   const setup = new GooseSetup(desktop, () => runtime.defaultsChanged());
   ctx.agentProtection.registerModels({
-    streaming: true,
     label: "Goose",
     models: async () => {
       const { providers } = await setup.providers();

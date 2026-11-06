@@ -26,7 +26,6 @@ export type ReviewPrompt = Readonly<{
  * its protection lasts, so a runtime may keep one worker for them all. */
 export type ReviewModelProvider = Readonly<{
   label: string;
-  streaming?: true;
   models(): Promise<readonly ReviewModelChoice[]>;
   complete(
     model: Omit<ReviewModel, "runtime">,

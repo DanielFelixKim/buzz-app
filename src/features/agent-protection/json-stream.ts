@@ -83,12 +83,13 @@ const containsSource = (value: unknown): boolean =>
 
 export async function writeJSON(process: Writer, value: unknown) {
   if (!containsSource(value)) {
-    await process.write(JSON.stringify(value) + "\n");
+    await process.write(`${JSON.stringify(value)}\n`);
     return;
   }
   const parts = jsonLines(value);
-  if (process.writeStream) await process.writeStream(parts);
-  else for await (const part of parts) await process.write(part);
+  if (!process.writeStream)
+    throw new Error("The process cannot accept streamed JSON");
+  await process.writeStream(parts);
 }
 
 /** Own object snapshots while keeping trusted replay sources out of JSON cloning. */

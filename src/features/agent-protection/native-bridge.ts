@@ -89,7 +89,6 @@ export function protectionChannel(protection: AgentProtection) {
       });
       if (call.method === "buzz/security/evidence/begin") {
         if (
-          !protection.checkEvidence ||
           pending >= 16 ||
           transfers.size >= 16 ||
           !["kind,session", "id,kind,session"].includes(
@@ -208,46 +207,7 @@ export function protectionChannel(protection: AgentProtection) {
         throw error;
       }
     }
-    const action = call?.params;
-    if (
-      typeof call?.id !== "string" ||
-      call?.method !== "buzz/security/check" ||
-      !action ||
-      !["context", "tool", "tool-result"].includes(action.kind) ||
-      typeof action.session !== "string" ||
-      !action.session ||
-      !["content,kind,session", "command,content,kind,session"].includes(
-        Object.keys(action).sort().join(","),
-      ) ||
-      (Object.hasOwn(action, "command") &&
-        typeof action.command !== "string") ||
-      pending >= 16
-    )
-      throw new Error("Invalid native security request");
-    pending++;
-    const check = ++started;
-    try {
-      await protection.check(structuredClone(action), lifetime.signal);
-      return { jsonrpc: "2.0", id: call.id, result: { allowed: true } };
-    } catch (error) {
-      // A check from an earlier turn that settles late keeps a newer reason.
-      if (
-        action.kind === "context" &&
-        error instanceof ProtectionDenied &&
-        error.reason &&
-        (explained.get(action.session)?.check ?? 0) < check
-      ) {
-        explained.delete(action.session);
-        explained.set(action.session, { reason: error.reason, check });
-        if (explained.size > 16) {
-          const [oldest = ""] = explained.keys();
-          explained.delete(oldest);
-        }
-      }
-      return { jsonrpc: "2.0", id: call.id, result: { allowed: false } };
-    } finally {
-      pending--;
-    }
+    throw new Error("Invalid native security request");
   };
   return {
     handler,
