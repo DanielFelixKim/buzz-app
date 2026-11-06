@@ -285,3 +285,100 @@ it("shows one Solo conversation row while a follow-up waits in the same agent se
   await user.click(screen.getByRole("button", { name: "Stop Agent" }));
   expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", "first");
 });
+
+it("keeps Stop for a stoppable Solo follow-up when older work cannot stop", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  const interrupt = vi.fn(async () => undefined);
+  f.update([], {
+    local: [
+      {
+        scope: "test",
+        agent,
+        channelId: "channel",
+        threadRootId: root,
+        messageId: "older",
+        startedAt: 1,
+        state: "working",
+        soloChat: true,
+        step: { tool: "Read", target: "first.txt" },
+      },
+      {
+        scope: "test",
+        agent,
+        channelId: "channel",
+        threadRootId: secondRoot,
+        messageId: "stoppable",
+        startedAt: 2,
+        state: "working",
+        soloChat: true,
+        stoppable: true,
+      },
+    ],
+  });
+  render(
+    <TypingIndicator
+      session={{
+        ...f.session,
+        agentActivity: { ...f.session.agentActivity, interrupt },
+      }}
+      channelId="channel"
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Reading first.txt" }));
+  await user.click(screen.getByRole("button", { name: "Stop Agent" }));
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(
+    agent,
+    "channel",
+    "stoppable",
+  );
+});
+
+it("opens the Solo conversation when the same agent also works in a thread", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  const openActivity = vi.fn();
+  f.update([], {
+    local: [
+      {
+        scope: "test",
+        agent,
+        channelId: "channel",
+        threadRootId: root,
+        messageId: "solo",
+        startedAt: 1,
+        state: "working",
+        soloChat: true,
+        stoppable: true,
+        step: { tool: "Read", target: "first.txt" },
+      },
+      {
+        scope: "test",
+        agent,
+        channelId: "channel",
+        threadRootId: secondRoot,
+        messageId: "thread",
+        startedAt: 2,
+        state: "working",
+        soloChat: true,
+        thread: true,
+        stoppable: true,
+      },
+    ],
+  });
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      openActivity={openActivity}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Reading first.txt" }));
+  await user.click(
+    screen.getByRole("button", { name: "Open conversation for Agent" }),
+  );
+  expect(openActivity).toHaveBeenCalledWith(
+    "buzz://channel/channel",
+    undefined,
+  );
+});

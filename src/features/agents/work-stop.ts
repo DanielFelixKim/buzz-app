@@ -76,7 +76,15 @@ export function conversationWorkStops(
   );
   // Top-level Solo messages steer one conversation, so they share one control.
   const solo = localActivity(
-    { local: local.filter((work) => work.soloChat && !work.thread) },
+    {
+      local: local.filter(
+        (work) =>
+          work.soloChat &&
+          !work.thread &&
+          work.stoppable &&
+          (work.state === "working" || work.state === "waiting"),
+      ),
+    },
     channelId,
   ).get(agent);
   const result = local.flatMap((work) => {

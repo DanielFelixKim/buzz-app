@@ -378,9 +378,11 @@ export function TypingIndicator({
     );
     const conversationRoot =
       workRoot ??
-      (work?.soloChat && !work.thread ? undefined : work?.threadRootId) ??
-      threadRootId ??
-      (knownRoots.length === 1 ? knownRoots[0] : undefined);
+      (work?.soloChat && !work.thread
+        ? null
+        : (work?.threadRootId ??
+          threadRootId ??
+          (knownRoots.length === 1 ? knownRoots[0] : undefined)));
     const conversation = conversationRoot
       ? `buzz://message?${new URLSearchParams({ channel: channelId, id: conversationRoot, thread: conversationRoot })}`
       : `buzz://channel/${encodeURIComponent(channelId)}`;
