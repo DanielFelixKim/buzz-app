@@ -67,9 +67,12 @@ test("saves an emoji over a transparent background in a squircle", async ({
     path: test.info().outputPath("agent-avatar-transparent.png"),
   });
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  const { size, corner, center, painted } = await savedAlpha(page);
+  // A cold WebKit can read a just-decoded image as blank once; read again.
+  await expect
+    .poll(async () => (await savedAlpha(page)).center)
+    .toBeGreaterThan(0);
+  const { size, corner, painted } = await savedAlpha(page);
   expect(size).toEqual([512, 512]);
   expect(corner).toBe(0);
-  expect(center).toBeGreaterThan(0);
   expect(painted).toBeLessThan(512 * 512);
 });
