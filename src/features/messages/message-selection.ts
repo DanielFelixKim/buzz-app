@@ -183,7 +183,7 @@ export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
   if (next) {
     event.preventDefault();
     selectMessage(next);
-    return;
+    return true;
   }
   // Past the last rendered row, native scrolling brings newer rows in.
   if (event.key === "ArrowDown" && showsNewest(owner)) {

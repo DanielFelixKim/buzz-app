@@ -1799,10 +1799,11 @@ function Timeline({
         touchY.current = next;
       }}
       onKeyDown={(event) => {
-        moveMessageSelection(event);
+        const selected = moveMessageSelection(event);
         const upward = scrollsHistory(event);
         const downward = scrollsHistory(event, false);
-        if (upward || downward) gesture(upward);
+        if (upward || downward || selected)
+          gesture(upward || (selected && event.key === "ArrowUp"));
         if (downward) loadNearBottom(event.currentTarget);
       }}
       onPointerDown={() => {
