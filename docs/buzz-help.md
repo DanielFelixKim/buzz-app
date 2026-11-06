@@ -857,8 +857,8 @@ confirmation.
   dialog starts with and ⌥F uses. Turning the plugin off mid-Focus shows everything again
   at once; 🔭 stays until it expires.
 - **Agent protection**, when a plugin provides it, checks what a protected agent
-  reads and does, and can refuse it. The plugin chooses its review budgets within
-  Buzz’s memory safeguards, including room for a Claude action’s preceding conversation.
+  reads and does, and can refuse it. Large evidence is transferred in sections and retained locally for review.
+  The plugin and selected model control what they can inspect.
   The review model has its own context capacity; a failed review never grants
   permission to act. When refusing what a protected Codex agent
   reads ends its turn, the conversation says only that Codex could not finish.

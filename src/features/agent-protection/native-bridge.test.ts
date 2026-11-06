@@ -3,7 +3,10 @@ import type { McpHandler } from "../host/service";
 import { nativeProtectionBridge } from "./native-bridge";
 import { ProtectionDenied, type AgentProtection } from "./service";
 
-async function fixture(check: AgentProtection["check"]) {
+async function fixture(
+  check: AgentProtection["check"],
+  extra: Partial<AgentProtection> = {},
+) {
   let handler!: McpHandler, closed!: () => void;
   const close = vi.fn(async () => closed());
   const bridge = await nativeProtectionBridge(
@@ -27,6 +30,7 @@ async function fixture(check: AgentProtection["check"]) {
       },
       assertAvailable() {},
       check,
+      ...extra,
     },
   );
   return { bridge, handler, close, closed };
@@ -211,4 +215,195 @@ it("explains a turn only by a refusal of a check that turn started", async () =>
   release();
   await stale;
   expect(next()).toBeUndefined();
+});
+
+const evidenceCall = (operation: string, params: object) => ({
+  id: crypto.randomUUID(),
+  method: `buzz/security/evidence/${operation}`,
+  params,
+});
+it("streams complete evidence beyond old budgets and keeps authority outside uploaded JSON", async () => {
+  let observed = 0;
+  const text = JSON.stringify({
+    policy: { disabled: true },
+    agent: { name: "forged" },
+    text: "😀".repeat(300000),
+  });
+  const f = await fixture(async () => {}, {
+    checkEvidence: async (action, source) => {
+      expect(action).toEqual({ kind: "context", session: "s" });
+      for await (const piece of source.read())
+        observed += new TextEncoder().encode(piece).length;
+    },
+  });
+  try {
+    await expect(
+      f.handler(
+        evidenceCall("begin", { kind: "context", session: "s", policy: {} }),
+      ),
+    ).rejects.toThrow();
+    const begin = (await f.handler(
+      evidenceCall("begin", { kind: "context", session: "s" }),
+    )) as { result: { id: string; chunkBytes: number } };
+    const bytes = new TextEncoder().encode(text);
+    let sequence = 0;
+    for (let at = 0; at < bytes.length; at += begin.result.chunkBytes) {
+      const data = btoa(
+        String.fromCharCode(...bytes.slice(at, at + begin.result.chunkBytes)),
+      );
+      expect(
+        await f.handler(
+          evidenceCall("chunk", {
+            id: begin.result.id,
+            sequence: sequence++,
+            data,
+          }),
+        ),
+      ).toMatchObject({ result: { accepted: true } });
+    }
+    expect(
+      await f.handler(
+        evidenceCall("finish", {
+          id: begin.result.id,
+          sequence,
+          bytes: bytes.length,
+        }),
+      ),
+    ).toMatchObject({ result: { allowed: true } });
+    expect(observed).toBe(bytes.length);
+    await expect(
+      f.handler(
+        evidenceCall("finish", {
+          id: begin.result.id,
+          sequence,
+          bytes: bytes.length,
+        }),
+      ),
+    ).rejects.toThrow();
+  } finally {
+    await f.bridge.close();
+  }
+});
+it("rejects out-of-order and incomplete transfers and cancels readers on close", async () => {
+  let failures = 0;
+  const f = await fixture(async () => {}, {
+    checkEvidence: async (_action, source) => {
+      try {
+        for await (const _ of source.read()) {
+          /* consume */
+        }
+      } catch (error) {
+        failures++;
+        throw error;
+      }
+    },
+  });
+  const begin = async () =>
+    (
+      (await f.handler(
+        evidenceCall("begin", { kind: "tool", session: "s" }),
+      )) as { result: { id: string } }
+    ).result.id;
+  const first = await begin();
+  await expect(
+    f.handler(
+      evidenceCall("chunk", { id: first, sequence: 1, data: btoa("{}") }),
+    ),
+  ).rejects.toThrow();
+  const second = await begin();
+  await f.handler(
+    evidenceCall("chunk", { id: second, sequence: 0, data: btoa("{}") }),
+  );
+  await expect(
+    f.handler(evidenceCall("finish", { id: second, sequence: 1, bytes: 3 })),
+  ).rejects.toThrow();
+  const third = await begin();
+  await f.bridge.close();
+  await expect(
+    f.handler(
+      evidenceCall("chunk", { id: third, sequence: 0, data: btoa("{}") }),
+    ),
+  ).rejects.toThrow();
+  await vi.waitFor(() => expect(failures).toBe(3));
+});
+
+it("refuses early allow, expires idle transfers, and checks provider lifetime at completion", async () => {
+  const early = await fixture(async () => {}, {
+    checkEvidence: async () => {},
+  });
+  const id = (
+    (await early.handler(
+      evidenceCall("begin", { kind: "context", session: "s" }),
+    )) as { result: { id: string } }
+  ).result.id;
+  await expect(
+    early.handler(evidenceCall("chunk", { id, sequence: 0, data: btoa("{}") })),
+  ).rejects.toThrow("completely");
+  await early.bridge.close();
+  vi.useFakeTimers();
+  const expired = await fixture(async () => {}, {
+    checkEvidence: async (_action, source) => {
+      for await (const _ of source.read()) {
+      }
+    },
+  });
+  const stale = (
+    (await expired.handler(
+      evidenceCall("begin", { kind: "context", session: "s" }),
+    )) as { result: { id: string } }
+  ).result.id;
+  await vi.advanceTimersByTimeAsync(310001);
+  await expect(
+    expired.handler(
+      evidenceCall("finish", { id: stale, sequence: 0, bytes: 0 }),
+    ),
+  ).rejects.toThrow("expired");
+  await expired.bridge.close();
+  vi.useRealTimers();
+  let live = true;
+  const revoked = await fixture(async () => {}, {
+    assertAvailable() {
+      if (!live) throw new Error("provider removed");
+    },
+    checkEvidence: async (_action, source) => {
+      for await (const _ of source.read()) {
+      }
+      live = false;
+    },
+  });
+  const gone = (
+    (await revoked.handler(
+      evidenceCall("begin", { kind: "tool", session: "s" }),
+    )) as { result: { id: string } }
+  ).result.id;
+  await revoked.handler(
+    evidenceCall("chunk", { id: gone, sequence: 0, data: btoa("{}") }),
+  );
+  await expect(
+    revoked.handler(
+      evidenceCall("finish", { id: gone, sequence: 1, bytes: 2 }),
+    ),
+  ).rejects.toThrow("provider removed");
+  await revoked.bridge.close();
+});
+
+it("cancels caller-owned admissions before their begin reply is used", async () => {
+  const f = await fixture(async () => {}, {
+    checkEvidence: async (_action, source) => {
+      for await (const _ of source.read()) {
+      }
+    },
+  });
+  try {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const id = crypto.randomUUID();
+      const opened = f.handler(
+        evidenceCall("begin", { id, kind: "context", session: "s" }),
+      );
+      await f.handler(evidenceCall("cancel", { id }));
+      expect(await opened).toMatchObject({ result: { id } });
+    }
+  } finally {
+    await f.bridge.close();
+  }
 });

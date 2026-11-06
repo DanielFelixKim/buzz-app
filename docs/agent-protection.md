@@ -136,7 +136,7 @@ prior behavior.
 `check` receives an immutable action (`kind`, `session`, `content`, optional
 `command`) plus host-captured `agent`, `relay`, `runtime` and `policy`. `kind` is
 `context`, `tool` or `tool-result`. Session metadata is not authorization or proof
-of the currently displayed conversation. The provider declares `limits: { maxActionBytes, maxReviewPromptBytes }` at registration. Both count the complete serialized UTF-8 envelope. Declarations must be positive integers up to the host’s 32 MiB resource ceiling; invalid declarations fail instead of being clamped. Limits are captured for that provider registration. Omitting them preserves the legacy 256 KiB action / 768 KiB prompt budgets. Optional `phases(policy)` returns a
+of the currently displayed conversation. Providers implementing `checkEvidence(metadata, source, signal)` receive host-captured metadata separately from a pull-driven `TextSource` whose `read()` yields serialized JSON content. There is no total evidence byte limit on this path; the provider must consume the source completely before an allow is accepted. Object-only legacy providers retain their 256 KiB action / 768 KiB prompt limits. Optional `phases(policy)` returns a
 boolean for every action kind; it is captured from the native policy at launch.
 Disabled phases still validate the provider lifetime, but send no inspection
 evidence and do not invoke a checker. Omitting it enables every phase. Plugins
@@ -318,14 +318,14 @@ choice remains separate from the requesting runtime's enforcement capability.
 
 ## Configurable inspection models
 
-Runtime plugins own `registerModels({label, models, complete})`; credentials remain
+Runtime plugins own `registerModels({label, models, complete, streaming: true})`; credentials remain
 with that runtime. `modelChoices()` lists configured choices. A protection provider
 calls `complete(model, {system, input, outputSchema?}, signal, requester?)` for
-bounded tool-free inference. The plugin owns instructions, schemas and response
+tool-free inference. The plugin owns instructions, schemas and response
 parsing; the host returns text and the actual model. The `agent` model selector
 resolves only the current requesting agent's configured runtime/model using its
 host identity and relay. Runtime changes and cancellation reject the result.
-The protecting plugin’s `maxReviewPromptBytes` bounds serialized prompts, including schemas. The selected runtime owns model capacity; this byte budget does not imply a token allowance.
+`input` can be a replayable `TextSource` when the selected runtime declares `streaming: true`. `writeJSON(process, value)` serializes these inputs through ordered, bounded process writes; `encodeJSON(value)` exposes the same encoding as an async iterator. A partial failed write stops the worker so the next request cannot be appended to an incomplete frame. The runtime/plugin owns model capacity and reports errors; the app imposes no total streaming prompt limit. Legacy string completion retains the compatibility bound for runtimes without streaming support.
 
 Runtime completion receives an optional fourth, prepared spawn function for the
 calling protection plugin's engine. Codex and Goose require it for their isolated,
@@ -362,4 +362,4 @@ quality. Native build caches remain keyed by pins and patches. Human
 acceptance and current UI/interaction checks remain required before marking the
 experimental PR ready.
 
-Protection plugins own evidence and prompt budgets and declare them at registration. Pending-review commands declare their own `maxOutputBytes`, derived from their page format. Buzz enforces these declarations within its 32 MiB memory safeguards; Claude frames and loopback HTTP bodies retain separate 16 MiB transport limits. Nothing is truncated to fit. Fixed classifiers and model runtimes can have smaller limits; a failed inspection must pause or deny. These byte bounds do not establish model token capacity or detection completeness.
+Protection plugins own evidence storage and model capacity. The shared `evidence/begin`, `chunk`, `finish`, and `cancel` protocol is bound to one worker and its host-owned policy. One chunk at a time is acknowledged after consumption; sequence and final byte count must match before approval. Codex and Goose share the native sender; Pi uses the same host channel over its process connection. Claude retains an immutable private transcript snapshot and pulls bounded sections, preserving the small-transcript source projection. The native Claude watchdog spools large frames and reads only control metadata. The security plugin stores large pending evidence separately and exposes bounded sections to human and model reviewers. Chunk, metadata, concurrency, timeout and legacy compatibility bounds remain; none is a total evidence allowance. The ordinary command-output and HTTP-body ceilings remain 1 MiB and 4 MiB. Nothing is truncated to obtain an allow. The plugin's native classifier/model implementation can still materialize full evidence and is responsible for resource/model failures; this is not a constant-memory guarantee for every runtime. A failed inspection must pause or deny.

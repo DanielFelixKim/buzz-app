@@ -454,7 +454,7 @@ async fn stops_with_the_page() {
 }
 
 #[tokio::test]
-async fn large_security_evidence_crosses_the_loopback_server_intact() {
+async fn bounded_security_evidence_chunks_cross_the_authenticated_loopback_server_intact() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
@@ -462,7 +462,7 @@ async fn large_security_evidence_crosses_the_loopback_server_intact() {
         .unwrap();
     let named = initialize(&servers, &info, &mut events).await;
     let body = serde_json::json!({"jsonrpc": "2.0", "id": 1,
-        "method": "buzz/security/check", "params": {"content": "x".repeat(5 * 1024 * 1024)}})
+        "method": "buzz/security/evidence/chunk", "params": {"id":"transfer","sequence":0,"data": "eHh4".repeat(16384)}})
     .to_string();
     let request = post(&info, &info.token, &named, &body);
     let client = tokio::spawn({

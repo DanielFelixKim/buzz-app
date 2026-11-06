@@ -1419,7 +1419,7 @@ Plugins declaring `host` in `inject` use `ctx.host.runCommand(id, input?)` and
 ID; the program and arguments come only from the plugin's manifest. Native
 execution uses no shell, accepts no stdin by default, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout by default. A command may declare `maxOutputBytes`, an integer from
-1 through 33554432 (32 MiB), to request a different bound. Output exceeding that
+1 through 1048576 (1 MiB), to request a different bound. Output exceeding that
 bound returns `null` without truncation. Existing declarations retain the 4 KiB
 default. Hosts that do not support this field reject manifests that declare it.
 

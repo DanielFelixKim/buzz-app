@@ -10,37 +10,18 @@ import type {
   ProtectedSpawn,
 } from "./models";
 
-// Resource safeguard, not a review/model budget. Plugins select their working
-// limits below this ceiling; declarations above it fail rather than being clamped.
-export const MAX_PROTECTION_PAYLOAD_BYTES = 32 * 1024 * 1024;
-export type ProtectionLimits = Readonly<{
-  maxActionBytes: number;
-  maxReviewPromptBytes: number;
-}>;
-// Keep legacy providers' behavior when they do not declare review limits.
-const DEFAULT_LIMITS: ProtectionLimits = Object.freeze({
-  maxActionBytes: 256 * 1024,
-  maxReviewPromptBytes: 768 * 1024,
-});
-const protectionLimits = (
-  limits: ProtectionLimits = DEFAULT_LIMITS,
-): ProtectionLimits => {
-  if (
-    !limits ||
-    Object.keys(limits).sort().join() !==
-      "maxActionBytes,maxReviewPromptBytes" ||
-    Object.values(limits).some(
-      (value) =>
-        !Number.isSafeInteger(value) ||
-        value < 1 ||
-        value > MAX_PROTECTION_PAYLOAD_BYTES,
-    )
-  )
-    throw new Error(
-      "Invalid protection limits: declare positive byte budgets up to 32 MiB",
-    );
-  return Object.freeze({ ...limits });
-};
+import {
+  isTextSource,
+  jsonPieces,
+  snapshotJSON,
+  writeJSON,
+  type TextSource,
+} from "./json-stream";
+
+// Compatibility only: providers implementing checkEvidence receive a pull-driven
+// source with no whole-evidence byte cap. Older object providers retain their contract.
+const LEGACY_ACTION_BYTES = 256 * 1024;
+const LEGACY_PROMPT_BYTES = 768 * 1024;
 
 export type ProtectionBinding = Readonly<{ provider: string; policy: unknown }>;
 export type ProtectionAction = Readonly<{
@@ -67,8 +48,13 @@ export type ProtectionRequest = ProtectionAction &
 /** A denial its provider explained, for Buzz to show people. */
 export type ProtectionDenial = Readonly<{ allowed: false; reason: string }>;
 export type ProtectionProvider = Readonly<{
-  /** Plugin-owned serialized UTF-8 budgets, captured at registration. */
-  limits?: ProtectionLimits;
+  /** Streaming admission. No total size limit is imposed by Buzz. The provider
+   * must consume the complete JSON evidence before approving. */
+  checkEvidence?(
+    request: Omit<ProtectionRequest, "content">,
+    evidence: TextSource,
+    signal: AbortSignal,
+  ): Promise<boolean | ProtectionDenial>;
   phases?(policy: unknown): ProtectionPhases;
   /** Checks one immutable action. Failure, removal and cancellation deny it. */
   check(
@@ -90,6 +76,11 @@ export type AgentProtection = Readonly<{
   spawn: ProtectedSpawn;
   assertAvailable(): void;
   check(action: ProtectionAction, signal: AbortSignal): Promise<void>;
+  checkEvidence?(
+    action: Omit<ProtectionAction, "content">,
+    evidence: TextSource,
+    signal: AbortSignal,
+  ): Promise<void>;
 }>;
 /** Its message is all the agent sees; `reason` is the provider's explanation,
  * for people. */
@@ -136,6 +127,9 @@ const blank = (): ProtectionDefaults => ({ revision: 0, defaults: null });
 export class AgentProtectionService extends Service {
   readonly available = true;
   readonly version = 3;
+  readonly evidenceVersion = 1;
+  readonly writeJSON = writeJSON;
+  readonly encodeJSON = jsonPieces;
   private providers = new Map<
     string,
     {
@@ -246,7 +240,7 @@ export class AgentProtectionService extends Service {
       throw new Error("The selected review model's runtime is unavailable");
     if (
       typeof prompt.system !== "string" ||
-      typeof prompt.input !== "string" ||
+      (typeof prompt.input !== "string" && !isTextSource(prompt.input)) ||
       (prompt.outputSchema !== undefined &&
         (!prompt.outputSchema ||
           typeof prompt.outputSchema !== "object" ||
@@ -254,13 +248,17 @@ export class AgentProtectionService extends Service {
     )
       throw new Error("Invalid model completion prompt");
     const protection = this.providers.get(caller);
-    if (
-      new TextEncoder().encode(JSON.stringify(prompt)).length >
-      (protection?.value.limits ?? DEFAULT_LIMITS).maxReviewPromptBytes
-    )
+    if (isTextSource(prompt.input) && provider.streaming !== true)
       throw new Error(
-        "Model completion exceeds the protection plugin’s review budget",
+        "The selected review runtime does not support streamed evidence",
       );
+    if (
+      !isTextSource(prompt.input) &&
+      !protection?.value.checkEvidence &&
+      new TextEncoder().encode(JSON.stringify(prompt)).length >
+        LEGACY_PROMPT_BYTES
+    )
+      throw new Error("Legacy model completion context is too large");
     // The same spawn for every review, so the runtime can keep its worker;
     // revoking the provider kills it.
     let spawn = protection?.reviewers.get(model.runtime);
@@ -273,7 +271,23 @@ export class AgentProtectionService extends Service {
         id: model.id,
         ...(model.provider === undefined ? {} : { provider: model.provider }),
       },
-      copy(prompt),
+      {
+        ...copy({
+          system: prompt.system,
+          ...(prompt.outputSchema ? { outputSchema: prompt.outputSchema } : {}),
+        }),
+        input: isTextSource(prompt.input)
+          ? {
+              read: async function* () {
+                for await (const part of (prompt.input as TextSource).read()) {
+                  signal.throwIfAborted();
+                  yield part;
+                }
+                signal.throwIfAborted();
+              },
+            }
+          : prompt.input,
+      },
       signal,
       spawn,
     );
@@ -341,7 +355,6 @@ export class AgentProtectionService extends Service {
     const next = {
       value: {
         ...value,
-        limits: protectionLimits(value.limits),
         processProtection: copy(value.processProtection),
         runtimeProcesses: copy(value.runtimeProcesses ?? {}),
       },
@@ -450,6 +463,96 @@ export class AgentProtectionService extends Service {
       )
         throw new Error("The required protection plugin is unavailable");
     };
+    const inspect = async (
+      action: ProtectionAction,
+      stopped: AbortSignal,
+      input?: TextSource,
+    ) => {
+      stopped.throwIfAborted();
+      assertAvailable();
+      if (phases[action.kind] === false) return;
+      if (!provider)
+        throw new Error("The required protection plugin is unavailable");
+      const deadline = new AbortController();
+      const signal = AbortSignal.any([
+        stopped,
+        provider.abort.signal,
+        deadline.signal,
+      ]);
+      const { content, ...metadata } = action;
+      const request = copy({
+        ...metadata,
+        policy: binding.policy,
+        agent: { id: agent.pubkey, pubkey: agent.pubkey, name: agent.name },
+        relay: agent.relay,
+        runtime: agent.type,
+      });
+      const streaming = provider.value.checkEvidence;
+      if (input && !streaming)
+        throw new Error(
+          "The protection plugin does not support streamed evidence",
+        );
+      const owned = input
+        ? undefined
+        : streaming
+          ? snapshotJSON(content)
+          : copy(content);
+      if (
+        !streaming &&
+        new TextEncoder().encode(JSON.stringify({ ...request, content: owned }))
+          .length > LEGACY_ACTION_BYTES
+      )
+        throw new Error("Legacy protected action is too large");
+      let consumed = false,
+        reading = false;
+      const evidence: TextSource = {
+        read: async function* () {
+          if (reading) throw new Error("Evidence can be consumed only once");
+          reading = true;
+          for await (const part of input ? input.read() : jsonPieces(owned)) {
+            signal.throwIfAborted();
+            yield part;
+          }
+          signal.throwIfAborted();
+          consumed = true;
+        },
+      };
+      let stop!: () => void;
+      const cancelled = new Promise<never>((_, reject) => {
+        stop = () => reject(new Error("Protected action was cancelled"));
+        signal.addEventListener("abort", stop, { once: true });
+        if (signal.aborted) stop();
+      });
+      let allowed: unknown = false;
+      let reason: string | undefined;
+      const timeout = setTimeout(
+        () =>
+          deadline.abort(
+            new DOMException(
+              "The operation was aborted due to timeout",
+              "TimeoutError",
+            ),
+          ),
+        310_000,
+      );
+      try {
+        allowed = await Promise.race([
+          streaming
+            ? streaming(request, evidence, signal)
+            : provider.value.check({ ...request, content: owned }, signal),
+          cancelled,
+        ]);
+        reason = explanation(allowed);
+      } catch {
+        /* A failed checker denies. */
+      } finally {
+        clearTimeout(timeout);
+        signal.removeEventListener("abort", stop);
+      }
+      signal.throwIfAborted();
+      if (allowed !== true || (streaming && !consumed))
+        throw new ProtectionDenied(reason);
+    };
     return Object.freeze({
       key,
       phases: Object.freeze(phases),
@@ -471,65 +574,13 @@ export class AgentProtectionService extends Service {
           hiddenPaths: [],
         },
       ),
-      check: async (action: ProtectionAction, stopped: AbortSignal) => {
-        stopped.throwIfAborted();
-        assertAvailable();
-        if (phases[action.kind] === false) return;
-        if (!provider)
-          throw new Error("The required protection plugin is unavailable");
-        const deadline = new AbortController();
-        const signal = AbortSignal.any([
-          stopped,
-          provider.abort.signal,
-          deadline.signal,
-        ]);
-        const request = copy({
-          ...action,
-          policy: binding.policy,
-          agent: { id: agent.pubkey, pubkey: agent.pubkey, name: agent.name },
-          relay: agent.relay,
-          runtime: agent.type,
-        });
-        if (
-          new TextEncoder().encode(JSON.stringify(request)).length >
-          (provider.value.limits ?? DEFAULT_LIMITS).maxActionBytes
-        )
-          throw new Error(
-            "Protected action exceeds the protection plugin’s evidence budget",
-          );
-        let stop!: () => void;
-        const cancelled = new Promise<never>((_, reject) => {
-          stop = () => reject(new Error("Protected action was cancelled"));
-          signal.addEventListener("abort", stop, { once: true });
-          if (signal.aborted) stop();
-        });
-        let allowed: unknown = false;
-        let reason: string | undefined;
-        const timeout = setTimeout(
-          () =>
-            deadline.abort(
-              new DOMException(
-                "The operation was aborted due to timeout",
-                "TimeoutError",
-              ),
-            ),
-          310_000,
-        );
-        try {
-          allowed = await Promise.race([
-            provider.value.check(request, signal),
-            cancelled,
-          ]);
-          reason = explanation(allowed);
-        } catch {
-          /* A failed checker denies. */
-        } finally {
-          clearTimeout(timeout);
-          signal.removeEventListener("abort", stop);
-        }
-        signal.throwIfAborted();
-        if (allowed !== true) throw new ProtectionDenied(reason);
-      },
+      check: (action: ProtectionAction, signal: AbortSignal) =>
+        inspect(action, signal),
+      checkEvidence: (
+        action: Omit<ProtectionAction, "content">,
+        evidence: TextSource,
+        signal: AbortSignal,
+      ) => inspect({ ...action, content: undefined }, signal, evidence),
     });
   }
 }

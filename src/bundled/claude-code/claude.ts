@@ -1,3 +1,8 @@
+import {
+  isTextSource,
+  snapshotJSON,
+  writeJSON,
+} from "../../features/agent-protection/json-stream";
 import { CLAUDE_HOOK_EVENTS, type ClaudeHook } from "./hooks";
 // One `claude` process driven over its stream-json protocol: the protocol the
 // Claude Agent SDK speaks to the same binary, so no Node runtime is needed. The
@@ -15,6 +20,7 @@ import {
   PROTECTED_CLAUDE_ROOT,
   protectedRuntime,
   protectionSources,
+  retainProtectionHistory,
   type ClaudeProtection,
 } from "./security";
 
@@ -143,11 +149,15 @@ export class ClaudeProcess {
       throw new Error("The security model returned no structured result");
     return JSON.stringify(this.reviewOutput);
   }
-  protectionContext() {
-    return structuredClone({
-      transcript: this.protectedHistory,
-      events: this.protectedEvents,
-    });
+  captureProtectionContext() {
+    const release = retainProtectionHistory(this.protectedHistory);
+    return {
+      value: snapshotJSON({
+        transcript: this.protectedHistory,
+        events: this.protectedEvents,
+      }),
+      release,
+    };
   }
   /** Its session, known once the first turn starts (or at once when resuming). */
   sessionId: string | undefined;
@@ -549,7 +559,7 @@ export class ClaudeProcess {
    * picked model and effort, or the session's own without them; a message
    * folded into a running turn changes only what it asks for. */
   send(
-    text: string,
+    text: import("../../features/agent-protection/json-stream").ReviewText,
     { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
   ): Promise<Settled> {
     if (!this.alive)
@@ -632,7 +642,7 @@ export class ClaudeProcess {
   }
 
   private write(message: Message) {
-    return this.process.write(`${JSON.stringify(message)}\n`);
+    return writeJSON(this.process, message);
   }
   /** Writes a control request: `written` settles with the write, `answer`
    * with Claude's response. */
@@ -905,6 +915,7 @@ export class ClaudeProcess {
         "security-session",
       ].includes(String(request.callback_id))
     ) {
+      let releaseHistory = () => {};
       try {
         const input = request.input as Message;
         if (
@@ -967,7 +978,12 @@ export class ClaudeProcess {
               return [];
             throw error;
           });
-        this.protectedHistory = structuredClone(history);
+        releaseHistory = retainProtectionHistory(history);
+        if (isTextSource(this.protectedHistory))
+          (this.protectedHistory as { dispose?: () => void }).dispose?.();
+        this.protectedHistory = isTextSource(history)
+          ? history
+          : structuredClone(history);
         const content = {
           ...(tool
             ? { title: input.tool_name, arguments: input.tool_input }
@@ -1050,6 +1066,8 @@ export class ClaudeProcess {
         await this.process.kill();
         await this.exited;
         return;
+      } finally {
+        releaseHistory();
       }
     } else if (request.subtype === "can_use_tool")
       response = success({

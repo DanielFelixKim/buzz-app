@@ -1,3 +1,4 @@
+import type { ReviewText } from "./json-stream";
 export type ReviewModel = Readonly<{
   runtime: string;
   provider?: string;
@@ -17,7 +18,7 @@ export type ProtectedSpawn = (
 /** Plugin-owned instructions and evidence, separate from runtime credentials. */
 export type ReviewPrompt = Readonly<{
   system: string;
-  input: string;
+  input: ReviewText;
   outputSchema?: Readonly<Record<string, unknown>>;
 }>;
 /** Runtime-owned inference uses its configured credentials, with no tools.
@@ -25,6 +26,7 @@ export type ReviewPrompt = Readonly<{
  * its protection lasts, so a runtime may keep one worker for them all. */
 export type ReviewModelProvider = Readonly<{
   label: string;
+  streaming?: true;
   models(): Promise<readonly ReviewModelChoice[]>;
   complete(
     model: Omit<ReviewModel, "runtime">,

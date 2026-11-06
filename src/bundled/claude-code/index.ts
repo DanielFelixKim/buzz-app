@@ -31,6 +31,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const readFile = host.readFile?.bind(host);
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
   ctx.agentProtection.registerModels({
+    streaming: true,
     label: "Claude",
     models: async () =>
       (await setup.catalog()).map((model) => ({

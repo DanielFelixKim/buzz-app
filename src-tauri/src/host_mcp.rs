@@ -51,7 +51,7 @@ pub(crate) use pairing::plugin_host_mcp_pairing;
 
 /// Servers running at once across all plugins.
 const MAX_SERVERS: usize = 64;
-const BODY_LIMIT: usize = 16 * 1024 * 1024;
+const BODY_LIMIT: usize = 4 * 1024 * 1024;
 const BODY_TIMEOUT: Duration = Duration::from_secs(30);
 const REPLY_LIMIT: usize = 16 * 1024 * 1024;
 const ENDPOINT: &str = "/mcp";

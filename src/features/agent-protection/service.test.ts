@@ -2,7 +2,6 @@ import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   AgentProtectionService,
-  MAX_PROTECTION_PAYLOAD_BYTES,
   ProtectionDenied,
   type ProtectionRequest,
 } from "./service";
@@ -642,126 +641,128 @@ it("requires a current requesting identity in the same relay for the agent model
   }
 });
 
-it("uses the protection plugin’s captured evidence and prompt budgets", async () => {
+it("streams evidence beyond the former app ceiling without materializing it", async () => {
   const f = await fixture();
-  const check = vi.fn(async (_request: ProtectionRequest) => true);
-  const limits = {
-    maxActionBytes: 12 * 1024 * 1024,
-    maxReviewPromptBytes: 28 * 1024 * 1024,
-  };
-  f.plugin.agentProtection.register({ processProtection, check, limits });
-  // Registration captures the declaration; subsequent mutation cannot expand it.
-  limits.maxActionBytes = MAX_PROTECTION_PAYLOAD_BYTES;
+  const check = vi.fn(async () => false);
+  let count = 0;
+  const checkEvidence = vi.fn(
+    async (
+      metadata: Omit<ProtectionRequest, "content">,
+      evidence: { read(): AsyncIterable<string> },
+    ) => {
+      expect(metadata.agent.pubkey).toBe(pubkey);
+      expect(metadata).not.toHaveProperty("content");
+      for await (const part of evidence.read()) count += part.length;
+      return true;
+    },
+  );
+  f.plugin.agentProtection.register({
+    processProtection,
+    check,
+    checkEvidence,
+  });
   const gate = f.security.bind({
     ...f.agent,
     protection: { provider: "security.test", policy: {} },
   });
-  if (!gate) throw new Error("Expected protected handle");
-  const content = `${'"\\😀'.repeat(1100000)}final evidence`;
-  await gate.check({ ...action, content }, new AbortController().signal);
-  expect(check.mock.calls[0]?.[0]).toMatchObject({ content });
-  await expect(
-    gate.check(
-      { ...action, content: "x".repeat(12 * 1024 * 1024) },
-      new AbortController().signal,
-    ),
-  ).rejects.toThrow("budget");
-  expect(check).toHaveBeenCalledOnce();
-  const complete = vi.fn<ReviewModelProvider["complete"]>(async () => ({
-    text: '{"blocked":true,"reason":"review"}',
-    model: { id: "configured" },
-  }));
-  f.ctx
-    .extend({ pluginOwner: { id: "buzz.test", revision: "one" } })
-    .agentProtection.registerModels({
-      label: "Model",
-      models: async () => [],
-      complete,
-    });
-  const request = {
-    ...action,
-    content,
-    agent: { id: pubkey, pubkey, name: "Worker" },
-    runtime: f.agent.type,
-    relay: f.agent.relay,
-    policy: {},
-  };
-  await f.plugin.agentProtection.complete(
-    { runtime: "buzz.test", id: "configured" },
-    { system: "Plugin instructions", input: JSON.stringify(request) },
-    new AbortController().signal,
-  );
-  expect(JSON.parse(complete.mock.calls[0]?.[1].input ?? "{}").content).toBe(
-    content,
-  );
-  await expect(
-    f.plugin.agentProtection.complete(
-      { runtime: "buzz.test", id: "configured" },
-      {
-        system: "Plugin instructions",
-        input: "x".repeat(28 * 1024 * 1024),
+  if (!gate?.checkEvidence) throw new Error("Missing streaming gate");
+  const piece = "x".repeat(16384);
+  await gate.checkEvidence(
+    { kind: "tool", session: "large" },
+    {
+      read: async function* () {
+        yield '"';
+        for (let i = 0; i < 2560; i++) yield piece;
+        yield '"';
       },
-      new AbortController().signal,
-    ),
-  ).rejects.toThrow("budget");
-  expect(complete).toHaveBeenCalledOnce();
-  // The plugin can raise the prompt budget beyond the former 24 MiB app cap.
-  const larger = {
-    system: "Plugin instructions",
-    input: "x".repeat(25 * 1024 * 1024),
-  };
-  await f.plugin.agentProtection.complete(
-    { runtime: "buzz.test", id: "configured" },
-    larger,
+    },
     new AbortController().signal,
   );
-  expect(complete.mock.calls[1]?.[1]).toEqual(larger);
+  expect(count).toBe(40 * 1024 * 1024 + 2);
+  expect(check).not.toHaveBeenCalled();
 });
 
-it.each([0, -1, 1.5, NaN, Infinity, MAX_PROTECTION_PAYLOAD_BYTES + 1])(
-  "rejects invalid plugin review budgets (%s) without replacing the live provider",
-  async (limit) => {
-    const f = await fixture();
-    const check = vi.fn(async () => true);
-    f.plugin.agentProtection.register({ processProtection, check });
-    for (const limits of [
-      { maxActionBytes: limit, maxReviewPromptBytes: 1024 },
-      { maxActionBytes: 1024, maxReviewPromptBytes: limit },
-    ])
-      expect(() =>
-        f.plugin.agentProtection.register({ processProtection, check, limits }),
-      ).toThrow("Invalid protection limits");
+it("denies an early allow and a partial-stream failure", async () => {
+  const f = await fixture();
+  for (const checkEvidence of [
+    async () => true,
+    async (_request: unknown, evidence: { read(): AsyncIterable<string> }) => {
+      for await (const _part of evidence.read()) break;
+      return true;
+    },
+  ]) {
+    f.plugin.agentProtection.register({
+      processProtection,
+      check: async () => true,
+      checkEvidence,
+    });
     const gate = f.security.bind({
       ...f.agent,
       protection: { provider: "security.test", policy: {} },
     });
-    await gate?.check(action, new AbortController().signal);
-    expect(check).toHaveBeenCalledOnce();
-  },
-);
+    await expect(
+      gate?.check(action, new AbortController().signal),
+    ).rejects.toBeInstanceOf(ProtectionDenied);
+  }
+});
 
-it("keeps legacy budgets and lets a plugin choose a smaller evidence budget", async () => {
+it("passes replayable review text to a capable runtime and refuses unsupported runtimes", async () => {
+  const f = await fixture();
+  const runtime = f.ctx.extend({
+    pluginOwner: { id: "buzz.test", revision: "one" },
+  });
+  const input = {
+    read: async function* () {
+      yield "complete ";
+      yield "evidence";
+    },
+  };
+  const complete = vi.fn<ReviewModelProvider["complete"]>(
+    async (_model, prompt) => {
+      if (typeof prompt.input === "string")
+        throw new Error("Expected a source");
+      let text = "";
+      for await (const part of prompt.input.read()) text += part;
+      expect(text).toBe("complete evidence");
+      return { text: "{}", model: { id: "selected" } };
+    },
+  );
+  runtime.agentProtection.registerModels({
+    label: "Runtime",
+    models: async () => [],
+    complete,
+  });
+  const ask = () =>
+    f.plugin.agentProtection.complete(
+      { runtime: "buzz.test", id: "selected" },
+      { system: "Review", input },
+      new AbortController().signal,
+    );
+  await expect(ask()).rejects.toThrow("does not support streamed evidence");
+  runtime.agentProtection.registerModels({
+    label: "Runtime",
+    streaming: true,
+    models: async () => [],
+    complete,
+  });
+  await ask();
+  await ask();
+  expect(complete).toHaveBeenCalledTimes(2);
+});
+
+it("retains the legacy object-provider limit", async () => {
   const f = await fixture();
   const check = vi.fn(async () => true);
-  const bind = () =>
-    f.security.bind({
-      ...f.agent,
-      protection: { provider: "security.test", policy: {} },
-    });
   f.plugin.agentProtection.register({ processProtection, check });
+  const gate = f.security.bind({
+    ...f.agent,
+    protection: { provider: "security.test", policy: {} },
+  });
   await expect(
-    bind()?.check(
+    gate?.check(
       { ...action, content: "x".repeat(256 * 1024) },
       new AbortController().signal,
     ),
-  ).rejects.toThrow("evidence budget");
-  f.plugin.agentProtection.register({
-    processProtection,
-    check,
-    limits: { maxActionBytes: 1, maxReviewPromptBytes: 1 },
-  });
-  await expect(
-    bind()?.check(action, new AbortController().signal),
-  ).rejects.toThrow("evidence budget");
+  ).rejects.toThrow("Legacy protected action");
   expect(check).not.toHaveBeenCalled();
 });

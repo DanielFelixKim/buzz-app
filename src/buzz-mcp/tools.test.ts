@@ -395,7 +395,12 @@ it("enforces a plugin’s captured-file budget before review or publication", as
     .agentProtection.register({
       processProtection: { readOnlyPaths: [], hiddenPaths: [] },
       check,
-      limits: { maxActionBytes: 1024, maxReviewPromptBytes: 3072 },
+      checkEvidence: async (_metadata, evidence) => {
+        let size = 0;
+        for await (const part of evidence.read())
+          size += new TextEncoder().encode(part).length;
+        return size <= 1024;
+      },
     });
   const protection = service.bind(agent);
   if (!protection) throw new Error("Expected protected handle");
@@ -408,7 +413,7 @@ it("enforces a plugin’s captured-file budget before review or publication", as
         audience: "everyone",
         path: "large.md",
       }),
-    ).rejects.toThrow("evidence budget");
+    ).rejects.toThrow("denied by its protection policy");
     expect(client.read).toHaveBeenCalledExactlyOnceWith("large.md");
     expect(check).not.toHaveBeenCalled();
     expect(client.upload).not.toHaveBeenCalled();

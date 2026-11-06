@@ -10,16 +10,160 @@ use tokio::{sync::oneshot, time::Instant};
 const DEADLINE: Duration = Duration::from_secs(350);
 /// Why the guard refuses a worker it stopped, or input to one that exited.
 pub(super) const STOPPED: &str = "The protected Claude worker stopped";
-// Full protected prompts and large tool arguments travel over this channel.
-const MAX_FRAME: usize = 16 * 1024 * 1024;
+// Only watchdog metadata is decoded. Large model/tool fields are skipped by
+// serde while the complete line lives in an anonymous private temporary file.
+#[derive(serde::Deserialize)]
+struct ControlFrame {
+    #[serde(rename = "type", default)]
+    kind: String,
+    request_id: Option<String>,
+    request: Option<ControlRequest>,
+    response: Option<ControlResponse>,
+}
+#[derive(serde::Deserialize)]
+struct ControlRequest {
+    subtype: Option<String>,
+    callback_id: Option<String>,
+}
+#[derive(serde::Deserialize)]
+struct ControlResponse {
+    request_id: Option<String>,
+    subtype: Option<String>,
+    #[serde(default)]
+    response: ObjectOnly,
+}
+#[derive(Default)]
+struct ObjectOnly(bool);
+impl<'de> serde::Deserialize<'de> for ObjectOnly {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ObjectOnly;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON value")
+            }
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(ObjectOnly(false))
+            }
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(ObjectOnly(false))
+            }
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(ObjectOnly(false))
+            }
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(ObjectOnly(false))
+            }
+            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(ObjectOnly(false))
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(ObjectOnly(false))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(ObjectOnly(false))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                while map
+                    .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                    .is_some()
+                {}
+                Ok(ObjectOnly(true))
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+impl ControlFrame {
+    fn projection(self) -> Result<Value, String> {
+        let request = self.request;
+        let response = self.response;
+        let strings = [
+            Some(self.kind.as_str()),
+            self.request_id.as_deref(),
+            request.as_ref().and_then(|r| r.subtype.as_deref()),
+            request.as_ref().and_then(|r| r.callback_id.as_deref()),
+            response.as_ref().and_then(|r| r.request_id.as_deref()),
+            response.as_ref().and_then(|r| r.subtype.as_deref()),
+        ];
+        if strings
+            .into_iter()
+            .flatten()
+            .any(|value| value.len() > 4096)
+        {
+            return Err("Invalid Claude control metadata".into());
+        }
+        Ok(
+            serde_json::json!({"type":self.kind,"request_id":self.request_id,
+                "request":{"subtype":request.as_ref().and_then(|r|r.subtype.as_ref()),"callback_id":request.as_ref().and_then(|r|r.callback_id.as_ref())},
+                "response":{"request_id":response.as_ref().and_then(|r|r.request_id.as_ref()),"subtype":response.as_ref().and_then(|r|r.subtype.as_ref()),
+                    "response":if response.as_ref().is_some_and(|r|r.response.0){Some(serde_json::json!({}))}else{None}}
+            }),
+        )
+    }
+}
+#[derive(Default)]
+struct Frames {
+    file: Option<std::fs::File>,
+    nonempty: bool,
+    generation: u64,
+    deadline: Option<Instant>,
+    cancel: Option<oneshot::Sender<()>>,
+}
+impl Frames {
+    fn push(&mut self, data: &[u8], now: Instant) -> Result<Vec<Value>, String> {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut frames = Vec::new();
+        for part in data.split_inclusive(|byte| *byte == b'\n') {
+            if self.file.is_none() {
+                self.file =
+                    Some(tempfile::tempfile().map_err(|_| "Cannot spool Claude control frame")?);
+                self.generation = self.generation.wrapping_add(1);
+                self.deadline = Some(now + DEADLINE);
+            }
+            if self.deadline.is_some_and(|deadline| deadline <= now) {
+                return Err("Incomplete Claude control frame expired".into());
+            }
+            self.nonempty |= part.iter().any(|byte| !byte.is_ascii_whitespace());
+            self.file
+                .as_mut()
+                .unwrap()
+                .write_all(part)
+                .map_err(|_| "Cannot spool Claude control frame")?;
+            if part.last() == Some(&b'\n') {
+                let mut file = self.file.take().unwrap();
+                self.deadline = None;
+                self.cancel = None;
+                if self.nonempty {
+                    file.seek(SeekFrom::Start(0))
+                        .map_err(|_| "Cannot read Claude control frame")?;
+                    let frame: ControlFrame =
+                        serde_json::from_reader(std::io::BufReader::new(file))
+                            .map_err(|_| "Invalid protected Claude frame")?;
+                    frames.push(frame.projection()?);
+                }
+                self.nonempty = false;
+            }
+        }
+        Ok(frames)
+    }
+}
+
 struct Pending {
     deadline: Instant,
     _cancel: oneshot::Sender<()>,
 }
 #[derive(Default)]
 struct State {
-    output: Vec<u8>,
-    input: Vec<u8>,
+    output: Frames,
+    input: Frames,
     pending: HashMap<String, Pending>,
     failed: bool,
     /// Nothing is left to kill or answer, but its last output still drains.
@@ -45,6 +189,8 @@ impl ClaudeHooks {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.exited = true;
         state.pending.clear();
+        state.input = Frames::default();
+        state.output = Frames::default();
     }
     pub fn trip(&self) {
         {
@@ -57,6 +203,8 @@ impl ClaudeHooks {
             }
             state.failed = true;
             state.pending.clear();
+            state.input = Frames::default();
+            state.output = Frames::default();
         }
         #[cfg(unix)]
         unsafe {
@@ -74,6 +222,7 @@ impl ClaudeHooks {
     }
     fn observe_at(&self, data: &[u8], output: bool, now: Instant) -> Result<(), String> {
         let mut timers = Vec::new();
+        let mut frame_timer = None;
         let result = (|| {
             let mut state = self
                 .state
@@ -90,20 +239,14 @@ impl ClaudeHooks {
             } else {
                 &mut state.input
             };
-            if buffer.len() + data.len() > MAX_FRAME {
-                return Err("Protected Claude frame is too large".into());
-            }
-            buffer.extend_from_slice(data);
-            let mut frames = Vec::new();
-            while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
-                let line: Vec<_> = buffer.drain(..=end).collect();
-                if line.iter().all(u8::is_ascii_whitespace) {
-                    continue;
+            let before = buffer.generation;
+            let frames = buffer.push(data, now)?;
+            if buffer.generation != before {
+                if let Some(deadline) = buffer.deadline {
+                    let (cancel, cancelled) = oneshot::channel();
+                    buffer.cancel = Some(cancel);
+                    frame_timer = Some((buffer.generation, deadline, cancelled));
                 }
-                frames.push(
-                    serde_json::from_slice::<Value>(&line)
-                        .map_err(|_| "Invalid protected Claude frame")?,
-                );
             }
             for frame in frames {
                 if output
@@ -162,6 +305,28 @@ impl ClaudeHooks {
             self.trip();
             return result;
         }
+        if let Some((generation, deadline, mut cancelled)) = frame_timer {
+            let guard = self.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::select! {
+                    _ = tokio::time::sleep_until(deadline) => {},
+                    _ = &mut cancelled => return,
+                }
+                let overdue = {
+                    let state = guard
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let frame = if output { &state.output } else { &state.input };
+                    !state.exited
+                        && frame.generation == generation
+                        && frame.deadline == Some(deadline)
+                };
+                if overdue {
+                    guard.trip();
+                }
+            });
+        }
         for (id, deadline, mut cancelled) in timers {
             let guard = self.clone();
             tauri::async_runtime::spawn(async move {
@@ -217,11 +382,11 @@ mod tests {
         child.kill().await.unwrap();
     }
     #[tokio::test]
-    async fn large_review_frames_remain_guarded_and_overflow_stops_the_worker() {
+    async fn large_review_frames_remain_guarded_and_incomplete_frames_expire() {
         let mut child = worker();
         let guard = ClaudeHooks::new(child.id().unwrap());
         let mut frame: serde_json::Value = serde_json::from_slice(&request("large")).unwrap();
-        frame["request"]["input"] = serde_json::json!({"prompt": "x".repeat(5 * 1024 * 1024)});
+        frame["request"]["input"] = serde_json::json!({"prompt": "x".repeat(20 * 1024 * 1024)});
         let mut frame = serde_json::to_vec(&frame).unwrap();
         frame.push(b'\n');
         guard.output(&frame).unwrap();
@@ -229,7 +394,9 @@ mod tests {
         guard.input(&response("large", "success")).unwrap();
         assert!(guard.state.lock().unwrap().pending.is_empty());
         assert!(child.try_wait().unwrap().is_none());
-        assert!(guard.output(&vec![b'x'; MAX_FRAME + 1]).is_err());
+        let now = Instant::now();
+        guard.observe_at(b"{", true, now).unwrap();
+        assert!(guard.observe_at(b" ", true, now + DEADLINE).is_err());
         assert!(!tokio::time::timeout(Duration::from_secs(5), child.wait())
             .await
             .unwrap()

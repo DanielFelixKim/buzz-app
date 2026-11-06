@@ -72,6 +72,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (pubkey) => ctx.agents.handle(pubkey),
   );
   ctx.agentProtection.registerModels({
+    streaming: true,
     label: "Codex",
     models: async () => {
       const rpc = new AppServer();

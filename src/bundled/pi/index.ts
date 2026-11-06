@@ -50,6 +50,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     agents.storage,
   );
   ctx.agentProtection.registerModels({
+    streaming: true,
     label: "Pi",
     models: async () => {
       const { providers } = await runtime.setup.providers();
