@@ -3695,6 +3695,10 @@ export function createChannelStore(
           void fetchProfiles(state.snapshot.rows);
         } catch (error) {
           if (isAbort(error) || !live(state, generation)) return;
+          if (readErrorKind(error) === "denied") {
+            denyChannel(channelId, error);
+            return;
+          }
           setWindow(state, { loadingNewer: undefined, error: describe(error) });
         } finally {
           if (state.controller === controller) {

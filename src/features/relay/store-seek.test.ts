@@ -4,6 +4,7 @@ import { createRelaySession } from "./session";
 import type { LiveCallbacks } from "./live";
 import type { ReadFilter, RelayEvent } from "./events";
 import { byteSize } from "./budget";
+import { ReadError } from "./errors";
 import {
   bounds,
   keypair,
@@ -44,6 +45,7 @@ function harness({
   const gate: {
     hold?: Promise<void> | undefined;
     failHead?: boolean;
+    denied?: boolean;
     aux?: RelayEvent[];
     notices?: RelayEvent[];
   } = {};
@@ -68,6 +70,7 @@ function harness({
         reads.push(filter);
         await gate.hold;
         signal?.throwIfAborted();
+        if (gate.denied) throw new ReadError("denied", "Access denied");
         if (gate.failHead && filter.until === undefined)
           throw new Error("offline");
         const cursor =
@@ -552,6 +555,22 @@ it("preserves a slid reader when its route reconnects", async () => {
   await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(reads));
   await vi.waitFor(() => expect(h.window().freshness).toBe("verified"));
   expect(h.window().rows.map((row) => row.id)).toEqual(retained);
+});
+
+it("purges retained channel rows when forward paging is denied", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  await h.open();
+  for (let step = 0; step < 3; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  expect(h.window().rows.length).toBeGreaterThan(0);
+  expect(h.window().hasNewer).toBe(true);
+  h.gate.denied = true;
+  h.channels.loadNewer?.("c");
+  await vi.waitFor(() => expect(h.window().error).toBeDefined());
+  expect(h.window().rows).toEqual([]);
+  expect(h.window().status).toBe("error");
 });
 
 it("releases cancelled forward paging after reconnect without losing the reader", async () => {
