@@ -297,6 +297,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   can't start DMs, New message still shows the earlier messages but Send is
   disabled, and search opens a one-to-one DM without bringing it back.
 - **Message link previews** appear when you hover or focus a Buzz message link.
+  The card shows the message with its formatting, mentions and custom emoji.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have
   been deleted; or the preview couldn't load. Links don't record their

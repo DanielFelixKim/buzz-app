@@ -81,12 +81,13 @@ function setup(
     });
     return () => {};
   });
+  const ensure = vi.fn(async () => {});
   const session = {
     thread,
     profiles: {
       subscribe: () => () => {},
       snapshot: () => profiles,
-      ensure: vi.fn(async () => {}),
+      ensure,
     },
     channels: {
       subscribeList: (listener: () => void) => {
@@ -115,6 +116,7 @@ function setup(
     thread,
     views,
     refer,
+    ensure,
     /** The channel lookup answers, or discovery moves the list on, as the
      * store notifies list subscribers. */
     answer(next: ChannelReference, nextStatus = list.status) {
@@ -382,5 +384,22 @@ it("asks for the relay thumbnail of the author's picture, as message rows do", (
   );
   expect(tree.querySelector("img")?.getAttribute("src")).toBe(
     `https://relay.test/media/${sha}.thumb.webp`,
+  );
+});
+it("shows the linked message as its timeline row, inert inside the card", () => {
+  const mentioned = "c".repeat(64);
+  const linked = {
+    ...root,
+    content: "**Ship** [the PR](https://example.com/pr)",
+    mentions: [mentioned],
+  };
+  const shown = setup({ ...base, status: "ready", root: linked });
+  const body = shown.tree.querySelector("[data-compact]");
+  expect(body?.querySelector("strong")?.textContent).toBe("Ship");
+  expect(body?.textContent).toBe("Ship the PR");
+  expect(shown.tree.querySelector("a")).toBeNull();
+  expect(shown.ensure).toHaveBeenCalledWith(
+    [root.authorId, mentioned],
+    "background",
   );
 });

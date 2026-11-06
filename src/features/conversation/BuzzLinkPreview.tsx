@@ -16,7 +16,7 @@ import { channelIcon } from "../channels/channel-icon";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import styles from "./LinkPreview.module.css";
-import { messagePreviewText } from "./message-preview-text";
+import { MessagePreview } from "../messages/MessagePreview";
 import { linkedMessage } from "./linked-message";
 import { avatarMedia } from "../../shared/avatar-source";
 import { sortParticipantNames } from "../identity-names/participant-order";
@@ -127,13 +127,22 @@ function PreviewContent({
     session.channels.list,
     session.channels.list,
   );
-  const authorId = message?.workflowOwnerId ?? message?.authorId;
+  // Its author and the people its text mentions.
+  const people = message
+    ? [
+        message.workflowOwnerId ?? message.authorId,
+        ...message.mentions,
+        ...(message.mentionReferences ?? []),
+      ].join(",")
+    : "";
   const profileGeneration = useProfileGeneration(session.profiles);
   useEffect(() => {
     void profileGeneration;
-    if (authorId)
-      void session.profiles.ensure([authorId], "background").catch(() => {});
-  }, [session, authorId, profileGeneration]);
+    if (people)
+      void session.profiles
+        .ensure(people.split(","), "background")
+        .catch(() => {});
+  }, [session, people, profileGeneration]);
   if (!ready || !message) {
     if (!stopped || looking) return loading;
     // The card stops at any failed read, as navigation does at a failed root.
@@ -208,8 +217,15 @@ function PreviewContent({
         </span>
       </span>
       <span className={styles.message}>
-        {messagePreviewText(message.content) ||
-          (message.attachments.length ? "Attachment" : "Empty message")}
+        {message.content || message.attachments.length ? (
+          <MessagePreview
+            row={message}
+            session={session}
+            extensions={undefined}
+          />
+        ) : (
+          "Empty message"
+        )}
       </span>
     </>
   );
