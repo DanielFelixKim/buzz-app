@@ -3711,6 +3711,14 @@ export function createChannelStore(
             fromId,
           );
         return landing(state, from);
+      } catch (error) {
+        if (
+          !controller.signal.aborted &&
+          live(state, generation) &&
+          readErrorKind(error) === "denied"
+        )
+          denyChannel(channelId, error);
+        throw error;
       } finally {
         signal.removeEventListener("abort", abort);
         controllers.delete(controller);

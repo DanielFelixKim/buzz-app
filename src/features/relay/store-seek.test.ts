@@ -1484,3 +1484,21 @@ it("bounds combined dense-second seek pages around the cached target", async () 
     byteSize(h.history.filter((event) => ids.has(event.id))),
   ).toBeLessThanOrEqual(8 * 1024 * 1024);
 });
+
+it("purges a cached channel when exact-target seek revalidation is denied", async () => {
+  const h = setup({ count: 450, spacing: 0 });
+  await h.open();
+  const target = h.window().rows[10];
+  assert.exists(target);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.state({ status: "retrying", routes: [] });
+  h.gate.denied = true;
+  await expect(
+    h.channels.seek?.("c", T0, new AbortController().signal, target.id),
+  ).rejects.toThrow();
+  expect(h.window().rows).toEqual([]);
+  expect(h.window().status).toBe("error");
+  expect(h.channels.list().channels.some((channel) => channel.id === "c")).toBe(
+    false,
+  );
+});
