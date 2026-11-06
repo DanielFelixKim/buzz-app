@@ -24,6 +24,9 @@ export type ActivityReceipt = Readonly<{
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
   superseded?: () => void;
+  /** Told the message's id once Claude has taken it: the id its transcript
+   * gives the prompt. A message Claude never took has none. */
+  submitted?: (uuid: string) => void;
 }>;
 
 export type Spawn = (
@@ -583,11 +586,13 @@ export class ClaudeProcess {
       message: { role: "user", content: text },
       parent_tool_use_id: null,
       session_id: "",
-    }).catch((error) =>
-      this.settle({
-        ok: false,
-        error: `Claude did not take the message: ${error}`,
-      }),
+    }).then(
+      () => activity.submitted?.(uuid),
+      (error) =>
+        this.settle({
+          ok: false,
+          error: `Claude did not take the message: ${error}`,
+        }),
     );
     return settled;
   }

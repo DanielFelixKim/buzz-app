@@ -78,6 +78,7 @@ import { protectionHistoryEntry } from "./security";
 import {
   readSessionTitle,
   readTranscript,
+  withNotices,
   type Conversation,
 } from "./transcript";
 import { sessionPrompts } from "../../features/agents/session-prompts";
@@ -178,6 +179,8 @@ const listing = (added: readonly AddedTool[]): Listing => ({
 
 /** How long a session start waits for the agent's recent notes. */
 const NOTES_WAIT_MS = 2_000;
+/** The fallback notices kept for each agent, the oldest dropped first. */
+const NOTICE_LIMIT = 100;
 
 export class ClaudeRuntime {
   private readonly agents = new Map<AgentKey, Entry>();
@@ -191,6 +194,8 @@ export class ClaudeRuntime {
   >();
   /** Solo chats whose title was already offered to the host this app run. */
   private readonly titled = new Set<string>();
+  /** Each agent's fallback notices, by the id of the message each ran from. */
+  private readonly notices = new Map<AgentKey, Map<string, string>>();
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
@@ -241,6 +246,7 @@ export class ClaudeRuntime {
       retiring = (async () => {
         const entry = this.agents.get(pubkey);
         this.agents.delete(pubkey);
+        this.notices.delete(pubkey);
         await entry?.sessions.shutdown();
       })();
       this.retirements.set(pubkey, retiring);
@@ -386,8 +392,26 @@ export class ClaudeRuntime {
       (pubkey) => this.reads(conversation.agent)?.name(pubkey),
     ).then(
       (transcript) =>
-        transcript && { ...transcript, turns: prompts.shown(transcript.turns) },
+        transcript && {
+          ...transcript,
+          turns: withNotices(
+            prompts.shown(transcript.turns),
+            this.notices.get(conversation.agent) ?? new Map(),
+          ),
+        },
     );
+  }
+  /** Keeps a turn's fallback notice for its Activity, by the id of the
+   * message it ran from, while the app runs. */
+  private noted(agent: AgentKey, uuid: string, notice: string) {
+    const notices = this.notices.get(agent) ?? new Map<string, string>();
+    notices.set(uuid, notice);
+    for (const oldest of notices.keys()) {
+      if (notices.size <= NOTICE_LIMIT) break;
+      notices.delete(oldest);
+    }
+    this.notices.set(agent, notices);
+    this.notify();
   }
   /** What each of the agent's sessions started with. */
   private prompts(agent: AgentKey) {
@@ -524,6 +548,7 @@ export class ClaudeRuntime {
     interruptible,
     named,
     gateway,
+    gatewayFallback,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
@@ -675,6 +700,13 @@ export class ClaudeRuntime {
             },
             admit,
             ...forwarded(this.forward(entry, agent.key, gateway, signal)),
+            // A mention's request shows its own; a wake's shows in Activity.
+            ...(wake && gatewayFallback
+              ? {
+                  submitted: (uuid: string) =>
+                    this.noted(agent.key, uuid, gatewayFallback.notice),
+                }
+              : {}),
           });
           void delivered.then(
             (result) => {

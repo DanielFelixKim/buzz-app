@@ -8,6 +8,9 @@ import type { ForwardOpen } from "../../features/host/forward";
 import type { GatewayRoute } from "../../features/agents/gateway/route";
 import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
@@ -38,7 +41,13 @@ import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
-import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
+import {
+  CLAUDES,
+  type FakeClaude,
+  fakeSpawn,
+  flush,
+  manifestProcesses,
+} from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
@@ -92,11 +101,26 @@ function setup(
     /** Raw text after the history, as a line Claude is still writing. */
     nativeTail?: string;
     forwarding?: ClaudeForwarding;
+    /** A home whose Claude Code projects the transcript is read from. */
+    home?: string;
   }> = {},
 ) {
   const fake = fakeSpawn();
+  const projects = options.home && manifestProcesses(options.home);
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
+    if (
+      projects &&
+      ["list", "starts", "read", "size", "read-page"].includes(id)
+    )
+      return projects(id, spawnOptions ?? {});
+    if (projects && id === "workspace") {
+      spawnOptions?.onStdout?.("/Users/me/.buzz\n");
+      return {
+        exited: Promise.resolve(0),
+        kill: async () => {},
+      } as unknown as Awaited<ReturnType<typeof fake.spawn>>;
+    }
     if (options.nativeHistory && id === "read-protected")
       spawnOptions?.onStdout?.(
         Buffer.from(
@@ -3268,6 +3292,128 @@ it("runs a fallen-back turn on Claude's own configuration, opening nothing", asy
   expect(JSON.stringify(args)).not.toContain("127.0.0.1:9");
   f.claudes()[0]?.finish();
   await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+});
+
+it("shows a wake's fallback notice in Activity beside its own prompt only", async () => {
+  const home = mkdtempSync(join(tmpdir(), "claude-notice-"));
+  try {
+    const f = setup([], { home });
+    const notice = "Ran without the agent gateway: it couldn't be reached.";
+    const fallback = {
+      gatewayFallback: { reason: "network", notice },
+    } as unknown as Partial<Delivery>;
+    await f.deliver(
+      { ...pluginWake(), type: "attention", topLevel: true },
+      fallback,
+    );
+    await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+    // A later wake in the same conversation, routed as usual.
+    await f.deliver({ ...pluginWake(), type: "attention", topLevel: true });
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((claude) => claude.prompts)).toHaveLength(2),
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    const [saved] = f.runtime.conversations(self);
+    if (!saved?.sessionId) throw new Error("Expected a saved conversation");
+    // The session file as Claude writes it: each prompt under its message's id.
+    const sent = f
+      .claudes()
+      .flatMap((claude) => claude.received)
+      .filter((received) => received.type === "user");
+    const file = join(
+      home,
+      ".claude/projects/-Users-me--buzz",
+      `${saved.sessionId}.jsonl`,
+    );
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      sent
+        .flatMap((received, index) => [
+          JSON.stringify({
+            type: "user",
+            uuid: received.uuid,
+            timestamp: new Date((index * 2 + 1) * 1000).toISOString(),
+            message: received.message,
+          }),
+          JSON.stringify({
+            type: "assistant",
+            uuid: `answer-${index}`,
+            timestamp: new Date((index * 2 + 2) * 1000).toISOString(),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "ok" }],
+            },
+          }),
+        ])
+        .join("\n"),
+    );
+    const transcript = await f.runtime.transcript(
+      saved,
+      "~/.buzz",
+      false,
+      new AbortController().signal,
+    );
+    const statuses = transcript?.turns.map((turn) =>
+      turn.items.flatMap((item) => (item.type === "status" ? [item] : [])),
+    );
+    expect(statuses).toEqual([
+      [
+        expect.objectContaining({
+          id: `${sent[0]?.uuid}:notice`,
+          text: notice,
+        }),
+      ],
+      [],
+    ]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it("keeps no fallback notice on a mention, whose request shows its own", async () => {
+  const home = mkdtempSync(join(tmpdir(), "claude-notice-"));
+  try {
+    const f = setup([], { home });
+    const root = message("1", "@Claude hi");
+    await f.deliver({ type: "mention", event: root }, {
+      gatewayFallback: { reason: "network", notice: "Ran without it." },
+    } as unknown as Partial<Delivery>);
+    await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    const [saved] = f.runtime.conversations(self);
+    if (!saved?.sessionId) throw new Error("Expected a saved conversation");
+    const [sent] = (f.claudes()[0]?.received ?? []).filter(
+      (received) => received.type === "user",
+    );
+    const file = join(
+      home,
+      ".claude/projects/-Users-me--buzz",
+      `${saved.sessionId}.jsonl`,
+    );
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: "user",
+        uuid: sent?.uuid,
+        timestamp: new Date(1000).toISOString(),
+        message: sent?.message,
+      }),
+    );
+    const transcript = await f.runtime.transcript(
+      saved,
+      "~/.buzz",
+      false,
+      new AbortController().signal,
+    );
+    expect(transcript?.turns).toHaveLength(1);
+    expect(
+      transcript?.turns[0]?.items.some((item) => item.type === "status"),
+    ).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 it("keeps an accepted Claude handoff past its deadline while compaction runs", async () => {
