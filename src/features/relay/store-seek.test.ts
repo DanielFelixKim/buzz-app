@@ -28,12 +28,14 @@ function harness({
   maxHistoryBytes,
   spacing = HOUR,
   prepared,
+  now,
 }: {
   count?: number;
   maxHistoryRows?: number;
   maxHistoryBytes?: number;
   spacing?: number;
   prepared?: boolean;
+  now?: number;
 } = {}) {
   const relay = keypair(),
     viewer = keypair(),
@@ -48,6 +50,8 @@ function harness({
     denied?: boolean;
     aux?: RelayEvent[];
     notices?: RelayEvent[];
+    retryEveryOther?: boolean;
+    retryTurn?: boolean;
   } = {};
   let live!: LiveCallbacks;
   const base = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -66,8 +70,15 @@ function harness({
                   event.id > (filter.before_id ?? "")),
             )
             .slice(0, filter.limit);
+        if (filter?.ids)
+          return history.filter((event) => filter.ids?.includes(event.id));
         if (!filter?.top_level) return [];
         reads.push(filter);
+        if (gate.retryEveryOther) {
+          gate.retryTurn = !gate.retryTurn;
+          if (gate.retryTurn)
+            throw new ReadError("unavailable", "Transient read", 503);
+        }
         await gate.hold;
         signal?.throwIfAborted();
         if (gate.denied) throw new ReadError("denied", "Access denied");
@@ -112,7 +123,7 @@ function harness({
       },
     },
     {
-      now: () => (T0 + count * HOUR) * 1000,
+      now: () => now ?? (T0 + count * HOUR) * 1000,
       ...(maxHistoryRows ? { maxHistoryRows } : {}),
       ...(maxHistoryBytes ? { maxHistoryBytes } : {}),
       ...(prepared ? { prepared } : {}),
@@ -751,7 +762,7 @@ it.each([false, true])(
     await vi.waitFor(() =>
       expect(h.owner.session.live?.snapshot().heads).toContainEqual({
         channelId: "c",
-        state: "deferred",
+        state: "verified",
       }),
     );
     expect(h.window().freshness).toBe("cached");
@@ -1001,4 +1012,325 @@ it("preserves adjacent newer rows when handing off a byte-heavy anchor", async (
       .filter((event) => !seen.has(event.id))
       .map((event) => event.content),
   ).toEqual([]);
+});
+
+it("keeps joining reactions accepted after their root leaves the live window", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 60 });
+  await h.open();
+  const target = h.history[80];
+  assert.exists(target);
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadOlder("c");
+  const reaction = signed(h.alice, {
+    kind: 7,
+    content: "+",
+    created_at: T0 + 101 * HOUR,
+    tags: [
+      ["h", "c"],
+      ["e", target.id],
+      ["p", target.pubkey],
+    ],
+  });
+  h.live.receive([reaction]);
+  const live = Array.from({ length: 81 }, (_, i) =>
+    message(h.alice, "c", `live${i}`, T0 + (100 + i) * HOUR),
+  );
+  h.history.push(...live);
+  h.live.receive(live);
+  expect(h.window().rows.some((row) => row.id === target.id)).toBe(false);
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const restored = h.window().rows.find((row) => row.id === target.id);
+  assert.exists(restored);
+  expect(restored.reactions).toHaveLength(1);
+});
+
+it("retains a forward boundary when buffered live rows do not fit the final page", async () => {
+  const h = setup({ count: 60, maxHistoryRows: 40 });
+  await h.open();
+  for (let page = 0; page < 2; page++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadNewer?.("c", h.window().rows[20]?.id);
+  const live = message(h.alice, "c", "buffered", T0 + 60 * HOUR);
+  h.live.receive([live]);
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  h.history.push(live);
+  for (let step = 0; h.window().hasNewer && step < 8; step++) {
+    h.channels.loadNewer?.("c");
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  }
+  expect(h.window().rows.map((row) => row.id)).toContain(live.id);
+});
+
+it("does not restore a joining root deleted after live eviction", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 60 });
+  await h.open();
+  const target = h.history[80];
+  assert.exists(target);
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadOlder("c");
+  h.live.receive(
+    Array.from({ length: 70 }, (_, i) =>
+      message(h.alice, "c", `evict${i}`, T0 + (100 + i) * HOUR, [
+        ["metadata", "x".repeat(150000)],
+      ]),
+    ),
+  );
+  expect(h.window().rows.some((row) => row.id === target.id)).toBe(false);
+  h.live.receive([
+    signed(h.alice, {
+      kind: 5,
+      content: "",
+      created_at: T0 + 801 * HOUR,
+      tags: [
+        ["h", "c"],
+        ["e", target.id],
+      ],
+    }),
+  ]);
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.find((row) => row.id === target.id)?.content).not.toBe(
+    target.content,
+  );
+});
+
+it("does not commit a rejected oversized older page's bounds", async () => {
+  const h = setup({ count: 60, maxHistoryBytes: 12000 });
+  await h.open();
+  const retained = h.window().rows.map((row) => row.id);
+  const oldest = Math.min(...h.times());
+  h.history.splice(
+    0,
+    h.history.findIndex((event) => event.created_at === oldest),
+  );
+  h.history.push(
+    message(h.alice, "c", `oversize${"x".repeat(20000)}`, oldest - 1),
+  );
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.map((row) => row.id)).toEqual(retained);
+  expect(h.window().hasNewer).toBeFalsy();
+});
+
+it("preserves joining continuity when live traffic evicts the newer tail", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 60 });
+  await h.open();
+  const anchor = h.history[99]?.id;
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadOlder("c", anchor);
+  const fresh = Array.from({ length: 61 }, (_, i) =>
+    message(h.alice, "c", `live${i}`, T0 + (100 + i) * HOUR),
+  );
+  h.history.push(...fresh);
+  h.live.receive(fresh);
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const seen = new Set(h.window().rows.map((row) => row.id));
+  for (let step = 0; h.window().hasNewer && step < 15; step++) {
+    h.channels.loadNewer?.("c");
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    for (const row of h.window().rows) seen.add(row.id);
+  }
+  expect(
+    fresh.filter((event) => !seen.has(event.id)).map((event) => event.content),
+  ).toEqual([]);
+});
+
+it("preserves contact-only deletion authority in the joining backup", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 60 });
+  const target = message(h.relay, "c", "relay contact", T0 + 80 * HOUR, [
+    ["actor", h.alice.pubkey],
+  ]);
+  h.history[80] = target;
+  await h.open();
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadOlder("c");
+  h.live.receive([
+    signed(h.alice, {
+      kind: 5,
+      content: "",
+      created_at: T0 + 101 * HOUR,
+      tags: [
+        ["h", "c"],
+        ["e", target.id],
+      ],
+    }),
+  ]);
+  expect(h.window().rows.find((row) => row.id === target.id)?.content).toBe(
+    target.content,
+  );
+  h.live.receive(
+    Array.from({ length: 81 }, (_, i) =>
+      message(h.alice, "c", `evict${i}`, T0 + (102 + i) * HOUR),
+    ),
+  );
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.find((row) => row.id === target.id)?.content).toBe(
+    target.content,
+  );
+});
+
+it("settles the live head separately from an unreachable sliding reader on reopen", async () => {
+  const h = setup({ count: 300, maxHistoryRows: 40 });
+  await h.open();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+      channelId: "c",
+      state: "verified",
+    }),
+  );
+  for (let page = 0; page < 10; page++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const retained = h.window().rows.map((row) => row.id);
+  const before = h.reads.length;
+  h.live.state({ status: "retrying", routes: [] });
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+      channelId: "c",
+      state: "verified",
+    }),
+  );
+  expect(h.reads.length - before).toBe(1);
+  expect(h.window().rows.map((row) => row.id)).toEqual(retained);
+  expect(h.window().freshness).toBe("cached");
+  h.channels.ensure("c");
+  await Promise.resolve();
+  expect(h.reads.length - before).toBe(1);
+});
+
+it("releases forward paging when another channel loses access", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  await h.open();
+  h.live.receive([roster(h.relay, "other", [h.viewer.pubkey], T0)]);
+  for (let page = 0; page < 2; page++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadNewer?.("c");
+  expect(h.window().loadingNewer).toBe(true);
+  h.live.receive([roster(h.relay, "other", [], T0 + 1)]);
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  h.channels.loadNewer?.("c");
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  expect(h.window().error).toBeUndefined();
+});
+
+it("keeps isolated exact reads from advancing the older cursor across unread history", async () => {
+  const h = setup({ count: 100, maxHistoryBytes: 12000 });
+  const isolated = message(h.alice, "c", `isolated${"x".repeat(5000)}`, T0);
+  h.history[0] = isolated;
+  await h.open();
+  const oldest = Math.min(...h.times());
+  await h.owner.session.read([{ ids: [isolated.id], limit: 1 }]);
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.reads.at(-1)?.until).toBe(oldest);
+  expect(
+    h.window().rows.some((row) => row.createdAt < oldest && row.createdAt > T0),
+  ).toBe(true);
+});
+
+it("counts actual transport retries inside the seek read allowance", async () => {
+  const h = setup({ count: 300, now: 8e15 });
+  await h.open();
+  const before = h.reads.length;
+  vi.useFakeTimers();
+  h.gate.retryEveryOther = true;
+  const seek = h.seek(0).catch((error) => error);
+  try {
+    await vi.runAllTimersAsync();
+    await seek;
+    expect(h.reads.length - before).toBeLessThanOrEqual(40);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("rejects an oversized forward row without replacing the committed window", async () => {
+  const h = setup({ count: 100, maxHistoryBytes: 12000 });
+  await h.open();
+  for (let page = 0; page < 3; page++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const retained = h.window().rows.map((row) => row.id);
+  const newest = Math.max(...h.times());
+  const index = h.history.findIndex(
+    (event) => event.created_at === newest + HOUR,
+  );
+  expect(index).toBeGreaterThanOrEqual(0);
+  h.history[index] = message(h.alice, "c", "x".repeat(20000), newest + HOUR);
+  h.channels.loadNewer?.("c");
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  expect(h.window().rows.map((row) => row.id)).toEqual(retained);
+  expect(h.window().errorDirection).toBe("newer");
+});
+
+it("cancels a joining snapshot whose accepted overlays exceed its byte allowance", async () => {
+  const h = setup({ count: 100, maxHistoryBytes: 12000 });
+  await h.open();
+  const target = h.window().rows[0];
+  assert.exists(target);
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadOlder("c");
+  const reaction = signed(h.alice, {
+    kind: 7,
+    content: "+",
+    created_at: T0 + 101 * HOUR,
+    tags: [
+      ["h", "c"],
+      ["e", target.id],
+      ["metadata", "x".repeat(12000)],
+    ],
+  });
+  try {
+    h.live.receive([reaction]);
+    expect(h.window().loadingOlder).toBe(false);
+    expect(h.window().errorDirection).toBe("older");
+  } finally {
+    release();
+    h.gate.hold = undefined;
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
 });

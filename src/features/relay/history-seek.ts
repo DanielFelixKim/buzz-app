@@ -82,20 +82,27 @@ export async function locate(
   let found: number | null | undefined;
   for (let span = DAY; found === undefined; span *= 2) {
     const ceiling = gallop && from + span < now ? from + span : null;
-    const outcome = classify(
-      await get(ceiling === null ? null : ceilingCursor(ceiling), false),
-      from,
+    const probe = await get(
+      ceiling === null ? null : ceilingCursor(ceiling),
+      false,
     );
+    const outcome = classify(probe, from);
     if (outcome === "fits") found = ceiling;
     else if (outcome === "overflow") {
-      hi = ceiling;
+      // A probe whose newest row is already in the boundary second needs
+      // keyset traversal, not timestamp bisection through an empty span.
+      hi =
+        probe.events.find((event) => WINDOW_KINDS.includes(event.kind))
+          ?.created_at === from
+          ? from + 1
+          : ceiling;
       break;
     } else if (ceiling === null) return { kind: "newest" };
     else lo = ceiling;
   }
   for (;;) {
     while (found === undefined) {
-      const top = hi ?? now + 1;
+      const top = hi ?? Math.max(now, from) + 1;
       // More than a page of rows share one second.
       if (top - lo <= 1) {
         if (!fromId) throw new SeekLimitError();

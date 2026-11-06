@@ -45,7 +45,13 @@ import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
-import { locate, SEEK_PAGE, type SeekRead } from "./history-seek";
+import {
+  locate,
+  SEEK_PAGE,
+  SEEK_READS,
+  SeekLimitError,
+  type SeekRead,
+} from "./history-seek";
 import type { WindowPage } from "./window";
 import { MatchRank, matchRank } from "../search/match";
 
@@ -544,6 +550,7 @@ export function createChannelStore(
     }
     const next = {
       ...state.snapshot,
+      ...("error" in patch ? { errorDirection: undefined } : {}),
       ...patch,
       rows,
       hasNewer: state.ceiling !== undefined || undefined,
@@ -1013,10 +1020,12 @@ export function createChannelStore(
       });
       // A settled catch-up aborts an older read that has already resolved.
       if (!live(state, generation) || controller.signal.aborted) return;
+      const interrupted = !!cursor && state.cursor !== cursor;
       const combined = new Map(
-        (cursor ? [...(joining?.values() ?? []), ...state.events] : []).map(
-          (event) => [event.id, event],
-        ),
+        (cursor
+          ? [...(joining?.values() ?? []), ...(interrupted ? [] : state.events)]
+          : []
+        ).map((event) => [event.id, event]),
       );
       for (const event of page.events) combined.set(event.id, event);
       const retained = cursor
@@ -1035,6 +1044,16 @@ export function createChannelStore(
           error: undefined,
         });
         return;
+      }
+      if (interrupted && state.ceiling === undefined) {
+        const boundary = retained
+          .filter((event) => channelRowKind(event.kind))
+          .sort(newestFirst)[0];
+        if (boundary) {
+          state.sliding = true;
+          state.ceiling = boundary.created_at;
+          state.ceilingId = boundary.id;
+        }
       }
       state.events = retained;
       state.atHead = !cursor;
@@ -1079,7 +1098,12 @@ export function createChannelStore(
       setWindow(
         state,
         cursor || state.snapshot.rows.length
-          ? { loadingOlder: false, error: describe(error), freshness: "cached" }
+          ? {
+              loadingOlder: false,
+              error: describe(error),
+              errorDirection: cursor ? "older" : undefined,
+              freshness: "cached",
+            }
           : {
               status: "error",
               rows: EMPTY_ROWS,
@@ -1104,20 +1128,20 @@ export function createChannelStore(
     }
   }
   /** Seek reads: window pages of `SEEK_PAGE` rows, bare for probes. */
-  const seekRead =
-    (channelId: string, signal: AbortSignal): SeekRead =>
-    async (cursor, full, limit = SEEK_PAGE) => {
+  const seekRead = (channelId: string, signal: AbortSignal): SeekRead => {
+    let reads = 0;
+    return async (cursor, full, limit = SEEK_PAGE) => {
       if (!transport) throw new Error("Relay is unavailable");
       const source = transport;
-      const events = await retryRead(
-        (attempt) =>
-          source.read([windowFilter(channelId, cursor, limit, full)], {
-            signal: attempt,
-          }),
-        signal,
-      );
+      const events = await retryRead((attempt) => {
+        if (++reads > SEEK_READS) throw new SeekLimitError();
+        return source.read([windowFilter(channelId, cursor, limit, full)], {
+          signal: attempt,
+        });
+      }, signal);
       return parseWindow(channelId, cursor, source.relayAuthor, events);
     };
+  };
   const nowSeconds = () => Math.floor(now() / 1000);
   /** Message rows, oldest first; the first at or after `from`, else the newest. */
   function landing(state: WindowState, from: number) {
@@ -1226,6 +1250,8 @@ export function createChannelStore(
       kept = slice(kept.length - Math.max(1, Math.ceil(kept.length / 4)));
       retained = retain(new Set(kept.map((event) => event.id)));
     }
+    // Rejected admission must leave the committed window and bounds intact.
+    if (listByteSize(retained) > maxHistoryBytes) return retained;
     const boundary = kept.at(-1);
     if (boundary && end === "newest") {
       state.floor = undefined;
@@ -3563,6 +3589,7 @@ export function createChannelStore(
       // Held rows answer when they reach below `from` and either hold a row
       // at or after it or end at the head.
       if (
+        state.snapshot.freshness !== "cached" &&
         (!state.snapshot.hasMore || rows.some((row) => row.createdAt < from)) &&
         (state.ceiling === undefined ||
           rows.some((row) => row.createdAt >= from))
@@ -3671,8 +3698,15 @@ export function createChannelStore(
             "newest",
             anchorId,
           );
+          if (listByteSize(trimmed) > maxHistoryBytes)
+            throw new Error("Message exceeds the history window budget");
           const retainedIds = new Set(trimmed.map((event) => event.id));
-          const clipped = advancing.some((event) => !retainedIds.has(event.id));
+          const clipped = [
+            ...advancing,
+            ...(head ? (state.above?.values() ?? []) : []),
+          ].some(
+            (event) => channelRowKind(event.kind) && !retainedIds.has(event.id),
+          );
           head &&= !clipped;
           const dropped = trimmed.length < merged.size;
           state.events = trimmed;
@@ -3704,7 +3738,11 @@ export function createChannelStore(
             denyChannel(channelId, error);
             return;
           }
-          setWindow(state, { loadingNewer: undefined, error: describe(error) });
+          setWindow(state, {
+            loadingNewer: undefined,
+            error: describe(error),
+            errorDirection: "newer",
+          });
         } finally {
           if (state.controller === controller) {
             state.controller = undefined;
@@ -3833,7 +3871,7 @@ export function createChannelStore(
     }
   });
   /** Verified traffic shares the same fold as reads and local intent. Window bounds remain read-owned. */
-  function accept(events: readonly RelayEvent[]) {
+  function accept(events: readonly RelayEvent[], paged = false) {
     if (disposed || !transport) return;
     const generation = epoch;
     const changedChannels = new Set(
@@ -3878,9 +3916,31 @@ export function createChannelStore(
           if (
             name === "e" &&
             target &&
-            deletionApplies(event, target, transport.relayAuthor)
+            deletionApplies(event, target, transport.archiveAuthority)
           )
             state.joining?.delete(id);
+        }
+      }
+      if (state.joining) {
+        const roots = new Set(
+          [...state.joining.values()]
+            .filter((event) => channelRowKind(event.kind))
+            .map((event) => event.id),
+        );
+        for (const event of relatedEvents(
+          [...state.joining.values(), ...events],
+          roots,
+        ))
+          state.joining.set(event.id, event);
+        if (listByteSize([...state.joining.values()]) > maxHistoryBytes) {
+          state.joining.clear();
+          state.joining = undefined;
+          state.controller?.abort();
+          setWindow(state, {
+            loadingOlder: false,
+            error: "History changed while loading. Try again.",
+            errorDirection: "older",
+          });
         }
       }
       const ids = new Set(state.events.map((event) => event.id));
@@ -3904,6 +3964,18 @@ export function createChannelStore(
                 (tag[0] === "h" && tag[1] === state.channelId) ||
                 (tag[0] === "e" && incomingIds.has(tag[1] ?? "")),
             )
+          )
+            continue;
+          // An isolated exact/search result below the paged range is not
+          // continuity evidence. Its ordinary page will admit it later.
+          if (
+            channelRowKind(event.kind) &&
+            !paged &&
+            !ids.has(event.id) &&
+            state.cursor &&
+            (event.created_at < state.cursor.createdAt ||
+              (event.created_at === state.cursor.createdAt &&
+                event.id > state.cursor.eventId))
           )
             continue;
           // Rows above a detached segment would show past its gap.
@@ -4056,6 +4128,8 @@ export function createChannelStore(
         state.generation++;
         state.controller?.abort();
         state.controller = undefined;
+        state.above = undefined;
+        state.joining = undefined;
         state.events = [];
         state.notices.clear();
         state.noticeCursor = undefined;
@@ -4063,6 +4137,8 @@ export function createChannelStore(
         setWindow(state, {
           rows: EMPTY_ROWS,
           loadingOlder: false,
+          loadingNewer: undefined,
+          refreshing: undefined,
           status: "idle",
         });
         continue;
@@ -4070,6 +4146,8 @@ export function createChannelStore(
       state.generation++;
       state.controller?.abort();
       state.controller = undefined;
+      state.above = undefined;
+      state.joining = undefined;
       state.events = visible([...state.events, ...state.traffic.values()]);
       state.notices = new Map(
         visible([...state.notices.values()]).map((event) => [event.id, event]),
@@ -4077,6 +4155,8 @@ export function createChannelStore(
       state.traffic.clear();
       setWindow(state, {
         loadingOlder: false,
+        loadingNewer: undefined,
+        refreshing: undefined,
         status: state.events.length ? "ready" : "idle",
       });
     }
@@ -4237,7 +4317,11 @@ export function createChannelStore(
             (event) => channelRowKind(event.kind) && kept.has(event.id),
           );
         contiguous = !kept.size || reached(page);
-        for (let pages = 0; !contiguous && page.cursor; pages++) {
+        for (
+          let pages = 0;
+          !retained.sliding && !contiguous && page.cursor;
+          pages++
+        ) {
           if (pages >= CATCH_UP_PAGES) {
             settle(page);
             break;
@@ -4250,7 +4334,7 @@ export function createChannelStore(
           ).page;
           if (!valid())
             throw new DOMException("Stale live catch-up", "AbortError");
-          accept(page.events);
+          accept(page.events, true);
           contiguous = reached(page);
         }
         if (!valid())
@@ -4269,7 +4353,9 @@ export function createChannelStore(
             streamDrops === dropsAtStart && complete ? "verified" : "cached",
           error: undefined,
         });
-        return complete;
+        // The live head is settled even when the independent historical
+        // segment remains cached. Reopening must not repeat an unreachable fill.
+        return true;
       } catch (error) {
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
@@ -4309,7 +4395,9 @@ export function createChannelStore(
     retainedEvent(id: string) {
       for (const state of windows.values()) {
         if (!authorized(state.channelId)) continue;
-        const event = state.events.find((candidate) => candidate.id === id);
+        const event =
+          state.events.find((candidate) => candidate.id === id) ??
+          state.joining?.get(id);
         if (event) return event;
       }
     },

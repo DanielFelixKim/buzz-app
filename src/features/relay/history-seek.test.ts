@@ -1,5 +1,5 @@
 import { ReadBudgetError, ReadError } from "./errors";
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import type { RelayEvent } from "./events";
 import {
   locate,
@@ -215,4 +215,38 @@ it("rechecks boundary coverage when auxiliary data shrinks the full read", async
   };
   const located = await locate(read, T0, T0 + 150, false);
   expect(rowsOf(located)).toContain(T0);
+});
+
+it("keeps future-dated dense-second rows above the sliding boundary", async () => {
+  const { rows, read } = relay(Array.from({ length: 450 }, () => T0 + 60));
+  const boundary = rows[350];
+  assert.exists(boundary);
+  const located = await locate(
+    read,
+    boundary.created_at,
+    T0,
+    true,
+    boundary.id,
+  );
+  expect(located.kind).toBe("segment");
+  if (located.kind !== "segment") return;
+  expect(located.page.events.some((event) => event.id === boundary.id)).toBe(
+    true,
+  );
+  expect(
+    located.ceiling === null || located.ceiling >= boundary.created_at,
+  ).toBe(true);
+});
+
+it("reaches a retained segment in a ten-thousand-row second within the existing budget", async () => {
+  const { rows, read, calls } = relay(Array.from({ length: 10000 }, () => T0));
+  const boundary = rows[7600];
+  assert.exists(boundary);
+  const located = await locate(read, T0, T0 + DAY * 30, true, boundary.id);
+  expect(located.kind).toBe("segment");
+  if (located.kind !== "segment") return;
+  expect(located.page.events.some((event) => event.id === boundary.id)).toBe(
+    true,
+  );
+  expect(calls.length).toBeLessThanOrEqual(SEEK_READS);
 });

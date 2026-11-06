@@ -209,6 +209,7 @@ export type ChannelWindow = Readonly<{
   /** Cached rows are immediately readable, but not claimed fresh until revalidated. */
   freshness?: "cached" | "verified";
   historyLimited?: boolean;
+  errorDirection?: "older" | "newer" | undefined;
   /** A head read is in flight for these rows; older pages wait for it. */
   refreshing?: boolean | undefined;
   /** Detached: the rows are a seek segment and newer history is not loaded. */
