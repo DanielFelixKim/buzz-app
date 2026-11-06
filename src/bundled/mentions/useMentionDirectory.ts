@@ -75,9 +75,12 @@ const derive = (session: ComposerSession, page: Page, query: string): Page => ({
   people: page.people.filter((person) => {
     const verified = verifiedName(session.profiles, person.pubkey);
     if (person.nameIsFallback && !verified) return true;
-    return [person.name, verified?.displayName, verified?.fullName].some(
-      (name) => name !== undefined && matchPerson(name, query),
-    );
+    return [
+      person.name,
+      verified?.displayName,
+      verified?.username,
+      verified?.fullName,
+    ].some((name) => name !== undefined && matchPerson(name, query));
   }),
   more: false,
 });

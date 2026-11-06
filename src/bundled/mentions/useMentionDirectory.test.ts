@@ -86,3 +86,27 @@ it.each([
     expect(people.mock.calls.map(([query]) => query)).toEqual(["ga", "gabi"]);
   },
 );
+
+it("keeps a named person with no profile when a refined query matches their verified username", async () => {
+  const other = { pubkey: "b".repeat(64), name: "Britt" };
+  const people = vi.fn(async () => ({
+    people: [unprofiled, other],
+    hasMore: false,
+  }));
+  // Their verified name is already known.
+  const shared = new Map([
+    [
+      unprofiled.pubkey,
+      { verified: { displayName: "Brittney G", username: "brittneyg" } },
+    ],
+  ]);
+  const session = {
+    directMessages: { people },
+    profiles: { snapshot: () => shared },
+  } as unknown as ComposerSession;
+  const signal = new AbortController().signal;
+  await fetchMentionDirectoryPage(session, "brit", signal);
+  const refined = await fetchMentionDirectoryPage(session, "brittneyg", signal);
+  expect(people).toHaveBeenCalledOnce();
+  expect(refined.people).toEqual([unprofiled]);
+});

@@ -3598,7 +3598,12 @@ it.each([
   },
 );
 type DirectoryPage = {
-  people: { pubkey: string; name: string; isAgent?: true }[];
+  people: {
+    pubkey: string;
+    name: string;
+    isAgent?: true;
+    nameIsFallback?: true;
+  }[];
   hasMore: boolean;
 };
 /** Other members map to a profile name, or null for a profile still loading. */
@@ -4190,6 +4195,56 @@ it("the resolver reads a page the chooser already settled from the shared cache"
     h.dispose();
   }
 });
+it.each([
+  ["selects them by it", true],
+  ["returns to prose while it is unknown", false],
+])(
+  "the resolver reads the verified name of a person found by it alone, and %s",
+  async (_case, answers) => {
+    const h = spaceFixture("Member");
+    try {
+      const verified = vi.fn(async (pubkeys: readonly string[]) => ({
+        authority: { pubkey: "8".repeat(64), multipleIssuers: false },
+        profiles: new Map(
+          answers
+            ? pubkeys.map((pubkey) => [
+                pubkey,
+                {
+                  displayName: "Jose",
+                  username: "jose",
+                  issuerLabel: "Example",
+                  verifiedAt: 1,
+                  status: "checked" as const,
+                  multipleIssuers: false,
+                },
+              ])
+            : [],
+        ),
+      }));
+      Object.assign(h.session.directMessages, { verified });
+      await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+      // Space is pressed before the chooser names the row.
+      const pending = resolver(h);
+      await h.finish({
+        people: [
+          {
+            pubkey: outsideJose,
+            name: outsideJose.slice(0, 10),
+            nameIsFallback: true,
+          },
+        ],
+        hasMore: false,
+      });
+      const outcome = await pending;
+      expect(verified).toHaveBeenCalledWith([outsideJose], expect.anything());
+      if (answers)
+        expect(outcome).toMatchObject({ pubkey: outsideJose, name: "Jose" });
+      else expect(outcome).toBeNull();
+    } finally {
+      h.dispose();
+    }
+  },
+);
 it("the resolver reads a longer name's page out of the complete page for its prefix without another read", async () => {
   const h = spaceFixture("Member");
   try {
