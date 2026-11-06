@@ -822,6 +822,11 @@ confirmation.
   On macOS and Linux, watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.
+- **Shared compute** is off by default; enable it in Settings → Plugins, then
+  turn on sharing separately. **Mesh agents**, when it is enabled, use saved Interest
+  instructions for watched turns in both Chat and Agent mode. Watched messages
+  are context for that Interest; later direct requests do not inherit it. Mesh
+  agents respond only to their owner.
 - **Solo workers**: where a plugin offers it, an owner can authorize one agent to
   start, message, read, stop, and archive the owner's workers in Solo chats. The
   agent asks the owner's Buzz in a private channel with only the two of them;

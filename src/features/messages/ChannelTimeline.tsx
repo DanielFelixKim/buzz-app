@@ -1499,11 +1499,13 @@ function Timeline({
       ) {
         intent.current++;
         restoredAnchor.current = undefined;
-        recordPosition(element);
+        // scrollend can precede this frame; do not restart its finished gesture.
+        recordPosition(element, !upwardGesture.current);
         return;
       }
       const row = rows[restoreIndex];
       if (anchor && row) {
+        const wasRestoring = !!restoredAnchor.current;
         pendingRestore.current = undefined;
         restoredAnchor.current = {
           id: containedOwners.has(anchor.id) ? anchor.id : row.id,
@@ -1531,6 +1533,11 @@ function Timeline({
           offset: innerOffset - anchor.y,
         });
         follow.current = false;
+        // After reader input, an already-placed anchor emits no scroll event.
+        // A resize can queue it after scrollend; sample to resume near-bottom follow.
+        // Existing anchors may belong to a held reply preview; keep that hold.
+        if (element && userScrolled.current && !wasRestoring)
+          recordPosition(element, true);
       } else if (follow.current) {
         layoutCorrection.current = true;
         const index = revealIndex >= 0 ? revealIndex : rows.length - 1;
