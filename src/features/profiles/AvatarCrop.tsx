@@ -33,7 +33,11 @@ export function useAvatarPan(
     handlers: {
       onPointerDown(event: PointerEvent<HTMLElement>) {
         if (disabled || event.button) return;
-        if (event.pointerType === "mouse") event.preventDefault();
+        // Keep a drag from selecting text, but still take focus for the arrows.
+        if (event.pointerType === "mouse") {
+          event.preventDefault();
+          event.currentTarget.focus();
+        }
         event.currentTarget.setPointerCapture(event.pointerId);
         drag.current = { x: event.clientX, y: event.clientY, crop };
       },
