@@ -21,7 +21,8 @@ export type DraftEntry = Entry & {
   placeholder?: true;
   /** The people the draft's text mentions. */
   mentions?: readonly string[];
-  /** The text as Markdown, with the editor's formatting, as sending publishes it. */
+  /** The typed text as Markdown with the editor's formatting, as sending
+   * publishes it. Staged chat cards and GIFs are left out. */
   markdown?: string;
   signature: string;
 };
