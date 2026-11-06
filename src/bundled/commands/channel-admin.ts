@@ -106,6 +106,10 @@ function refuseUnavailableAgents(
 /** `/rename`, `/archive`, `/mute` and `/dm` over the services the channel and
  * new-message UI already use. Each failure throws, so the draft stays. */
 export function channelAdminCommands(navigation: Navigation): SlashCommand[] {
+  /** A /dm message whose run was abandoned before its delivery settled, by the
+   * draft that queued it: running that draft again confirms the same message
+   * instead of sending it twice. */
+  const abandoned = new Map<string, string>();
   return [
     {
       id: "rename",
@@ -225,11 +229,18 @@ export function channelAdminCommands(navigation: Navigation): SlashCommand[] {
           const names = listNames(people.map(({ name }) => name));
           if (!directMessages.delivered)
             throw new Error("This connection cannot start direct messages.");
-          const sent = await session.messages.send(channelId, message, []);
+          const draft = JSON.stringify([scope, keys, message]);
+          const profiles = session.profiles.snapshot();
+          const agents = keys.filter((key) => profiles.get(key)?.isAgent);
+          const sent =
+            abandoned.get(draft) ??
+            (await session.messages.send(channelId, message, agents));
+          abandoned.set(draft, sent);
           try {
             await directMessages.delivered(sent, channelId, signal);
           } catch (reason) {
             signal.throwIfAborted();
+            abandoned.delete(draft);
             const proven = directMessages.delivery?.(sent) === "failed";
             let kept: unknown;
             if (proven && session.outbox?.dismiss)
@@ -245,6 +256,8 @@ export function channelAdminCommands(navigation: Navigation): SlashCommand[] {
                   : `Couldn't send your message to ${names} (${why(reason)}).`,
             );
           }
+          signal.throwIfAborted();
+          abandoned.delete(draft);
         }
         return {
           done: true,

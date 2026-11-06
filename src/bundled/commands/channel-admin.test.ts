@@ -531,6 +531,25 @@ describe("/dm", () => {
     expect(w.navigation.open).toHaveBeenCalledExactlyOnceWith(target);
   });
 
+  it("tags the agents it messages, so an agent in a group DM is addressed", async () => {
+    const w = world();
+    Object.assign(w.session, {
+      agentChoices: {
+        snapshot: () => ({
+          identities: [{ pubkey: robot.pubkey, managed: true }],
+        }),
+      },
+    });
+    await commandsFor(w).run("dm", "@Alice @Robot do this", [alice, robot]);
+    expect(w.directMessages.open).toHaveBeenCalledExactlyOnceWith(
+      [alice.pubkey, robot.pubkey],
+      expect.any(AbortSignal),
+    );
+    expect(w.send).toHaveBeenCalledExactlyOnceWith(dmId, "do this", [
+      robot.pubkey,
+    ]);
+  });
+
   it("reads the leading mentions against the draft's own, not by name", async () => {
     const w = world();
     const ann = { pubkey: "d".repeat(64), name: "Ann" };
@@ -713,6 +732,30 @@ describe("/dm", () => {
     );
     expect(w.dismiss).not.toHaveBeenCalled();
     expect(w.navigation.open).not.toHaveBeenCalled();
+  });
+
+  it("confirms the message an abandoned run queued when the same draft runs again, instead of sending it twice", async () => {
+    const w = world();
+    const commands = commandsFor(w);
+    const abandon = new AbortController();
+    w.directMessages.delivered.mockImplementationOnce(async () => {
+      abandon.abort();
+      throw new DOMException("Aborted", "AbortError");
+    });
+    await expect(
+      commands.run("dm", "@Alice hi", [alice], { signal: abandon.signal }),
+    ).rejects.toThrow();
+    expect(w.send).toHaveBeenCalledOnce();
+    const result = await commands.run("dm", "@Alice hi", [alice]);
+    expect(w.send).toHaveBeenCalledOnce();
+    expect(w.directMessages.delivered).toHaveBeenLastCalledWith(
+      "event-1",
+      dmId,
+      expect.any(AbortSignal),
+    );
+    expect(result).toMatchObject({ done: true });
+    await commands.run("dm", "@Alice hi", [alice]);
+    expect(w.send).toHaveBeenCalledTimes(2);
   });
 
   it("stops without reporting once the send is abandoned", async () => {
