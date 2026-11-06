@@ -3697,6 +3697,8 @@ export function createChannelStore(
           if (state.controller === controller) {
             state.controller = undefined;
             state.above = undefined;
+            if (live(state, generation))
+              setWindow(state, { loadingNewer: undefined });
           }
         }
       })();
