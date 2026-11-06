@@ -210,9 +210,13 @@ cards use the existing relay protocol; no server changes are part of this slice.
   `buzz-audio-client` crate from `block/buzz` supplies the shared audio handshake,
   v2 wire format, Opus sender, and per-peer jitter buffer; it does not pull in the
   v0 desktop app or speech models. Receivers drain 10 ms frames and reset on peer
-  removal/reassignment. Signing stays in the existing IdentityHost. Commands are
-  available only to the main
-  application webview.
+  removal/reassignment. Frames from multiple devices belonging to the same
+  pubkey are mixed once per tick and clipped after summing. Socket writes go
+  through their own queue (five messages, newest dropped when full), so a stalled
+  send never blocks receive or playout. Microphone PCM uses a serial sender: at
+  most four waiting 20 ms frames plus one in flight, oldest waiting frame dropped
+  on overflow; mute discards waiting frames. Signing stays in the existing
+  IdentityHost. Commands are available only to the main application webview.
 
 This is a client-only implementation. It uses the existing private ephemeral
 channel creation event (9007, TTL 3600), parent announcement (48100), authenticated

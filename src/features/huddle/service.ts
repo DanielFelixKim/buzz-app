@@ -1,3 +1,4 @@
+import { createPcmSender } from "./sender";
 import type { ChannelSummary } from "../relay/contracts";
 import type { AudioSettingsState } from "./audio-settings";
 import { createHuddleRequests } from "./requests";
@@ -29,7 +30,7 @@ type Attempt = {
   heartbeat?: ReturnType<typeof setInterval>;
   stopAccess?: () => void;
   stopAudioSettings?: () => void;
-  sending: boolean;
+  sender: ReturnType<typeof createPcmSender>;
 };
 const idle: HuddleSnapshot = { phase: "idle", muted: false, participants: [] };
 const message = (error: unknown) =>
@@ -249,11 +250,19 @@ export function createHuddles(
       snapshot.destination.channelId === destination.channelId
         ? snapshot
         : undefined;
+    const id = crypto.randomUUID();
+    const abort = new AbortController();
     const attempt: Attempt = {
-      id: crypto.randomUUID(),
+      id,
       connection,
-      abort: new AbortController(),
-      sending: false,
+      abort,
+      sender: createPcmSender(
+        (samples) => bridge.send(id, samples),
+        abort.signal,
+        (error) => {
+          if (valid(attempt)) void leave(message(error));
+        },
+      ),
     };
     current = attempt;
     attempt.stopAccess = connection.session.channels.subscribeList(() => {
@@ -338,20 +347,11 @@ export function createHuddles(
           if (
             !valid(attempt) ||
             snapshot.phase !== "connected" ||
-            snapshot.muted ||
-            attempt.sending
+            snapshot.muted
           )
             return;
           activity(destination.viewer, samples);
-          attempt.sending = true;
-          void bridge
-            .send(attempt.id, samples)
-            .catch((error) => {
-              if (valid(attempt)) void leave(message(error));
-            })
-            .finally(() => {
-              attempt.sending = false;
-            });
+          void attempt.sender.send(samples);
         },
         () => {
           if (valid(attempt))
@@ -429,6 +429,7 @@ export function createHuddles(
     mute() {
       if (!current || snapshot.phase !== "connected") return;
       const muted = !snapshot.muted;
+      if (muted) current.sender.clear();
       current.audio?.mute(muted);
       if (muted && snapshot.destination)
         speakers.delete(snapshot.destination.viewer);
