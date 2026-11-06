@@ -1733,3 +1733,43 @@ it("revalidates a missing exact target within a retained boundary second", async
   );
   expect(h.window().rows.some((row) => row.id === target.id)).toBe(true);
 });
+
+it("keeps a cursor-second live root through eviction during an older read", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 41 });
+  const pair = [
+    message(h.alice, "c", "boundary", T0 + 60 * HOUR),
+    message(h.alice, "c", "boundary live", T0 + 60 * HOUR),
+  ].sort(newestFirst);
+  const boundary = pair[0],
+    root = pair[1];
+  assert.exists(boundary);
+  assert.exists(root);
+  h.history[60] = boundary;
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  const before = h.reads.length;
+  h.channels.loadOlder("c");
+  try {
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+    // This arrival is absent from the pending response's relay snapshot.
+    h.live.receive([root], { channelId: "c", phase: "live" });
+    expect(h.window().rows.some((row) => row.id === root.id)).toBe(true);
+    const traffic = Array.from({ length: 41 }, (_, i) =>
+      message(h.alice, "c", `new live ${i}`, T0 + (100 + i) * HOUR),
+    );
+    h.history.push(...traffic);
+    h.live.receive(traffic, { channelId: "c", phase: "live" });
+    expect(h.window().rows.some((row) => row.id === root.id)).toBe(false);
+  } finally {
+    release();
+    h.gate.hold = undefined;
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    h.history.push(root);
+  }
+  expect(h.window().rows.some((row) => row.id === root.id)).toBe(true);
+});
