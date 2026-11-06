@@ -38,4 +38,7 @@ it("keeps the source when its Markdown renders no prose, so the line is never bl
   expect(activityPreviewText("[1]: https://example.com")).toBe(
     "[1]: https://example.com",
   );
+  expect(activityPreviewText("<!-- buzz:marker -->\n\nReal text here")).toBe(
+    "<!-- buzz:marker -->…",
+  );
 });
