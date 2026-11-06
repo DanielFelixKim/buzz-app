@@ -253,6 +253,7 @@ function community() {
         subscribeList: () => () => {},
       },
       media: (url: string) => url,
+      profiles: { snapshot: () => new Map() },
     } as unknown as RelaySession,
     heads,
     outbox,
