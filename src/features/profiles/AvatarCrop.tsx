@@ -73,6 +73,7 @@ export function AvatarCropFrame({
   disabled,
   imageRef,
   onChange,
+  onError,
 }: {
   src: string;
   shape: "circle" | "squircle";
@@ -80,6 +81,7 @@ export function AvatarCropFrame({
   disabled?: boolean;
   imageRef?: Ref<HTMLImageElement>;
   onChange?(crop: AvatarCrop): void;
+  onError?(): void;
 }) {
   const [aspect, setAspect] = useState(1);
   const box = avatarCropBox(aspect, crop);
@@ -95,6 +97,7 @@ export function AvatarCropFrame({
         src={src}
         alt="Avatar preview"
         draggable={false}
+        onError={onError}
         onLoad={(event) => {
           const image = event.currentTarget;
           setAspect(image.naturalWidth / image.naturalHeight || 1);

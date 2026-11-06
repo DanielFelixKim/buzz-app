@@ -37,7 +37,9 @@ export function RemoteAgentIntroduction({
     () => endings[Math.floor(Math.random() * endings.length)] ?? endings[0],
   );
   // The picture is still the original upload; the crop is painted on save.
-  const crop = avatar.kind === "image" ? avatar.crop : undefined;
+  // If it fails to load, the portrait's own fallback and retries take over.
+  const [unframed, setUnframed] = useState(false);
+  const crop = avatar.kind === "image" && !unframed ? avatar.crop : undefined;
   const framed = useAvatarPreview(
     crop && avatar.kind === "image" ? avatar.picture : "",
     community,
@@ -169,7 +171,12 @@ export function RemoteAgentIntroduction({
             />
           </div>
         ) : crop && framed ? (
-          <AvatarCropFrame src={framed} shape="squircle" crop={crop} />
+          <AvatarCropFrame
+            src={framed}
+            shape="squircle"
+            crop={crop}
+            onError={() => setUnframed(true)}
+          />
         ) : (
           <AgentPortrait
             agent={{ name, picture: avatar.picture }}
