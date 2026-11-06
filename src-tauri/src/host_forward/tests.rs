@@ -1435,6 +1435,13 @@ fn pending(forward: &HostForward) -> usize {
     let registry = forward.registry();
     registry.generations.values().map(|g| g.pending.len()).sum()
 }
+/// Ready, with a deadline no test reaches, so a parked request stays parked
+/// until the test releases it.
+fn patient(origin: &str) -> HostForward {
+    let mut forward = ready(origin);
+    forward.rendezvous = Duration::from_secs(3600);
+    forward
+}
 /// Waits until `count` requests are parked: an observed state, not a delay.
 async fn parked(forward: &HostForward, count: usize) {
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -1476,7 +1483,7 @@ async fn a_registered_child_is_admitted_under_its_own_session() {
 #[tokio::test]
 async fn a_request_first_child_waits_dispatching_nothing_until_registered() {
     let mut gateway = fake_gateway().await;
-    let forward = ready(gateway.origin);
+    let forward = patient(gateway.origin);
     let generation = goose(&forward);
     let early = send(invoke(&generation.url, CHILD));
     parked(&forward, 1).await;
@@ -1500,10 +1507,10 @@ async fn an_unregistered_child_is_refused_at_the_deadline() {
     let mut forward = ready(gateway.origin);
     forward.rendezvous = Duration::from_millis(300);
     let mut generation = goose(&forward);
+    // Only the outcome is asserted, never the brief parked state; the
+    // request-first test proves parking.
     let started = std::time::Instant::now();
-    let early = send(invoke(&generation.url, CHILD));
-    parked(&forward, 1).await;
-    let response = early.await.unwrap();
+    let response = invoke(&generation.url, CHILD).send().await.unwrap();
     assert!(started.elapsed() >= forward.rendezvous);
     assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
     assert!(response
@@ -1532,7 +1539,7 @@ async fn an_unregistered_child_is_refused_at_the_deadline() {
 #[tokio::test]
 async fn parked_requests_are_capped_and_free_only_their_own_slot() {
     let gateway = fake_gateway().await;
-    let forward = ready(gateway.origin);
+    let forward = patient(gateway.origin);
     let mut generation = goose(&forward);
     let waiting: Vec<_> = (0..PENDING_CAP)
         .map(|n| send(invoke(&generation.url, &format!("child-{n}"))))
@@ -1562,9 +1569,33 @@ async fn parked_requests_are_capped_and_free_only_their_own_slot() {
 }
 
 #[tokio::test]
+async fn a_cancelled_request_leaves_its_same_child_sibling_parked() {
+    let mut gateway = fake_gateway().await;
+    let forward = patient(gateway.origin);
+    let generation = goose(&forward);
+    let cancelled = send(invoke(&generation.url, CHILD));
+    parked(&forward, 1).await;
+    let survivor = send(invoke(&generation.url, CHILD));
+    parked(&forward, 2).await;
+    cancelled.abort();
+    parked(&forward, 1).await;
+    assert_eq!(
+        register(&forward, generation.id, "call-1", CHILD),
+        Registered::Registered
+    );
+    assert_eq!(survivor.await.unwrap().status(), StatusCode::OK);
+    assert_eq!(
+        recv(&mut gateway.seen).await.headers["agent-session-id"],
+        CHILD
+    );
+    assert_eq!(pending(&forward), 0);
+    assert!(gateway.seen.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn seal_revocation_and_close_release_every_parked_request() {
     let gateway = fake_gateway().await;
-    let forward = ready(gateway.origin);
+    let forward = patient(gateway.origin);
     let generation = goose(&forward);
     let early = send(invoke(&generation.url, CHILD));
     parked(&forward, 1).await;
