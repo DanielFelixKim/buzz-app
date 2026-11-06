@@ -75,12 +75,12 @@ it("never reads sent-message editing text and reports disagreeing live editors",
     editing();
   }
 });
-it.each([
-  ["x:thread:" + thread, undefined],
+it.each<[string, string | undefined]>([
+  [`x:thread:${thread}`, undefined],
   ["channel", "bad"],
   ["channel", ""],
 ])("rejects malformed coordinates %s %s", (channel, root) => {
-  expect(() => readOwnerDraft(scope, channel!, root)).toThrow("Invalid draft");
+  expect(() => readOwnerDraft(scope, channel, root)).toThrow("Invalid draft");
 });
 it("reports storage failure and corrupt saved drafts separately from absence", () => {
   const fail = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {

@@ -15497,9 +15497,11 @@ it("lets an external agent tool read live composer text without sending, focus c
       memories: async () => ({ entries: [], partial: false }),
     },
   );
+  if (!tool) throw new Error("Draft plugin did not register its tool");
+  const tools = [tool];
   const field = screen.getByRole("textbox");
   const read = () =>
-    callSessionTool(client, {}, "draft_get", { channel: "channel" }, [tool!]);
+    callSessionTool(client, {}, "draft_get", { channel: "channel" }, tools);
   const writes = vi
     .spyOn(Storage.prototype, "setItem")
     .mockImplementation(() => {
@@ -15531,9 +15533,24 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
     const { tmpdir, homedir } = await import("node:os");
     const { join } = await import("node:path");
     const { CodexRuntime } = await import("../../bundled/codex/runtime");
-    const h = mount();
+    const edit = !!process.env.BUZZ_DRAFT_LIVE_EDIT;
+    const h = edit ? archiveToastFixture() : mount();
+    const draftScope = edit ? "archive-toast" : "scope";
     const prose = `Unsent fixture draft ${crypto.randomUUID()}`;
+    if (edit) {
+      h.fill("Previously saved fixture draft");
+      const writes = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(() => {
+          throw Error("Disk full");
+        });
+      onTestFinished(() => writes.mockRestore());
+    }
     h.fill(prose);
+    if ("edit" in h) {
+      h.edit();
+      h.fill("Private sent-message edit");
+    }
     let draftTool: AddedTool | undefined;
     draftPlugin.apply({
       agents: {
@@ -15542,12 +15559,14 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
         },
       },
     });
+    if (!draftTool) throw new Error("Draft plugin did not register its tool");
+    const registered = draftTool;
     let reads = 0;
     const tool: AddedTool = {
-      ...draftTool!,
+      ...registered,
       call: async (...args) => {
         reads++;
-        return draftTool!.call(...args);
+        return registered.call(...args);
       },
     };
     const cwd = await mkdtemp(join(tmpdir(), "buzz-draft-codex-"));
@@ -15556,10 +15575,13 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
     const owner = "a".repeat(64),
       pubkey = "b".repeat(64);
     const storage = new Map<string, string>();
+    const binary = process.env.BUZZ_DRAFT_LIVE_CODEX;
+    if (!binary)
+      throw new Error("Set BUZZ_DRAFT_LIVE_CODEX to the Codex executable");
     const runtime = new CodexRuntime(
       async (_id, options = {}) => {
         const child = spawn(
-          process.env.BUZZ_DRAFT_LIVE_CODEX!,
+          binary,
           [
             "app-server",
             ...(options.args ?? []),
@@ -15604,7 +15626,7 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
         };
       },
       () => ({
-        connection: h.session,
+        connection: h,
         scope: "scope",
         channel: async () => ({
           name: "Draft test",
@@ -15667,7 +15689,7 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
           name: "Draft reader",
           relay: "wss://fixture.test",
           readDraft: (channel: string, thread?: string) =>
-            readOwnerDraft("scope", channel, thread),
+            readOwnerDraft(draftScope, channel, thread),
           query: async () => [],
           publish: async (event: Parameters<AgentHandle["publish"]>[0]) => {
             published.push(event);
@@ -15698,8 +15720,10 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
       });
       expect(reads).toBeGreaterThan(0);
       expect(published[0]?.content).toContain(prose);
-      expect(screen.getByRole("textbox")).toHaveValue(prose);
-      expect(h.onSend).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox")).toHaveValue(
+        edit ? "Private sent-message edit" : prose,
+      );
+      if ("onSend" in h) expect(h.onSend).not.toHaveBeenCalled();
       console.log(
         "PASS real Codex read unique live draft via external draft_get and left composer unchanged",
       );
@@ -15710,3 +15734,23 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
     }
   },
 );
+
+it("reads the preserved unsent draft while editing a sent message after storage fails", () => {
+  const h = archiveToastFixture();
+  h.fill("Previously saved draft");
+  const writes = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw Error("Disk full");
+    });
+  onTestFinished(() => writes.mockRestore());
+  h.fill("Newest unsaved original draft");
+  h.edit();
+  h.fill("Private sent-message edit");
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(readOwnerDraft("archive-toast", "channel")).toMatchObject({
+    text: "Newest unsaved original draft",
+    source: "composer",
+  });
+  expect(h.input()).toHaveValue("Private sent-message edit");
+});
