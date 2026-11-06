@@ -295,6 +295,20 @@ describe("ClaudeForwarding.open", () => {
     ]);
   });
 
+  it("still fails with the cancellation when native could not close what opened after it", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    vi.mocked(h.native.open).mockImplementationOnce(async () => {
+      controller.abort(new Error("cancelled"));
+      return { type: "opened", id: 1, url: "http://127.0.0.1:9/h1" };
+    });
+    vi.mocked(h.native.close).mockRejectedValueOnce(new Error("gone"));
+    await expect(
+      h.forwarding.open(AGENT, eligible(2), turn, controller.signal),
+    ).rejects.toThrow("cancelled");
+    expect(h.native.close).toHaveBeenCalledOnce();
+  });
+
   it("fails before dispatch when native forwarding can't be reached", async () => {
     for (const method of ["push", "open"] as const) {
       const h = harness();
@@ -1221,6 +1235,25 @@ describe("forwarded turns in a conversation", () => {
     expect(opened).toEqual([["new-1", undefined]]);
     expect(log).toEqual(["open g1", "seal g1", "close g1", "closed g1"]);
     expect(all.size).toBe(0);
+  });
+
+  it("ends a one-off turn as it did when native could not close its generation", async () => {
+    const { sessions, log, claudes } = pool();
+    const refused = Promise.reject(new Error("gone"));
+    refused.catch(() => undefined);
+    const done = sessions.runOnce(
+      "watch",
+      () => "wake",
+      undefined,
+      async () => ({
+        generation: generation("refused", log, refused),
+        binding,
+      }),
+    );
+    await flush();
+    nth(claudes()).finish();
+    expect(await done).toEqual({ ok: true });
+    expect(log).toEqual(["seal refused", "close refused"]);
   });
 
   it("ends a one-off turn's process when the route revokes its generation", async () => {
