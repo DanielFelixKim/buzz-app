@@ -1457,6 +1457,18 @@ export class CodexRuntime {
           rpc,
           instructions,
         );
+        // A resumed thread keeps its first developer message, not resume's.
+        if (!loaded.fresh)
+          await rpc.request("thread/inject_items", {
+            threadId: loaded.threadId,
+            items: [
+              {
+                type: "message",
+                role: "developer",
+                content: [{ type: "input_text", text: instructions }],
+              },
+            ],
+          });
         signal.throwIfAborted();
         lane.voice = { loaded, signal };
         const threadId = loaded.threadId;

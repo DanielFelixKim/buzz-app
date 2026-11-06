@@ -5845,7 +5845,52 @@ describe("voice seats", () => {
     expect(vi.mocked(openVoice).mock.calls.at(-1)?.[5]).toContain(
       "Resolved voice crew",
     );
+    // A fresh thread already has the context as its developer message.
+    expect(f.sent.some((wire) => wire.method === "thread/inject_items")).toBe(
+      false,
+    );
     await f.connection.close();
+  });
+  it("gives a resumed room thread the seat's current context", async () => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    f.huddleChannels.add("channel");
+    await f.runtime.run(f.delivery("@Codex typed first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.complete(0, "DONE");
+    f.core.mockResolvedValueOnce("NEW CORE");
+    const d = f.delivery("unused");
+    const connection = await f.runtime.voice(
+      {
+        config: d.config,
+        agent: { ...d.agent, config: d.config } as unknown as Agent,
+        conversation: { channelId: "channel" },
+        signal: new AbortController().signal,
+        async output() {},
+        async transcript() {},
+        ended() {},
+      },
+      d.agent,
+    );
+    const methods = f.sent.map((wire) => wire.method);
+    const injected = methods.indexOf("thread/inject_items");
+    expect(injected).toBeGreaterThan(methods.lastIndexOf("thread/resume"));
+    // Codex keeps a resumed thread's first developer message, so the
+    // seat's context reaches the model only as an injected item.
+    expect(f.sent[injected]?.params).toMatchObject({
+      threadId: "thread-1",
+      items: [
+        {
+          type: "message",
+          role: "developer",
+          content: [
+            { type: "input_text", text: expect.stringContaining("NEW CORE") },
+          ],
+        },
+      ],
+    });
+    expect(vi.mocked(openVoice).mock.calls.at(-1)?.[5]).toContain("NEW CORE");
+    await connection.close();
   });
   it("preserves the mention path's synced-effort refusal", async () => {
     await expect(
