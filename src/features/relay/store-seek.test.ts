@@ -1502,3 +1502,53 @@ it("purges a cached channel when exact-target seek revalidation is denied", asyn
     false,
   );
 });
+
+it("restarts a pending forward seek from a ceiling retreated by live byte eviction", async () => {
+  const h = setup({ count: 500, maxHistoryRows: 300 });
+  await h.open();
+  for (let step = 0; step < 15; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  expect(h.window().hasNewer).toBe(true);
+  const expected = h.window().rows.map((row) => row.id);
+  const target = h.window().rows[0];
+  assert.exists(target);
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  const seen = new Set<string>();
+  const before = h.reads.length;
+  h.channels.loadNewer?.("c");
+  try {
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+    const reaction = signed(h.alice, {
+      kind: 7,
+      created_at: T0 + 501 * HOUR,
+      content: "+",
+      tags: [
+        ["h", "c"],
+        ["e", target.id],
+        ["metadata", "x".repeat(8 * 1024 * 1024 - 10000)],
+      ],
+    });
+    h.live.receive([reaction]);
+    for (const row of h.window().rows) seen.add(row.id);
+    expect(
+      expected.filter((id) => !h.window().rows.some((row) => row.id === id))
+        .length,
+    ).toBeGreaterThan(200);
+  } finally {
+    release();
+    h.gate.hold = undefined;
+  }
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  for (const row of h.window().rows) seen.add(row.id);
+  for (let step = 0; h.window().hasNewer && step < 20; step++) {
+    h.channels.loadNewer?.("c");
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    for (const row of h.window().rows) seen.add(row.id);
+  }
+  expect(expected.filter((id) => !seen.has(id))).toEqual([]);
+});

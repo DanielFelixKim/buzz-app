@@ -3743,14 +3743,24 @@ export function createChannelStore(
       setWindow(state, { loadingNewer: true, error: undefined });
       void (async () => {
         try {
-          const located = await locate(
-            seekRead(state.channelId, controller.signal),
-            from,
-            nowSeconds(),
-            true,
-            state.ceilingId ?? "f".repeat(64),
-          );
-          if (!live(state, generation) || controller.signal.aborted) return;
+          const read = seekRead(state.channelId, controller.signal);
+          let start = from;
+          let startId = state.ceilingId;
+          let located: Awaited<ReturnType<typeof locate>>;
+          for (;;) {
+            located = await locate(
+              read,
+              start,
+              nowSeconds(),
+              true,
+              startId ?? "f".repeat(64),
+            );
+            if (!live(state, generation) || controller.signal.aborted) return;
+            if (state.ceiling === start && state.ceilingId === startId) break;
+            if (state.ceiling === undefined) return;
+            start = state.ceiling;
+            startId = state.ceilingId;
+          }
           // Nothing at or after the ceiling: the segment already ends at the head.
           const page = located.kind === "segment" ? located.page : undefined;
           // A seek can return much more than a byte-limited window can hold.
