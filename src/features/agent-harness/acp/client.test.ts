@@ -1056,6 +1056,18 @@ describe("holding a conversation", () => {
     expect(work).toHaveBeenCalledOnce();
   });
 
+  it("counts as the conversation's session for the next message", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions } = held(harness, await start(harness));
+    await sessions.exclusive("chat", async () => undefined);
+    const named = vi.fn();
+    await sessions.deliver("chat", "stale", 1, {
+      fresh: async () => "rebuilt",
+      named,
+    });
+    expect(harness.turns.map((turn) => turn.text)).toEqual(["rebuilt"]);
+  });
+
   it("keeps a session only while it holds the conversation, and releases it on failure", async () => {
     const harness = fakeHarness({ capabilities: CLOSES });
     const { sessions, saved } = held(harness, await start(harness));

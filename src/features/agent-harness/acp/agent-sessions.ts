@@ -434,8 +434,12 @@ export class AgentSessions {
    * only once the harness has acknowledged that close and every earlier
    * close of the conversation's sessions, or their process has exited; it
    * never starts after a close that was not, nor once interrupted or
-   * stopped. Saved sessions are never deleted. `work` retires whatever
-   * session it opens before it settles, or says what it `outlives`. */
+   * stopped, when it rejects with "<label> was stopped". An interrupt while
+   * it waits for a close takes effect when that close settles, within
+   * REQUEST_TIMEOUT_MS. A close that failed refuses the conversation while
+   * the process runs. Saved sessions are never deleted. `work` retires
+   * whatever session it opens before it settles, or says what it
+   * `outlives`. */
   async exclusive<T>(
     key: string,
     work: (exclusive: Exclusive) => Promise<T>,
@@ -472,6 +476,8 @@ export class AgentSessions {
       if (controller.signal.aborted || this.disposed)
         throw new Error(`${label} was stopped`);
       const saved = savedConversation(this.options.store?.get(key));
+      // A later message's session follows this one, as after any other.
+      this.had.add(key);
       return await work({
         saved: saved?.sessions?.[0],
         keep: (id) => {
