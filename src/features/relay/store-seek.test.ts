@@ -1458,3 +1458,29 @@ it("does not choose an isolated live root as a clipped older page cursor", async
   expect(h.reads.at(-1)?.before_id).not.toBe(event.id);
   expect(h.window().hasMore).toBe(true);
 });
+
+it("bounds combined dense-second seek pages around the cached target", async () => {
+  const h = setup({ count: 0 });
+  for (let i = 0; i < 80; i++)
+    h.history.push(
+      message(h.alice, "c", `dense${i}`, T0, [
+        ["metadata", "x".repeat(128 * 1024)],
+      ]),
+    );
+  await h.open();
+  for (let step = 0; step < 3; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const target = [...h.history].sort(newestFirst)[60];
+  assert.exists(target);
+  expect(h.window().rows.some((row) => row.id === target.id)).toBe(true);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.state({ status: "retrying", routes: [] });
+  await h.channels.seek?.("c", T0, new AbortController().signal, target.id);
+  const ids = new Set(h.window().rows.map((row) => row.id));
+  expect(ids.has(target.id)).toBe(true);
+  expect(
+    byteSize(h.history.filter((event) => ids.has(event.id))),
+  ).toBeLessThanOrEqual(8 * 1024 * 1024);
+});

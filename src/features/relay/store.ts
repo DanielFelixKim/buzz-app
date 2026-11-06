@@ -1186,11 +1186,33 @@ export function createChannelStore(
     page: WindowPage,
     ceiling: number | null,
     ceilingId?: string,
+    targetId?: string,
   ) {
+    const bounded = { ...state, events: [], traffic: new Map() };
+    const retained = trimWindow(bounded, page.events, "newest", targetId);
+    if (listByteSize(retained) > maxHistoryBytes)
+      throw new Error("Message exceeds the history window budget");
+    const roots = page.events
+      .filter((event) => channelRowKind(event.kind))
+      .sort(newestFirst);
+    const kept = retained
+      .filter((event) => channelRowKind(event.kind))
+      .sort(newestFirst);
+    const newerClipped = roots[0]?.id !== kept[0]?.id;
+    const olderClipped = roots.at(-1)?.id !== kept.at(-1)?.id;
+    if (newerClipped && kept[0]) {
+      ceiling = kept[0].created_at;
+      ceilingId = kept[0].id;
+    }
+    const oldest = kept.at(-1);
+    const cursor =
+      olderClipped && oldest
+        ? { createdAt: oldest.created_at, eventId: oldest.id }
+        : page.cursor;
     state.controller?.abort();
     state.controller = undefined;
     state.generation++;
-    state.events = page.events;
+    state.events = retained;
     state.atHead = ceiling === null;
     state.sliding = false;
     state.ceiling = ceiling ?? undefined;
@@ -1198,10 +1220,10 @@ export function createChannelStore(
     state.floor = undefined;
     state.kept = undefined;
     state.restored = false;
-    moveCursor(state, page.cursor);
+    moveCursor(state, cursor);
     setWindow(state, {
       status: "ready",
-      hasMore: page.hasMore && page.cursor !== null,
+      hasMore: olderClipped || (page.hasMore && page.cursor !== null),
       loadingOlder: false,
       loadingNewer: undefined,
       refreshing: undefined,
@@ -3681,7 +3703,13 @@ export function createChannelStore(
         if (!live(state, generation))
           throw new DOMException("Stale history seek", "AbortError");
         if (located.kind === "segment")
-          install(state, located.page, located.ceiling, located.ceilingId);
+          install(
+            state,
+            located.page,
+            located.ceiling,
+            located.ceilingId,
+            fromId,
+          );
         return landing(state, from);
       } finally {
         signal.removeEventListener("abort", abort);
