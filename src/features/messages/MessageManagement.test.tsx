@@ -922,12 +922,16 @@ it.each([9, 45001, 45003])(
     const rows = session.channels.window("room").rows;
     const row = rows[0];
     assert.exists(row);
+    // The popup mounts before its asynchronous positioning makes it visible.
+    // Establish that boundary before checking either present or absent actions.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menuitem", { name: "Delete message" }),
+      ).toBeVisible(),
+    );
     expect(!!screen.queryByRole("menuitem", { name: "Edit message" })).toBe(
       kind === 9,
     );
-    expect(
-      screen.getByRole("menuitem", { name: "Delete message" }),
-    ).toBeVisible();
     expect(lastEditableMessage(session, rows)?.id).toBe(
       kind === 9 ? row.id : undefined,
     );
