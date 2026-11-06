@@ -82,12 +82,12 @@ test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
   });
   await page.getByRole("button", { name: "Save", exact: true }).click();
   // A cold WebKit can read a just-decoded image as blank once; read again.
+  let saved;
   await expect
-    .poll(async () => (await savedArtwork(page)).left[3])
+    .poll(async () => (saved = await savedArtwork(page)).left[3])
     .toBeGreaterThan(0);
-  const { size, left, right } = await savedArtwork(page);
-  const pixels = { size, left, right };
-  expect(pixels).toEqual({
+  const { size, left, right } = saved;
+  expect({ size, left, right }).toEqual({
     size: [512, 512],
     left: [255, 0, 0, 255],
     right: [255, 0, 0, 255],
