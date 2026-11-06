@@ -157,7 +157,7 @@ export function ChannelsPage({
   /** For adding a whole team of the owner's agents from the members dialog. */
   agents?: Agents | undefined;
   communities?: CommunityReader | undefined;
-  /** The viewer's community role, for the auto-join switch in Channel settings. */
+  /** The viewer's community role, for creating #general in an empty community. */
   membership?: CommunityMembership | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
@@ -1969,8 +1969,6 @@ function ChannelWorkspace({
       }
       channel={current}
       details={queries.channelDetails}
-      lifecycle={queries.channelLifecycle}
-      membership={membership}
       session={queries}
       canOpenLink={canOpenLink}
       onOpenLink={openLink}
@@ -2077,6 +2075,7 @@ function ChannelWorkspace({
             }
             landing={current.landing && current.channelType === "stream"}
             welcomeMessage={current.welcome}
+            welcomeTitle={current.welcomeTitle}
             communities={communities}
           />
         ) : noChannels ? (
