@@ -3213,6 +3213,26 @@ it("restores an explicit pane check after opting out during automatic discovery"
   ).toBeVisible();
 });
 
+it("keeps keyboard focus on the row action when discovery finds an update", async () => {
+  const fixture = reviewPluginFixture();
+  Object.assign(fixture.external, { updateSource: savedGitSource });
+  let finish!: (result: ReturnType<typeof gitCheckResult>) => void;
+  const checkGit = vi.fn(
+    () =>
+      new Promise<ReturnType<typeof gitCheckResult>>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  Object.assign(fixture.manager, { imports: { checkGit } });
+  act(fixture.publish);
+  await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+  screen.getByRole("button", { name: "Disable Zebra external" }).focus();
+  await act(async () => finish(gitCheckResult("new")));
+  expect(
+    await screen.findByRole("button", { name: "Update Zebra external" }),
+  ).toHaveFocus();
+});
+
 it("refreshes a new Manage plugins visit while the section stays mounted", async () => {
   const navigation = {
     entryId: "first",

@@ -1128,20 +1128,26 @@ export function Settings({
                         </span>
                       )}
                       {updateAvailable ? (
-                        <Button
-                          size="sm"
-                          variant="prominent"
-                          disabled={busy}
-                          aria-label={`Update ${plugin.manifest.name}`}
-                          onClick={(event) => {
-                            holdPluginRow(event.currentTarget);
-                            setActivationAttempt(undefined);
-                            setSelectedPluginId(id);
-                            setReviewPluginId(id);
-                          }}
+                        <Tooltip
+                          content={null}
+                          open={false}
+                          disableHoverablePopup
                         >
-                          Update
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant="prominent"
+                            disabled={busy}
+                            aria-label={`Update ${plugin.manifest.name}`}
+                            onClick={(event) => {
+                              holdPluginRow(event.currentTarget);
+                              setActivationAttempt(undefined);
+                              setSelectedPluginId(id);
+                              setReviewPluginId(id);
+                            }}
+                          >
+                            Update
+                          </Button>
+                        </Tooltip>
                       ) : isRequiredPlugin(plugin) ? (
                         <Button variant="outline" size="sm" disabled>
                           Required
