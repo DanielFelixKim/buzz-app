@@ -70,7 +70,10 @@ test("saves an emoji over a transparent background in a squircle", async ({
   // A cold WebKit can read a just-decoded image as blank once; read again.
   let pixels;
   await expect
-    .poll(async () => (pixels = await savedAlpha(page)).center)
+    .poll(async () => {
+      pixels = await savedAlpha(page);
+      return pixels.center;
+    })
     .toBeGreaterThan(0);
   const { size, corner, painted } = pixels;
   expect(size).toEqual([512, 512]);
