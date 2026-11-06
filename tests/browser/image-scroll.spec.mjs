@@ -631,6 +631,93 @@ test("virtualized rows request custom emoji on mount, beyond native lazy margins
   }
 });
 
+// WebKit keeps no cache for the native `buzz-media` scheme, so each new
+// avatar element there sends another relay read; `no-store` makes both test
+// engines drop an avatar no element shows, as the app's WebKit does. Virtua's
+// real eviction and remounting need a browser.
+test("virtualized rows fetch each native avatar once across remounts", async ({
+  page,
+}) => {
+  const requests = new Map();
+  await page.route("http://buzz-media.localhost/**", (route) => {
+    const url = route.request().url();
+    requests.set(url, (requests.get(url) ?? 0) + 1);
+    const origin = route.request().headers().origin;
+    return route.fulfill({
+      path: fileURLToPath(
+        new URL("../fixtures/attachment-media/profile.webp", import.meta.url),
+      ),
+      contentType: "image/webp",
+      headers: {
+        "Cache-Control": "no-store",
+        ...(origin ? { "Access-Control-Allow-Origin": origin } : {}),
+      },
+    });
+  });
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/avatar-scroll.html`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    const mounted = () =>
+      feed.evaluate((element) =>
+        [...element.querySelectorAll(".buzz-avatar")].map((avatar) => {
+          const image = avatar.querySelector("img");
+          return {
+            row: avatar
+              .closest("[data-message-id]")
+              ?.textContent?.match(/Message \d+\./)?.[0],
+            loaded: image?.dataset.loaded === "true",
+            source: image?.src,
+          };
+        }),
+      );
+    // Barrier: every mounted avatar has painted, so its request has settled.
+    const painted = async () => {
+      await settle(page, feed);
+      await expect
+        .poll(async () => (await mounted()).filter(({ loaded }) => !loaded))
+        .toEqual([]);
+      return mounted();
+    };
+    await expect(feed.locator(".buzz-avatar").first()).toBeAttached();
+    const latest = await painted();
+    await feed.hover();
+    while ((await feed.evaluate((element) => element.scrollTop)) > 4)
+      await wheel(page, -1500, feed);
+    const oldest = await painted();
+    while (
+      (await feed.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      )) > 4
+    )
+      await wheel(page, 1500, feed);
+    const returned = await painted();
+    expect(
+      latest.some(({ row }) => !oldest.some((other) => other.row === row)),
+      "rows left the timeline and remounted",
+    ).toBe(true);
+    expect(requests.size).toBeGreaterThan(latest.length);
+    expect(
+      [...requests].filter(([, count]) => count !== 1),
+      "each avatar is requested once",
+    ).toEqual([]);
+    // Remounted avatars show the bytes their first mount fetched.
+    expect(
+      returned.filter(({ source }) => !source?.startsWith("blob:")),
+    ).toEqual([]);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+    } finally {
+      await server.close();
+    }
+  }
+});
+
 // Virtua measurement, native scroll clamping and actual eviction require a browser.
 test("decoded image resizing preserves reading and bottom following across remounts", async ({
   page,

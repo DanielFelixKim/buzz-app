@@ -17,6 +17,16 @@ export const AvatarArtworkContext = createContext<
   ((src: string) => ReactNode) | null
 >(null);
 
+/** The host may hold recognized sources' bytes locally. `held` returns the URL
+ * to show now: the source itself when unrecognized, a local URL once held, or
+ * undefined until `load` resolves one. `load` rejects when it is unavailable. */
+export const AvatarSourceContext = createContext<{
+  held(src: string): string | undefined;
+  load(src: string): Promise<string>;
+  /** Drop held bytes that failed to decode, so a retry fetches again. */
+  forget(src: string): void;
+} | null>(null);
+
 type AvatarSize = "tiny" | "compact" | "small" | "default" | "large" | "fill";
 type ImageStatus = "loading" | "loaded" | "failed";
 
@@ -57,7 +67,21 @@ function AvatarArtwork({
   const [showFallback, setShowFallback] = useState(() => fallbackShown.current);
   const [attempt, setAttempt] = useState(0);
   const [previouslyLoaded] = useState(() => loadedAvatarSources.has(src));
+  const sources = useContext(AvatarSourceContext);
+  const [shown, setShown] = useState(() => (sources ? sources.held(src) : src));
   const image = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    if (shown !== undefined || status !== "loading" || !sources) return;
+    let live = true;
+    sources.load(src).then(
+      (url) => live && setShown(url),
+      () => live && setStatus("failed"),
+    );
+    return () => {
+      live = false;
+    };
+  }, [sources, src, shown, status]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a host-fetched source mounts its element once it resolves.
   useLayoutEffect(() => {
     // Cached artwork is already ready at mount; reveal it before the first paint
     // instead of waiting for another asynchronous load event after navigation.
@@ -67,10 +91,11 @@ function AvatarArtwork({
         setStatus("loaded");
       } else {
         loadedAvatarSources.delete(src);
+        if (shown !== src) sources?.forget(src);
         setStatus("failed");
       }
     }
-  }, [src]);
+  }, [src, shown]);
   useLayoutEffect(() => {
     fallbackShown.current =
       status === "failed" || (status === "loading" && showFallback);
@@ -85,6 +110,8 @@ function AvatarArtwork({
     const retry = () => {
       setShowFallback(true);
       setAttempt(attempt + 1);
+      // A held URL may have been released since; ask again.
+      setShown(sources ? sources.held(src) : src);
       setStatus("loading");
     };
     const waiting = failedAvatars.get(src) ?? new Set();
@@ -96,7 +123,7 @@ function AvatarArtwork({
       waiting.delete(retry);
       if (!waiting.size) failedAvatars.delete(src);
     };
-  }, [src, status, attempt]);
+  }, [sources, src, status, attempt]);
   // data-avatar-fallback: see `.buzz-avatar:has(> [data-avatar-fallback])`.
   if (status === "failed")
     return (
@@ -106,23 +133,29 @@ function AvatarArtwork({
     );
   return (
     <>
-      <img
-        ref={image}
-        src={src}
-        data-loaded={status === "loaded" ? "true" : undefined}
-        alt=""
-        loading={loading ?? (previouslyLoaded ? "eager" : "lazy")}
-        decoding="async"
-        referrerPolicy="no-referrer"
-        onLoad={() => {
-          rememberAvatar(src);
-          setStatus("loaded");
-        }}
-        onError={() => {
-          loadedAvatarSources.delete(src);
-          setStatus("failed");
-        }}
-      />
+      {shown !== undefined && (
+        <img
+          ref={image}
+          src={shown}
+          data-loaded={status === "loaded" ? "true" : undefined}
+          alt=""
+          // Local bytes need no lazy scheduling.
+          loading={
+            loading ?? (previouslyLoaded || shown !== src ? "eager" : "lazy")
+          }
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onLoad={() => {
+            rememberAvatar(src);
+            setStatus("loaded");
+          }}
+          onError={() => {
+            loadedAvatarSources.delete(src);
+            if (shown !== src) sources?.forget(src);
+            setStatus("failed");
+          }}
+        />
+      )}
       {status === "loading" && showFallback ? (
         <span aria-hidden="true" data-avatar-fallback="">
           {fallback}

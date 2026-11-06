@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { Avatar } from "./Avatar";
+import { Avatar, AvatarSourceContext } from "./Avatar";
 
 afterEach(() => {
   cleanup();
@@ -238,4 +238,108 @@ it("retries a failed source behind the fallback until it or another mount loads"
   reply.unmount();
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("shows a host-held source's local URL and fetches the rest through the host, never directly", async () => {
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  let resolve: ((url: string) => void) | undefined;
+  const load = vi.fn(
+    (_src: string) =>
+      new Promise<string>((done) => {
+        resolve = done;
+      }),
+  );
+  const sources = {
+    held: (src: string) => (src === "native:held" ? "blob:held" : undefined),
+    load,
+    forget: vi.fn(),
+  };
+  const view = render(
+    <StrictMode>
+      <AvatarSourceContext value={sources}>
+        <Avatar src="native:held" alt="Held" fallback="H" />
+        <Avatar src="native:new" alt="New" fallback="N" />
+      </AvatarSourceContext>
+    </StrictMode>,
+  );
+  const image = (name: string) =>
+    view.container.querySelector(`[aria-label="${name}"] img`);
+  // Local bytes need no lazy scheduling.
+  expect(image("Held")).toHaveAttribute("src", "blob:held");
+  expect(image("Held")).toHaveAttribute("loading", "eager");
+  expect(load).not.toHaveBeenCalledWith("native:held");
+  // A source the host has yet to fetch mounts no element that would request it.
+  expect(image("New")).toBeNull();
+  expect(load).toHaveBeenCalledWith("native:new");
+  await act(async () => resolve?.("blob:new"));
+  expect(image("New")).toHaveAttribute("src", "blob:new");
+  fireEvent.load(image("New") as HTMLImageElement);
+  expect(image("New")).toHaveAttribute("data-loaded", "true");
+});
+
+it("retries an avatar the host could not fetch, asking the host again", async () => {
+  vi.useFakeTimers();
+  const load = vi.fn(async (_src: string): Promise<string> => {
+    throw new Error("Avatar unavailable: 502");
+  });
+  const held = vi.fn((_src: string): string | undefined => undefined);
+  render(
+    <AvatarSourceContext value={{ held, load, forget: vi.fn() }}>
+      <Avatar src="native:transient" alt="Transient" fallback="T" />
+    </AvatarSourceContext>,
+  );
+  const avatar = screen.getByRole("img", { name: "Transient" });
+  await act(async () => {});
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(avatar).toHaveTextContent("T");
+  load.mockResolvedValueOnce("blob:transient");
+  await act(async () => vi.advanceTimersByTime(2_000));
+  expect(held).toHaveBeenCalledTimes(2);
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(avatar.querySelector("img")).toHaveAttribute("src", "blob:transient");
+  // The initial stays until the retried artwork is ready.
+  expect(avatar).toHaveTextContent("T");
+});
+
+it("forgets held bytes that fail to decode, so the retry fetches them again", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  let stored: string | undefined = "blob:broken";
+  const held = vi.fn((_src: string) => stored);
+  const forget = vi.fn((_src: string) => {
+    stored = undefined;
+  });
+  const load = vi.fn(async (_src: string) => "blob:repaired");
+  render(
+    <AvatarSourceContext value={{ held, load, forget }}>
+      <Avatar src="native:repaired" alt="Repaired" fallback="R" />
+    </AvatarSourceContext>,
+  );
+  const avatar = screen.getByRole("img", { name: "Repaired" });
+  expect(avatar.querySelector("img")).toHaveAttribute("src", "blob:broken");
+  fireEvent.error(avatar.querySelector("img") as HTMLImageElement);
+  expect(forget).toHaveBeenCalledWith("native:repaired");
+  await act(async () => vi.advanceTimersByTime(2_000));
+  expect(load).toHaveBeenCalledWith("native:repaired");
+  expect(avatar.querySelector("img")).toHaveAttribute("src", "blob:repaired");
+});
+
+it("leaves a direct source's failure to the host cache it never used", () => {
+  const forget = vi.fn();
+  render(
+    <AvatarSourceContext
+      value={{ held: (src) => src, load: async (src) => src, forget }}
+    >
+      <Avatar src="https://example.test/a.png" alt="Direct" fallback="D" />
+    </AvatarSourceContext>,
+  );
+  const image = screen
+    .getByRole("img", { name: "Direct" })
+    .querySelector("img") as HTMLImageElement;
+  fireEvent.error(image);
+  expect(forget).not.toHaveBeenCalled();
 });
