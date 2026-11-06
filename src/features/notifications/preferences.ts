@@ -1,3 +1,4 @@
+import { relayOrigin } from "../communities/destination";
 import {
   DEFAULT_CATEGORY_SOUNDS,
   isSoundName,
@@ -19,6 +20,10 @@ export type NotificationPreferences = Readonly<{
   sound: boolean;
   sounds: CategorySounds;
   categories: Readonly<Record<string, boolean>>;
+  quietConversations?: readonly Readonly<{
+    communityOrigin: string;
+    channelId: string;
+  }>[];
 }>;
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences =
   Object.freeze({
@@ -52,6 +57,28 @@ function parseSounds(raw: unknown): CategorySounds {
   }
   return Object.freeze(sounds);
 }
+function parseQuietConversations(raw: unknown) {
+  if (raw === undefined) return Object.freeze([]);
+  if (!Array.isArray(raw) || raw.length > 1000)
+    throw new Error("Invalid quiet conversations");
+  return Object.freeze(
+    raw.map((entry: unknown) => {
+      if (!entry || typeof entry !== "object")
+        throw new Error("Invalid quiet conversation");
+      const value = entry as Record<string, unknown>;
+      if (
+        typeof value.communityOrigin !== "string" ||
+        typeof value.channelId !== "string" ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(value.channelId)
+      )
+        throw new Error("Invalid quiet conversation");
+      return Object.freeze({
+        communityOrigin: relayOrigin(value.communityOrigin),
+        channelId: value.channelId,
+      });
+    }),
+  );
+}
 export function parsePreferences(raw: unknown): NotificationPreferences {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     throw new Error("Invalid notification preferences");
@@ -81,6 +108,11 @@ export function parsePreferences(raw: unknown): NotificationPreferences {
     sound: value.sound as boolean,
     sounds: parseSounds(value.sounds),
     categories: Object.freeze(Object.fromEntries(categories)),
+    ...(value.quietConversations !== undefined
+      ? {
+          quietConversations: parseQuietConversations(value.quietConversations),
+        }
+      : {}),
   });
 }
 export function createNotificationPreferences(

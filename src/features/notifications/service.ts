@@ -38,6 +38,11 @@ export type NotificationGate = Readonly<{
   allows(target: OpenTarget): boolean;
 }>;
 export interface Notifications {
+  /** Account-local audio policy; banners and unread state retain their normal behavior. */
+  setConversationSound(
+    target: Extract<OpenTarget, { kind: "conversation" }>,
+    sound: "default" | "silent",
+  ): void;
   register(
     category: NotificationCategoryDescriptor,
   ): Readonly<{ submit(input: NotificationInput): Promise<boolean> }>;
@@ -202,6 +207,38 @@ export class NotificationsService extends Service implements Notifications {
   updatePreferences(patch: Partial<NotificationPreferences>) {
     return this.preferences.update(patch);
   }
+  setConversationSound(
+    target: Extract<OpenTarget, { kind: "conversation" }>,
+    sound: "default" | "silent",
+  ) {
+    const parsed = parseOpenTarget(target);
+    if (
+      this.closed ||
+      parsed.kind !== "conversation" ||
+      parsed.scope.viewer !== this.state.viewer ||
+      (sound !== "default" && sound !== "silent")
+    )
+      throw new Error("Cannot change sound for this conversation");
+    const quiet = this.state.preferences.quietConversations ?? [];
+    const matches = (entry: (typeof quiet)[number]) =>
+      entry.communityOrigin === parsed.scope.communityOrigin &&
+      entry.channelId === parsed.channelId;
+    if (
+      quiet.some(matches) === (sound === "silent") &&
+      !this.state.preferencesError
+    )
+      return;
+    const next = quiet.filter((entry) => !matches(entry));
+    if (sound === "silent")
+      next.push({
+        communityOrigin: parsed.scope.communityOrigin,
+        channelId: parsed.channelId,
+      });
+    if (!this.preferences.update({ quietConversations: next }))
+      throw new Error(
+        "Could not save silent conversation settings. Retry before starting background work.",
+      );
+  }
   reloadPreferences() {
     this.preferences.reload();
   }
@@ -257,10 +294,21 @@ export class NotificationsService extends Service implements Notifications {
       this.gated(item.target)
     );
   }
-  private soundEnabled(category: string) {
+  private soundEnabled(item: Candidate) {
+    const target = item.target;
+    if (
+      target.kind === "conversation" &&
+      this.state.preferences.quietConversations?.some(
+        (entry) =>
+          entry.communityOrigin === target.scope.communityOrigin &&
+          entry.channelId === target.channelId,
+      )
+    )
+      return false;
     return (
       this.state.preferences.sound &&
-      resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
+      resolveCategorySound(this.state.preferences.sounds, item.category) !==
+        "silent"
     );
   }
   /** Whether every registered gate lets this target alert. */
@@ -297,7 +345,7 @@ export class NotificationsService extends Service implements Notifications {
     // Restoring the setting before submission resolves must not resurrect it.
     for (const decision of this.sounding) {
       if (
-        !this.soundEnabled(decision.item.category) ||
+        !this.soundEnabled(decision.item) ||
         !this.allowed(decision.item) ||
         decision.item.eligible() === false
       )
@@ -460,7 +508,7 @@ export class NotificationsService extends Service implements Notifications {
       // The item is out of `pending`, so register its audio decision for
       // sticky cancellation by `revalidate` while the submission is
       // outstanding. Sound off at submission means no decision at all.
-      const decision = this.soundEnabled(item.category)
+      const decision = this.soundEnabled(item)
         ? { item, cancelled: false }
         : null;
       if (decision) this.sounding.add(decision);
@@ -499,7 +547,7 @@ export class NotificationsService extends Service implements Notifications {
         decision &&
         !decision.cancelled &&
         generation === this.generation &&
-        this.soundEnabled(item.category) &&
+        this.soundEnabled(item) &&
         this.allowed(item) &&
         item.eligible() === true
       )

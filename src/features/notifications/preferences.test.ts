@@ -40,3 +40,23 @@ it.each([
     ).toThrow("Invalid notification sounds");
   },
 );
+
+it("validates and isolates quiet conversation preferences while restoring older settings", () => {
+  const saved = {
+    ...DEFAULT_NOTIFICATION_PREFERENCES,
+    quietConversations: [
+      { communityOrigin: "wss://EXAMPLE.test/", channelId: "solo-123" },
+    ],
+  };
+  expect(parsePreferences(saved).quietConversations).toEqual([
+    { communityOrigin: "https://example.test", channelId: "solo-123" },
+  ]);
+  for (const quietConversations of [
+    null,
+    {},
+    [{ communityOrigin: "https://example.test/path", channelId: "chat" }],
+    [{ communityOrigin: "https://example.test", channelId: "../chat" }],
+    Array(1001).fill(saved.quietConversations[0]),
+  ])
+    expect(() => parsePreferences({ ...saved, quietConversations })).toThrow();
+});

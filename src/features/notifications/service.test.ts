@@ -21,7 +21,9 @@ afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
   vi.restoreAllMocks();
 });
-function setup() {
+function setup(
+  authorized?: (target: import("../navigation/targets").OpenTarget) => boolean,
+) {
   const ctx = new Context();
   contexts.push(ctx);
   let module: PluginModule = { apply() {} };
@@ -57,7 +59,7 @@ function setup() {
     navigation.navigation,
     platform,
     preferences,
-    undefined,
+    authorized,
     (name) => plays.push(name),
   );
   service.selectViewer(viewer);
@@ -543,4 +545,105 @@ it("plugin display text is flattened and bounded, with the category text as fall
   expect(rich.body.startsWith("Call Ana <b>raw</b> bbb")).toBe(true);
   expect(Array.from(rich.body)).toHaveLength(200);
   expect(shown[1]).toMatchObject({ title: "Buzz", body: "New updates" });
+});
+
+it("keeps one conversation silent across mention, reply and agent completion categories without changing banners or other chats", async () => {
+  const t = setup(() => true);
+  const quiet = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "quiet-chat",
+  } as const;
+  t.service.setConversationSound(quiet, "silent");
+  for (const category of ["mention", "thread", "agent"]) {
+    await t.service.admit(
+      category,
+      category,
+      { sourceKey: category, target: quiet },
+      () => true,
+    );
+    await flush();
+  }
+  expect(t.platform.show).toHaveBeenCalledTimes(3);
+  expect(t.plays).toHaveLength(0);
+  await t.service.admit(
+    "mention",
+    "Mentions",
+    { sourceKey: "other-chat", target: { ...quiet, channelId: "other-chat" } },
+    () => true,
+  );
+  await flush();
+  expect(t.plays).toHaveLength(1);
+  await t.service.admit(
+    "agent",
+    "Agents",
+    {
+      sourceKey: "other-community",
+      target: {
+        ...quiet,
+        scope: { ...quiet.scope, communityOrigin: "https://other.test" },
+      },
+    },
+    () => true,
+  );
+  await flush();
+  expect(t.plays).toHaveLength(2);
+  t.preferences.reload();
+  expect(t.service.snapshot().preferences.quietConversations).toEqual([
+    {
+      communityOrigin: quiet.scope.communityOrigin,
+      channelId: quiet.channelId,
+    },
+  ]);
+  const nextViewer = "b".repeat(64);
+  t.service.selectViewer(nextViewer);
+  expect(() => t.service.setConversationSound(quiet, "default")).toThrow();
+  await t.service.admit(
+    "mention",
+    "Mentions",
+    {
+      sourceKey: "other-owner",
+      target: { ...quiet, scope: { ...quiet.scope, viewer: nextViewer } },
+    },
+    () => true,
+  );
+  await flush();
+  expect(t.plays).toHaveLength(3);
+});
+
+it("cancels pending sound permanently when the conversation becomes silent during banner delivery, and reports a failed save", async () => {
+  const t = setup(() => true);
+  const quiet = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "quiet-chat",
+  } as const;
+  let release!: () => void;
+  vi.mocked(t.platform.show).mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  await t.service.admit(
+    "agent",
+    "Agents",
+    { sourceKey: "pending", target: quiet },
+    () => true,
+  );
+  await flush();
+  t.service.setConversationSound(quiet, "silent");
+  t.service.setConversationSound(quiet, "default");
+  release();
+  await flush();
+  expect(t.plays).toHaveLength(0);
+  vi.spyOn(t.host.localStorage, "setItem").mockImplementationOnce(() => {
+    throw new Error("Disk full");
+  });
+  expect(() => t.service.setConversationSound(quiet, "silent")).toThrow(
+    "Could not save",
+  );
+  expect(t.service.snapshot().preferencesError).toBeTruthy();
 });
