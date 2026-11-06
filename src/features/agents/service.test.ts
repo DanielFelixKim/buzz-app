@@ -12677,7 +12677,7 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
   if (!handle) throw new Error("Missing handle");
   const client = appClient(handle, {
     read: vi.fn(),
-    protectionContext: async () => ({ value: { messages: [] } }),
+    protectionContext: async () => ({ messages: [] }),
     memories: async () => ({ entries: [], partial: false }),
   });
   select(second.origin);
@@ -12831,7 +12831,7 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
   if (!handle) throw new Error("Missing handle");
   const client = appClient(handle, {
     read: vi.fn(),
-    protectionContext: async () => ({ value: { messages: [] } }),
+    protectionContext: async () => ({ messages: [] }),
     memories: async () => ({ entries: [], partial: false }),
   });
   const result = JSON.parse(
@@ -15756,7 +15756,7 @@ it("revoking the runner while a protected shared tool waits cancels it before an
   if (!handle) throw new Error("Expected active handle");
   const client = appClient(handle, {
     read: vi.fn(),
-    protectionContext: async () => ({ value: { messages: [] } }),
+    protectionContext: async () => ({ messages: [] }),
     memories: async () => ({ entries: [], partial: false }),
   });
   const call = vi.fn(async () => "done");

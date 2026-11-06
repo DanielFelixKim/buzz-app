@@ -846,7 +846,7 @@ export class GooseRuntime {
               { sessionId: serving.sessionId, format: "json" },
               REQUEST_TIMEOUT_MS,
             )) as { data: string };
-            return { value: JSON.parse(data) };
+            return JSON.parse(data);
           },
           relayAuthor: this.relay(agent)?.snapshot().session.relayAuthor,
           signingAuthority:

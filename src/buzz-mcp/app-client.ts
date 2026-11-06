@@ -30,8 +30,9 @@ export function appClient(
     /** Reject operations after the owning turn or community has ended. */
     check?(): void;
     signal?: AbortSignal;
-    /** Native evidence, optionally retained until the exact tool check settles. */
-    protectionContext?(): Promise<{ value: unknown; release?(): void }>;
+    protectionContext?(): Promise<unknown>;
+    /** Retain a file-backed native snapshot until the exact tool check settles. */
+    captureProtectionContext?(): Promise<{ value: unknown; release(): void }>;
     /** The runtime reviews each tool call itself before Buzz dispatches it. */
     nativeToolGate?: boolean;
   }>,
@@ -63,17 +64,25 @@ export function appClient(
             action: import("../features/agent-protection/service").ProtectionAction,
           ) => {
             check();
-            let release: (() => void) | undefined;
+            let release = () => {};
             try {
               if (
                 action.kind === "tool" &&
                 agent.protection?.phases?.tool !== false
               ) {
-                if (!options.protectionContext)
+                if (
+                  !options.protectionContext &&
+                  !options.captureProtectionContext
+                )
                   throw new Error(
                     "The protected tool has no native conversation context",
                   );
-                const context = await options.protectionContext();
+                const context = options.captureProtectionContext
+                  ? await options.captureProtectionContext()
+                  : {
+                      value: await options.protectionContext?.(),
+                      release: () => {},
+                    };
                 release = context.release;
                 action = {
                   ...action,
@@ -89,7 +98,7 @@ export function appClient(
               );
               check();
             } finally {
-              release?.();
+              release();
             }
           },
           ...(options.nativeToolGate ? { nativeToolGate: true as const } : {}),
