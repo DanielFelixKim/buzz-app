@@ -1,0 +1,89 @@
+name: Diagnose navigation 42164249946
+on:
+  push:
+    branches: [diag/ci-42164249946]
+permissions:
+  contents: read
+env:
+  CI: "true"
+jobs:
+  browser_fixture:
+    name: Native browser fixture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      artifact-id: ${{ steps.fixture-upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: browser-fixture
+          save-if: ${{ github.event_name == 'push' }}
+      - name: Build native browser fixture
+        timeout-minutes: 8
+        run: ./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --bin buzzodz --target-dir target/browser-fixture
+      - name: Package same-revision native fixture
+        run: |
+          mkdir -p target/browser-artifact
+          cp target/browser-fixture/debug/examples/fixture-bridge target/browser-fixture/debug/buzzodz target/browser-artifact/
+          git rev-parse HEAD > target/browser-artifact/revision
+          cd target/browser-artifact
+          sha256sum fixture-bridge buzzodz > SHA256SUMS
+          tar -cf ../browser-fixture.tar fixture-bridge buzzodz revision SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: fixture-upload
+        with:
+          name: browser-fixture-${{ github.sha }}-${{ github.run_attempt }}
+          path: target/browser-fixture.tar
+          if-no-files-found: error
+          # Re-running failed shards reuses this artifact by ID, so keep it as
+          # long as their evidence.
+          retention-days: 7
+
+  navigation:
+    needs: [browser_fixture]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --ipc=host
+    env:
+      HOME: /root
+      BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/setup
+        with:
+          browsers: "true"
+          browser-engine: webkit
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.browser_fixture.outputs.artifact-id }}
+          merge-multiple: true
+          path: target/ci-browser-fixture
+      - name: Verify fixture and instrument exact source
+        run: |
+          cd target/ci-browser-fixture
+          tar -xf browser-fixture.tar
+          test "$(cat revision)" = "$(git rev-parse HEAD)"
+          sha256sum --check SHA256SUMS
+          cd ../..
+          mkdir -p test-results/diagnostic
+          git rev-parse HEAD > test-results/diagnostic/revision
+          ./bin/node scripts/diagnose-ci-navigation.mjs
+          git diff > test-results/diagnostic/instrumentation.patch
+      - name: Repeat affected navigation journey
+        run: ./bin/pnpm test:browser:ci --project webkit --no-deps tests/browser/navigation-channel-history.spec.mjs --grep "Back between two links" --workers 2 --repeat-each 20
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: navigation-diagnostic
+          path: test-results
+          retention-days: 7
