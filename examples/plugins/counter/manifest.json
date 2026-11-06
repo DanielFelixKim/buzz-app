@@ -1,5 +1,6 @@
 {
   "id": "example.counter",
   "name": "Counter playground",
-  "apiVersion": 1
+  "apiVersion": 1,
+  "updates": { "defaultEnabled": true }
 }
