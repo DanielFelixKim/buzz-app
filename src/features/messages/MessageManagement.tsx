@@ -803,7 +803,8 @@ export function MessageManagementStatus() {
         (item.event.kind === 5 &&
           item.event.tags.some(
             ([name, kind]) =>
-              name === "k" && ["9", "40002"].includes(kind ?? ""),
+              name === "k" &&
+              ["9", "40002", "45001", "45003"].includes(kind ?? ""),
           ))) &&
       item.event.tags.some(([name, id]) => name === "h" && id === channelId) &&
       ["failed", "unknown"].includes(item.delivery),

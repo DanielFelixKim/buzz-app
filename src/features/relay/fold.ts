@@ -237,7 +237,7 @@ export function deletionApplies(
   event: EventData,
   signingAuthority: string | undefined,
 ) {
-  const messageKind = [9, 40002].includes(event.kind);
+  const messageKind = [9, 40002, 45001, 45003].includes(event.kind);
   const nip09 = deletion.kind === 5 || deletion.kind === 9005;
   return (
     (nip09 && deletion.pubkey === event.pubkey) ||
