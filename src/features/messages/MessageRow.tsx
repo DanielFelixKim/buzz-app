@@ -88,6 +88,7 @@ import { DeliveryNotice } from "./DeliveryNotice";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
 import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
+import { MediaLoadingContext } from "./MediaLoadingContext";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
@@ -1651,7 +1652,7 @@ export const MessageRow = memo(function AudienceMessageRow(
   const { onOpenLink, canOpenLink, row } = props;
   const rootId = row.threadRootId ?? row.id;
   // Plugin content in this row opens targets as the row's own links do.
-  return (
+  const content = (
     <TargetOpenerProvider
       canOpen={(target) => canOpenLink?.(target) ?? false}
       open={(target) => onOpenLink(target, { rootId })}
@@ -1675,6 +1676,13 @@ export const MessageRow = memo(function AudienceMessageRow(
         <FullMessageRow {...props} />
       )}
     </TargetOpenerProvider>
+  );
+  // Only the virtualized timeline pins rows, so only its rows load plugin
+  // images on mount; nested rows inherit their host's loading.
+  return props.keepMounted ? (
+    <MediaLoadingContext value="eager">{content}</MediaLoadingContext>
+  ) : (
+    content
   );
 });
 
