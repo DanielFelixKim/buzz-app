@@ -1,19 +1,19 @@
-import { SOUND_NAMES, type SoundName } from "./sound";
+import { SOUND_NAMES, type SoundRef } from "./sound";
 
 export interface SoundRegistry {
   /** Known and playable now; Silent counts as available. */
-  isAvailable(ref: SoundName): boolean;
+  isAvailable(ref: SoundRef): boolean;
   /** Media URL for a fresh element, or null for Silent and unavailable refs. */
-  source(ref: SoundName): string | null;
+  source(ref: SoundRef): string | null;
   /** Restarts the cached element, or returns null for Silent and unavailable refs. */
-  play(ref: SoundName): HTMLAudioElement | null;
+  play(ref: SoundRef): HTMLAudioElement | null;
 }
 
 const BUNDLED: ReadonlySet<string> = new Set(SOUND_NAMES);
 
 export function createSoundRegistry(): SoundRegistry {
   const elements = new Map<string, HTMLAudioElement>();
-  const source = (ref: SoundName) =>
+  const source = (ref: SoundRef) =>
     BUNDLED.has(ref) ? `/sounds/${ref}.mp3` : null;
   return {
     isAvailable: (ref) => ref === "silent" || BUNDLED.has(ref),

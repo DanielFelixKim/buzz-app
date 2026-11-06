@@ -14,7 +14,7 @@ import {
   CATEGORY_SOUND_LABELS,
   RECOMMENDED_SOUND_BY_CATEGORY,
   SOUND_NAMES,
-  type SoundName,
+  type SoundRef,
 } from "../features/notifications/sound";
 import styles from "./NotificationSettings.module.css";
 
@@ -33,9 +33,9 @@ function AlertSoundRow({
   onChange,
 }: {
   category: NotificationCategory;
-  value: SoundName;
+  value: SoundRef;
   disabled: boolean;
-  onChange: (next: SoundName) => void;
+  onChange: (next: SoundRef) => void;
 }) {
   const recommended = RECOMMENDED_SOUND_BY_CATEGORY[category];
 
@@ -69,7 +69,7 @@ function AlertSoundRow({
               })),
             },
           ]}
-          onValueChange={(next) => onChange(next as SoundName)}
+          onValueChange={(next) => onChange(next as SoundRef)}
         />
       }
     />
@@ -93,7 +93,7 @@ export function NotificationSettings({
   );
   const preview = useRef<{
     category: NotificationCategory;
-    name: SoundName;
+    name: SoundRef;
   } | null>(null);
   const previewAudio = useRef<HTMLAudioElement | null>(null);
   const stopPreview = useCallback((owner?: HTMLAudioElement) => {
@@ -109,7 +109,7 @@ export function NotificationSettings({
     preview.current = null;
   }, []);
   const previewSound = useCallback(
-    (category: NotificationCategory, name: SoundName) => {
+    (category: NotificationCategory, name: SoundRef) => {
       stopPreview();
       const source = notifications.soundRegistry.source(name);
       if (!source) return;
