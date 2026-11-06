@@ -190,9 +190,12 @@ export function createThreadView({
         .filter((event) => isReply(event) && !(exact && event.id === messageId))
         .map((event) => event.id),
     );
-  /** Traversal order: newest first for strict windows, oldest first for legacy. */
+  /** Traversal order, as each relay pages: strict windows newest first with
+   * ids ascending within a second, legacy oldest first. */
   const order = (a: ThreadCursor, b: ThreadCursor) =>
-    mode === "older" ? compare(b, a) : compare(a, b);
+    mode === "older"
+      ? b.created_at - a.created_at || a.id.localeCompare(b.id)
+      : compare(a, b);
   /** A row past an evicted page boundary. Each page holds the rows after its
    * start, up to and including the next page's start. */
   const outside = (event: RelayEvent) => {
@@ -644,7 +647,8 @@ export function createThreadView({
     if (controller) {
       if (established) again = "established";
       else if (replace) again ||= "refresh";
-      else queued = kind;
+      // Reopening at the newest page outranks a page read asked for after it.
+      else if (queued !== "latest") queued = kind;
       return;
     }
     if (!canAccess()) {

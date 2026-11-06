@@ -257,9 +257,11 @@ Threads share the 64 owned-handle ceiling. Past 2,000 events / 4 MiB a view evic
 whole pages from its far end, always keeping the last page read, so one oversized
 page is held rather than lost; live growth evicts the oldest end. Eviction drops
 replies with their edits and reactions, never a deletion (kinds 5 and 9005), the
-root, the exact target or an ancestor of a reply that stays. A reply read again,
-from a lagging replica, a live replay or the shared cache, still folds as deleted,
-and no reply is detached from its parent. While newer pages are evicted, live
+root, the exact target or an ancestor of a reply that stays. A reply whose
+deletion the view saw still folds as deleted when it is read again, from a lagging
+replica, a live replay or the shared cache, and no reply is detached from its
+parent. Own replies come from the outbox's confirmed journal, so the window's
+gating never hides them. While newer pages are evicted, live
 replies above the window are not merged; they return with their page. Cache clear, access loss and session disposal
 cancel pending work and purge owned state. A missing finite root hides the display
 but retains bounded tombstones for safe retry. Short/empty pages mean only what the

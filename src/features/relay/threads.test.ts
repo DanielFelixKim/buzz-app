@@ -979,6 +979,73 @@ it.each([
   },
 );
 
+it("shows the viewer's confirmed reply while newer pages are evicted, though its relay copy is held off", async () => {
+  const channel = "11111111-1111-4111-8111-111111111111";
+  const top = message(alice, channel, "Root", 1);
+  const answer = (n: number, author = alice) =>
+    message(author, channel, `reply ${n}`, 10 * n, [
+      ["e", top.id, "", "reply"],
+    ]);
+  const rows = Array.from({ length: 620 }, (_, n) => answer(n + 1));
+  const newest = [...rows].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  );
+  const reader: RelayReader = {
+    read: async ([filter]) => {
+      if (filter?.ids) return [top];
+      const eligible = newest.filter(
+        (row) =>
+          filter?.until === undefined ||
+          row.created_at < filter.until ||
+          (row.created_at === filter.until &&
+            row.id > (filter.before_id ?? "")),
+      );
+      const page = eligible.slice(0, filter?.limit);
+      const last = page.at(-1);
+      const more = eligible.length > page.length && last;
+      return [
+        ...page,
+        signed(relay, {
+          kind: 39007,
+          content: JSON.stringify({
+            version: 1,
+            direction: "older",
+            has_more: !!more,
+            next_cursor: more
+              ? { created_at: last.created_at, id: last.id }
+              : null,
+          }),
+          tags: [],
+        }),
+      ];
+    },
+  };
+  let operations: OutgoingEvent[] = [];
+  const thread = createThreadView({
+    channelId: channel,
+    messageId: top.id,
+    relayAuthor: relay.pubkey,
+    reader,
+    seed: top,
+    local: { snapshot: () => operations, subscribe: () => () => {} },
+    canAccess: () => true,
+    visible: (events) => events,
+    notify: (listener) => listener(),
+  });
+  await thread.view.refresh();
+  for (let page = 1; page <= 10; page++) await thread.view.loadMore();
+  expect(thread.view.snapshot().canLoadBack).toBe(true);
+  const mine = answer(900, viewer);
+  const theirs = answer(901);
+  // The outbox keeps a delivered reply in its confirmed journal.
+  operations = [{ event: mine, delivery: "seen" }];
+  thread.localChanged();
+  thread.receive([mine, theirs]);
+  const shown = thread.view.snapshot().replies.map((row) => row.id);
+  expect(shown).toContain(mine.id);
+  expect(shown).not.toContain(theirs.id);
+});
+
 it("re-folds for local operations and profiles only when the thread's own change", () => {
   const agent = keypair();
   const answer = signed(agent, {

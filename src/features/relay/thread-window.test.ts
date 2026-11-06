@@ -1071,3 +1071,20 @@ it("fills an evicted page that a backdated reply grew, leaving no gap before the
   for (const row of [backdated, at(620), at(612), at(611)])
     expect(ids(h).has(row.id)).toBe(true);
 });
+
+it("keeps every reply of a busy second when a page boundary falls inside it", async () => {
+  // Three replies a second: the relay orders a second's replies by id
+  // ascending, and the window's boundaries must agree.
+  const rows = Array.from({ length: 620 }, (_, n) => reply(n));
+  const newest = [...rows].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  );
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  expect(ids(h)).toEqual(new Set(newest.slice(10, 510).map((row) => row.id)));
+  await h.view.refresh();
+  expect(ids(h)).toEqual(new Set(newest.slice(10, 510).map((row) => row.id)));
+  await h.view.loadBack();
+  expect(ids(h)).toEqual(new Set(newest.slice(0, 460).map((row) => row.id)));
+});
