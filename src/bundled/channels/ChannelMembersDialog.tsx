@@ -764,6 +764,19 @@ export function ChannelMembersDialog({
       : ""
     : rosterReadError;
   const text = query.trim();
+  // Folded names and queries of this roster, kept while the dialog is open.
+  const folds = useMemo(() => new Map<string, string>(), []);
+  // Npubs of this roster: every keystroke rescans each member, and a bounded
+  // shared cache would miss on every lookup once the roster outgrows it.
+  const npubs = useMemo(() => new Map<string, string>(), []);
+  const npubOf = (key: string) => {
+    let npub = npubs.get(key);
+    if (npub === undefined) {
+      npub = npubEncode(key);
+      npubs.set(key, npub);
+    }
+    return npub;
+  };
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new query or explicit refresh rereads stored choice/visit scores.
   const usage = useMemo(
     () => readSearchUsage(session.scope),
@@ -946,18 +959,16 @@ export function ChannelMembersDialog({
       verifiedOf(key)?.username,
       verifiedOf(key)?.fullName,
       ...(searchProfiles.get(key)?.profileNames ?? []),
-    ].some((name) => name && matchPerson(name, query)) ||
-    `${name} ${key} ${npubEncode(key)}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase());
+    ].some((name) => name && matchPerson(name, query, folds)) ||
+    `${name} ${key} ${npubOf(key)}`.toLowerCase().includes(text.toLowerCase());
   // People to add use the shared name rule, like the relay's people page; a
   // whole key or npub finds its owner.
   const addable = (key: string, ...names: (string | undefined)[]) => {
     const typed = query.trim().toLowerCase();
     return (
-      names.some((name) => name && matchPerson(name, query)) ||
+      names.some((name) => name && matchPerson(name, query, folds)) ||
       typed === key ||
-      typed === npubEncode(key)
+      typed === npubOf(key)
     );
   };
   // Label once per member: a fallback label bech32-encodes the key, too costly
