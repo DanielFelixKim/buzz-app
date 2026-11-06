@@ -18,6 +18,48 @@ export type OwnerDraft = Readonly<{
 type Reader = () => MentionDraft | undefined;
 const composers = new Map<string, Set<Reader>>();
 const coordinate = (scope: string, key: string) => JSON.stringify([scope, key]);
+const submitted = new WeakMap<MentionDraft, Set<string>>();
+const snapshot = (
+  draft: MentionDraft,
+  source: OwnerDraft["source"],
+): OwnerDraft => ({
+  text: draft.text,
+  markdown: composerMarkdown(draft),
+  recipients: draft.recipients.map(({ pubkey, name, start, end }) => ({
+    pubkey,
+    name,
+    start,
+    end,
+  })),
+  source,
+});
+
+/** Capture before awaiting admission, so identical edits made later survive. */
+export function captureSubmittedDrafts(
+  scope: string,
+  key: string,
+  draft: MentionDraft,
+) {
+  const id = coordinate(scope, key);
+  const content = JSON.stringify(snapshot(draft, "composer"));
+  const captured: MentionDraft[] = [];
+  for (const read of composers.get(id) ?? []) {
+    try {
+      const current = read();
+      if (current && JSON.stringify(snapshot(current, "composer")) === content)
+        captured.push(current);
+    } catch {
+      // A detached or conflicted reader cannot supply a live snapshot.
+    }
+  }
+  return () => {
+    for (const current of captured) {
+      const coordinates = submitted.get(current) ?? new Set<string>();
+      coordinates.add(id);
+      submitted.set(current, coordinates);
+    }
+  };
+}
 
 /** The mounted editor owns unsaved changes, including storage conflicts. */
 export function registerComposerDraft(
@@ -46,29 +88,13 @@ export function readOwnerDraft(
   const target = draftCoordinates(key);
   if (!target || target.channelId !== channel || target.threadRootId !== thread)
     throw new Error("Invalid draft channel or thread.");
-  const snapshot = (
-    draft: MentionDraft,
-    source: OwnerDraft["source"],
-  ): OwnerDraft => ({
-    text: draft.text,
-    markdown: composerMarkdown(draft),
-    recipients: draft.recipients.map(({ pubkey, name, start, end }) => ({
-      pubkey,
-      name,
-      start,
-      end,
-    })),
-    source,
-  });
   const accepted = session && acceptedComposerSend(session, `${scope}:${key}`);
-  const submitted = accepted?.sent && snapshot(accepted.sent, "composer");
+  const id = coordinate(scope, key);
   let live: OwnerDraft | undefined;
   for (const read of composers.get(coordinate(scope, key)) ?? []) {
     const draft = read();
-    if (!draft) continue; // Sent-message edits are not unsent drafts.
+    if (!draft || submitted.get(draft)?.has(id)) continue;
     const next = snapshot(draft, "composer");
-    if (submitted && JSON.stringify(next) === JSON.stringify(submitted))
-      continue;
     if (live && JSON.stringify(live) !== JSON.stringify(next))
       throw new Error(
         "Multiple open composers have different drafts. Choose which draft to keep in Buzz first.",

@@ -1,5 +1,8 @@
 import { recoveryFor } from "../messages/composer-accepted";
-import { registerComposerDraft } from "../messages/draft-read";
+import {
+  captureSubmittedDrafts,
+  registerComposerDraft,
+} from "../messages/draft-read";
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
 import { mentionDraft } from "../messages/mention-draft";
@@ -270,6 +273,13 @@ export function createHuddleComposerOwner(
         }
         check(true);
         signal.throwIfAborted();
+        const scope = session.scope;
+        const key = `draft:${room}`;
+        const retireSubmittedDrafts = captureSubmittedDrafts(
+          scope,
+          key,
+          mentionDraft(JSON.parse(draft)),
+        );
         const id = session.messages.send(
           room,
           text,
@@ -283,8 +293,7 @@ export function createHuddleComposerOwner(
         // acknowledgement must not restore a message already in the main
         // outbox. The stub is what the composer saves for every send; it
         // keeps the remembered agents in memory (see seedMentions).
-        const scope = session.scope;
-        const key = `draft:${room}`;
+        retireSubmittedDrafts();
         if (JSON.stringify(readView(scope, key, null)) === draft) {
           const revision = viewRevision(scope, key);
           const next = mentionDraft("");
@@ -292,7 +301,6 @@ export function createHuddleComposerOwner(
             recoveryFor(session).set(`${scope}:${key}`, {
               next,
               revision,
-              sent: mentionDraft(JSON.parse(draft)),
             });
         }
         for (const file of files) release(file);

@@ -6,7 +6,7 @@ import {
   updateSoloModelPicks,
 } from "./solo-model-picks";
 import { subscribeModelPicks } from "./solo-model-picks-storage";
-import { registerComposerDraft } from "./draft-read";
+import { captureSubmittedDrafts, registerComposerDraft } from "./draft-read";
 import { useChatLinkSharing } from "./useChatLinkSharing";
 import {
   draftGif,
@@ -1077,7 +1077,12 @@ function Composer({
         ? "saved"
         : replaceView(scope, draftKey, expected, next);
     writing.current = false;
-    if (result === "saved") revision.current = JSON.stringify(next);
+    if (result === "saved") {
+      revision.current = JSON.stringify(next);
+      const pending = recoveryFor(session).get(recoveryKey);
+      if (pending && next !== pending.next)
+        recoveryFor(session).delete(recoveryKey);
+    }
     setConflict(result === "changed");
     setStorageFailed(result === "failed");
     return result;
@@ -2611,6 +2616,11 @@ function Composer({
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
+    const retireSubmittedDrafts = captureSubmittedDrafts(
+      scope,
+      draftKey,
+      captured,
+    );
     const capturedRecipients = routing ? recipientsNow : captured.recipients;
     const capturedAttachments = attachments.store.snapshot();
     // Mention resolution can update recipients before their picker commits.
@@ -3029,7 +3039,8 @@ function Composer({
             // The whole captured pick set returns with the whole draft; the
             // recipient filter above applies again on the next send.
             notifyRecovered(session, recoveryKey, {
-              draft: captured,
+              // Recovery restores new intent, not the retired submitted snapshot.
+              draft: { ...captured },
               picks: capturedPicks,
               preparationError,
             });
@@ -3047,10 +3058,10 @@ function Composer({
       // in memory, and any composer here, on any device, seeds them from the
       // sent message once it lands (see seedMentions).
       const followUp = next;
+      retireSubmittedDrafts();
       const pending = {
         next: mentionDraft(""),
         revision: savedRevision,
-        sent: captured,
       };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);

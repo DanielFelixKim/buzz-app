@@ -6,7 +6,11 @@ import { createRelaySession } from "../relay/session";
 import { typedDraft } from "./composer-testing";
 import { mentionDraft } from "./mention-draft";
 import { writeView } from "../../shared/view-state";
-import { readOwnerDraft, registerComposerDraft } from "./draft-read";
+import {
+  captureSubmittedDrafts,
+  readOwnerDraft,
+  registerComposerDraft,
+} from "./draft-read";
 const scope = "https://community.test:owner";
 const thread = "a".repeat(64);
 afterEach(() => {
@@ -157,10 +161,10 @@ it("suppresses accepted sibling snapshots while preserving newer live prose", ()
   recoveryFor(store.session).set(`${scope}:draft:channel`, {
     next: mentionDraft(""),
     revision: JSON.stringify(sent),
-    sent,
   });
   let current = sent;
   const stop = registerComposerDraft(scope, "draft:channel", () => current);
+  captureSubmittedDrafts(scope, "draft:channel", sent)();
   try {
     expect(
       readOwnerDraft(scope, "channel", undefined, store.session)?.text ?? "",
@@ -172,5 +176,43 @@ it("suppresses accepted sibling snapshots while preserving newer live prose", ()
   } finally {
     stop();
     store.dispose();
+  }
+});
+
+it("retires only snapshots captured before acceptance, preserving identical later edits", () => {
+  let current = mentionDraft("Submitted caption");
+  const sent = current;
+  const stop = registerComposerDraft(scope, "draft:channel", () => current);
+  try {
+    const accept = captureSubmittedDrafts(scope, "draft:channel", sent);
+    expect(readOwnerDraft(scope, "channel")?.text).toBe(sent.text);
+    current = mentionDraft(sent.text);
+    accept();
+    expect(readOwnerDraft(scope, "channel")?.text).toBe(sent.text);
+    current = sent;
+    expect(readOwnerDraft(scope, "channel")).toBeUndefined();
+  } finally {
+    stop();
+  }
+});
+
+it("does not retire different link destinations or another draft coordinate", () => {
+  const sent = linkedDraft("https://example.com/one");
+  const other = linkedDraft("https://example.com/two");
+  const stops = [
+    registerComposerDraft(scope, "draft:channel", () => sent),
+    registerComposerDraft(scope, "draft:channel", () => other),
+    registerComposerDraft(scope, "draft:other", () => sent),
+  ];
+  try {
+    captureSubmittedDrafts(scope, "draft:channel", sent)();
+    expect(readOwnerDraft(scope, "channel")?.markdown).toContain(
+      "https://example.com/two",
+    );
+    expect(readOwnerDraft(scope, "other")?.markdown).toContain(
+      "https://example.com/one",
+    );
+  } finally {
+    for (const stop of stops) stop();
   }
 });

@@ -15911,3 +15911,91 @@ it("does not expose accepted text from a stale sibling composer", async () => {
     "Newer unsaved sibling text",
   );
 });
+
+it("keeps a submitted parked sibling retired after successful cleanup and sender unmount", async () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.fill("Submitted parked caption");
+  let editScope: ReturnType<typeof useMessageEditScope>;
+  function Probe() {
+    editScope = useMessageEditScope();
+    return null;
+  }
+  const row = editableMessage();
+  const sibling = render(
+    <MessageEditScope>
+      <Probe />
+      <MessageComposer
+        session={h.session}
+        scope="scope"
+        channelId="channel"
+        channelName="General"
+        editMessages={[row]}
+      />
+    </MessageEditScope>,
+    { wrapper: ToastProvider },
+  );
+  const input = within(sibling.container).getByRole<ComposerInputElement>(
+    "textbox",
+  );
+  act(() => editScope?.current?.(row));
+  expect(input).toHaveAccessibleName("Edit message");
+  await h.user.click(
+    within(h.container).getByRole("button", { name: "Send message" }),
+  );
+  expect(
+    readOwnerDraft("scope", "channel", undefined, h.session)?.text ?? "",
+  ).toBe("");
+  h.unmount();
+  expect(
+    readOwnerDraft("scope", "channel", undefined, h.session),
+  ).toBeUndefined();
+});
+
+it.each([false, true])(
+  "reads an identical caption freshly retyped in a sibling (storage recovers: %s)",
+  async (restored) => {
+    const h = mount();
+    h.fill("Same submitted caption");
+    const sibling = render(
+      <MessageComposer
+        session={h.session}
+        scope="scope"
+        channelId="channel"
+        channelName="General"
+      />,
+      { wrapper: ToastProvider },
+    );
+    const input = within(sibling.container).getByRole<ComposerInputElement>(
+      "textbox",
+    );
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw Error("full");
+      });
+    try {
+      await h.user.click(
+        within(h.container).getByRole("button", { name: "Send message" }),
+      );
+      h.unmount();
+      if (restored) fail.mockRestore();
+      act(() => {
+        input.value = "";
+      });
+      act(() => {
+        input.value = "Same submitted caption";
+      });
+      expect(
+        readOwnerDraft("scope", "channel", undefined, h.session)?.text,
+      ).toBe("Same submitted caption");
+      if (restored) {
+        sibling.unmount();
+        expect(
+          readOwnerDraft("scope", "channel", undefined, h.session)?.text,
+        ).toBe("Same submitted caption");
+      }
+    } finally {
+      fail.mockRestore();
+    }
+  },
+);
