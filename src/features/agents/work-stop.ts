@@ -1,7 +1,7 @@
 import type { RelaySession } from "../relay/session";
 import type { Agents } from "./service";
 import type { RequestWork } from "./request-work";
-import type { LocalWork } from "./local-activity";
+import { localActivity, type LocalWork } from "./local-activity";
 import { activityTranscript } from "./activity-transcript";
 
 export type WorkStopAgents = Pick<Agents, "interruptible" | "interrupt">;
@@ -74,14 +74,29 @@ export function conversationWorkStops(
       work.channelId === channelId &&
       (!threadRootId || work.threadRootId === threadRootId),
   );
+  // Top-level Solo messages steer one conversation, so they share one control.
+  const solo = localActivity(
+    { local: local.filter((work) => work.soloChat && !work.thread) },
+    channelId,
+  ).get(agent);
   const result = local.flatMap((work) => {
+    const continuous = work.soloChat && !work.thread;
+    if (continuous && work !== solo) return [];
     const control = workStop(
       { ...work, lifecycle: true, working: work.state === "working" },
       work,
       activity,
       agents,
     );
-    return control ? [{ control, work, threadRootId: work.threadRootId }] : [];
+    return control
+      ? [
+          {
+            control,
+            work,
+            threadRootId: continuous ? undefined : work.threadRootId,
+          },
+        ]
+      : [];
   });
   // Local lifecycle evidence owns this agent's state, including settled work.
   if (local.length || snapshot.status !== "listening") return result;

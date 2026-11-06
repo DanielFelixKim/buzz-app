@@ -378,7 +378,7 @@ export function TypingIndicator({
     );
     const conversationRoot =
       workRoot ??
-      work?.threadRootId ??
+      (work?.soloChat && !work.thread ? undefined : work?.threadRootId) ??
       threadRootId ??
       (knownRoots.length === 1 ? knownRoots[0] : undefined);
     const conversation = conversationRoot

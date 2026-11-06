@@ -235,3 +235,53 @@ it("identifies each hosted thread and stops only the selected work", async () =>
     });
   }
 });
+
+it("shows one Solo conversation row while a follow-up waits in the same agent session", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  const interrupt = vi.fn(async () => undefined);
+  const session = {
+    ...f.session,
+    agentActivity: { ...f.session.agentActivity, interrupt },
+  };
+  const local = [
+    {
+      scope: "test",
+      agent,
+      channelId: "channel",
+      threadRootId: root,
+      messageId: "first",
+      startedAt: 1,
+      state: "working" as const,
+      soloChat: true as const,
+      stoppable: true as const,
+      step: { tool: "Read", target: "first.txt" },
+    },
+    {
+      scope: "test",
+      agent,
+      channelId: "channel",
+      threadRootId: secondRoot,
+      messageId: "follow-up",
+      startedAt: 2,
+      state: "working" as const,
+      soloChat: true as const,
+      stoppable: true as const,
+    },
+  ];
+  f.update([], { local });
+  render(<TypingIndicator session={session} channelId="channel" />);
+  await user.click(screen.getByRole("button", { name: "Reading first.txt" }));
+  expect(screen.getAllByRole("button", { name: /^Stop Agent/ })).toHaveLength(
+    1,
+  );
+  expect(screen.queryByText(/Thread ·/)).toBeNull();
+  // Actual thread work remains separate even in a Solo channel.
+  f.update([], { local: local.map((work) => ({ ...work, thread: true })) });
+  expect(screen.getAllByRole("button", { name: /^Stop Agent/ })).toHaveLength(
+    2,
+  );
+  f.update([], { local });
+  await user.click(screen.getByRole("button", { name: "Stop Agent" }));
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", "first");
+});

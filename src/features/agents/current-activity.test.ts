@@ -311,3 +311,23 @@ it("moves channel-started local work into its observed reply thread", () => {
     ).has(agent),
   ).toBe(true);
 });
+
+it("keeps top-level Solo requests in the channel conversation", () => {
+  expect(
+    project({
+      ...base,
+      local: [
+        {
+          scope: "test",
+          agent,
+          channelId: "channel",
+          threadRootId: root,
+          messageId: root,
+          state: "working",
+          startedAt: now,
+          soloChat: true,
+        },
+      ],
+    }).get(agent)?.roots,
+  ).toEqual([null]);
+});
