@@ -15,6 +15,7 @@ import {
   type SavedConversation,
   ServerPool,
   SharedProcess,
+  type SessionStore,
   type SessionsOptions,
 } from "./sessions";
 
@@ -40,7 +41,7 @@ const setup = (
     pool?: ServerPool;
     started?: SessionsOptions["started"];
     onChange?: () => void;
-    store?: Map<string, SavedConversation>;
+    store?: SessionStore;
     /** Wraps the fake's `serve`. */
     serve?: (serve: ServeMcp) => ServeMcp;
     silent?: readonly string[];
@@ -1193,6 +1194,51 @@ it("keeps what held work saved, and New session, as stored across every write", 
     at: 2,
     sessions: ["g1"],
     binding: { session: "g1", value: { v: 1 } },
+  });
+});
+
+it("refuses New session, keeping what was saved, when storage cannot save it", async () => {
+  const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const data = new Map<string, string>();
+  let full = false;
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      if (full) throw new DOMException("quota", "QuotaExceededError");
+      data.set(key, value);
+    },
+  } as Storage;
+  const prior = {
+    at: 1,
+    sessions: ["g1", "g0"],
+    binding: { session: "g1", value: { v: 1 } },
+  };
+  localSessions(storage, "one").set("a", prior);
+  full = true;
+  const { sessions } = setup({}, false, {
+    store: localSessions(storage, "one"),
+  });
+  await expect(sessions.reset("a", "new")).resolves.toEqual({
+    ok: false,
+    error: "goose could not save New session",
+  });
+  expect(warned).toHaveBeenCalledWith(
+    "goose sessions were not saved",
+    expect.any(DOMException),
+  );
+  full = false;
+  expect(localSessions(storage, "one").get("a")).toEqual(prior);
+  // The next held work resumes what was left, with its value.
+  await expect(
+    sessions.exclusive("a", async ({ saved, reset, binding }) => ({
+      saved,
+      reset,
+      binding,
+    })),
+  ).resolves.toEqual({
+    saved: "g1",
+    reset: false,
+    binding: { value: { v: 1 } },
   });
 });
 

@@ -621,6 +621,8 @@ export class AgentSessions {
       reset,
       binding: reset ? undefined : association(saved),
       keep: (id, binding) => {
+        // Stored, none would read back as damage.
+        if (binding === undefined) return false;
         if (!store || this.held.get(key) !== mine) return false;
         const sessions = savedConversation(store.get(key))?.sessions ?? [];
         const kept = { session: id, value: binding };
@@ -702,11 +704,12 @@ export class AgentSessions {
         : { ok: false, error: message(error) };
     }
     const { mine, release } = reservation;
-    const { store } = this.options;
+    const { signal } = mine.controller;
+    const { store, label } = this.options;
     try {
       const live = this.live.get(key);
       if (action !== "new") {
-        if (live?.session.open) return await this.compact(key);
+        if (live?.session.open) return await this.compact(key, signal);
         const saved = savedConversation(store?.get(key));
         if (!forwarded || saved?.next === "new" || !association(saved))
           return { ok: true };
@@ -714,11 +717,19 @@ export class AgentSessions {
       }
       if (live) {
         await live.session.idle();
+        // Interrupted while it waited: it does nothing more.
+        if (signal.aborted || this.disposed) return this.stopped;
         if (this.live.get(key) === live) this.drop(key, live);
       }
-      if (this.disposed) return this.stopped;
+      if (signal.aborted || this.disposed) return this.stopped;
       const saved = savedConversation(store?.get(key));
-      if (saved?.sessions?.length) store?.set(key, { ...saved, next: "new" });
+      if (!store || !saved?.sessions?.length) return { ok: true };
+      store.set(key, { ...saved, next: "new" });
+      // Done only once it reads back so: a store that kept the old record
+      // would have the next held work resume what was left.
+      const read = savedConversation(store.get(key));
+      if (read?.next !== "new" || read.sessions?.[0] !== saved.sessions[0])
+        return { ok: false, error: `${label} could not save New session` };
       return { ok: true };
     } catch (error) {
       return { ok: false, error: message(error) };
@@ -730,11 +741,12 @@ export class AgentSessions {
   }
   /** Waits for the conversation's session to finish its work, then compacts
    * it. Without an open session there is nothing to do. */
-  private async compact(key: string): Promise<Settled> {
+  private async compact(key: string, signal?: AbortSignal): Promise<Settled> {
     const live = this.live.get(key);
     if (!live?.session.open) return { ok: true };
     await live.session.idle();
-    if (this.disposed) return this.stopped;
+    // Interrupted while it waited: nothing is sent.
+    if (signal?.aborted || this.disposed) return this.stopped;
     if (this.live.get(key) !== live || !live.session.open) return { ok: true };
     const result = await this.answer(
       key,

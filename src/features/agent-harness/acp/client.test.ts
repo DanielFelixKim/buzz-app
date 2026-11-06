@@ -1295,8 +1295,11 @@ describe("saved sessions under holds", () => {
     });
     return { promise, resolve, reject };
   };
-  const sessionsWith = (saved = new Map<string, SavedConversation>()) => {
-    const harness = fakeHarness({ capabilities: CLOSES });
+  const sessionsWith = (
+    saved = new Map<string, SavedConversation>(),
+    hold = false,
+  ) => {
+    const harness = fakeHarness({ capabilities: CLOSES, hold });
     const acp = start(harness);
     const sessions = new AgentSessions({
       label: "Harness",
@@ -1536,6 +1539,52 @@ describe("saved sessions under holds", () => {
     await turn;
     await expect(resetting).resolves.toEqual({ ok: true });
     expect(saved.get("chat")?.next).toBe("new");
+  });
+
+  it("does nothing more once New session or compaction is interrupted while it waits for the turn", async () => {
+    for (const action of ["new", "compact"] as const) {
+      const saved = new Map<string, SavedConversation>();
+      const { sessions, harness } = sessionsWith(saved, true);
+      const forwarded = vi.fn(
+        async (_held: Exclusive) => ({ ok: true }) as const,
+      );
+      const delivered = sessions.deliver("chat", "one", 1);
+      while (!harness.turns.length) await flush();
+      const before = saved.get("chat");
+      expect(before?.sessions).toHaveLength(1);
+      const resetting = sessions.reset("chat", action, forwarded);
+      await flush();
+      await sessions.interrupt("chat");
+      harness.turns[0]?.finish();
+      await delivered;
+      await expect(resetting).resolves.toEqual({
+        ok: false,
+        error: "Harness was stopped",
+      });
+      // Only the turn's own save, which keeps the time it ended.
+      expect(saved.get("chat")).toEqual({ ...before, at: expect.any(Number) });
+      expect(forwarded).not.toHaveBeenCalled();
+      expect(harness.turns.map((turn) => turn.text)).toEqual(["one"]);
+      // The session it waited on is still the conversation's.
+      const again = sessions.deliver("chat", "two", 2);
+      while (harness.turns.length < 2) await flush();
+      harness.turns[1]?.finish();
+      await again;
+      expect(harness.turns.map((turn) => turn.sessionId)).toEqual([
+        harness.turns[0]?.sessionId,
+        harness.turns[0]?.sessionId,
+      ]);
+      expect(harness.sent("session/new")).toHaveLength(1);
+    }
+  });
+
+  it("refuses to keep no value at all, writing nothing", async () => {
+    const saved = new Map<string, SavedConversation>();
+    const { sessions } = sessionsWith(saved);
+    await sessions.exclusive("chat", async ({ keep }) => {
+      expect(keep("g1", undefined)).toBe(false);
+    });
+    expect(saved.get("chat")).toBeUndefined();
   });
 
   it("chooses compaction under the hold: the open session, a forwarded one, or nothing", async () => {
