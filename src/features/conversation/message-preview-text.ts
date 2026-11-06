@@ -1,3 +1,5 @@
+import { plainText } from "../notifications/content";
+
 /** A compact excerpt: stop before an empty paragraph rather than clamping a blank line. */
 export function messagePreviewText(content: string): string {
   const text = content.trim();
@@ -6,3 +8,7 @@ export function messagePreviewText(content: string): string {
     ? `${text.slice(0, paragraphBreak.index).trimEnd()}…`
     : text;
 }
+
+/** The excerpt's rendered prose on one line: no Markdown syntax or spoiler text. */
+export const activityPreviewText = (content: string) =>
+  plainText(messagePreviewText(content), { limit: 280 });
