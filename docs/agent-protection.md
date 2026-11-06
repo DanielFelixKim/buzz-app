@@ -136,7 +136,7 @@ prior behavior.
 `check` receives an immutable action (`kind`, `session`, `content`, optional
 `command`) plus host-captured `agent`, `relay`, `runtime` and `policy`. `kind` is
 `context`, `tool` or `tool-result`. Session metadata is not authorization or proof
-of the currently displayed conversation. Each source or combined tool action is limited to 256 KiB. Optional `phases(policy)` returns a
+of the currently displayed conversation. Each source or combined tool action is limited to 8 MiB. Optional `phases(policy)` returns a
 boolean for every action kind; it is captured from the native policy at launch.
 Disabled phases still validate the provider lifetime, but send no inspection
 evidence and do not invoke a checker. Omitting it enables every phase. Plugins
@@ -325,7 +325,7 @@ bounded tool-free inference. The plugin owns instructions, schemas and response
 parsing; the host returns text and the actual model. The `agent` model selector
 resolves only the current requesting agent's configured runtime/model using its
 host identity and relay. Runtime changes and cancellation reject the result.
-Prompts, including optional serializable schemas, are bounded to 768 KiB.
+Prompts, including optional serializable schemas, are bounded to 24 MiB.
 
 Runtime completion receives an optional fourth, prepared spawn function for the
 calling protection plugin's engine. Codex and Goose require it for their isolated,
@@ -362,4 +362,4 @@ quality. Native build caches remain keyed by pins and patches. Human
 acceptance and current UI/interaction checks remain required before marking the
 experimental PR ready.
 
-Each input source or combined tool action is bounded to 256 KiB, with separate 768 KiB serialized prompt/record headroom. Nothing is truncated to fit. Fixed classifiers can have smaller input bounds; a failed inspection must pause or deny. These byte limits do not establish classifier tokenization or detection completeness.
+Each input source or combined tool action is bounded to 8 MiB, with separate 24 MiB serialized prompt/record headroom. Nothing is truncated to fit. Fixed classifiers can have smaller input bounds; a failed inspection must pause or deny. Pending-review snapshot commands opt into a 32 MiB output ceiling. Both the Buzz host and security plugin must be updated together. These transport limits are independent of a review model’s token capacity; a model failure still pauses or denies the action with complete evidence. These byte limits do not establish classifier tokenization or detection completeness.

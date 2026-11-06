@@ -10,7 +10,8 @@ use tokio::{sync::oneshot, time::Instant};
 const DEADLINE: Duration = Duration::from_secs(350);
 /// Why the guard refuses a worker it stopped, or input to one that exited.
 pub(super) const STOPPED: &str = "The protected Claude worker stopped";
-const MAX_FRAME: usize = 4 * 1024 * 1024;
+// Full protected prompts and large tool arguments travel over this channel.
+const MAX_FRAME: usize = 16 * 1024 * 1024;
 struct Pending {
     deadline: Instant,
     _cancel: oneshot::Sender<()>,
@@ -214,6 +215,26 @@ mod tests {
         assert!(child.try_wait().unwrap().is_none());
         guard.close();
         child.kill().await.unwrap();
+    }
+    #[tokio::test]
+    async fn large_review_frames_remain_guarded_and_overflow_stops_the_worker() {
+        let mut child = worker();
+        let guard = ClaudeHooks::new(child.id().unwrap());
+        let mut frame: serde_json::Value = serde_json::from_slice(&request("large")).unwrap();
+        frame["request"]["input"] = serde_json::json!({"prompt": "x".repeat(5 * 1024 * 1024)});
+        let mut frame = serde_json::to_vec(&frame).unwrap();
+        frame.push(b'\n');
+        guard.output(&frame).unwrap();
+        assert_eq!(guard.state.lock().unwrap().pending.len(), 1);
+        guard.input(&response("large", "success")).unwrap();
+        assert!(guard.state.lock().unwrap().pending.is_empty());
+        assert!(child.try_wait().unwrap().is_none());
+        assert!(guard.output(&vec![b'x'; MAX_FRAME + 1]).is_err());
+        assert!(!tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success());
     }
     #[tokio::test]
     async fn failed_or_late_callback_kills_the_worker() {

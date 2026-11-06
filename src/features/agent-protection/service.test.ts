@@ -2,6 +2,8 @@ import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   AgentProtectionService,
+  MAX_PROTECTED_ACTION_BYTES,
+  MAX_REVIEW_PROMPT_BYTES,
   ProtectionDenied,
   type ProtectionRequest,
 } from "./service";
@@ -650,12 +652,12 @@ it("preserves complete large actions and bounds serialized review prompts separa
     protection: { provider: "security.test", policy: {} },
   });
   if (!gate) throw new Error("Expected protected handle");
-  const content = `${'"\\😀'.repeat(20000)}final evidence`;
+  const content = `${'"\\😀'.repeat(200000)}final evidence`;
   await gate.check({ ...action, content }, new AbortController().signal);
   expect(check.mock.calls[0]?.[0]).toMatchObject({ content });
   await expect(
     gate.check(
-      { ...action, content: "x".repeat(256 * 1024) },
+      { ...action, content: "x".repeat(MAX_PROTECTED_ACTION_BYTES) },
       new AbortController().signal,
     ),
   ).rejects.toThrow("too large");
@@ -690,7 +692,10 @@ it("preserves complete large actions and bounds serialized review prompts separa
   await expect(
     f.plugin.agentProtection.complete(
       { runtime: "buzz.test", id: "configured" },
-      { system: "Plugin instructions", input: "x".repeat(768 * 1024) },
+      {
+        system: "Plugin instructions",
+        input: "x".repeat(MAX_REVIEW_PROMPT_BYTES),
+      },
       new AbortController().signal,
     ),
   ).rejects.toThrow("too large");

@@ -25,7 +25,8 @@ const MAX_ICON_BYTES: usize = 1024 * 1024;
 const MAX_ICON_DIMENSION: u32 = 4096;
 const MAX_ICON_PIXELS: u64 = 1024 * 1024;
 pub const DEFAULT_HOST_COMMAND_OUTPUT_BYTES: u64 = 4096;
-pub const MAX_HOST_COMMAND_OUTPUT_BYTES: u64 = 1024 * 1024;
+// Large exact security reviews opt in; ordinary commands keep the 4 KiB default.
+pub const MAX_HOST_COMMAND_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_HOST_COMMAND_INPUT_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

@@ -10,6 +10,11 @@ import type {
   ProtectedSpawn,
 } from "./models";
 
+// Transport ceilings, independent of the selected model’s token capacity.
+// A complete action may be encoded again inside a review prompt.
+export const MAX_PROTECTED_ACTION_BYTES = 8 * 1024 * 1024;
+export const MAX_REVIEW_PROMPT_BYTES = 3 * MAX_PROTECTED_ACTION_BYTES;
+
 export type ProtectionBinding = Readonly<{ provider: string; policy: unknown }>;
 export type ProtectionAction = Readonly<{
   kind: "context" | "tool" | "tool-result";
@@ -219,7 +224,10 @@ export class AgentProtectionService extends Service {
           Array.isArray(prompt.outputSchema)))
     )
       throw new Error("Invalid model completion prompt");
-    if (new TextEncoder().encode(JSON.stringify(prompt)).length > 768 * 1024)
+    if (
+      new TextEncoder().encode(JSON.stringify(prompt)).length >
+      MAX_REVIEW_PROMPT_BYTES
+    )
       throw new Error("Model completion context is too large");
     const protection = this.providers.get(caller);
     // The same spawn for every review, so the runtime can keep its worker;
@@ -452,7 +460,7 @@ export class AgentProtectionService extends Service {
         });
         if (
           new TextEncoder().encode(JSON.stringify(request)).length >
-          256 * 1024
+          MAX_PROTECTED_ACTION_BYTES
         )
           throw new Error("Protected action is too large");
         let stop!: () => void;
