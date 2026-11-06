@@ -1705,7 +1705,7 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
 
 it("discovers local workspaces and files only after creating a Solo with explicit members", async () => {
   const { client, published } = relay();
-  const file = vi.fn(async () => {});
+  const file = vi.fn(async () => ({ status: "filed" as const }));
   const list = vi.fn(async () => [{ id: "work", name: "Work" }]);
   const prepare = vi.fn(async () => file);
   client.soloWorkspaces = { list, prepare };
@@ -1720,7 +1720,7 @@ it("discovers local workspaces and files only after creating a Solo with explici
     workspace: "work",
   });
   const id = published[0]?.tags[0]?.[1];
-  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice]);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice], id);
   expect(file).toHaveBeenCalledExactlyOnceWith(id);
   expect(answer).toBe(
     `created ${id}\nadded ${alice} Alice Smith\nfiled in workspace work`,
@@ -1781,10 +1781,80 @@ it.each([
   });
   const id = published[0]?.tags[0]?.[1];
   expect(answer).toContain(`created ${id}`);
-  expect(answer).toContain(`created, not filed in workspace: ${message}`);
+  expect(answer).toContain(
+    `workspace placement unconfirmed and may have completed: ${message}`,
+  );
   expect(answer).toContain("do not create another chat");
   expect(published).toHaveLength(1);
   expect(file).toHaveBeenCalledOnce();
+});
+
+it.each(["not-filed", "unconfirmed"] as const)(
+  "reports structured placement outcome without repeating create: %s",
+  async (status) => {
+    const { client, published } = relay();
+    client.soloWorkspaces = {
+      list: async () => [],
+      prepare: async () => async () => ({ status, error: "placement stopped" }),
+    };
+    const answer = await callTool(client, {}, "channel_create", {
+      name: "triage",
+      visibility: "private",
+      solo: true,
+      members: [alice],
+      workspace: "work",
+    });
+    expect(answer).toContain(`created ${published[0]?.tags[0]?.[1]}`);
+    expect(answer).toContain(
+      status === "not-filed"
+        ? "created, not filed"
+        : "placement unconfirmed and may have completed",
+    );
+    if (status === "unconfirmed")
+      expect(answer).toContain("Inspect or refresh");
+    expect(published).toHaveLength(1);
+  },
+);
+
+it("reports uncertainty after a gated durable placement loses its app lifetime", async () => {
+  const { client, published } = relay();
+  let release!: () => void;
+  const delivered = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started!: () => void;
+  const enqueued = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let durable = false;
+  client.soloWorkspaces = {
+    list: async () => [],
+    prepare: async () => async () => {
+      durable = true;
+      started();
+      await delivered;
+      throw new Error("retired after durable placement");
+    },
+  };
+  const pending = callTool(client, {}, "channel_create", {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  });
+  try {
+    await enqueued;
+    expect(durable).toBe(true);
+    expect(published).toHaveLength(1);
+  } finally {
+    release();
+  }
+  const answer = await pending;
+  expect(answer).toContain(`created ${published[0]?.tags[0]?.[1]}`);
+  expect(answer).toContain("placement unconfirmed and may have completed");
+  expect(answer).toContain("Inspect or refresh");
+  expect(answer).not.toContain("not filed");
 });
 
 it("refuses Solo arguments that do not fit, before publishing", async () => {

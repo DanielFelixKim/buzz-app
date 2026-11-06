@@ -223,8 +223,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   A locally hosted agent can list your personal workspace IDs with
   `solo_workspace_list` and explicitly choose one when creating a Solo chat,
   provided it includes you in the chat’s members. This only files the new chat;
-  it does not copy workspace defaults or Canvas. If it reports “created, not
-  filed,” use **Move to** on the reported chat instead of creating it again.
+  it does not copy workspace defaults or Canvas. A known pre-write refusal
+  reports “created, not filed.” A write that cannot be
+  confirmed reports that placement may have completed: inspect or refresh the
+  reported chat before **Move to**, and never create it again.
   This option is not available through external/standalone or Nexus requests.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator.

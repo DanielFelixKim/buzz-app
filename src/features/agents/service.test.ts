@@ -11037,13 +11037,13 @@ it("binds run-only Solo placement to the owner, community and just-created confi
   try {
     expect(f.plugin.agents.handle(bot)?.soloWorkspaces).toBeUndefined();
     expect(await workspace.list()).toEqual([{ id: "work", name: "Work" }]);
-    await expect(workspace.prepare("work", [])).rejects.toThrow(
+    await expect(workspace.prepare("work", [], "new-chat")).rejects.toThrow(
       "Include your owner",
     );
-    await expect(workspace.prepare("unknown", [viewer])).rejects.toThrow(
-      "No such Solo workspace",
-    );
-    const file = await workspace.prepare("work", [viewer]);
+    await expect(
+      workspace.prepare("unknown", [viewer], "new-chat"),
+    ).rejects.toThrow("No such Solo workspace");
+    const file = await workspace.prepare("work", [viewer], "new-chat");
     await expect(file("old-chat")).rejects.toThrow("No new chat from this run");
     await handle.publish({
       kind: 9007,
@@ -11073,7 +11073,7 @@ it("binds run-only Solo placement to the owner, community and just-created confi
       { signal: expect.any(AbortSignal) },
     );
     await expect(file("new-chat")).rejects.toThrow("already attempted");
-    const stale = await workspace.prepare("work", [viewer]);
+    const stale = await workspace.prepare("work", [viewer], "new-chat");
     f.connect(false);
     await expect(stale("new-chat")).rejects.toThrow();
     await expect(workspace.list()).rejects.toThrow();
@@ -11145,7 +11145,11 @@ it.each([
   await f.service.create({ type: "example/echo", name: "Echo" });
   const handle = await handleOf(f.run, f.emit);
   try {
-    const file = await handle.soloWorkspaces?.prepare("work", [viewer]);
+    const file = await handle.soloWorkspaces?.prepare(
+      "work",
+      [viewer],
+      "new-chat",
+    );
     await handle.publish({
       kind: 9007,
       content: "",
@@ -11155,7 +11159,10 @@ it.each([
         ["p", viewer],
       ],
     });
-    await expect(file?.("new-chat")).rejects.toThrow("not confirmed");
+    await expect(file?.("new-chat")).resolves.toMatchObject({
+      status: "not-filed",
+      error: expect.stringContaining("not confirmed"),
+    });
     expect(assign).not.toHaveBeenCalled();
   } finally {
     await f.ctx.fiber.dispose();
@@ -11197,11 +11204,186 @@ it("fences workspace discovery when its community binding changes during the rea
   }
 });
 
-it.each([false, true])(
-  "uses the existing Solo preference writer and detects a target deleted after create: %s",
-  async (deleted) => {
+it("keeps overlapping prepared creates independently fileable through the run", async () => {
+  const f = await setup();
+  const authority = "f".repeat(64);
+  const firstStarted = runnerGate(),
+    releaseFirst = runnerGate();
+  const assign = vi.fn(async (_id: string) => {});
+  Object.assign(f.session, {
+    channelKit: { refresh: async () => {} },
+    relayAuthor: authority,
+    soloPreferences: {
+      refresh: async () => {},
+      writable: true,
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [{ id: "work", name: "Work" }] },
+      }),
+      assign,
+    },
+    snapshotRead: async (filters: readonly ReadFilter[]) => {
+      const id = filters[0]?.["#d"]?.[0] ?? "";
+      if (id === "first") {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      }
+      return [
+        event("meta", {
+          kind: 39000,
+          pubkey: authority,
+          tags: [
+            ["d", id],
+            ["t", "stream"],
+            ["t", "buzz.solo"],
+            ["P", bot],
+          ],
+        }),
+        event("roster", {
+          kind: 39002,
+          pubkey: authority,
+          tags: [
+            ["d", id],
+            ["p", bot],
+            ["p", viewer],
+          ],
+        }),
+      ];
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  const ws = handle.soloWorkspaces;
+  if (!ws) throw new Error("Missing run capability");
+  const create = (id: string) =>
+    handle.publish({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["t", "buzz.solo"],
+        ["p", viewer],
+      ],
+    });
+  try {
+    const first = await ws.prepare("work", [viewer], "first");
+    await create("first");
+    // First tool is still confirming metadata when the second publishes.
+    const second = await ws.prepare("work", [viewer], "second");
+    await create("second");
+    const pending = first("first");
+    await Promise.race([
+      firstStarted.promise,
+      pending.then(() => {
+        throw new Error("First placement finished before its authority read");
+      }),
+    ]);
+    await expect(second("second")).resolves.toEqual({ status: "filed" });
+    releaseFirst.resolve();
+    await expect(pending).resolves.toEqual({ status: "filed" });
+    expect(assign.mock.calls.map(([id]) => id)).toEqual(["second", "first"]);
+    await expect(first("first")).rejects.toThrow("already attempted");
+  } finally {
+    releaseFirst.resolve();
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it.each(["authority", "assignment"])(
+  "retains truthful status when retired during pending %s",
+  async (boundary) => {
+    const f = await setup();
+    const authority = "f".repeat(64);
+    const started = runnerGate(),
+      release = runnerGate();
+    const signal = new AbortController();
+    let durable = false;
+    const assign = vi.fn(async () => {
+      durable = true;
+      started.resolve();
+      await release.promise;
+    });
+    Object.assign(f.session, {
+      channelKit: { refresh: async () => {} },
+      relayAuthor: authority,
+      soloPreferences: {
+        refresh: async () => {},
+        writable: true,
+        snapshot: () => ({
+          status: "ready",
+          data: { sections: [{ id: "work", name: "Work" }] },
+        }),
+        assign,
+      },
+      snapshotRead: async () => {
+        if (boundary === "authority") {
+          started.resolve();
+          await release.promise;
+        }
+        return [
+          event("meta", {
+            kind: 39000,
+            pubkey: authority,
+            tags: [
+              ["d", "chat"],
+              ["t", "stream"],
+              ["t", "buzz.solo"],
+              ["P", bot],
+            ],
+          }),
+          event("roster", {
+            kind: 39002,
+            pubkey: authority,
+            tags: [
+              ["d", "chat"],
+              ["p", bot],
+              ["p", viewer],
+            ],
+          }),
+        ];
+      },
+    });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    const handle = await handleOf(f.run, f.emit);
+    try {
+      const file = await handle.soloWorkspaces?.prepare(
+        "work",
+        [viewer],
+        "chat",
+        signal.signal,
+      );
+      await handle.publish({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", "chat"],
+          ["t", "buzz.solo"],
+          ["p", viewer],
+        ],
+      });
+      const pending = file?.("chat");
+      await started.promise;
+      signal.abort(new Error("retired"));
+      release.resolve();
+      await expect(pending).resolves.toMatchObject({
+        status: boundary === "authority" ? "not-filed" : "unconfirmed",
+      });
+      expect(durable).toBe(boundary === "assignment");
+    } finally {
+      release.resolve();
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
+it.each(["filed", "deleted", "retired"])(
+  "uses the existing Solo preference writer across placement outcome: %s",
+  async (outcome) => {
     const f = await setup();
     const lifetime = new AbortController();
+    const call = new AbortController();
+    const saved = runnerGate(),
+      release = runnerGate();
     let entries: KitEntry[] = [
       {
         eventId: "head",
@@ -11234,6 +11416,10 @@ it.each([false, true])(
           },
         },
       ];
+      if (outcome === "retired") {
+        saved.resolve();
+        await release.promise;
+      }
     });
     const kit = {
       available: true,
@@ -11272,7 +11458,12 @@ it.each([false, true])(
     await f.service.create({ type: "example/echo", name: "Echo" });
     const handle = await handleOf(f.run, f.emit);
     try {
-      const file = await handle.soloWorkspaces?.prepare("work", [viewer]);
+      const file = await handle.soloWorkspaces?.prepare(
+        "work",
+        [viewer],
+        "new-chat",
+        call.signal,
+      );
       await handle.publish({
         kind: 9007,
         content: "",
@@ -11282,14 +11473,24 @@ it.each([false, true])(
           ["p", viewer],
         ],
       });
-      if (deleted) entries = [];
-      if (deleted) {
-        await expect(file?.("new-chat")).rejects.toThrow(
-          "Solo group is unavailable",
-        );
+      if (outcome === "deleted") entries = [];
+      if (outcome === "deleted") {
+        await expect(file?.("new-chat")).resolves.toMatchObject({
+          status: "unconfirmed",
+          error: expect.stringContaining("Solo group is unavailable"),
+        });
         expect(save).not.toHaveBeenCalled();
       } else {
-        await file?.("new-chat");
+        const pending = file?.("new-chat");
+        if (outcome === "retired") {
+          await saved.promise;
+          // The real preference writer's save has committed its fixture head.
+          call.abort(new Error("retired after save"));
+          release.resolve();
+        }
+        await expect(pending).resolves.toMatchObject({
+          status: outcome === "retired" ? "unconfirmed" : "filed",
+        });
         expect(save).toHaveBeenCalledExactlyOnceWith(
           {
             type: "groups",
@@ -11309,6 +11510,7 @@ it.each([false, true])(
         });
       }
     } finally {
+      release.resolve();
       preferences.dispose();
       lifetime.abort();
       await f.ctx.fiber.dispose();

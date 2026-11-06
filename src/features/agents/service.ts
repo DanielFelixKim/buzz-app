@@ -437,6 +437,10 @@ export type HandoffSource = Readonly<{ channel?: string; root?: string }>;
 /** A wake the agent sends itself, `from` another of its conversations. */
 export type AgentHandoff = AgentWake & Readonly<{ from: HandoffSource }>;
 /** Run-only placement of a just-created Solo; never a general move capability. */
+export type SoloPlacement = Readonly<{
+  status: "filed" | "not-filed" | "unconfirmed";
+  error?: string;
+}>;
 export type SoloWorkspaces = Readonly<{
   list(
     signal: AbortSignal,
@@ -445,7 +449,7 @@ export type SoloWorkspaces = Readonly<{
     workspace: string,
     members: readonly string[],
     signal: AbortSignal,
-  ): Promise<(created: RelayEvent) => Promise<void>>;
+  ): Promise<(created: RelayEvent) => Promise<SoloPlacement>>;
 }>;
 /** The agent as `run` holds it. A run's handle works for as long as the
  * agent exists; one from `Agents.handle` fails each call while `handle`
@@ -518,8 +522,9 @@ export type AgentHandle = Readonly<{
     prepare(
       workspace: string,
       members: readonly string[],
+      channelId: string,
       signal?: AbortSignal,
-    ): Promise<(id: string) => Promise<void>>;
+    ): Promise<(id: string) => Promise<SoloPlacement>>;
   }>;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
@@ -2217,72 +2222,91 @@ export class AgentsService extends Service implements Agents {
               );
             const active = AbortSignal.any([signal, binding.controller.signal]);
             return async (created) => {
-              check(active);
-              const id = created.tags.find(([key]) => key === "h")?.[1];
-              if (
-                created.kind !== 9007 ||
-                created.pubkey !== agent.pubkey ||
-                !id ||
-                !created.tags.some(
-                  ([key, value]) => key === "t" && value === "buzz.solo",
-                ) ||
-                !created.tags.some(
-                  ([key, value]) => key === "p" && value === binding.viewer,
+              const errorText = (error: unknown) =>
+                error instanceof Error ? error.message : String(error);
+              let id: string | undefined;
+              try {
+                check(active);
+                id = created.tags.find(([key]) => key === "h")?.[1];
+                if (
+                  created.kind !== 9007 ||
+                  created.pubkey !== agent.pubkey ||
+                  !id ||
+                  !created.tags.some(
+                    ([key, value]) => key === "t" && value === "buzz.solo",
+                  ) ||
+                  !created.tags.some(
+                    ([key, value]) => key === "p" && value === binding.viewer,
+                  )
                 )
-              )
-                throw new Error("Not this agent's new Solo chat");
-              // Read relay-owned authority, not an optimistic channel-list entry.
-              const events = await binding.session.snapshotRead?.(
-                [
-                  {
-                    kinds: [39000, 39002],
-                    authors: [binding.session.relayAuthor ?? ""],
-                    "#d": [id],
-                    limit: 2,
-                    consistency: "strong",
-                  },
-                ],
-                { signal: active },
-              );
-              check(active);
-              const metadata = events?.find(
-                (event) =>
-                  event.kind === 39000 &&
-                  event.pubkey === binding.session.relayAuthor &&
-                  event.tags.some(
-                    ([key, value]) => key === "d" && value === id,
-                  ),
-              );
-              const roster = events?.find(
-                (event) =>
-                  event.kind === 39002 &&
-                  event.pubkey === binding.session.relayAuthor &&
-                  event.tags.some(
-                    ([key, value]) => key === "d" && value === id,
-                  ),
-              );
-              if (
-                !metadata ||
-                !soloChannelMetadata(metadata) ||
-                regionLabels(channelIdentity(metadata).labels).length > 0 ||
-                !metadata.tags.some(
-                  ([key, value]) => key === "P" && value === agent.pubkey,
-                ) ||
-                ![agent.pubkey, binding.viewer, ...members].every((member) =>
-                  roster?.tags.some(
-                    ([key, value]) => key === "p" && value === member,
-                  ),
-                )
-              )
-                throw new Error(
-                  "New Solo chat creator and members are not confirmed",
+                  throw new Error("Not this agent's new Solo chat");
+                // Read relay-owned authority, not an optimistic channel-list entry.
+                const events = await binding.session.snapshotRead?.(
+                  [
+                    {
+                      kinds: [39000, 39002],
+                      authors: [binding.session.relayAuthor ?? ""],
+                      "#d": [id],
+                      limit: 2,
+                      consistency: "strong",
+                    },
+                  ],
+                  { signal: active },
                 );
-              await binding.session.soloPreferences.assign(
-                id,
-                workspace,
-                active,
-              );
-              check(active);
+                check(active);
+                const metadata = events?.find(
+                  (event) =>
+                    event.kind === 39000 &&
+                    event.pubkey === binding.session.relayAuthor &&
+                    event.tags.some(
+                      ([key, value]) => key === "d" && value === id,
+                    ),
+                );
+                const roster = events?.find(
+                  (event) =>
+                    event.kind === 39002 &&
+                    event.pubkey === binding.session.relayAuthor &&
+                    event.tags.some(
+                      ([key, value]) => key === "d" && value === id,
+                    ),
+                );
+                if (
+                  !metadata ||
+                  !soloChannelMetadata(metadata) ||
+                  regionLabels(channelIdentity(metadata).labels).length > 0 ||
+                  !metadata.tags.some(
+                    ([key, value]) => key === "P" && value === agent.pubkey,
+                  ) ||
+                  ![agent.pubkey, binding.viewer, ...members].every((member) =>
+                    roster?.tags.some(
+                      ([key, value]) => key === "p" && value === member,
+                    ),
+                  )
+                )
+                  throw new Error(
+                    "New Solo chat creator and members are not confirmed",
+                  );
+              } catch (error) {
+                return {
+                  status: "not-filed" as const,
+                  error: errorText(error),
+                };
+              }
+              try {
+                await binding.session.soloPreferences.assign(
+                  id,
+                  workspace,
+                  active,
+                );
+                check(active);
+                return { status: "filed" as const };
+              } catch (error) {
+                // Assignment can enqueue durably before confirmation/cancellation fails.
+                return {
+                  status: "unconfirmed" as const,
+                  error: errorText(error),
+                };
+              }
             };
           },
         };

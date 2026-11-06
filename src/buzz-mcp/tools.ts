@@ -1718,11 +1718,11 @@ class Tools {
       throw new Error("workspace is for Solo chats.");
     if (workspace !== undefined && !this.client.soloWorkspaces)
       throw new Error("Solo workspaces are unavailable on this host");
+    const id = crypto.randomUUID();
     const file =
       workspace === undefined
         ? undefined
-        : await this.client.soloWorkspaces?.prepare(workspace, members);
-    const id = crypto.randomUUID();
+        : await this.client.soloWorkspaces?.prepare(workspace, members, id);
     await this.client.publish({
       kind: 9007,
       content: "",
@@ -1751,11 +1751,17 @@ class Tools {
     if (members.length) lines.push(...(await this.joined(id, members)));
     if (file) {
       try {
-        await file(id);
-        lines.push(`filed in workspace ${workspace}`);
+        const placement = await file(id);
+        lines.push(
+          placement.status === "filed"
+            ? `filed in workspace ${workspace}`
+            : placement.status === "not-filed"
+              ? `created, not filed in workspace: ${placement.error}. Use Move to on this chat; do not create another chat.`
+              : `created; workspace placement unconfirmed and may have completed: ${placement.error}. Inspect or refresh this chat before Move to; do not create another chat.`,
+        );
       } catch (error) {
         lines.push(
-          `created, not filed in workspace: ${reason(error)}. Use Move to on this chat; do not create another chat.`,
+          `created; workspace placement unconfirmed and may have completed: ${reason(error)}. Inspect or refresh this chat before Move to; do not create another chat.`,
         );
       }
     }

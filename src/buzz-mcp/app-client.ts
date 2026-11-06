@@ -88,18 +88,24 @@ export function appClient(
           check();
           return result;
         },
-        prepare: async (workspace: string, members: readonly string[]) => {
+        prepare: async (
+          workspace: string,
+          members: readonly string[],
+          channelId: string,
+        ) => {
           check();
           const file = await soloWorkspaces.prepare(
             workspace,
             members,
+            channelId,
             options.signal,
           );
           check();
           return async (id: string) => {
             check();
-            await file(id);
+            const result = await file(id);
             check();
+            return result;
           };
         },
       },

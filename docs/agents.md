@@ -786,8 +786,10 @@ in `members`. This files only that new confirmed Solo chat. It does not enroll
 members implicitly, copy default agents/Canvas, or change agent authorship.
 Unknown targets and missing owner membership fail before creation. A target
 removed later or a failed preference write leaves the created chat intact; the
-result reports its ID and “created, not filed.” Recover with **Move to** on that
-chat, never by creating a duplicate. Omit `workspace` for unchanged creation.
+result preserves its ID. A known refusal before assignment says “created, not
+filed”; after assignment starts, failure says placement is unconfirmed and may
+have completed. Inspect or refresh the chat before using **Move to**; never
+create a duplicate. Omit `workspace` for unchanged creation.
 External/standalone tools, Nexus worker requests, and plugin agent handles do
 not gain this host-private capability or a general move operation.
 

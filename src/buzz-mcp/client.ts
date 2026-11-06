@@ -3,7 +3,7 @@ import type { ProtectionAction } from "../features/agent-protection/service";
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
 import type { GitAuth } from "../features/agents/native";
-import type { AgentAttention } from "../features/agents/service";
+import type { SoloPlacement, AgentAttention } from "../features/agents/service";
 import type { AgentPlugins } from "../plugins/requests";
 import type { SettingState } from "../shared/device-settings";
 
@@ -160,7 +160,8 @@ export interface BuzzClient {
     prepare(
       workspace: string,
       members: readonly string[],
-    ): Promise<(id: string) => Promise<void>>;
+      channelId: string,
+    ): Promise<(id: string) => Promise<SoloPlacement>>;
   }>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;

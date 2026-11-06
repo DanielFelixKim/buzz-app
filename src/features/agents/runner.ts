@@ -2680,7 +2680,7 @@ export class AgentRunners {
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
     const workspaces = run ? this.host.soloWorkspaces?.(agent) : undefined;
-    const created = new Map<string, RelayEvent>();
+    const creations = new Map<string, (event: RelayEvent) => void>();
     const handle = guarded(
       {
         protection: protection && {
@@ -2710,8 +2710,10 @@ export class AgentRunners {
             );
             if (workspaces && event.kind === 9007) {
               const id = published.tags.find(([key]) => key === "h")?.[1];
-              created.clear();
-              if (id) created.set(id, published);
+              if (id) {
+                creations.get(id)?.(published);
+                creations.delete(id);
+              }
             }
             if (ownReply) {
               const channel = this.host.channel(agent, published);
@@ -2788,6 +2790,7 @@ export class AgentRunners {
             prepare: async (
               workspace: string,
               members: readonly string[],
+              channelId: string,
               signal?: AbortSignal,
             ) => {
               const active = AbortSignal.any([
@@ -2795,19 +2798,23 @@ export class AgentRunners {
                 ...(signal ? [signal] : []),
               ]);
               const file = await workspaces.prepare(workspace, members, active);
-              // Only the next create published through this run can be filed once.
-              created.clear();
+              // Each overlapping call owns one exact future create, consumed once.
+              let created: RelayEvent | undefined;
+              if (creations.has(channelId))
+                throw new Error("Chat creation already prepared");
+              creations.set(channelId, (event) => {
+                created = event;
+              });
               let attempted = false;
               return async (id: string) => {
                 active.throwIfAborted();
                 if (attempted)
                   throw new Error("Solo placement was already attempted");
-                const event = created.get(id);
-                created.delete(id);
-                if (!event)
+                const event = created;
+                if (id !== channelId || !event)
                   throw new Error("No new chat from this run to file");
                 attempted = true;
-                await file(event);
+                return file(event);
               };
             },
           },

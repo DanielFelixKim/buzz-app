@@ -90,9 +90,11 @@ behavior on the label, so a rename touches copy only.
   owner explicitly in `members`; filing never adds members, copies workspace
   defaults or Canvas, or changes the creator. This capability is unavailable to
   standalone/external connections, Nexus workers, and plugin agent handles.
-  Creation and filing are not atomic: a placement failure reports the created
-  chat ID and “created, not filed.” Use **Move to** on that chat, not another
-  create. Omitting `workspace` preserves creation without filing.
+  Creation and filing are not atomic. A known refusal before assignment reports
+  the created ID and “created, not filed.” After assignment starts, failure reports
+  placement unconfirmed: it may already be durable or pending delivery. Inspect
+  or refresh that chat before **Move to**, never create another. Omitting
+  `workspace` preserves creation without filing.
   It cannot check NIP-CL support first, so on a relay that drops the
   label it reports an ordinary private channel instead.
 - **Share** opens the same access dialog from Solo and Messages. This flow
