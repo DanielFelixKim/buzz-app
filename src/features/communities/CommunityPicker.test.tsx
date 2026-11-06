@@ -426,12 +426,12 @@ it("returns focus after a pointer open to the field the right-click interrupted,
   const rightClick = () => {
     fireEvent.pointerDown(target, { button: 2 });
     target.focus();
+    expect(target).toHaveFocus();
     return openMenu("Primary");
   };
   composer.focus();
   const menu = await rightClick();
   expect(menu).toHaveAttribute("data-side", "bottom");
-  expect(target).toHaveFocus();
   await user.click(
     within(menu).getByRole("menuitem", { name: "Copy community URL" }),
   );
