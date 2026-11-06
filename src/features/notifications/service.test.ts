@@ -22,6 +22,7 @@ const contexts: Context[] = [];
 afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 function setup() {
   const ctx = new Context();
@@ -732,7 +733,6 @@ it("a plugin sound that fails to load warns once and alerts fall back to the def
   await t.submit("one");
   await flush();
   expect(t.plays).toEqual(["flutter"]);
-  vi.unstubAllGlobals();
 });
 it("the example sound pack registers playable WAV tones", async () => {
   const blobs: Blob[] = [];
@@ -758,4 +758,22 @@ it("the example sound pack registers playable WAV tones", async () => {
     const header = new Uint8Array(await blob.arrayBuffer()).subarray(0, 12);
     expect(new TextDecoder().decode(header)).toMatch(/^RIFF.{4}WAVE$/s);
   }
+});
+it("registering after the plugin's scope ended leaves no media URL behind", async () => {
+  const created = vi.spyOn(URL, "createObjectURL");
+  const revoked = vi.spyOn(URL, "revokeObjectURL");
+  const t = setup();
+  let notifications: Notifications | undefined;
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      notifications = ctx.notifications;
+    },
+  });
+  await vi.waitFor(() => expect(notifications).toBeDefined());
+  t.disable();
+  await flush();
+  expect(() => notifications?.sounds.register(soundPack())).toThrow();
+  expect(t.service.soundRegistry.snapshot()).toEqual([]);
+  expect(revoked).toHaveBeenCalledTimes(created.mock.calls.length);
 });

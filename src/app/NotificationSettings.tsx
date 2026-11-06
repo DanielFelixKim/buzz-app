@@ -46,7 +46,8 @@ function AlertSoundRow({
   const packSound = packs
     .flatMap((pack) => pack.sounds)
     .find((sound) => sound.ref === value);
-  const unavailable = available ? null : `${value} (unavailable)`;
+  // A listed sound keeps its own option even after its audio failed to load.
+  const unavailable = available || packSound ? null : `${value} (unavailable)`;
 
   const names = [
     "silent",

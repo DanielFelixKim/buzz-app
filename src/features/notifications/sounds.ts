@@ -179,24 +179,27 @@ export function createSoundRegistry(root: Context) {
       )
         throw new RangeError("A plugin's sound packs may total at most 4 MiB");
       const urls: string[] = [];
-      let sounds: PackEntry["sounds"];
-      try {
-        sounds = pack.sounds.map((sound) => {
-          const url = URL.createObjectURL(
-            sound.audio instanceof Blob ? sound.audio : new Blob([sound.audio]),
-          );
-          urls.push(url);
-          return Object.freeze({
-            ref: `${pluginId}/${sound.id}` as SoundRef,
-            label: sound.label,
-            source: url,
-          });
-        });
-      } catch (error) {
-        for (const url of urls) URL.revokeObjectURL(url);
-        throw error;
-      }
+      let sounds: PackEntry["sounds"] = [];
+      // URLs are made inside the effect: an ended scope throws before any exist.
       const release = ctx.effect(() => {
+        try {
+          sounds = pack.sounds.map((sound) => {
+            const url = URL.createObjectURL(
+              sound.audio instanceof Blob
+                ? sound.audio
+                : new Blob([sound.audio]),
+            );
+            urls.push(url);
+            return Object.freeze({
+              ref: `${pluginId}/${sound.id}` as SoundRef,
+              label: sound.label,
+              source: url,
+            });
+          });
+        } catch (error) {
+          for (const url of urls) URL.revokeObjectURL(url);
+          throw error;
+        }
         usage.set(key, {
           pluginId,
           soundIds: pack.sounds.map((sound) => sound.id),
@@ -206,6 +209,9 @@ export function createSoundRegistry(root: Context) {
           usage.delete(key);
           for (const sound of sounds) broken.delete(sound.ref);
           for (const url of urls) {
+            const audio = elements.get(url);
+            // A late load error must not mark a re-registered sound broken.
+            if (audio) audio.onerror = null;
             elements.delete(url);
             URL.revokeObjectURL(url);
           }
@@ -227,4 +233,3 @@ export function createSoundRegistry(root: Context) {
     },
   };
 }
-export type SoundRegistry = ReturnType<typeof createSoundRegistry>;
