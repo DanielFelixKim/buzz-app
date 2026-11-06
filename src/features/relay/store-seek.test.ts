@@ -923,3 +923,68 @@ it("hands off a rendered anchor when preserving it would repeat the older cursor
   expect(h.window().hasNewer).toBeFalsy();
   expect(h.window().rows.map((row) => row.id)).toContain(anchor.id);
 });
+
+it("preserves adjacent newer rows when handing off a byte-heavy anchor", async () => {
+  const h = setup({
+    count: 400,
+    spacing: 0,
+    maxHistoryRows: 300,
+    maxHistoryBytes: 240_000,
+  });
+  await h.open();
+  for (let step = 0; step < 12; step++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const ordered = [...h.history].sort(newestFirst);
+  const retained = new Set(h.window().rows.map((row) => row.id));
+  const oldest = Math.max(
+    ...ordered.map((event, index) => (retained.has(event.id) ? index : -1)),
+  );
+  const target = ordered[oldest + 20];
+  assert.exists(target);
+  const reaction = signed(h.alice, {
+    kind: 7,
+    content: "+",
+    created_at: T0 + 401 * HOUR,
+    tags: [
+      ["h", "c"],
+      ["e", target.id],
+      ["metadata", "x".repeat(220_000)],
+    ],
+  });
+  h.gate.aux = [reaction];
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.map((row) => row.id)).toContain(target.id);
+  h.gate.aux = [];
+  const initial = new Set(h.window().rows.map((row) => row.id));
+  const from = ordered.findIndex((event) => initial.has(event.id));
+  const seen = new Set(h.window().rows.map((row) => row.id));
+  for (let step = 0; h.window().hasNewer && step < 20; step++) {
+    h.channels.loadNewer?.(
+      "c",
+      step === 0 ? target.id : h.window().rows[0]?.id,
+    );
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    expect(h.window().error).toBeUndefined();
+    for (const row of h.window().rows) seen.add(row.id);
+    const ids = new Set(h.window().rows.map((row) => row.id));
+    expect(
+      byteSize(
+        [...h.history, reaction].filter(
+          (event) =>
+            ids.has(event.id) ||
+            (event.id === reaction.id && ids.has(target.id)),
+        ),
+      ),
+    ).toBeLessThanOrEqual(240_000);
+  }
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(
+    ordered
+      .slice(0, from)
+      .filter((event) => !seen.has(event.id))
+      .map((event) => event.content),
+  ).toEqual([]);
+});

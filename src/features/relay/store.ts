@@ -1212,7 +1212,7 @@ export function createChannelStore(
     const slice = (count: number) => {
       let start = Math.max(0, anchor - count + 1);
       // Hand off an anchor that would discard every row beyond the old edge.
-      if (edge > 0 && start >= edge) start = 0;
+      if (edge > 0 && start >= edge) start = Math.max(0, edge - count);
       return rows.slice(start, start + count);
     };
     let kept = slice(maxHistoryRows);
