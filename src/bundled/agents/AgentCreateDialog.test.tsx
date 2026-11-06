@@ -72,13 +72,14 @@ vi.mock("motion/react", async (actual) => ({
 }));
 
 afterEach(cleanup);
-// jsdom decodes no images; each upload is a square.
+// jsdom decodes no images; each upload is a decoded square.
 vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(
   100,
 );
 vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(
   100,
 );
+HTMLImageElement.prototype.decode = () => Promise.resolve();
 // jsdom has no object URLs; an upload previews its file through one.
 beforeEach(() => {
   vi.stubGlobal(
@@ -603,9 +604,9 @@ it("pans and zooms an uploaded image, then saves the framed crop", async () => {
 });
 
 it.each([
-  ["an unadjusted image", "image/png", true],
-  ["a GIF, keeping its animation", "image/gif", false],
-])("saves %s as uploaded", async (_, type, croppable) => {
+  ["an unadjusted image", "image/png", "image", true],
+  ["a GIF, keeping its animation", "image/gif", "GIF89a", false],
+])("saves %s as uploaded", async (_, type, bytes, croppable) => {
   vi.mocked(croppedAvatar).mockClear();
   vi.mocked(uploadAvatar).mockResolvedValueOnce(
     "https://images.example/original",
@@ -617,7 +618,7 @@ it.each([
   );
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
-    target: { files: [new File(["image"], "image", { type })] },
+    target: { files: [new File([bytes], "image", { type })] },
   });
   await within(dialog).findByRole(croppable ? "application" : "img", {
     name: croppable ? "Image position" : "Selected avatar",

@@ -25,13 +25,14 @@ vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   croppedAvatar: vi.fn(),
 }));
 
-// jsdom decodes no images; each upload is a square.
+// jsdom decodes no images; each upload is a decoded square.
 vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(
   100,
 );
 vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(
   100,
 );
+HTMLImageElement.prototype.decode = () => Promise.resolve();
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();

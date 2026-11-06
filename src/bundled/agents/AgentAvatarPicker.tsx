@@ -1,4 +1,5 @@
 import { useMediaCorners } from "../../features/messages/use-media-corners";
+import { animatedImage } from "../../features/messages/prepare-attachment";
 import { AgentAvatarBackdrop } from "./AgentAvatarBackdrop";
 import { EmojiSwap } from "./EmojiSwap";
 import {
@@ -129,7 +130,7 @@ export function AgentAvatarPicker({
   // The chosen file shows at once; it stays the artwork after its upload lands.
   const [local, setLocal] = useState<{
     url: string;
-    animated: boolean;
+    animated?: boolean;
     picture?: string;
     progress?: number;
   } | null>(null);
@@ -238,13 +239,14 @@ export function AgentAvatarPicker({
   const preview = useAvatarPreview(selected ? "" : picture, community, "small");
   useEffect(() => () => pending.current?.abort(), []);
   const shown = local?.picture === picture ? local?.url : undefined;
-  // Painting would keep only a GIF's first frame, so GIFs upload as chosen.
+  // Painting would keep only an animation's first frame, so those upload as chosen.
   const cropping = shown && !local?.animated ? shown : undefined;
   useImperativeHandle(avatarRef, () => ({
     async prepare() {
       const image = cropImage.current;
       // Default framing keeps the original upload, as does artwork this
       // browser can't decode (HEIC outside WebKit), which the host converts.
+      if (cropping) await image?.decode().catch(() => {});
       const framed =
         cropping && image?.naturalWidth
           ? avatarCropBox(image.naturalWidth / image.naturalHeight, crop).crop
@@ -281,20 +283,20 @@ export function AgentAvatarPicker({
     const request = new AbortController();
     pending.current = request;
     const url = URL.createObjectURL(file);
-    const animated = file.type === "image/gif";
-    setLocal({ url, animated });
+    setLocal({ url });
+    // The previous image's source is gone, so its framing can't be kept.
+    if (selection.kind === "image" && selection.crop)
+      onChange({ kind: "image", picture: selection.picture });
     onBusyChange(true);
     setError("");
     try {
-      const value = await uploadAvatar(
-        file,
-        community,
-        request.signal,
-        (sent, total) => {
+      const [value, animated] = await Promise.all([
+        uploadAvatar(file, community, request.signal, (sent, total) => {
           if (!request.signal.aborted && total)
-            setLocal({ url, animated, progress: sent / total });
-        },
-      );
+            setLocal({ url, progress: sent / total });
+        }),
+        animatedImage(file).catch(() => true),
+      ]);
       if (request.signal.aborted) return;
       setLocal({ url, animated, picture: value });
       onChange({ kind: "image", picture: value });

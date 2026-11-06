@@ -17,6 +17,22 @@ import {
   webpNeedsPixelTransform,
 } from "./image-metadata";
 
+const animatedPng = (chunks: ReturnType<typeof pngChunks>) =>
+  chunks.some((c) => c.kind === "acTL");
+const animatedWebp = (chunks: ReturnType<typeof webpChunks>) =>
+  chunks.some((c) => ["ANIM", "ANMF"].includes(c.kind));
+
+/** Whether painting the image would keep only its first frame. */
+export async function animatedImage(file: Blob): Promise<boolean> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const type = imageType(bytes.subarray(0, 32));
+  return (
+    type === "image/gif" ||
+    (type === "image/png" && animatedPng(pngChunks(bytes))) ||
+    (type === "image/webp" && animatedWebp(webpChunks(bytes)))
+  );
+}
+
 /** Prepare pixels before the byte-exact upload contract; the relay still validates. */
 export async function prepareAttachment(
   file: File,
@@ -36,13 +52,13 @@ export async function prepareAttachment(
   if (type === "image/png") {
     const chunks = pngChunks(bytes);
     snapshot = stripSnapshotMetadata ? undefined : snapshotChunk(chunks);
-    const animated = chunks.some((c) => c.kind === "acTL");
+    const animated = animatedPng(chunks);
     if (animated || (stripSnapshotMetadata && !pngNeedsPixelTransform(chunks)))
       output = cleanPng(bytes, snapshot, animated);
   }
   if (type === "image/webp") {
     const chunks = webpChunks(bytes);
-    const animated = chunks.some((c) => ["ANIM", "ANMF"].includes(c.kind));
+    const animated = animatedWebp(chunks);
     if (animated || !webpNeedsPixelTransform(chunks))
       output = cleanWebp(bytes, animated);
   }
