@@ -88,7 +88,7 @@ export function conversationWorkStops(
     channelId,
   ).get(agent);
   const result = local.flatMap((work) => {
-    const continuous = work.soloChat && !work.thread;
+    const continuous = work.soloChat && !work.thread && !threadRootId;
     if (continuous && work !== solo) return [];
     const control = workStop(
       { ...work, lifecycle: true, working: work.state === "working" },

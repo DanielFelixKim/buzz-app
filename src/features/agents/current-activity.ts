@@ -169,7 +169,9 @@ export function currentActivity(
               (row.state === "working" || row.state === "waiting"),
           )
           .map((row) =>
-            row.soloChat && !row.thread ? null : row.threadRootId,
+            row.soloChat && !row.thread && !threadRootId
+              ? null
+              : row.threadRootId,
           ),
       ),
     ];

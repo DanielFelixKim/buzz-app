@@ -385,16 +385,13 @@ export function TypingIndicator({
     if (!detail) return null;
     const target = profileActivityViewTarget(pubkey);
     const canOpen = !!target && !!openActivity && !!canOpenActivity?.(target);
-    const knownRoots = detail.roots.filter(
-      (value) => typeof value === "string",
-    );
     const conversationRoot =
       workRoot ??
       (work?.soloChat && !work.thread
-        ? null
+        ? (threadRootId ?? null)
         : (work?.threadRootId ??
           threadRootId ??
-          (knownRoots.length === 1 ? knownRoots[0] : undefined)));
+          (detail.roots.length === 1 ? detail.roots[0] : undefined)));
     const conversation = conversationRoot
       ? `buzz://message?${new URLSearchParams({ channel: channelId, id: conversationRoot, thread: conversationRoot })}`
       : `buzz://channel/${encodeURIComponent(channelId)}`;

@@ -334,53 +334,105 @@ it("keeps Stop for a stoppable Solo follow-up when older work cannot stop", asyn
   );
 });
 
-it("opens the Solo conversation when the same agent also works in a thread", async () => {
-  const f = fixture();
-  const user = userEvent.setup();
-  const openActivity = vi.fn();
-  f.update([], {
-    local: [
-      {
-        scope: "test",
-        agent,
-        channelId: "channel",
-        threadRootId: root,
-        messageId: "solo",
-        startedAt: 1,
-        state: "working",
-        soloChat: true,
-        stoppable: true,
-        step: { tool: "Read", target: "first.txt" },
-      },
-      {
-        scope: "test",
-        agent,
-        channelId: "channel",
-        threadRootId: secondRoot,
-        messageId: "thread",
-        startedAt: 2,
-        state: "working",
-        soloChat: true,
-        thread: true,
-        stoppable: true,
-      },
-    ],
-  });
-  render(
-    <TypingIndicator
-      session={f.session}
-      channelId="channel"
-      openActivity={openActivity}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Reading first.txt" }));
-  expect(screen.queryByText(/Channel conversation \/ Thread/)).toBeNull();
-  expect(screen.getByText("Channel conversation")).toBeVisible();
-  await user.click(
-    screen.getByRole("button", { name: "Open conversation for Agent" }),
-  );
-  expect(openActivity).toHaveBeenCalledWith(
-    "buzz://channel/channel",
-    undefined,
-  );
-});
+it.each([true, false])(
+  "opens the Solo conversation when the same agent also works in a thread (stoppable: %s)",
+  async (stoppable) => {
+    const f = fixture();
+    const user = userEvent.setup();
+    const openActivity = vi.fn();
+    f.update([], {
+      local: [
+        {
+          scope: "test",
+          agent,
+          channelId: "channel",
+          threadRootId: root,
+          messageId: "solo",
+          startedAt: 1,
+          state: "working",
+          soloChat: true,
+          ...(stoppable ? { stoppable: true as const } : {}),
+          step: { tool: "Read", target: "first.txt" },
+        },
+        {
+          scope: "test",
+          agent,
+          channelId: "channel",
+          threadRootId: secondRoot,
+          messageId: "thread",
+          startedAt: 2,
+          state: "working",
+          soloChat: true,
+          thread: true,
+          ...(stoppable ? { stoppable: true as const } : {}),
+        },
+      ],
+    });
+    render(
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        openActivity={openActivity}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Reading first.txt" }));
+    if (stoppable) {
+      expect(screen.queryByText(/Channel conversation \/ Thread/)).toBeNull();
+      expect(screen.getByText("Channel conversation")).toBeVisible();
+    }
+    await user.click(
+      screen.getByRole("button", { name: "Open conversation for Agent" }),
+    );
+    expect(openActivity).toHaveBeenCalledWith(
+      "buzz://channel/channel",
+      undefined,
+    );
+  },
+);
+
+it.each([false, true])(
+  "keeps a Solo request in its observed reply thread (profile activity: %s)",
+  async (profileActivity) => {
+    const f = fixture();
+    const user = userEvent.setup();
+    const openActivity = vi.fn();
+    f.update([], {
+      local: [
+        {
+          scope: "test",
+          agent,
+          channelId: "channel",
+          threadRootId: root,
+          messageId: root,
+          startedAt: 1,
+          state: "working",
+          soloChat: true,
+          stoppable: true,
+        },
+      ],
+    });
+    render(
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        threadRootId={root}
+        openActivity={openActivity}
+        canOpenActivity={profileActivity ? () => true : undefined}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: profileActivity ? "View Agent activity" : "Open thread for Agent",
+      }),
+    );
+    expect(openActivity).toHaveBeenCalledWith(
+      profileActivity
+        ? expect.any(String)
+        : `buzz://message?channel=channel&id=${root}&thread=${root}`,
+      profileActivity ? { rootId: root } : undefined,
+    );
+  },
+);
