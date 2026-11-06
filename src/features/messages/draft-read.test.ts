@@ -179,6 +179,26 @@ it("suppresses accepted sibling snapshots while preserving newer live prose", ()
   }
 });
 
+it.each(["", "   ", { text: "", recipients: [] }])(
+  "returns absence for an empty saved stub: %j",
+  (draft) => {
+    writeView(scope, "draft:channel", draft);
+    expect(readOwnerDraft(scope, "channel")).toBeUndefined();
+  },
+);
+
+it("treats an empty live composer as authoritative over older saved prose", () => {
+  const stop = registerComposerDraft(scope, "draft:channel", () =>
+    mentionDraft(""),
+  );
+  try {
+    writeView(scope, "draft:channel", "New draft saved while editing");
+    expect(readOwnerDraft(scope, "channel")).toBeUndefined();
+  } finally {
+    stop();
+  }
+});
+
 it("retires only snapshots captured before acceptance, preserving identical later edits", () => {
   let current = mentionDraft("Submitted caption");
   const sent = current;

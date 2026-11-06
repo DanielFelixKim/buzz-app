@@ -3,7 +3,7 @@ import { draftCoordinates, viewRevision } from "../../shared/view-state";
 import { composerMarkdown } from "./composer-markdown";
 import { acceptedComposerSend } from "./composer-accepted";
 import {
-  legacyFollowupDraft,
+  hasDraftContent,
   mentionDraft,
   type MentionDraft,
 } from "./mention-draft";
@@ -91,6 +91,7 @@ export function readOwnerDraft(
   const accepted = session && acceptedComposerSend(session, `${scope}:${key}`);
   const id = coordinate(scope, key);
   let live: OwnerDraft | undefined;
+  let empty = false;
   for (const read of composers.get(coordinate(scope, key)) ?? []) {
     const draft = read();
     if (!draft || submitted.get(draft)?.has(id)) continue;
@@ -100,8 +101,9 @@ export function readOwnerDraft(
         "Multiple open composers have different drafts. Choose which draft to keep in Buzz first.",
       );
     live = next;
+    empty = !hasDraftContent(draft);
   }
-  if (live) return live;
+  if (live) return empty ? undefined : live;
   const raw = viewRevision(scope, key);
   if (raw === undefined) throw new Error("Draft storage is unavailable.");
   if (raw === null || (accepted && raw === accepted.revision)) return undefined;
@@ -123,5 +125,5 @@ export function readOwnerDraft(
   )
     throw new Error("The saved draft cannot be read.");
   const draft = mentionDraft(value);
-  return legacyFollowupDraft(draft) ? undefined : snapshot(draft, "saved");
+  return hasDraftContent(draft) ? snapshot(draft, "saved") : undefined;
 }

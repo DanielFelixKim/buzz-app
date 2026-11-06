@@ -125,6 +125,7 @@ import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
   legacyFollowupDraft,
+  hasDraftContent,
   MAX_DRAFT_GIFS,
   mentionBoundary,
   mentionDraft,
@@ -1131,7 +1132,7 @@ function Composer({
       (!untouchedDraft(parked) &&
         automaticTag.current !== JSON.stringify(parked))
     )
-      return userDraft(parked);
+      return parked && hasDraftContent(parked) ? userDraft(parked) : undefined;
     if (viewRevision(scope, draftKey) !== JSON.stringify(recovered))
       throw new Error(
         "The recovered draft changed during message editing. Finish or cancel the edit before reading it.",

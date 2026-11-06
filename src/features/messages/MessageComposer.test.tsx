@@ -16013,3 +16013,51 @@ it.each([false, true])(
     }
   },
 );
+
+it("does not read older saved prose after the live draft is cleared during storage failure", () => {
+  const h = mount();
+  h.fill("Older saved prose");
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    h.fill("");
+    expect(
+      readOwnerDraft("scope", "channel", undefined, h.session),
+    ).toBeUndefined();
+  } finally {
+    fail.mockRestore();
+  }
+});
+
+it("reads newer saved prose while an empty unsent draft is parked for message editing", () => {
+  const h = mount({}, undefined, first.pubkey);
+  let editScope: ReturnType<typeof useMessageEditScope>;
+  function Probe() {
+    editScope = useMessageEditScope();
+    return null;
+  }
+  const row = editableMessage();
+  h.unmount();
+  const sibling = render(
+    <MessageEditScope>
+      <Probe />
+      <MessageComposer
+        session={h.session}
+        scope="scope"
+        channelId="channel"
+        channelName="General"
+        editMessages={[row]}
+      />
+    </MessageEditScope>,
+    { wrapper: ToastProvider },
+  );
+  act(() => editScope?.current?.(row));
+  expect(within(sibling.container).getByRole("textbox")).toHaveAccessibleName(
+    "Edit message",
+  );
+  act(() => writeView("scope", "draft:channel", "Newer saved replacement"));
+  expect(
+    readOwnerDraft("scope", "channel", undefined, h.session),
+  ).toMatchObject({ text: "Newer saved replacement", source: "saved" });
+});
