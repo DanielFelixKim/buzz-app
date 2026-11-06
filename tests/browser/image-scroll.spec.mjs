@@ -477,6 +477,61 @@ for (const unavailable of ["canvas", "visibility"]) {
   });
 }
 
+// Native lazy-loading margins and Virtua's mount buffer exist only in a browser.
+// WebKit's lazy margin is about one viewport, inside that buffer, so lazy
+// images in rows scrolled into the buffer wait to be requested.
+test("virtualized rows request images on mount, beyond native lazy margins", async ({
+  page,
+}) => {
+  const requested = new Set();
+  // Held responses keep every placeholder geometry fixed while scrolling.
+  await page.route("https://image.test/**", (route) => {
+    requested.add(route.request().url());
+  });
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/image-scroll.html`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    await expect(
+      feed.locator("[data-media-preview] img").first(),
+    ).toBeAttached();
+    await settle(page, feed);
+    await feed.hover();
+    // Stop while older rows remain above the buffer's newly mounted edge.
+    while ((await feed.evaluate((element) => element.scrollTop)) > 4000)
+      await wheel(page, -1500, feed);
+    const mounted = await feed.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      return [...element.querySelectorAll("[data-media-preview] img")].map(
+        (image) => ({
+          source: image.src,
+          distant: image.getBoundingClientRect().bottom < top - innerHeight,
+        }),
+      );
+    });
+    expect(
+      mounted.some(({ distant }) => distant),
+      "an image is mounted beyond one viewport above the reader",
+    ).toBe(true);
+    await expect
+      .poll(() =>
+        mounted
+          .map(({ source }) => source)
+          .filter((source) => !requested.has(source)),
+      )
+      .toEqual([]);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+    } finally {
+      await server.close();
+    }
+  }
+});
+
 // Virtua measurement, native scroll clamping and actual eviction require a browser.
 test("decoded image resizing preserves reading and bottom following across remounts", async ({
   page,
