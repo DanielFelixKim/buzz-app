@@ -63,6 +63,8 @@ import {
 import { listed, scopeOf } from "./scope";
 import { useActivity, useDeletions, useSent } from "./views";
 import styles from "./DraftsSent.module.css";
+import type { ConversationExtensions } from "../conversation/contracts";
+import { MessagePreview } from "../messages/MessagePreview";
 
 /** Labels change by the minute, so half a minute keeps them current. */
 const TICK_MS = 30_000;
@@ -112,11 +114,13 @@ export function DraftsSentPage({
   navigator,
   navigation,
   companion,
+  extensions,
 }: {
   relay: RelayData;
   navigator: Navigation;
   navigation?: PageNavigation | undefined;
   companion?: ReactNode;
+  extensions?: ConversationExtensions | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const scope = scopeOf(connection);
@@ -133,6 +137,7 @@ export function DraftsSentPage({
             viewer={scope.viewer}
             origin={scope.communityOrigin}
             navigator={navigator}
+            extensions={extensions}
           />
         ) : (
           <div data-buzz-ui="" className={styles.page}>
@@ -170,11 +175,13 @@ function ScopedPage({
   viewer,
   origin,
   navigator,
+  extensions,
 }: {
   session: RelaySession;
   viewer: string;
   origin: string;
   navigator: Navigation;
+  extensions: ConversationExtensions | undefined;
 }) {
   const drafts = useDrafts(session);
   const { channels } = useChannelList(session.channels);
@@ -394,6 +401,13 @@ function ScopedPage({
     for (const key of row.activity?.people.slice(0, 4) ??
       row.place.members.slice(0, 3))
       people.add(key);
+  // And the people sent messages mention.
+  for (const row of sentRows)
+    for (const key of [
+      ...(row.entry.row?.mentions ?? []),
+      ...(row.entry.row?.mentionReferences ?? []),
+    ])
+      people.add(key);
   const missing = [...people]
     .sort()
     .filter((key) => !profiles.has(key))
@@ -568,7 +582,17 @@ function ScopedPage({
             </span>
           </span>
         }
-        preview={line}
+        preview={
+          !draft && entry.row ? (
+            <MessagePreview
+              row={entry.row}
+              session={session}
+              extensions={extensions}
+            />
+          ) : (
+            line
+          )
+        }
       />
     );
     return (

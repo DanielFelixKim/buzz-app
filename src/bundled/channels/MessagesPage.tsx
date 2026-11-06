@@ -13,6 +13,7 @@ export function MessagesPage(props: ComponentProps<typeof ChannelsPage>) {
       navigator={props.navigator}
       navigation={props.navigation}
       companion={props.companion}
+      extensions={props.extensions}
     />
   ) : (
     <ChannelsPage {...props} />

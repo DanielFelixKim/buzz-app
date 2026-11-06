@@ -962,3 +962,19 @@ it("asks for a community before showing anything", () => {
   );
   expect(screen.getByText("Choose a community")).toBeInTheDocument();
 });
+
+it("shows a sent message as its timeline row, named by its plain text", async () => {
+  vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+  const h = harness();
+  h.emit([event({ content: "**Ship** [the PR](https://example.com/pr)" })]);
+  const Page = h.page.component;
+  render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  const row = await screen.findByRole("button", {
+    name: /View message in #launch-room: Ship the PR/,
+  });
+  expect(within(row).getByText("Ship").tagName).toBe("STRONG");
+  expect(row).not.toHaveTextContent("**");
+  expect(row).not.toHaveTextContent("https://example.com/pr");
+  expect(within(row).queryByRole("link")).toBeNull();
+});

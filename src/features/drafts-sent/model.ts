@@ -1,6 +1,8 @@
 import type { VisibleEvent } from "../../features/relay/projection";
 import { threadReference } from "../../features/relay/thread-reference";
 import { plainText } from "../../features/notifications/content";
+import type { ChannelMessage } from "../../features/relay/contracts";
+import { foldMessages } from "../../features/relay/fold";
 
 export type ReadEvent = VisibleEvent;
 export type Entry = {
@@ -12,6 +14,8 @@ export type Entry = {
   createdAt?: number;
   /** Sent: Buzz's millisecond send order (`ms` tag), so same-second messages sort as Buzz shows them. */
   createdAtMs?: number;
+  /** Sent: the message as the timeline renders it. */
+  row?: ChannelMessage;
 };
 
 export const SENT_LIMIT = 100;
@@ -91,6 +95,9 @@ export function sentEntries(
     const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channelId || !Number.isFinite(event.created_at)) continue;
     const root = threadRoot(event);
+    const [row] = foldMessages(channelId, "", [event], {
+      includeReplies: true,
+    });
     entries.set(event.id, {
       id: event.id,
       channelId,
@@ -98,6 +105,7 @@ export function sentEntries(
       text: event.content,
       createdAt: event.created_at,
       createdAtMs: eventMs(event),
+      ...(row ? { row } : {}),
     });
   }
   // Newest first: the reverse of Buzz's message order.
