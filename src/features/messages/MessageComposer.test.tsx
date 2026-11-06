@@ -15799,6 +15799,31 @@ it("runs a command that sends nothing: clears the draft, announces its notice po
   expect(h.input()).toHaveValue("/hold now");
 });
 
+it("finishes a done command without asking about or adding a mentioned nonmember", async () => {
+  const service = await commandService();
+  const h = mount({ extensions: service, slashCommands: true });
+  const add = vi.fn(async () => {});
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+  });
+  h.fill("/hush ");
+  act(() => service.composerTools()?.insertMention(first));
+  h.submit();
+  expect(await screen.findByText("Hushed.")).toHaveAttribute("role", "status");
+  expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+  expect(add).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("");
+});
+
 /** The mounted channel listed as a one-to-one DM. */
 function directMessageSession(session: RelaySession) {
   const direct = {
