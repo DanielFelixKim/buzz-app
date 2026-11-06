@@ -2665,6 +2665,55 @@ it("discovers installed source updates from the list and refreshes on focus", as
   expect(checkFolder).toHaveBeenCalledTimes(2);
 });
 
+it.each(["updated", "failed"])(
+  "shows a pending list check before its %s result without opening details",
+  async (outcome) => {
+    const fixture = reviewPluginFixture();
+    Object.assign(fixture.external, { updateSource: savedGitSource });
+    let resolve!: (result: ReturnType<typeof gitCheckResult>) => void;
+    let reject!: (reason: Error) => void;
+    const checkGit = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof gitCheckResult>>((yes, no) => {
+          resolve = yes;
+          reject = no;
+        }),
+    );
+    Object.assign(fixture.manager, { imports: { checkGit } });
+    act(fixture.publish);
+    try {
+      await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+      expect(
+        await screen.findByText("Checking for updates…", {}, { timeout: 2500 }),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "Disable Zebra external" }),
+      ).toBeEnabled();
+      expect(
+        screen.queryByRole("complementary", { name: "Zebra external details" }),
+      ).toBeNull();
+    } finally {
+      await act(async () => {
+        if (outcome === "updated") resolve(gitCheckResult("new"));
+        else reject(new Error("repository offline"));
+      });
+    }
+    expect(screen.queryByText("Checking for updates…")).toBeNull();
+    if (outcome === "updated")
+      expect(
+        await screen.findByRole("button", { name: "Update Zebra external" }),
+      ).toBeVisible();
+    else
+      expect(
+        screen.getByText("Update check failed. Error: repository offline"),
+      ).toBeVisible();
+    expect(checkGit).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("complementary", { name: "Zebra external details" }),
+    ).toBeNull();
+  },
+);
+
 it("checks disabled Git plugins at their saved path while isolating source failures", async () => {
   const fixture = reviewPluginFixture();
   const plugin = fixture.external;

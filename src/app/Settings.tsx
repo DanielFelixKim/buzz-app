@@ -28,6 +28,7 @@ import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Tabs } from "../shared/design-system/ui/Tabs";
 import { SearchField } from "../shared/design-system/ui/SearchField";
+import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
 import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import {
   type ReactNode,
@@ -53,6 +54,7 @@ import {
 import {
   createPluginUpdateChecks,
   pluginUpdateAvailable,
+  pluginUpdateCheck,
   type PluginUpdateChecks,
 } from "../plugins/update-checks";
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
@@ -1006,6 +1008,7 @@ export function Settings({
               const failure =
                 plugin.error ??
                 (running?.revision === plugin.revision ? running.error : null);
+              const sourceCheck = pluginUpdateCheck(updateSnapshot, plugin);
               const updateAvailable =
                 !!plugins.imports &&
                 !managedBy(managed, id) &&
@@ -1210,6 +1213,21 @@ export function Settings({
                       />
                     </div>
                   </article>
+                  {sourceCheck && (
+                    <LoadingRegion
+                      pending={sourceCheck.checking}
+                      label="Checking for updates…"
+                      feedback={
+                        sourceCheck.error ? (
+                          <p role="alert" className="error text-body-sm">
+                            Update check failed. {sourceCheck.error}
+                          </p>
+                        ) : undefined
+                      }
+                    >
+                      {null}
+                    </LoadingRegion>
+                  )}
                   {accessReason && (
                     <p id={`plugin-access-${id}`} className="sr-only">
                       {accessReason}
