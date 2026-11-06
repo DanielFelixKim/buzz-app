@@ -150,6 +150,7 @@ export function RemoteAgentIntroduction({
       >
         {avatar.kind === "emoji" ? (
           <div
+            data-avatar-shape="squircle"
             className={styles.remoteEmoji}
             style={{ backgroundColor: avatar.color }}
           >

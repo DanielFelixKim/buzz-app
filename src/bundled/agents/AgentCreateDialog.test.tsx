@@ -1062,11 +1062,12 @@ it("previews an emoji without uploading until Continue and retries a failed remo
   const intro = await screen.findByRole("dialog", {
     name: "Meet your remote agent",
   });
-  expect(
-    within(intro)
-      .getByRole("img", { name: "Nova’s avatar" })
-      .querySelector("canvas"),
-  ).not.toBeNull();
+  const portrait = within(intro).getByRole("img", { name: "Nova’s avatar" });
+  expect(portrait.querySelector("canvas")).not.toBeNull();
+  expect(portrait.firstElementChild).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
   expect(emojiAvatar).not.toHaveBeenCalled();
   expect(uploadAvatar).not.toHaveBeenCalled();
   await user.click(within(intro).getByRole("button", { name: "Let’s go" }));
