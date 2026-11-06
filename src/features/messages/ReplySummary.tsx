@@ -91,7 +91,8 @@ export function ReplySummary({
           data-thread-recency=""
           aria-hidden="true"
         >
-          Last reply {relativeTimestamp(lastReplyAt, now)}
+          <span>·</span>
+          <span>last reply {relativeTimestamp(lastReplyAt, now)}</span>
         </span>
       )}
     </>

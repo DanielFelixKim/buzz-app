@@ -660,7 +660,7 @@ it("reserves the last reply's recency in the summary and names it for assistive 
       'aria-label="View thread: 6 replies, last reply 2 hours ago"',
     );
     expect(html).toMatch(
-      /data-thread-recency="" aria-hidden="true">Last reply 2 hours ago</,
+      /data-thread-recency="" aria-hidden="true"><span>·<\/span><span>last reply 2 hours ago<\/span>/,
     );
   } finally {
     vi.useRealTimers();
