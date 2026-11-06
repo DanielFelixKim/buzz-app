@@ -17086,6 +17086,36 @@ it("spends a /leave draft that is confirmed after its composer is gone, without 
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("keeps the draft of a command that finishes after an unrelated unmount, without a toast", async () => {
+  const service = await commandService();
+  const h = mount(
+    { extensions: service, slashCommands: true, scope: stewardScope },
+    undefined,
+    undefined,
+    undefined,
+    true,
+  );
+  stewardship(h, "member");
+  h.fill("/hold now");
+  await waitFor(() =>
+    expect(readView(stewardScope, "draft:channel", null)).toMatchObject({
+      text: "/hold now",
+    }),
+  );
+  h.submit();
+  await waitFor(() => expect(service.held.runs).toBe(1));
+  h.removeComposer();
+  expect(service.held.signals[0]?.aborted).toBe(true);
+  await act(async () =>
+    service.held.result.resolve({ done: true, notice: "Held." }),
+  );
+  expect(readView(stewardScope, "draft:channel", null)).toMatchObject({
+    text: "/hold now",
+  });
+  expect(screen.queryByText("Held.")).toBeNull();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("refuses to publish a command's text into a destination that stopped being writable, and keeps the draft", async () => {
   const service = await commandService();
   const h = mount({

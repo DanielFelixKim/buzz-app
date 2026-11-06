@@ -2780,6 +2780,7 @@ function Composer({
         };
         attempt.signal.addEventListener("abort", release, { once: true });
         commandRunning.current = true;
+        let removedHere = false;
         let result: Awaited<ReturnType<typeof runSlashCommand>>;
         try {
           result = await runSlashCommand(command.command, {
@@ -2800,11 +2801,13 @@ function Composer({
                       .list()
                       .channels.find((item) => item.id === id);
                     return channel
-                      ? channelActions.confirmLifecycle(
-                          channel,
-                          action,
-                          attempt.signal,
-                        )
+                      ? channelActions
+                          .confirmLifecycle(channel, action, attempt.signal)
+                          .then((outcome) => {
+                            if (outcome === "completed" && id === channelId)
+                              removedHere = true;
+                            return outcome;
+                          })
                       : Promise.reject(
                           new Error("This channel is unavailable."),
                         );
@@ -2827,7 +2830,12 @@ function Composer({
           commandRunning.current = false;
           attempt.signal.removeEventListener("abort", release);
         }
-        if (attempt.signal.aborted && !live.current && result.done) {
+        if (
+          attempt.signal.aborted &&
+          !live.current &&
+          result.done &&
+          removedHere
+        ) {
           // A finished command whose effect removed this composer (`/leave`):
           // its draft is spent, and its notice outlives the composer as a toast.
           const spent = { next: mentionDraft(""), revision: savedRevision };
