@@ -1084,7 +1084,10 @@ export function createChannelStore(
       );
     } finally {
       if (state.joining === joining) state.joining = undefined;
-      if (state.controller === controller) state.controller = undefined;
+      if (state.controller === controller) {
+        state.controller = undefined;
+        if (live(state, generation)) setWindow(state, { loadingOlder: false });
+      }
       // Aborted reads end here too; a newer head read keeps the flag.
       if (
         !state.controller &&

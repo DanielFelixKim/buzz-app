@@ -588,6 +588,40 @@ it("releases cancelled forward paging after reconnect without losing the reader"
   expect(h.window().error).toBeUndefined();
   expect(h.window().rows.map((row) => row.id)).not.toEqual(retained);
 });
+it("releases cancelled older paging after reconnect without losing the reader", async () => {
+  const h = setup({ count: 500, maxHistoryRows: 40 });
+  await h.open();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() => expect(h.window().freshness).toBe("verified"));
+  for (let i = 0; i < 12; i++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  const retained = h.window().rows.map((row) => row.id);
+  let release!: () => void;
+  h.gate.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reads = h.reads.length;
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(reads));
+  expect(h.window().loadingOlder).toBe(true);
+  try {
+    h.live.state({ status: "retrying", routes: [] });
+  } finally {
+    h.gate.hold = undefined;
+    release();
+  }
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBeFalsy());
+  expect(h.window().rows.map((row) => row.id)).toEqual(retained);
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBeFalsy());
+  expect(h.window().error).toBeUndefined();
+  expect(h.window().rows.map((row) => row.id)).not.toEqual(retained);
+});
 
 it("loads newer across a sliding boundary with more than a page in one second", async () => {
   const h = setup({ count: 300, spacing: 0, maxHistoryRows: 40 });
