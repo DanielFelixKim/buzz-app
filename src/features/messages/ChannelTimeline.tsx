@@ -1498,8 +1498,29 @@ function Timeline({
       else savedPosition.current = { bottom: true };
     }
     let observer: MutationObserver | undefined;
+    const restoreOffset = scroller.current?.scrollTop;
+    const upwardRestore = upwardGesture.current === "moving";
     const restorePosition = () => {
       if (intent.current !== scheduledIntent || !handle.current) return;
+      const element = scroller.current;
+      // A resize can queue this anchor between native steps of one wheel.
+      // That newer movement wins even after scrollend retires its input flag.
+      if (
+        restore &&
+        element &&
+        restoreOffset !== undefined &&
+        (upwardRestore || upwardGesture.current === "moving") &&
+        element.scrollTop <
+          Math.min(
+            restoreOffset,
+            Math.max(0, element.scrollHeight - element.clientHeight),
+          )
+      ) {
+        intent.current++;
+        restoredAnchor.current = undefined;
+        recordPosition(element);
+        return;
+      }
       const row = rows[restoreIndex];
       if (anchor && row) {
         pendingRestore.current = undefined;
@@ -1562,7 +1583,7 @@ function Timeline({
         // expires. Retain the same reading anchor (or bottom intent) through
         // those late measurements, never through a new reader gesture.
         const list = scroller.current?.querySelector("ol");
-        if (list) {
+        if (list && intent.current === scheduledIntent) {
           // Virtua measures children in ResizeObserver and synchronously writes
           // this parent height. Observing the parent box would create skipped
           // resize notifications; watch only Virtua's committed height instead.

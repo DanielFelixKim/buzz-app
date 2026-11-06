@@ -605,6 +605,7 @@ async function threadHistoryFixture() {
       ...(attempt.focus ? { focus: attempt.focus } : {}),
       position: () => undefined,
       savePosition() {},
+      passThrough: () => () => {},
       forSession: () => request,
       resolve: () => false,
       complete: () => true,
