@@ -61,7 +61,7 @@ import {
   sentEntries,
   type Entry,
 } from "./model";
-import { listed, scopeOf } from "./scope";
+import { draftListed, listed, scopeOf } from "./scope";
 import { useActivity, useDeletions, useSent } from "./views";
 import styles from "./DraftsSent.module.css";
 
@@ -250,7 +250,7 @@ function ScopedPage({
   }
 
   const shownDrafts = drafts.entries.filter((entry) =>
-    listed(byId.get(entry.channelId)),
+    draftListed(byId.get(entry.channelId)),
   );
   const sentList = useMemo(
     () =>
@@ -670,7 +670,7 @@ function ScopedPage({
               <span className={styles.groupHeading}>
                 Drafts
                 {shownDrafts.length ? (
-                  <span className="text-caption text-subtle">
+                  <span className={`text-caption text-subtle ${styles.count}`}>
                     {shownDrafts.length}
                   </span>
                 ) : null}
@@ -723,7 +723,13 @@ function ScopedPage({
               </Button>
             </div>
           )}
-          <LoadingRegion pending={sentLoading} label="Loading sent messages…">
+          {/* The status row is reserved only while nothing is shown; once Sent loads it
+              would leave a blank line under the heading. */}
+          <LoadingRegion
+            pending={sentLoading}
+            label="Loading sent messages…"
+            statusVisibility={sentLoading ? "visible" : "screen-reader"}
+          >
             {groups.length ? (
               groups.map((group) => (
                 <section key={group.label} aria-label={group.label}>

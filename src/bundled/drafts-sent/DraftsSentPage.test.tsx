@@ -71,6 +71,7 @@ function harness() {
       },
       { id: "dm", name: "DM", channelType: "dm", participants: [friend] },
       { id: "room", name: "Huddle", channelType: "stream", huddle: true },
+      { id: "old", name: "old-plans", channelType: "stream", archived: true },
     ],
   };
   const profiles = new Map<string, { name: string; isAgent?: true }>([
@@ -227,6 +228,34 @@ it("registers a sidebar page with a live draft count", () => {
   saved("draft:dm", "Second");
   act(() => window.dispatchEvent(new Event("focus")));
   expect(screen.getByLabelText("2 drafts")).toBeInTheDocument();
+});
+
+it("leaves archived conversations' drafts out of the list and count, but keeps their sent messages", () => {
+  saved("draft:old", "Stranded note");
+  saved("draft:dm", "Lunch tomorrow?");
+  const h = harness();
+  h.emit([
+    event({ content: "Shipped before archiving", tags: [["h", "old"]] }),
+  ]);
+  const Page = h.page.component;
+  const Badge = h.page.badge;
+  render(
+    <>
+      <Badge />
+      <Page />
+    </>,
+  );
+  expect(screen.getByLabelText("1 draft")).toBeInTheDocument();
+  const drafts = screen.getByRole("list", { name: "Drafts" });
+  expect(within(drafts).getByText("Lunch tomorrow?")).toBeInTheDocument();
+  expect(screen.queryByText("Stranded note")).toBeNull();
+  expect(screen.getByText("Shipped before archiving")).toBeInTheDocument();
+  // Hidden, not cleared: unarchiving brings the draft back.
+  expect(
+    localStorage.getItem(
+      `buzz-view.v1:${JSON.stringify([scope, "draft:old"])}`,
+    ),
+  ).not.toBeNull();
 });
 
 it("lists drafts first and continues a thread draft at its root", async () => {
