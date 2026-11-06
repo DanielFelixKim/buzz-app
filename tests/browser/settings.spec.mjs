@@ -422,11 +422,13 @@ confirmedPresence(
       await avatar.click();
       await expect(account).toBeHidden();
       await avatar.click();
-      // The account popup may cover main’s top-left on narrow layouts.
-      // Click the lower content area, genuinely outside the popup.
+      // The dock account popup opens beside the bottom controls.
+      // Click exposed content above it to exercise outside dismissal.
       const main = page.getByRole("main");
       const bounds = await main.boundingBox();
-      await main.click({ position: { x: 24, y: bounds.height - 5 } });
+      await main.click({
+        position: { x: bounds.width / 2, y: bounds.height / 3 },
+      });
       await expect(account).toBeHidden();
       await avatar.focus();
       await page.keyboard.press("Enter");
@@ -457,6 +459,13 @@ confirmedPresence(
       await tab(true);
       await expect(
         page.getByRole("button", { name: /^Community switcher:/ }),
+      ).toBeFocused();
+      await tab(true);
+      await expect(
+        page
+          .getByRole("navigation", { name: "Apps dock" })
+          .getByRole("tab")
+          .and(page.locator('[tabindex="0"]')),
       ).toBeFocused();
       await tab(true);
       await expect(button(page, "Search Buzz")).toBeFocused();
@@ -947,9 +956,10 @@ test("Settings loads and publishes the selected community profile", async ({
     exact: true,
   });
   await picture.fill("http://example.com/avatar.png");
-  await expect(
-    avatarEditor.getByRole("button", { name: "Done", exact: true }),
-  ).toBeDisabled();
+  // Done reveals the URL error instead of applying it.
+  await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(picture).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+  await expect(avatarEditor).toBeVisible();
   await picture.fill("");
   await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
   await expect(avatarEditor).toBeHidden();
@@ -1092,9 +1102,10 @@ test("discarding community setup leaves the published profile unchanged", async 
     exact: true,
   });
   await picture.fill("http://example.com/avatar.png");
-  await expect(
-    avatarEditor.getByRole("button", { name: "Done", exact: true }),
-  ).toBeDisabled();
+  // Done reveals the URL error instead of applying it.
+  await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(picture).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+  await expect(avatarEditor).toBeVisible();
   await picture.fill("https://example.com/avatar.png");
   await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
   await expect(button(page, "Publish profile & open")).toBeEnabled();

@@ -504,20 +504,9 @@ export function EditableInput({
     // `buzz:paste-plain` sent just before its command, marks it as raw.
     let plainPaste = false;
     const editable = () => !current.current.disabled && !locked.current;
-    // A projection depends only on the immutable document, but selection events
-    // and completion read value/selection several times per keystroke.
-    let projected:
-      | {
-          doc: EditorState["doc"];
-          value: ReturnType<typeof projectComposerDocument>;
-        }
-      | undefined;
-    const projection = () => {
-      const { doc } = editor.state;
-      if (projected?.doc !== doc)
-        projected = { doc, value: projectComposerDocument(doc) };
-      return projected.value;
-    };
+    // Selection events and completion read value/selection several times per
+    // keystroke; projectComposerDocument memoizes per immutable document.
+    const projection = () => projectComposerDocument(editor.state.doc);
     const tokenViews = () => refresh((revision) => revision + 1);
     let formats: string | undefined;
     const selected = () => {
@@ -1641,7 +1630,9 @@ export function EditableInput({
     /** Runs an Apple paragraph command in document terms, since native ones
      * stop at a token's uneditable edge. Control-A and Control-E move to the
      * paragraph's edge, and Option-Up and Option-Down first step off an edge
-     * they start at, as natively. Paragraphs are lines of the draft text, as
+     * they start at, as natively. An empty draft leaves Option-Up and
+     * Option-Down to the conversation shortcuts, as in Slack. Paragraphs are
+     * lines of the draft text, as
      * for triple click. Control-K deletes to the paragraph's end across a
      * token. Elsewhere it stays native, which keeps Control-Y working there. */
     const paragraphKey = (event: globalThis.KeyboardEvent, named: string) => {
@@ -1665,6 +1656,7 @@ export function EditableInput({
       const side = backward ? "start" : "end";
       const source = projection(),
         text = source.draft.text;
+      if (command === "step" && !text) return false;
       const at = event.shiftKey
         ? selection.head
         : backward

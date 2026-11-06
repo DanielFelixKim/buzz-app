@@ -7,6 +7,7 @@ import { browserLoginAvailable, oauthTarget } from "./oauth/browser";
 import { brokerBuilderlab, createDevSession } from "./dev-session";
 import { createNativeSession, nativeBuilderlab } from "./session";
 import { createAgentClient } from "./agents/client";
+import { startTurnStatusRecovery } from "./agents/turn-status";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import { createKnownCommunitiesClient } from "./known-communities/client";
@@ -85,6 +86,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }),
     );
   const agents = createAgentClient(session);
+  if (loginAvailable)
+    ctx.effect(() =>
+      startTurnStatusRecovery({ relay: ctx.relay, session, client: agents }),
+    );
   if (!unavailable) {
     let providerState: AgentProviderSnapshot = {
       readiness: "attention",
@@ -97,7 +102,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         state.status === "signed-in"
           ? state.account?.canUseRemoteAgents
             ? { readiness: "ready" }
-            : { readiness: "attention", attentionLabel: "Coming soon" }
+            : {
+                readiness: "attention",
+                attentionLabel: null,
+                attentionDescription: "Unavailable for this account",
+              }
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {
@@ -123,7 +132,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           {state.status === "signed-in" &&
             !state.account?.canUseRemoteAgents && (
               <p role="status" className="text-body-sm text-secondary">
-                Builderlab remote agents are coming soon for your account.
+                Builderlab remote agents are unavailable for this account.
               </p>
             )}
         </div>

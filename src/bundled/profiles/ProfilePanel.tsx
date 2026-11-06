@@ -5,6 +5,15 @@ import {
   profileHistoryTarget,
 } from "../../features/profiles/target";
 import { useProfileMessage } from "../../features/profiles/useProfileMessage";
+import {
+  otherVerifiedName,
+  verifiedLabel,
+} from "../../features/profiles/name-preference";
+import {
+  AgentSaveState,
+  DiscardChanges,
+  useAgentSaveReports,
+} from "../../features/agents/AgentSaveButton";
 import { AgentDetails } from "../agents/AgentDetails";
 import { AgentMessageButton } from "../agents/AgentMessageButton";
 import { useAgents } from "../../features/agents/react";
@@ -235,56 +244,83 @@ function OwnedAgentProfile({
   const { types } = useAgents(agents);
   const owned = useAgent(agents, pubkey);
   const channels = useChannelChoices(session.channels);
+  // Unsaved edits are asked about before a link replaces this profile.
+  const [unsaved, reportUnsaved] = useAgentSaveReports();
+  const [leaving, setLeaving] = useState<string>();
+  if (leaving && !unsaved.dirty) setLeaving(undefined);
   if (!owned) return null;
   const address = navigation?.snapshot().entry.target;
+  const go = (link: string) => (context?.push ?? context?.open)?.(link);
   return (
-    <AgentDetails
-      historyPresentation={
-        navigation &&
-        address?.kind === "conversation" &&
-        address.detail?.target === target
-          ? historyPresentation(
-              navigation,
-              profileHistoryRoute(target),
-              (selected) => ({
-                ...address,
-                detail: {
-                  ...address.detail,
-                  target: profileHistoryTarget(target, selected),
-                },
-              }),
-              profileHistoryActive(target),
-            )
-          : undefined
-      }
-      agents={agents}
-      communities={communities}
-      agent={owned.agent}
-      type={owned.type}
-      types={types}
-      channels={channels}
-      memories={session.agentMemories}
-      onRemoved={close}
-      initialActivity={initialActivity}
-      initialTranscript={initialTranscript}
-      close={close}
-      openConversation={openConversation}
-      conversation={openedFrom(session, context)}
-      messageAction={(variant) => (
-        <AgentMessageButton
-          variant={variant}
-          pubkey={pubkey}
-          relay={relay}
-          navigator={navigation}
-          navigation={undefined}
+    <AgentSaveState value={reportUnsaved}>
+      <AgentDetails
+        historyPresentation={
+          navigation &&
+          address?.kind === "conversation" &&
+          address.detail?.target === target
+            ? historyPresentation(
+                navigation,
+                profileHistoryRoute(target),
+                (selected) => ({
+                  ...address,
+                  detail: {
+                    ...address.detail,
+                    target: profileHistoryTarget(target, selected),
+                  },
+                }),
+                profileHistoryActive(target),
+              )
+            : undefined
+        }
+        agents={agents}
+        communities={communities}
+        agent={owned.agent}
+        type={owned.type}
+        types={types}
+        channels={channels}
+        memories={session.agentMemories}
+        onRemoved={close}
+        initialActivity={initialActivity}
+        initialTranscript={initialTranscript}
+        close={close}
+        openConversation={openConversation}
+        openLink={
+          context &&
+          ((link) => {
+            if (!context.canOpen(link)) return false;
+            if (!unsaved.saving && !unsaved.dirty) return !!go(link);
+            if (!unsaved.saving) setLeaving(link);
+            return false;
+          })
+        }
+        canOpenLink={context && ((link) => context.canOpen(link))}
+        conversation={openedFrom(session, context)}
+        messageAction={(variant) => (
+          <AgentMessageButton
+            variant={variant}
+            pubkey={pubkey}
+            relay={relay}
+            navigator={navigation}
+            navigation={undefined}
+          />
+        )}
+        openSettings={
+          navigation &&
+          ((section) =>
+            void navigation.open({ version: 1, kind: "settings", section }))
+        }
+      />
+      {leaving && (
+        <DiscardChanges
+          description={`Your unsaved changes to ${owned.agent.name} will be lost.`}
+          onKeep={() => setLeaving(undefined)}
+          onDiscard={() => {
+            setLeaving(undefined);
+            go(leaving);
+          }}
         />
       )}
-      openSettings={
-        navigation &&
-        ((section) =>
-          void navigation.open({ version: 1, kind: "settings", section }))
-      }
-    />
+    </AgentSaveState>
   );
 }
 
@@ -444,6 +480,12 @@ function ProfileDetails({
     profile?.name ??
       (displayAgent ? "Unknown agent" : (formatPublicKey(pubkey) ?? pubkey)),
   );
+  // The verification line carries the check, so it keeps the handle when the
+  // name already is it.
+  const otherName =
+    profile?.verified &&
+    (otherVerifiedName(verifiedLabel(profile.verified), profile.verified) ??
+      `@${profile.verified.username}`);
   // The portrait is 5rem (at most 240 device px), so the relay's 320 px
   // thumbnail already covers it and reuses the URL message rows have loaded.
   const picture = avatarMedia(profile?.picture, session.media) ?? null;
@@ -529,9 +571,7 @@ function ProfileDetails({
               <p
                 className={`${styles.verifiedName} text-body-sm text-secondary`}
               >
-                <span>
-                  {profile.verified.fullName ?? `@${profile.verified.username}`}
-                </span>
+                <span>{otherName}</span>
                 {profile.verified.status === "checked" && (
                   <CheckCircleIcon
                     aria-hidden="true"
@@ -545,7 +585,8 @@ function ProfileDetails({
                 {profile.verified.status === "checked"
                   ? `Name verified by ${profile.verified.issuerLabel}`
                   : `Cached verification from ${profile.verified.issuerLabel}`}{" "}
-                {profile.verified.fullName && `· @${profile.verified.username}`}
+                {otherName !== `@${profile.verified.username}` &&
+                  `· @${profile.verified.username}`}
               </p>
             )}
             {presence !== "unknown" && (

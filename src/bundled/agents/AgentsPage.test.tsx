@@ -1,5 +1,8 @@
 import { ProfilePanel } from "../profiles/ProfilePanel";
-import { createRelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import {
   profileActivityViewTarget,
   profileTarget,
@@ -36,7 +39,10 @@ import type {
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
-import { setDefaultAgent } from "../../features/solo/default-agent";
+import {
+  chooseDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 import { readView, writeView } from "../../shared/view-state";
 import type { RelayData } from "../../features/relay/service";
 import type { CommunityReader } from "../../features/communities/service";
@@ -53,7 +59,6 @@ import { registerNavigationShortcuts } from "../../app/shortcuts";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import { AgentsPage } from "./AgentsPage";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -178,6 +183,7 @@ function setup(
       communities?: CommunityReader;
     },
     teams = [] as AgentsSnapshot["teams"],
+    linkTab = false,
   } = {},
 ) {
   let snapshot: AgentsSnapshot = {
@@ -413,7 +419,34 @@ function setup(
     registerHook: vi.fn(),
     dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
-    addedTabs: () => [],
+    addedTabs: () =>
+      linkTab
+        ? [
+            {
+              id: "link",
+              key: "link",
+              pluginId: "test",
+              revision: "1",
+              title: "Link",
+              component: ({
+                canOpen,
+              }: {
+                canOpen?: ((target: string) => boolean) | undefined;
+              }) => (
+                <>
+                  <p>
+                    Agent{" "}
+                    {String(canOpen?.(profileTarget("2".repeat(64)) ?? ""))}
+                  </p>
+                  <p>
+                    Person{" "}
+                    {String(canOpen?.(profileTarget("9".repeat(64)) ?? ""))}
+                  </p>
+                </>
+              ),
+            },
+          ]
+        : [],
     registerTab: () => {},
     controlAttention: () => {},
     registerExecution: () => {},
@@ -422,6 +455,7 @@ function setup(
     inspectExecution: async () => undefined,
     execution: async () => undefined,
     harness: {} as Agents["harness"],
+    subscribeSteps: () => () => {},
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0, scope };
   const relay = {
@@ -439,6 +473,15 @@ function setup(
   };
   return { agents, echoProvider, types, show, change, relay, ...view };
 }
+
+it("offers a plugin tab's links only to the agents it can open", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1), agent("Bo", 2)], { linkTab: true });
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  await user.click(await screen.findByRole("tab", { name: "Link" }));
+  expect(screen.getByText("Agent true")).toBeVisible();
+  expect(screen.getByText("Person false")).toBeVisible();
+});
 
 it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
   const user = userEvent.setup();
@@ -703,6 +746,7 @@ it("restores provider links and retires only that provider's visits after close 
       position: () => undefined,
       savePosition() {},
       forSession: () => navigation,
+      passThrough: () => () => {},
       resolve: () => true,
       complete: () => true,
     };
@@ -787,6 +831,7 @@ it("lets the Back shortcut hide a routed provider's blocking work and Forward re
         signal: attempt.signal,
         position: () => undefined,
         savePosition() {},
+        passThrough: () => () => {},
         forSession: () => request,
         resolve: () => true,
         complete: () => true,
@@ -860,6 +905,7 @@ it("opens the agent a link names, on Your agents", async () => {
     forSession: () => navigation,
     resolve: () => true,
     complete: () => true,
+    passThrough: () => () => {},
   };
   setup([agent("Ada", 1), agent("Bea", 2)], {
     page: { navigator, navigation },
@@ -1273,7 +1319,7 @@ it("cancels cross-community consent and discards it when the destination changes
   expect(reminder()).not.toBeChecked();
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
+      within(dialog).getByRole("button", { name: "Import" }),
     ).toHaveFocus(),
   );
   await user.click(reminder());
@@ -1523,7 +1569,7 @@ it("shows the matching community images and follows their presentation updates",
   expect(to).toHaveTextContent("destination.example");
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
+      within(dialog).getByRole("button", { name: "Import" }),
     ).toHaveFocus(),
   );
   await user.hover(from);
@@ -1534,7 +1580,8 @@ it("shows the matching community images and follows their presentation updates",
   await waitFor(() =>
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
   );
-  // Return through Close to the destination illustration using the keyboard.
+  // Return through Cancel and Close to the destination illustration using the keyboard.
+  await user.tab({ shift: true });
   await user.tab({ shift: true });
   await user.tab({ shift: true });
   expect(to).toHaveFocus();
@@ -2575,8 +2622,44 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(card);
   expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Delete team" }));
+  let dialog = await screen.findByRole("alertdialog", { name: "Delete Crew?" });
+  expect(dialog).toHaveAccessibleDescription(
+    "Its agents aren't deleted, but they stop getting its instructions. It can't be undone.",
+  );
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  // Escape dismisses only the confirmation, not the editor under it.
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(agents.removeTeam).not.toHaveBeenCalled();
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Delete team" })).toHaveFocus(),
+  );
+  // So does one pressed before focus moves into the dialog, which starts in
+  // the editor.
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  await screen.findByRole("alertdialog", { name: "Delete Crew?" });
+  fireEvent.keyDown(
+    within(
+      screen.getByRole("form", { name: "Edit Crew", hidden: true }),
+    ).getByRole("button", { name: "Delete team", hidden: true }),
+    { key: "Escape" },
+  );
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  dialog = await screen.findByRole("alertdialog", { name: "Delete Crew?" });
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
+  );
 });
 
 it("offers hosted agents as members, warning that they may not get the instructions", async () => {
@@ -2996,7 +3079,181 @@ it("keeps a synced team in its home while none of its members is listed", async 
   expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" }, undefined);
   await user.click(screen.getByRole("button", { name: "Gone" }));
   await user.click(screen.getByRole("button", { name: "Delete team" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Gone?",
+  });
+  expect(dialog).toHaveAccessibleDescription(
+    "It's deleted on all your devices. Its agents aren't deleted, but they stop getting its instructions. It can't be undone.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("gone");
+});
+
+it("keeps a failed team delete in its dialog, and only there", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)], {
+    teams: [
+      {
+        id: "crew",
+        name: "Crew",
+        instructions: "",
+        members: ["9".repeat(64)],
+        revision: "1",
+      },
+    ],
+  });
+  let fail!: (reason: Error) => void;
+  agents.removeTeam.mockImplementationOnce(
+    () =>
+      new Promise<void>((_, reject) => {
+        fail = reject;
+      }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Crew?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
+  expect(agents.removeTeam).toHaveBeenCalledWith("crew");
+  // While pending, neither Cancel nor Escape closes it or the editor.
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeInTheDocument();
+  expect(
+    screen.getByRole("form", { name: "Edit Crew", hidden: true }),
+  ).toBeInTheDocument();
+
+  await act(async () =>
+    fail(new Error("Connect to relay.example to delete this team")),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Connect to relay.example to delete this team",
+  );
+  expect(screen.getAllByText(/^Connect to relay\.example/)).toHaveLength(1);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByText(/^Connect to relay\.example/)).toBeNull();
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Delete team" })).toHaveFocus(),
+  );
+});
+
+it("keeps a local team's editor open through a failed delete, for a retry", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const crew = {
+    id: "crew",
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey],
+  };
+  const { agents, change } = setup([ada], { teams: [crew] });
+  let fail!: () => void;
+  // As the service does: a local team leaves the list as its delete starts,
+  // and comes back when the write fails.
+  agents.removeTeam.mockImplementationOnce(async () => {
+    change({ teams: [] });
+    await new Promise<void>((resolve) => {
+      fail = resolve;
+    });
+    change({ teams: [crew] });
+    throw new Error("Could not save teams");
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Crew?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  expect(
+    screen.getByRole("form", { name: "Edit Crew", hidden: true }),
+  ).toBeInTheDocument();
+
+  await act(async () => fail());
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Could not save teams",
+  );
+  expect(dialog).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
+  expect(agents.removeTeam).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
+  );
+});
+
+it("closes a synced team's editor when its delete ends, before the team leaves the list", async () => {
+  const user = userEvent.setup();
+  const { agents, change } = setup([agent("Ada", 1)], {
+    teams: [
+      {
+        id: "crew",
+        name: "Crew",
+        instructions: "",
+        members: ["9".repeat(64)],
+        revision: "1",
+      },
+    ],
+  });
+  let finish!: () => void;
+  agents.removeTeam.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Crew?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
+  expect(
+    within(dialog).getByRole("button", { name: "Delete team" }),
+  ).toHaveAttribute("aria-busy", "true");
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+  await act(async () => finish());
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
+  );
+  act(() => change({ teams: [] }));
+  expect(screen.queryByRole("button", { name: "Crew" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus();
+});
+
+it("focuses Your teams when a team is deleted elsewhere under its dialog", async () => {
+  const user = userEvent.setup();
+  const { change } = setup([agent("Ada", 1)], {
+    teams: [
+      {
+        id: "crew",
+        name: "Crew",
+        instructions: "",
+        members: ["9".repeat(64)],
+        revision: "1",
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  await screen.findByRole("alertdialog", { name: "Delete Crew?" });
+  act(() => change({ teams: [] }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
+  );
 });
 
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {
@@ -3201,10 +3458,35 @@ it("opens deletion from the card menu without selecting it and requires confirma
   );
 });
 
+it.each([false, true])(
+  "keeps the production provider/model presentation on a remote card (model controls: %s)",
+  (model) => {
+    setup(
+      [{ ...agent("Ada", 1), place: "hosted", config: { reply: "Echo" } }],
+      { model },
+    );
+    const card = screen.getByRole("gridcell", { name: "Ada" });
+    expect(within(card).queryByText("Remote")).not.toBeInTheDocument();
+    if (model) {
+      expect(
+        within(card).getByRole("button", { name: "Change model" }),
+      ).toBeVisible();
+      expect(within(card).queryByText("Echo")).not.toBeInTheDocument();
+    } else {
+      const detail = within(card).getByText("Echo");
+      expect(detail.parentElement?.querySelector("svg")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    }
+  },
+);
+
 it("saves a card model through its type and keeps failures on the card", async () => {
   const user = userEvent.setup();
   const saved = agent("Ada", 1);
   const { agents } = setup([saved], { model: true });
+  expect(screen.queryByText("Local · Desktop")).not.toBeInTheDocument();
   agents.save.mockRejectedValueOnce(new Error("Model could not save"));
   await user.click(screen.getByRole("button", { name: "Change model" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -3651,7 +3933,7 @@ it("opens the owned agent provider Activity tab for the originating conversation
   }
 });
 
-it("opens a turn's thread or channel from its label on the Agents page Activity tab", async () => {
+it("lets an Activity tab open a thread or channel through the host", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const open = vi.fn(async () => ({ status: "opened" as const }));
@@ -3669,27 +3951,18 @@ it("opens a turn's thread or channel from its label on the Agents page Activity 
   };
   const relay = { ...view.relay, snapshot: () => snapshot };
   const root = "c".repeat(64);
-  const turn = (turnId: string, threadRootId: string | null) => ({
-    turnId,
-    channelId: "channel-a",
-    threadRootId,
-    triggeringEventIds: [],
-    newSession: false,
-    config: [],
-    startedAt: Date.parse("2026-10-20T12:00:00Z"),
-    endedAt: Date.parse("2026-10-20T12:01:00Z"),
-    partial: false,
-    items: [],
-  });
-  const transcript = { turns: [turn("thread", root), turn("channel", null)] };
-  // Like a harness's Activity tab: it hands the host's opener to the transcript.
   const Activity = ({ openConversation }: AgentViewProps) => (
-    <ActivityTranscript
-      transcript={transcript}
-      agentName="Ada"
-      state={() => "ended"}
-      openConversation={openConversation}
-    />
+    <>
+      <button
+        type="button"
+        onClick={() => openConversation?.("channel-a", root)}
+      >
+        Thread cccccccc
+      </button>
+      <button type="button" onClick={() => openConversation?.("channel-a")}>
+        Channel
+      </button>
+    </>
   );
   const echo = view.agents.types()[0];
   if (!echo) throw new Error("Missing fixture type");
@@ -4290,6 +4563,7 @@ it("leaves an agent a link opened while an unfinished agent's Delete was finishi
     focus: "content",
     position: () => undefined,
     savePosition() {},
+    passThrough: () => () => {},
     forSession: () => navigation,
     resolve: () => true,
     complete: () => true,
@@ -4581,6 +4855,10 @@ it("announces the Bestie on its card without repeating it in actions", async () 
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   expect(within(menu).queryByText("Bestie")).toBeNull();
+  // Without an account to save none to, it can't be removed here.
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Remove as bestie" }),
+  ).toBeNull();
   // Right-click carries the same ordinary actions as the card's "..." menu.
   expect(
     within(menu).getByRole("menuitem", { name: "Copy public key" }),
@@ -4731,6 +5009,162 @@ it("offers Make my bestie for a remote agent, asking first, and Cancel saves not
   await vi.waitFor(() =>
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
   );
+});
+
+it("removes a Bestie on another device from its card, asking first", async () => {
+  const user = userEvent.setup();
+  const ada: Agent = { ...agent("Ada", 1), place: "elsewhere" };
+  const view = setup([ada]);
+  const rows = [{ pubkey: ada.pubkey, name: ada.name, managed: true }];
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const connection = {
+    status: "ready",
+    scope: "remove-remote-bestie",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = await screen.findByRole("gridcell", { name: "Ada, Bestie" });
+  const ask = async () => {
+    await user.click(
+      within(card).getByRole("button", { name: "Actions for Ada" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Remove as bestie" }),
+    );
+    return screen.findByRole("alertdialog", {
+      name: "Remove Ada as your Bestie?",
+    });
+  };
+  // Removal starts on the highlighted Cancel, which saves nothing; its
+  // settings are on the device it runs on.
+  let dialog = await ask();
+  const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+  expect(cancel).toHaveAttribute("data-variant", "prominent");
+  await waitFor(() => expect(cancel).toHaveFocus());
+  expect(dialog).toHaveTextContent(
+    "turn them off in its Former Bestie tab on the device it runs on.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(mainAgent.write).not.toHaveBeenCalled();
+  // A failed save says so and keeps the Bestie.
+  mainAgent.write.mockRejectedValueOnce(new Error("offline"));
+  dialog = await ask();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Removing your Bestie couldn't be saved to your account. Try again.",
+  );
+  // The open dialog hides the page from the accessibility tree.
+  expect(
+    screen.getByRole("gridcell", { name: "Ada, Bestie", hidden: true }),
+  ).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  expect(mainAgent.write).toHaveBeenLastCalledWith(null);
+  expect(await screen.findByRole("gridcell", { name: "Ada" })).toBeVisible();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  // No longer Bestie, it is offered again instead.
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(
+    within(menu).getByRole("menuitem", { name: "Make my bestie" }),
+  ).toBeVisible();
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Remove as bestie" }),
+  ).toBeNull();
+});
+
+it("keeps a Bestie chosen elsewhere while its removal is being asked about", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const rows = [ada, bea].map((each) => ({
+    pubkey: each.pubkey,
+    name: each.name,
+    managed: true,
+  }));
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const connection = {
+    status: "ready",
+    scope: "remove-superseded-bestie",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = await screen.findByRole("gridcell", { name: "Ada, Bestie" });
+  await user.click(
+    within(card).getByRole("button", { name: "Actions for Ada" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove as bestie" }),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Remove Ada as your Bestie?",
+  });
+  // Another surface makes Bea Bestie while the question is open.
+  await act(() =>
+    chooseDefaultAgent(
+      connection.session as unknown as RelaySession,
+      connection.scope,
+      bea.pubkey,
+    ),
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  expect(mainAgent.write).toHaveBeenCalledTimes(1);
+  expect(mainAgent.write).toHaveBeenLastCalledWith(bea.pubkey);
+  expect(screen.getByRole("gridcell", { name: "Bea, Bestie" })).toBeVisible();
 });
 
 it("keeps a failed Bestie replacement visible and retries the account save", async () => {
@@ -5238,6 +5672,7 @@ it("opens a restored version address in Settings, closes on Back, and retires on
       signal: new AbortController().signal,
       position: () => undefined,
       savePosition() {},
+      passThrough: () => () => {},
       forSession: () => navigation,
       resolve: () => true,
       complete: () => true,
@@ -5324,4 +5759,127 @@ it("opens a restored version address in Settings, closes on Back, and retires on
   expect(
     screen.getByRole("button", { name: "Previous versions" }),
   ).toHaveAttribute("aria-expanded", "false");
+});
+
+it("opens Create agent from an agent card's link and retires the link's visits when it closes", async () => {
+  const user = userEvent.setup();
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const routed = {
+    ...base,
+    route: { version: 1, params: { card: "tinker" } },
+  } as const;
+  const dismiss = vi.fn();
+  const navigator = {
+    snapshot: () => ({ entry: { id: "card", target: routed } }),
+    open: vi.fn(),
+    dismiss,
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "card",
+    target: routed,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  const fetch = vi.fn(async () =>
+    Response.json({
+      id: "tinker",
+      name: "Tinker",
+      avatarUrl: "https://cdn.example/tinker/avatar.png",
+      instructions: "You are Tinker.",
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const { agents } = setup([agent("Ada", 1)], {
+      page: { navigator, navigation },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Create agent" });
+    expect(fetch).toHaveBeenCalledWith(
+      "https://d2z0pbxrxbsiz5.cloudfront.net/tinker/agent.json",
+      expect.anything(),
+    );
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Tinker");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create agent" }),
+    );
+    expect(agents.create).toHaveBeenCalledWith({
+      type: "test/echo",
+      name: "Tinker",
+      picture: "https://cdn.example/tinker/avatar.png",
+      config: { reply: "" },
+    });
+    await vi.waitFor(() => expect(dismiss).toHaveBeenCalledOnce());
+    const [matches, fallback] = dismiss.mock.calls[0] as unknown as [
+      (target: OpenTarget) => boolean,
+      OpenTarget,
+    ];
+    expect(fallback).toEqual(base);
+    expect(matches(routed)).toBe(true);
+    expect(matches(base)).toBe(false);
+    expect(
+      matches({ ...routed, route: { version: 1, params: { card: "occam" } } }),
+    ).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("explains an agent card that can't be loaded, and retries it", async () => {
+  const user = userEvent.setup();
+  const routed = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { card: "gone" } },
+  } as const;
+  const dismiss = vi.fn();
+  const navigator = {
+    snapshot: () => ({ entry: { id: "card", target: routed } }),
+    open: vi.fn(),
+    dismiss,
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "card",
+    target: routed,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  const fetch = vi.fn(async () => new Response("", { status: 404 }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    setup([agent("Ada", 1)], { page: { navigator, navigation } });
+    const dialog = await screen.findByRole("dialog", { name: "Agent card" });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "This agent card isn’t available.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Close" }),
+    );
+    expect(dismiss).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: "Create agent" })).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

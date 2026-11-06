@@ -318,6 +318,7 @@ const test = base.extend({
   },
 });
 async function startNewMessage(page) {
+  await openPage(page, "Messages");
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const messages = sidebar.locator('[data-sidebar-section="dms"] summary');
   await messages.hover();
@@ -832,7 +833,7 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   await sidebarDm.click({ button: "right" });
   await page
     .getByRole("menu", { name: "Actions for Avery Chen" })
-    .getByRole("menuitem", { name: "Remove from Team", exact: true })
+    .getByRole("menuitem", { name: "Close conversation", exact: true })
     .click();
   await expect(sidebarDm).toHaveCount(0);
   await page.reload();

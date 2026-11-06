@@ -82,7 +82,7 @@ pub(super) fn record() -> Arc<Session> {
 #[test]
 fn each_community_routes_by_host_to_its_own_server() {
     let servers = config::compiled(
-        Some(r#"{"version":1,"id":"bb-block","identityOrigin":"https://block.builderlab.xyz","communityHosts":["buzz.block.builderlab.xyz"],"adapterBase":"https://block.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#),
+        Some(r#"{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#),
         None,
         None,
     )
@@ -116,14 +116,14 @@ fn each_community_routes_by_host_to_its_own_server() {
             .id
             .clone()
     };
-    assert_eq!(id("wss://buzz.block.builderlab.xyz"), "bb-block");
+    assert_eq!(id("wss://buzz.acme.builderlab.xyz"), "bb-acme");
     assert_eq!(id("wss://team.communities.buzz.xyz"), "bb-public");
     assert!(first
         .server_for("wss://team.communities.buzz.xyz")
         .unwrap()
         .is(&public));
     // A community no server covers stays with the first, which attaches no token.
-    assert_eq!(id("wss://relay.example"), "bb-block");
+    assert_eq!(id("wss://relay.example"), "bb-acme");
     assert_eq!(
         first
             .server_for_command(Some("https://Team.communities.buzz.xyz"), None)
@@ -142,7 +142,7 @@ fn each_community_routes_by_host_to_its_own_server() {
         .unwrap()
         .is(&public));
     assert!(first
-        .server_for_command(None, Some("bb-block"))
+        .server_for_command(None, Some("bb-acme"))
         .unwrap()
         .is(&first));
     assert!(first.server_for_command(None, Some("other")).is_err());
@@ -151,14 +151,14 @@ fn each_community_routes_by_host_to_its_own_server() {
             .servers()
             .map(|server| server.0.config.as_ref().unwrap().id.as_str())
             .collect::<Vec<_>>(),
-        ["bb-block", "bb-public"]
+        ["bb-acme", "bb-public"]
     );
 }
 
 #[tokio::test]
 async fn signing_out_of_one_server_keeps_the_others_session() {
     let mut configs = config::compiled(
-        Some(r#"{"version":1,"id":"bb-block","identityOrigin":"https://block.builderlab.xyz","communityHosts":["buzz.block.builderlab.xyz"],"adapterBase":"https://block.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#),
+        Some(r#"{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#),
         None,
         None,
     )
@@ -222,6 +222,40 @@ async fn restored_snapshots_do_not_wait_for_an_interactive_operation() {
         .expect("a restored snapshot must not wait for the browser operation");
     assert!(snapshot.status == Status::SigningIn);
     drop(operation);
+}
+
+#[test]
+fn a_callback_timeout_keeps_its_own_failure_code() {
+    assert_eq!(callback_failure("Sign-in canceled."), "sign-in-canceled");
+    assert_eq!(
+        callback_failure(crate::oauth_callback::TIMED_OUT),
+        "sign-in-timed-out"
+    );
+    assert_eq!(
+        callback_failure("Sign-in listener failed"),
+        "callback-refused"
+    );
+}
+
+#[test]
+fn the_login_start_asks_only_for_the_sign_up_screen_and_forced_login_it_was_given() {
+    let config = host(Arc::new(Memory::default())).0.config.clone().unwrap();
+    let start = "https://identity.example/v1/login/start?handoff_challenge=challenge&handoff_challenge_method=S256";
+    for (signup, force_login, hints) in [
+        (false, false, ""),
+        (true, false, "&screen_hint=signup"),
+        (false, true, "&prompt=login"),
+        (true, true, "&screen_hint=signup&prompt=login"),
+    ] {
+        let asked = LoginStart {
+            signup,
+            force_login,
+        };
+        assert_eq!(
+            login_start(&config, "challenge", asked).as_str(),
+            format!("{start}{hints}")
+        );
+    }
 }
 
 #[tokio::test]
@@ -935,7 +969,7 @@ fn expiry_watch_follows_the_wall_clock_across_sleep() {
 }
 
 /// Signed in at `base`, which serves both the adapter and the identity origin.
-fn signed_in_at(
+pub(super) fn signed_in_at(
     store: Arc<Memory>,
     base: String,
     email: &str,
@@ -981,7 +1015,10 @@ async fn signing_in_adopts_a_session_another_copy_saved() {
         .manage(crate::oauth_callback::OAuthCallbackHost::default())
         .build(crate::app_context())
         .unwrap();
-    let snapshot = host.sign_in(app.handle()).await.unwrap();
+    let snapshot = host
+        .sign_in(app.handle(), LoginStart::default())
+        .await
+        .unwrap();
     assert!(snapshot.status == Status::SignedIn);
     assert_eq!(snapshot.failure, None);
     assert_eq!(snapshot.revision, other.record.revision);
@@ -1010,7 +1047,8 @@ async fn a_sign_out_during_the_shared_item_read_ends_signed_out() {
         .build(crate::app_context())
         .unwrap();
     let (worker, handle) = (host.clone(), app.handle().clone());
-    let signing_in = tokio::spawn(async move { worker.sign_in(&handle).await });
+    let signing_in =
+        tokio::spawn(async move { worker.sign_in(&handle, LoginStart::default()).await });
     tokio::task::spawn_blocking(move || reading.recv().unwrap())
         .await
         .unwrap();

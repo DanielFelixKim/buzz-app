@@ -1,4 +1,5 @@
 import { visibleTeams } from "../../features/agents/visible-teams";
+import { profileKey } from "../../features/profiles/target";
 import type { OpenTarget } from "../../features/navigation/targets";
 import {
   agentHistoryActive,
@@ -93,6 +94,7 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -123,11 +125,13 @@ import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
 import {
+  agentCardRoute,
   agentProviderRoute,
   agentProviderTarget,
   agentRoute,
   conversationOpener,
 } from "./routes";
+import { AgentCardCreate } from "./AgentCardCreate";
 import { writeClipboardText } from "../../shared/clipboard";
 
 const message = (error: unknown) =>
@@ -210,6 +214,17 @@ export function AgentsPage({
   const [flow, setFlow] = useState<"import" | "import-team">();
   // A team being edited by its id, or "new" for one being made.
   const [editingTeam, setEditingTeam] = useState<string>();
+  // A local team leaves the list as its delete starts, so its editor keeps it
+  // until the delete ends, to show a failure there.
+  const [removing, setRemoving] = useState<Team>();
+  const removeTeam = async (team: Team) => {
+    setRemoving(team);
+    try {
+      await agents.removeTeam(team.id);
+    } finally {
+      setRemoving(undefined);
+    }
+  };
   const newAgentButton = useRef<HTMLButtonElement>(null);
   const newAgentLabel = useRef<HTMLSpanElement>(null);
   const [importing, setImporting] = useState(false);
@@ -280,6 +295,30 @@ export function AgentsPage({
       );
     }
   };
+  // Opened from an agent card's link: Create agent, filled in from the card.
+  const card =
+    routed && navigation.target.kind === "page"
+      ? agentCardRoute(navigation.target.route?.params)
+      : undefined;
+  const closeCard = () => {
+    if (
+      !navigation ||
+      !navigator ||
+      navigation.signal.aborted ||
+      navigation.target.kind !== "page" ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    const target = agentProviderTarget(navigation.target);
+    const pageKey = targetKey(target);
+    navigator.dismiss(
+      (visit) =>
+        visit.kind === "page" &&
+        agentCardRoute(visit.route?.params) === card &&
+        targetKey(agentProviderTarget(visit)) === pageKey,
+      target,
+    );
+  };
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
   const find = (pubkey: string | undefined) =>
@@ -330,9 +369,12 @@ export function AgentsPage({
   // here, or with none in any community. A synced team always shows in its
   // home, and elsewhere only with a member there or while it has none.
   const teams = visibleTeams(agents);
-  // Only a team still saved, or one being made, keeps its editor open.
+  // Only a team still saved or being deleted, or one being made, keeps its
+  // editor open.
   const editing =
-    editingTeam === "new" || teams.some((team) => team.id === editingTeam)
+    editingTeam === "new" ||
+    editingTeam === removing?.id ||
+    teams.some((team) => team.id === editingTeam)
       ? editingTeam
       : undefined;
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
@@ -601,6 +643,11 @@ export function AgentsPage({
             : undefined
         }
         onRemoved={() => removed(selected.pubkey)}
+        openLink={(target) => {
+          const pubkey = profileKey(target);
+          return !!find(pubkey) && browse(pubkey);
+        }}
+        canOpenLink={(target) => !!find(profileKey(target))}
         openSettings={openSettings}
         openConversation={conversationOpener(
           navigator,
@@ -651,7 +698,9 @@ export function AgentsPage({
               )}
               teams={teams}
               editing={editing}
+              removing={removing}
               onEdit={setEditingTeam}
+              onRemove={removeTeam}
               newTeam={!toolbarAction && newTeamMenu}
             />
           )}
@@ -809,6 +858,23 @@ export function AgentsPage({
           }}
         />
       )}
+      {card && (
+        <AgentCardCreate
+          key={`${routedEntry}:${card}`}
+          card={card}
+          agents={agents}
+          types={types}
+          community={
+            connection.status === "ready" ? connection.origin : undefined
+          }
+          onClose={closeCard}
+          onCreated={(agent) => {
+            closeCard();
+            changeTab("yours");
+            build(agent.pubkey);
+          }}
+        />
+      )}
       {providerKey && (
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
@@ -838,6 +904,8 @@ type InventoryProps = {
   /** The agent explicitly saved as this community's Bestie. */
   bestie?: string | undefined;
   onMakeBestie?: ((pubkey: string) => void) | undefined;
+  /** Asks before saving no Bestie; absent where none can be saved. */
+  onRemoveBestie?: ((pubkey: string, name: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
   /** The community connection Share publishes through, while it is ready. */
   session?: RelaySession;
@@ -872,6 +940,7 @@ function DefaultAgentInventory({
           new Set(bestie.choices.selectable.map((agent) => agent.pubkey))
         }
         onMakeBestie={bestie.make}
+        onRemoveBestie={bestie.remove}
       />
       {bestie.view}
     </>
@@ -990,6 +1059,7 @@ function InventoryGrid({
   bestie,
   defaultChoices,
   onMakeBestie,
+  onRemoveBestie,
   session,
   onViewListing,
   dragging,
@@ -1070,6 +1140,10 @@ function InventoryGrid({
                           selected: isBestie,
                           available: !!defaultChoices?.has(agent.pubkey),
                           onMake: () => onMakeBestie(agent.pubkey),
+                          ...(onRemoveBestie && {
+                            onRemove: () =>
+                              onRemoveBestie(agent.pubkey, agent.name),
+                          }),
                         }
                       : undefined
                   }
@@ -1144,7 +1218,14 @@ function InventoryCard({
   onViewListing?: ((agent: SharedAgent) => void) | undefined;
   /** Whether it is the community's Bestie or can be made it. */
   bestie?:
-    | { selected: boolean; available: boolean; onMake(): void }
+    | {
+        selected: boolean;
+        available: boolean;
+        onMake(): void;
+        /** Removing it as Bestie, which edits only the account, so it is
+         * offered wherever the agent runs. */
+        onRemove?: (() => void) | undefined;
+      }
     | undefined;
 }) {
   const agent = props.agent;
@@ -1175,6 +1256,12 @@ function InventoryCard({
           <MenuItem disabled={!bestie.available} onClick={bestie.onMake}>
             Make my bestie
           </MenuItem>
+          <MenuSeparator />
+        </>
+      )}
+      {bestie?.selected && bestie.onRemove && (
+        <>
+          <MenuItem onClick={bestie.onRemove}>Remove as bestie</MenuItem>
           <MenuSeparator />
         </>
       )}
@@ -1946,7 +2033,7 @@ function CommunityImportDialog({
   onClose(): void;
   onImport(remember: boolean): void;
 }) {
-  const cancel = useRef<HTMLButtonElement>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   const [remember, setRemember] = useState(false);
   const known = useSyncExternalStore(
     communities?.subscribe ?? noSubscribe,
@@ -1999,17 +2086,19 @@ function CommunityImportDialog({
           </div>
         </div>
       }
-      initialFocus={cancel}
+      initialFocus={proceed}
       finalFocus={finalFocus}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
       actions={
         <>
-          <Button ref={cancel} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="prominent" onClick={() => onImport(remember)}>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            ref={proceed}
+            variant="prominent"
+            onClick={() => onImport(remember)}
+          >
             Import
           </Button>
         </>
@@ -2232,7 +2321,9 @@ function Teams({
   saved,
   teams,
   editing,
+  removing,
   onEdit,
+  onRemove,
   newTeam,
 }: {
   agents: Agents;
@@ -2240,10 +2331,15 @@ function Teams({
   teams: readonly Team[];
   /** A team's id while it is edited, or "new" for one being made. */
   editing: string | undefined;
+  /** A team while its delete runs, which may have left `teams`. */
+  removing: Team | undefined;
   onEdit(id: string | undefined): void;
+  onRemove(team: Team): Promise<void>;
   newTeam: ReactNode;
 }) {
-  const team = teams.find((item) => item.id === editing);
+  const team =
+    teams.find((item) => item.id === editing) ??
+    (removing?.id === editing ? removing : undefined);
   if (editing === "new" || team)
     return (
       <TeamEditor
@@ -2251,6 +2347,7 @@ function Teams({
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
+        onRemove={onRemove}
         onDone={() => onEdit(undefined)}
       />
     );
@@ -2287,11 +2384,14 @@ function TeamEditor({
   agents,
   saved,
   team,
+  onRemove,
   onDone,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   team?: Team;
+  /** Deletes the team, keeping this editor open until that ends. */
+  onRemove(team: Team): Promise<void>;
   onDone(): void;
 }) {
   const [name, setName] = useState(team?.name ?? "");
@@ -2301,6 +2401,12 @@ function TeamEditor({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
+  const askDelete = (open: boolean) => {
+    setError("");
+    setDeleting(open);
+  };
   // What a synced Save revises, and a new team's id for every retry.
   const [opened] = useState(team);
   const [draft] = useState(() => crypto.randomUUID());
@@ -2373,7 +2479,9 @@ function TeamEditor({
         void save();
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !pending) onDone();
+        // Not while Save runs, as its button keeps focus while loading, nor
+        // under the dialog: before focus moves into it, its Escape starts here.
+        if (event.key === "Escape" && !pending && !deleting) onDone();
       }}
     >
       <SideHeader
@@ -2448,7 +2556,7 @@ function TeamEditor({
           </p>
         )}
       </Section>
-      {error && (
+      {error && !deleting && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {error}
         </p>
@@ -2464,14 +2572,52 @@ function TeamEditor({
         </Button>
         {team && (
           <Button
+            ref={deleteButton}
             variant="destructive"
             disabled={pending}
-            onClick={() => void act(() => agents.removeTeam(team.id))}
+            onClick={() => askDelete(true)}
           >
             Delete team
           </Button>
         )}
       </div>
+      {team && deleting && (
+        <AlertDialog
+          title={`Delete ${team.name}?`}
+          description={`${team.revision ? "It's deleted on all your devices. " : ""}Its agents aren't deleted, but they stop getting its instructions. It can't be undone.`}
+          pending={pending}
+          // While pending, it closes only with the editor, once the delete
+          // ends. The editor also goes if the team is deleted elsewhere, and
+          // React has by then cleared Delete team's ref. Either way focus
+          // moves to the tab now shown, as leaveListing does.
+          finalFocus={() =>
+            pending || !deleteButton.current
+              ? (document.getElementById("agents-teams-tab") ?? false)
+              : deleteButton.current
+          }
+          onClose={() => askDelete(false)}
+          actions={
+            <>
+              <Button disabled={pending} onClick={() => askDelete(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={pending}
+                onClick={() => void act(() => onRemove(team))}
+              >
+                Delete team
+              </Button>
+            </>
+          }
+        >
+          {error && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {error}
+            </p>
+          )}
+        </AlertDialog>
+      )}
     </form>
   );
 }
