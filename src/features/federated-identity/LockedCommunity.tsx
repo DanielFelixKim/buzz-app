@@ -4,6 +4,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { CommunitySignIn, recoveryMessage } from "./CommunitySignIn";
 import { LOCKED_SIGN_IN } from "./lock";
+import type { Membership } from "../communities/service";
 import type { FederatedIdentity } from "./service";
 
 /** Takes the place of an organization community's pages while its saved
@@ -13,9 +14,13 @@ import type { FederatedIdentity } from "./service";
 export function LockedCommunity({
   identity,
   retry,
+  relay,
+  memberships,
 }: {
   identity: FederatedIdentity;
   retry?: () => void;
+  relay?: string | undefined;
+  memberships?: readonly Membership[];
 }) {
   const state = useSyncExternalStore(
     identity.subscribe,
@@ -34,10 +39,11 @@ export function LockedCommunity({
     state.status === "reauthentication-required";
   const started = useRef(false);
   useEffect(() => {
+    if (state.status === "signed-in") started.current = true;
     if (LOCKED_SIGN_IN !== "selection" || started.current || !ended) return;
     started.current = true;
     void identity.signIn().catch(() => {});
-  }, [ended, identity]);
+  }, [ended, identity, state.status]);
 
   const organization = state.authority?.organization;
   const signingIn = state.status === "signing-in";
@@ -67,11 +73,6 @@ export function LockedCommunity({
         description={
           <>
             {description}
-            <CommunitySignIn
-              identity={identity}
-              error={state.failure ?? undefined}
-              retry={retry ?? (() => {})}
-            />
             {failure && (
               <span role="alert" className="block text-danger">
                 {recoveryMessage(failure)}
@@ -80,32 +81,41 @@ export function LockedCommunity({
           </>
         }
         action={
-          signingIn ? (
-            <Button onClick={() => run(() => identity.cancelSignIn())}>
-              Cancel
-            </Button>
-          ) : signedIn && retry ? (
-            <>
-              <Button variant="prominent" onClick={retry}>
-                Try again
+          <>
+            <CommunitySignIn
+              identity={identity}
+              error={state.failure ?? undefined}
+              retry={retry ?? (() => {})}
+              relay={relay}
+              memberships={memberships}
+            />
+            {signingIn ? (
+              <Button onClick={() => run(() => identity.cancelSignIn())}>
+                Cancel
               </Button>
-              <Button onClick={() => run(() => identity.signIn())}>
-                Sign in again
+            ) : signedIn && retry ? (
+              <>
+                <Button variant="prominent" onClick={retry}>
+                  Try again
+                </Button>
+                <Button onClick={() => run(() => identity.signIn())}>
+                  Sign in again
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="prominent"
+                loading={checking}
+                onClick={() => run(() => identity.signIn())}
+              >
+                {unavailable || checking
+                  ? "Try again"
+                  : organization
+                    ? `Sign in with ${organization}`
+                    : "Sign in"}
               </Button>
-            </>
-          ) : (
-            <Button
-              variant="prominent"
-              loading={checking}
-              onClick={() => run(() => identity.signIn())}
-            >
-              {unavailable || checking
-                ? "Try again"
-                : organization
-                  ? `Sign in with ${organization}`
-                  : "Sign in"}
-            </Button>
-          )
+            )}
+          </>
         }
       />
     </section>

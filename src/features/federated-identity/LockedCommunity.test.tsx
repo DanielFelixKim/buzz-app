@@ -229,3 +229,45 @@ it("requires native proof for the exact key/community and drops it on account ch
   publish({ cacheAdmissions: [{ viewer, relay: origin, allowed: false }] });
   expect(gate.canConnect?.(viewer)).toBe(false);
 });
+
+it("gates each community on its own organization server's admission", async () => {
+  ipc.invoke.mockResolvedValue(true);
+  const first = federatedFixture("first");
+  const second = federatedFixture("second");
+  const forCommunity = vi.fn(() => second.service);
+  const gate = relayGates({ ...first.service, forCommunity })(origin);
+  if (!gate) throw new Error("Native gate expected");
+  await gate.protects();
+  first.publish({
+    status: "signed-in",
+    expiresAt: "2099-01-01T00:00:00Z",
+    cacheAdmissions: proof,
+  });
+  expect(gate.admits(viewer)).toBe(false);
+  const changed = vi.fn();
+  const stop = gate.subscribe(changed);
+  second.publish({
+    status: "signed-in",
+    expiresAt: "2099-01-01T00:00:00Z",
+    cacheAdmissions: proof,
+  });
+  expect(gate.admits(viewer)).toBe(true);
+  expect(changed).toHaveBeenCalledOnce();
+  expect(forCommunity).toHaveBeenCalledWith(origin);
+  stop();
+});
+
+it("lets account switching own sign-in after a refused signed-in session", async () => {
+  const { service, publish } = federatedFixture();
+  publish({
+    status: "signed-in",
+    failure: "binding-mismatch",
+    email: "a@example.com",
+  });
+  render(<LockedCommunity identity={service} retry={vi.fn()} relay={origin} />);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Switch account" }));
+  expect(service.signOut).toHaveBeenCalledOnce();
+  expect(service.signIn).toHaveBeenCalledOnce();
+});

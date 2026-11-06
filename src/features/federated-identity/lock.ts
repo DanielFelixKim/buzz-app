@@ -42,15 +42,16 @@ export function relayGates(
   identity: FederatedIdentity,
 ): (origin: string) => RelayGate | undefined {
   if (!identity.apiAvailable) return () => undefined;
-  // Keep the settled snapshot during a recheck, including its original expiry.
-  let settled = identity.snapshot();
-  const current = () => {
-    const state = identity.snapshot();
-    if (state.status !== "restoring" || state.revision !== settled.revision)
-      settled = state;
-    return settled;
-  };
   return (origin) => {
+    const session = identity.forCommunity?.(origin) ?? identity;
+    // Keep this server's settled snapshot, including expiry, during rechecks.
+    let settled = session.snapshot();
+    const current = () => {
+      const state = session.snapshot();
+      if (state.status !== "restoring" || state.revision !== settled.revision)
+        settled = state;
+      return settled;
+    };
     let protectedState: boolean | undefined;
     let checking: Promise<boolean | undefined> | undefined;
     const listeners = new Set<() => void>();
@@ -110,7 +111,7 @@ export function relayGates(
         };
         listeners.add(changed);
         arm();
-        const unsubscribe = identity.subscribe(() => {
+        const unsubscribe = session.subscribe(() => {
           changed();
           if (protectedState === undefined) void protects();
         });

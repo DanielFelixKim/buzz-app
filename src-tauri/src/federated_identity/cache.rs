@@ -37,7 +37,7 @@ impl FederatedIdentity {
     ) -> Result<(), String> {
         // Socket cancellation can follow the immediate denial notification. The
         // durable write (or session retirement on failure) must still finish.
-        let owner = self.clone();
+        let owner = self.server_for(&canonical_relay(relay)?)?;
         let revision = revision.to_owned();
         let viewer = viewer.to_owned();
         let relay = relay.to_owned();
@@ -101,13 +101,15 @@ impl FederatedIdentity {
             Err(failure) => {
                 // A refusal which cannot be saved must not leave reusable offline proof.
                 if !allowed {
-                    {
+                    let retired_revision = {
                         let mut state = self.state();
-                        if state.snapshot.revision == revision {
-                            self.retire_state(&mut state, Status::Unavailable, Some(failure.code));
+                        if state.snapshot.revision != revision {
+                            return Err("Federated session changed".into());
                         }
-                    }
-                    let _ = self.remove(session).await;
+                        self.retire_state(&mut state, Status::Unavailable, Some(failure.code));
+                        state.snapshot.revision.clone()
+                    };
+                    self.remove_retired(session, &retired_revision).await;
                 }
                 return Err(failure.code.into());
             }
