@@ -4214,6 +4214,19 @@ it.each([
     {},
     false,
   ],
+  // Zelda's profile name is Jose: unnamed, the other Jose may be a namesake.
+  [
+    "returns to prose when the read fails",
+    [outsideJose],
+    { fails: true, zeldaIsJose: true },
+    false,
+  ],
+  [
+    "returns to prose while a possible namesake is unknown",
+    [],
+    { zeldaIsJose: true },
+    false,
+  ],
   [
     "lets a newer shared head that withdrew it win",
     [outsideJose],
@@ -4229,11 +4242,21 @@ it.each([
 ] as [
   string,
   readonly string[],
-  { held?: boolean; arrives?: boolean },
+  {
+    held?: boolean;
+    arrives?: boolean;
+    fails?: boolean;
+    zeldaIsJose?: boolean;
+  },
   boolean,
 ][])(
   "the resolver looks up the verified names on its page, and %s",
-  async (_case, answered, { held = false, arrives = false }, selects) => {
+  async (_case, answered, {
+    held = false,
+    arrives = false,
+    fails = false,
+    zeldaIsJose = false,
+  }, selects) => {
     // The chooser is on other text, so only the resolver names this page.
     const h = spaceFixture("Member", {}, { query: "xyz" });
     try {
@@ -4241,6 +4264,7 @@ it.each([
       let revision = 0;
       let landed = false;
       const verified = vi.fn(async (pubkeys: readonly string[]) => {
+        if (fails) throw new Error("offline");
         if (arrives) {
           revision += 1;
           landed = true;
@@ -4272,7 +4296,7 @@ it.each([
             name: outsideJose.slice(0, 10),
             nameIsFallback: true,
           },
-          { pubkey: zelda, name: "Zelda" },
+          { pubkey: zelda, name: zeldaIsJose ? "Jose" : "Zelda" },
         ],
         hasMore: false,
       });

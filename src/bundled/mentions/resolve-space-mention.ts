@@ -28,8 +28,9 @@ import {
 
 /**
  * `people` named as the chooser names them: their verified names are looked
- * up through the same lookups and rules, then read back. A person found by a
- * verified name alone who is still unnamed is left out.
+ * up through the same lookups and rules, then read back. Undefined while a
+ * person found by a verified name alone is still unnamed (the read failed or
+ * did not answer): without their name, the page is incomplete evidence.
  */
 async function namedPeople(
   session: ComposerSession,
@@ -50,13 +51,12 @@ async function namedPeople(
       return verified ? [[pubkey, verified] as const] : [];
     }),
   );
-  return withVerifiedNames(
-    people.filter(
-      (person) => !person.nameIsFallback || page.has(person.pubkey),
-    ),
-    page,
-    session.profiles.snapshot(),
-  );
+  // Someone still unnamed may be a namesake: the page cannot decide.
+  if (
+    people.some((person) => person.nameIsFallback && !page.has(person.pubkey))
+  )
+    return undefined;
+  return withVerifiedNames(people, page, session.profiles.snapshot());
 }
 
 /** What the chooser knew about its destination when Space was typed. */
@@ -262,7 +262,7 @@ async function resolve(
   // A truncated page may hide a namesake, as it does for Space in the chooser.
   if (signal.aborted || page.more) return null;
   const people = await namedPeople(session, page.people, signal);
-  if (signal.aborted) return null;
+  if (signal.aborted || !people) return null;
   return decide(people, true, name);
 }
 
