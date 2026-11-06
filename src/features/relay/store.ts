@@ -859,6 +859,10 @@ export function createChannelStore(
         state.controller?.abort();
         state.noticeRead?.controller.abort();
         state.events = [];
+        state.above = undefined;
+        attached(state);
+        state.atHead = true;
+        state.kept = undefined;
         state.notices.clear();
         state.noticeCursor = undefined;
         state.floor = undefined;

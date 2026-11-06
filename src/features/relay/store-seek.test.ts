@@ -136,6 +136,7 @@ function harness({
     (channels.seek as NonNullable<typeof channels.seek>)("c", from, signal);
   return {
     relay,
+    viewer,
     alice,
     owner,
     channels,
@@ -560,6 +561,9 @@ it("preserves a slid reader when its route reconnects", async () => {
 it("purges retained channel rows when forward paging is denied", async () => {
   const h = setup({ count: 100, maxHistoryRows: 40 });
   await h.open();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() => expect(h.window().freshness).toBe("verified"));
   for (let step = 0; step < 3; step++) {
     h.channels.loadOlder("c");
     await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
@@ -572,6 +576,16 @@ it("purges retained channel rows when forward paging is denied", async () => {
   expect(h.window().rows).toEqual([]);
   expect(h.window().status).toBe("error");
   expect(h.window().loadingNewer).toBeFalsy();
+  h.gate.denied = false;
+  h.live.receive([roster(h.relay, "c", [h.viewer.pubkey], T0 + 1)]);
+  h.live.established("c");
+  await vi.waitFor(() => expect(h.window().freshness).toBe("verified"));
+  expect(h.window().status).toBe("ready");
+  expect(h.window().rows.at(-1)?.id).toBe(h.history.at(-1)?.id);
+  expect(h.window().hasNewer).toBeFalsy();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.times()[0]).toBe(T0 + 60 * HOUR);
 });
 
 it("releases cancelled forward paging after reconnect without losing the reader", async () => {
