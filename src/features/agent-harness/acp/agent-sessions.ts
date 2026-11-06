@@ -169,13 +169,18 @@ export type Exclusive = Readonly<{
   signal: AbortSignal;
   /** A session the work opened outlives it until `done`, its process's
    * `exited`: until then the conversation cannot be held again and its
-   * messages wait. Should `done` reject, its owner is unknown, and both
-   * fail from then on. */
+   * messages wait. Each call adds to the ones before, which are all waited
+   * for. Should any `done` reject, its owner is unknown, and both fail from
+   * then on. Throws once the work has settled. */
   outlives(done: Promise<unknown>): void;
 }>;
 
 /** A session left running by held work, until its process has exited. */
-type Outliving = { settled: Promise<void>; failed: boolean };
+type Outliving = {
+  exits: readonly Promise<unknown>[];
+  settled: Promise<void>;
+  failed: boolean;
+};
 
 type Live = {
   session: AcpSession;
@@ -514,9 +519,17 @@ export class AgentSessions {
         },
         signal: controller.signal,
         outlives: (done) => {
+          // Too late to block anything: the hold may already be another's.
+          if (this.held.get(key) !== mine)
+            throw new Error(`${label} has released this conversation`);
+          // Every process the work left running is waited for, not just the
+          // last, and a rejection of any keeps the conversation blocked.
+          const prior = this.outliving.get(key);
+          const exits = [...(prior?.exits ?? []), done];
           const outliving: Outliving = {
+            exits,
             failed: false,
-            settled: done.then(
+            settled: Promise.all(exits).then(
               () => {
                 if (this.outliving.get(key) !== outliving) return;
                 this.outliving.delete(key);
@@ -525,10 +538,11 @@ export class AgentSessions {
               (error: unknown) => {
                 // Only an exit retires it: an unknown owner stays blocking.
                 outliving.failed = true;
-                console.warn(
-                  `${label} could not confirm a session ended`,
-                  error,
-                );
+                if (this.outliving.get(key) === outliving)
+                  console.warn(
+                    `${label} could not confirm a session ended`,
+                    error,
+                  );
               },
             ),
           };
