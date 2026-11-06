@@ -687,6 +687,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             <LockedCommunity
               key={connection.origin ?? client.selected ?? ""}
               identity={services.federatedIdentity}
+              retry={services.relay.retry}
             />
           ) : !settings &&
             ((!route.state.ingress && route.failure) || failedPage) ? (

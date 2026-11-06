@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LockIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { recoveryMessage } from "./CommunitySignIn";
+import { CommunitySignIn, recoveryMessage } from "./CommunitySignIn";
 import { LOCKED_SIGN_IN } from "./lock";
 import type { FederatedIdentity } from "./service";
 
@@ -10,7 +10,13 @@ import type { FederatedIdentity } from "./service";
  * history is locked. Keyed by community, so selecting one is a new visit:
  * with `LOCKED_SIGN_IN` at `selection`, that visit opens the browser
  * sign-in once; a cancel or failure leaves the button to the person. */
-export function LockedCommunity({ identity }: { identity: FederatedIdentity }) {
+export function LockedCommunity({
+  identity,
+  retry,
+}: {
+  identity: FederatedIdentity;
+  retry?: () => void;
+}) {
   const state = useSyncExternalStore(
     identity.subscribe,
     identity.snapshot,
@@ -41,15 +47,18 @@ export function LockedCommunity({ identity }: { identity: FederatedIdentity }) {
     (state.failure === "network-unavailable" ||
       state.failure === "network-timeout");
   const unavailable = state.status === "unavailable";
+  const signedIn = state.status === "signed-in";
   const description = checking
     ? "Checking your sign-in…"
-    : signingIn
-      ? "Finish signing in in your browser. This community opens as soon as you’re done."
-      : offline
-        ? "Your sign-in has ended. Connect to the internet to sign in again."
-        : unavailable
-          ? recoveryMessage(state.failure ?? "")
-          : `Your ${organization ? `${organization} ` : ""}sign-in has ended. Sign in again to see this community.`;
+    : signedIn
+      ? "Your community’s saved conversations stay hidden until Buzz confirms your access."
+      : signingIn
+        ? "Finish signing in in your browser. This community opens as soon as you’re done."
+        : offline
+          ? "Your sign-in has ended. Connect to the internet to sign in again."
+          : unavailable
+            ? recoveryMessage(state.failure ?? "")
+            : `Your ${organization ? `${organization} ` : ""}sign-in has ended. Sign in again to see this community.`;
   return (
     <section aria-label="Sign in to continue" className="page-status">
       <EmptyState
@@ -58,6 +67,11 @@ export function LockedCommunity({ identity }: { identity: FederatedIdentity }) {
         description={
           <>
             {description}
+            <CommunitySignIn
+              identity={identity}
+              error={state.failure ?? undefined}
+              retry={retry ?? (() => {})}
+            />
             {failure && (
               <span role="alert" className="block text-danger">
                 {recoveryMessage(failure)}
@@ -70,6 +84,15 @@ export function LockedCommunity({ identity }: { identity: FederatedIdentity }) {
             <Button onClick={() => run(() => identity.cancelSignIn())}>
               Cancel
             </Button>
+          ) : signedIn && retry ? (
+            <>
+              <Button variant="prominent" onClick={retry}>
+                Try again
+              </Button>
+              <Button onClick={() => run(() => identity.signIn())}>
+                Sign in again
+              </Button>
+            </>
           ) : (
             <Button
               variant="prominent"

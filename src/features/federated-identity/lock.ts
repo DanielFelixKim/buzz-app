@@ -1,78 +1,125 @@
 import { invoke } from "@tauri-apps/api/core";
+import { relayOrigin } from "../communities/destination";
 import type { RelayGate } from "../relay/service";
 import type { FederatedIdentity, SessionSnapshot } from "./service";
 
-/** What a locked organization community does when someone selects it:
- * `selection` opens the browser sign-in once by itself; `button` waits for
- * its Sign in button. */
 export const LOCKED_SIGN_IN: "selection" | "button" = "selection";
 
-/** Whether the organization session lets Buzz show an organization
- * community's saved history now: signed in, or offline with a saved session
- * that has not ended. Anything else, including the startup check, waits. */
-export function admits(state: SessionSnapshot, now = Date.now()) {
-  if (state.status === "signed-in") return true;
+function networkUnavailable(state: SessionSnapshot) {
   return (
     state.status === "unavailable" &&
     (state.failure === "network-unavailable" ||
-      state.failure === "network-timeout") &&
+      state.failure === "network-timeout")
+  );
+}
+function admission(
+  state: SessionSnapshot,
+  viewer: string | undefined,
+  origin: string,
+) {
+  return state.cacheAdmissions?.find(
+    (entry) =>
+      entry.viewer === viewer &&
+      relayOrigin(entry.relay) === relayOrigin(origin),
+  );
+}
+/** A session alone is not permission to read this key/community's cache. */
+export function admits(
+  state: SessionSnapshot,
+  viewer: string | undefined,
+  origin: string,
+  now = Date.now(),
+) {
+  return (
+    (state.status === "signed-in" || networkUnavailable(state)) &&
     !!state.expiresAt &&
-    Date.parse(state.expiresAt) > now
+    Date.parse(state.expiresAt) > now &&
+    admission(state, viewer, origin)?.allowed === true
   );
 }
 
-/** One gate per community origin. Only native knows the build's
- * organization hosts, so a build without native identity protects none. */
 export function relayGates(
   identity: FederatedIdentity,
 ): (origin: string) => RelayGate | undefined {
   if (!identity.apiAvailable) return () => undefined;
-  // A re-check (native passes through `restoring` whenever it verifies the
-  // saved session again) keeps the last settled state, so a community open
-  // offline doesn't reload on every reconnect or outlive its saved expiry.
+  // Keep the settled snapshot during a recheck, including its original expiry.
   let settled = identity.snapshot();
   const current = () => {
     const state = identity.snapshot();
-    if (state.status !== "restoring") settled = state;
+    if (state.status !== "restoring" || state.revision !== settled.revision)
+      settled = state;
     return settled;
   };
-  return (origin) => ({
-    // Native also refuses an unsigned organization connection, so an IPC
-    // failure here only loses the cache gate, never the relay's own refusal.
-    protects: invoke<boolean>("federated_identity_protects", {
-      relay: origin,
-    }).then(
-      (protects) => protects === true,
-      () => false,
-    ),
-    admits: () => admits(current()),
-    subscribe(listener) {
-      // Offline reading ends with the saved session, even with no event.
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const arm = () => {
-        clearTimeout(timer);
+  return (origin) => {
+    let protectedState: boolean | undefined;
+    let checking: Promise<boolean | undefined> | undefined;
+    const listeners = new Set<() => void>();
+    const protects = () => {
+      if (protectedState !== undefined) return Promise.resolve(protectedState);
+      if (checking) return checking;
+      checking = invoke<boolean>("federated_identity_protects", {
+        relay: origin,
+      })
+        .then(
+          (value) => {
+            if (typeof value === "boolean") protectedState = value;
+            for (const listener of listeners) listener();
+            return protectedState;
+          },
+          () => undefined,
+        )
+        .finally(() => {
+          checking = undefined;
+        });
+      return checking;
+    };
+    return {
+      protects,
+      admits: (viewer) =>
+        protectedState === false ||
+        (protectedState === true && admits(current(), viewer, origin)),
+      canConnect: (viewer) => {
+        if (protectedState === false) return true;
         const state = current();
-        if (state.status !== "unavailable" || !state.expiresAt) return;
-        const left = Date.parse(state.expiresAt) - Date.now();
-        // Timers cap near 24.8 days: a long wait wakes early and re-arms.
-        if (left > 0)
-          timer = setTimeout(
-            () => {
-              arm();
-              listener();
-            },
-            Math.min(left, 2 ** 31 - 1),
-          );
-      };
-      arm();
-      const unsubscribe = identity.subscribe(() => {
+        return (
+          admission(state, viewer, origin)?.allowed !== false &&
+          (state.status === "signed-in" ||
+            state.status === "restoring" ||
+            networkUnavailable(state))
+        );
+      },
+      subscribe(listener) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const arm = () => {
+          clearTimeout(timer);
+          const state = current();
+          if (!state.expiresAt) return;
+          const left = Date.parse(state.expiresAt) - Date.now();
+          if (left > 0)
+            timer = setTimeout(
+              () => {
+                arm();
+                listener();
+              },
+              Math.min(left, 2 ** 31 - 1),
+            );
+        };
+        const changed = () => {
+          arm();
+          listener();
+        };
+        listeners.add(changed);
         arm();
-        listener();
-      });
-      return () => {
-        clearTimeout(timer);
-        unsubscribe();
-      };
-    },
-  });
+        const unsubscribe = identity.subscribe(() => {
+          changed();
+          if (protectedState === undefined) void protects();
+        });
+        return () => {
+          clearTimeout(timer);
+          unsubscribe();
+          listeners.delete(changed);
+        };
+      },
+    };
+  };
 }

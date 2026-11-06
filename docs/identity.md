@@ -1030,19 +1030,30 @@ On-demand builds keep the warning to at-launch builds.
 
 In every build with an organization descriptor, a community on one of its
 `communityHosts` (native `federated_identity_protects`) shows its saved
-history only while the organization session admits it: signed in, or offline
-(`network-unavailable`/`network-timeout` while checking the saved session)
-before that saved session's `expiresAt`. The decision comes from the
-descriptor, before the relay answers, so a cold start never puts a locked
-community's cache in memory. Otherwise the relay service drops that
-community's in-memory session (timeline, threads, previews, unread counts,
-search) and publishes `locked`, keeping its disk cache. The community's pages
-show **Sign in to continue**; selecting it opens the browser sign-in once
-(`LOCKED_SIGN_IN` in `features/federated-identity/lock.ts`), and a cancel or
-failure leaves the button. When the session admits it again, the community
-reconnects and its history returns from disk. Other communities are
-unaffected. A relay socket closed for authorization locks the community once
-native learns the session was refused (its next assertion or 401 recheck).
+history only after native records the relay's acceptance of NIP-42 authentication
+for that organization session, Nostr key and community. A new sign-in, including
+a different account, inherits no admission. Unknown or failed native protection
+lookups keep history locked; connection retry, focus and session updates retry
+the lookup. A confirmed community outside the descriptor stays unaffected.
+
+Admission is saved with the native session revision. Offline
+(`network-unavailable`/`network-timeout` while checking the saved session), only
+previously admitted history stays readable, before that session's `expiresAt`.
+An older installation without saved admission needs one online connection.
+Explicit issuer refusals (including `binding-mismatch`), rejected NIP-42 AUTH,
+HTTP 403 and socket policy close 1008 revoke admission for that key/community;
+restart and late success cannot undo the refusal. A fresh sign-in can try again.
+
+Before admission, the relay service opens a temporary authentication socket
+without constructing any owners that load saved history, sidebar data or outbox.
+This adds one socket for a fresh admission, reusing native assertion issuance;
+existing admission uses the ordinary connection. Native open keeps its 90-second
+budget plus 10 seconds for authentication. Lost admission drops the community's
+in-memory session (timeline, threads, previews, unread counts, search), keeping
+its disk cache. Its pages show **Sign in to continue**; selecting it after the
+session ends opens browser sign-in once (`LOCKED_SIGN_IN` in
+`features/federated-identity/lock.ts`). A valid sign-in without confirmed access
+offers **Try again** and **Sign in again**. History returns only after admission.
 
 The Node development host retains its supported broker flow.
 

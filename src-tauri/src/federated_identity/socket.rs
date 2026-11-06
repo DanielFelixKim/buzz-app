@@ -126,6 +126,7 @@ pub(crate) async fn relay_socket_connect(
         let mut closing: Option<(u16, String)> = None;
         let mut refused = None;
         let mut renew = false;
+        let mut authentication = None;
         let ready = tokio::select! {
             result = tokio::time::timeout(Duration::from_secs(10), started) => result.is_ok_and(|value| value.is_ok()),
             _ = cancel.cancelled() => false,
@@ -145,7 +146,9 @@ pub(crate) async fn relay_socket_connect(
                                     if frame.first().and_then(|v| v.as_str()) == Some("AUTH") && frame.get(1).and_then(|v| v.get("pubkey")).and_then(|v| v.as_str()) != Some(assertion.viewer.as_str()) { break; }
                                 }
                             }
+                            let sent_auth = auth_id(&data);
                             if socket.send(Message::Text(data.into())).await.is_err() { break; }
+                            if let Some(id) = sent_auth { authentication = Some(id); }
                         }
                         frame = socket.next() => {
                             if let Some(assertion) = &assertion {
@@ -153,6 +156,10 @@ pub(crate) async fn relay_socket_connect(
                             }
                             match frame {
                                 Some(Ok(Message::Text(data))) => {
+                                    if let (Some(assertion), Some(allowed)) = (&assertion, auth_result(authentication.as_deref(), &data)) {
+                                        authentication = None;
+                                        if host.cache_result(&assertion.revision, &assertion.viewer, &assertion.relay, allowed).await.is_err() { break; }
+                                    }
                                     refused = missing_evidence(unsigned, &data);
                                     if refused.is_some() || on_event.send(SocketEvent::Text {data:data.to_string()}).is_err() { break; }
                                 },
@@ -186,6 +193,14 @@ pub(crate) async fn relay_socket_connect(
             .as_ref()
             .filter(|_| closing.as_ref().is_some_and(|(code, _)| *code == 1008))
         {
+            let _ = host
+                .cache_result(
+                    &assertion.revision,
+                    &assertion.viewer,
+                    &assertion.relay,
+                    false,
+                )
+                .await;
             host.reject_assertion(assertion).await;
         }
         let (code, reason) = match closing {
@@ -343,7 +358,12 @@ async fn upgrade(
                         // Missing evidence: the relay requires a token after all.
                         None => unsigned.unwrap_or("relay-unauthorized"),
                     },
-                    403 => "relay-forbidden",
+                    403 => {
+                        if let Some(assertion) = &assertion {
+                            let _ = fi.cache_result(&assertion.revision, &assertion.viewer, &assertion.relay, false).await;
+                        }
+                        "relay-forbidden"
+                    },
                     503 => "relay-unavailable",
                     _ => "Native socket upgrade refused",
                 }
@@ -360,6 +380,21 @@ async fn upgrade(
     Ok(Some((socket, assertion, unsigned, cancel)))
 }
 
+// Correlate only a relay's answer to this socket's actual NIP-42 authentication.
+fn auth_id(data: &str) -> Option<String> {
+    let frame: serde_json::Value = serde_json::from_str(data).ok()?;
+    (frame.get(0)?.as_str()? == "AUTH").then_some(())?;
+    frame.get(1)?.get("id")?.as_str().map(str::to_owned)
+}
+fn auth_result(id: Option<&str>, data: &str) -> Option<bool> {
+    let id = id?;
+    let frame: serde_json::Value = serde_json::from_str(data).ok()?;
+    if frame.get(0)?.as_str()? != "OK" || frame.get(1)?.as_str()? != id {
+        return None;
+    }
+    frame.get(2)?.as_bool()
+}
+
 /// Tests' loopback communities use one self-signed root.
 fn connector() -> Option<tokio_tungstenite::Connector> {
     #[cfg(test)]
@@ -373,8 +408,124 @@ mod tests {
     use super::*;
     use crate::federated_identity::testing::{community, reply};
 
+    #[test]
+    fn cache_proof_requires_the_exact_sent_authentication() {
+        assert_eq!(
+            auth_id(r#"["AUTH",{"id":"auth"}]"#).as_deref(),
+            Some("auth")
+        );
+        assert_eq!(auth_id(r#"["EVENT",{"id":"auth"}]"#), None);
+        assert_eq!(auth_result(None, r#"["OK","auth",true]"#), None);
+        assert_eq!(auth_result(Some("auth"), r#"["OK","publish",true]"#), None);
+        assert_eq!(
+            auth_result(Some("auth"), r#"["OK","auth",true]"#),
+            Some(true)
+        );
+        assert_eq!(
+            auth_result(Some("auth"), r#"["OK","auth",false]"#),
+            Some(false)
+        );
+    }
+
     fn relay(community: &super::super::testing::Community) -> String {
         format!("wss://{}", community.origin.authority())
+    }
+
+    #[tokio::test]
+    async fn socket_worker_records_only_matching_auth_and_persists_refusal() {
+        use tauri::{ipc::InvokeResponseBody, Manager};
+        for policy_close in [false, true] {
+            let community = community(true).await;
+            let viewer = community.host.viewer().await.unwrap();
+            let destination = relay(&community);
+            let (close, closing) = oneshot::channel();
+            let (accept, accepting) = oneshot::channel();
+            let server = community.serve_socket(move |mut relay| async move {
+                relay.send(Message::Text(r#"["AUTH","challenge"]"#.into())).await.unwrap();
+                let Some(Ok(Message::Text(auth))) = relay.next().await else { panic!("no AUTH") };
+                assert_eq!(auth_id(&auth).as_deref(), Some("auth"));
+                relay.send(Message::Text(r#"["OK","unrelated",true,""]"#.into())).await.unwrap();
+                accepting.await.unwrap();
+                relay.send(Message::Text(r#"["OK","auth",true,""]"#.into())).await.unwrap();
+                closing.await.unwrap();
+                if policy_close {
+                    relay.send(Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                        code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Policy,
+                        reason: "restricted".into(),
+                    }))).await.unwrap();
+                } else {
+                    let Some(Ok(Message::Text(auth))) = relay.next().await else { panic!("no second AUTH") };
+                    assert_eq!(auth_id(&auth).as_deref(), Some("second"));
+                    relay.send(Message::Text(r#"["OK","second",false,"restricted"]"#.into())).await.unwrap();
+                }
+                let _ = relay.next().await;
+            });
+            let app = tauri::test::mock_builder()
+                .manage(community.fi.clone())
+                .manage(community.host.clone())
+                .manage(Sockets::default())
+                .build(crate::app_context())
+                .unwrap();
+            let (events, mut received) = mpsc::unbounded_channel::<serde_json::Value>();
+            let channel = Channel::new(move |body| {
+                if let InvokeResponseBody::Json(json) = body {
+                    let _ = events.send(serde_json::from_str(&json).unwrap());
+                }
+                Ok(())
+            });
+            let id = uuid::Uuid::new_v4().to_string();
+            relay_socket_connect(
+                app.state(),
+                app.state(),
+                app.state(),
+                id.clone(),
+                destination.clone(),
+                channel,
+            )
+            .await
+            .unwrap();
+            relay_socket_start(app.state(), id.clone()).unwrap();
+            let challenge = received.recv().await.unwrap();
+            assert_eq!(challenge["data"], r#"["AUTH","challenge"]"#);
+            relay_socket_send(
+                app.state(),
+                id.clone(),
+                serde_json::json!(["AUTH", {"id":"auth", "pubkey":viewer}]).to_string(),
+            )
+            .unwrap();
+            let unrelated = received.recv().await.unwrap();
+            assert_eq!(unrelated["data"], r#"["OK","unrelated",true,""]"#);
+            assert!(community.fi.snapshot().cache_admissions.is_empty());
+            accept.send(()).unwrap();
+            // The matching receipt is forwarded only after durable admission.
+            let accepted = received.recv().await.unwrap();
+            assert_eq!(accepted["data"], r#"["OK","auth",true,""]"#);
+            let revision = community.fi.snapshot().revision;
+            let entries = community.fi.0.store.cache_admissions(&revision).unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].viewer, viewer);
+            assert_eq!(entries[0].relay, destination);
+            assert!(entries[0].allowed);
+            close.send(()).unwrap();
+            if !policy_close {
+                relay_socket_send(
+                    app.state(),
+                    id.clone(),
+                    serde_json::json!(["AUTH", {"id":"second", "pubkey":viewer}]).to_string(),
+                )
+                .unwrap();
+            }
+            let refusal = received.recv().await.unwrap();
+            if policy_close {
+                assert_eq!(refusal["code"], 1008);
+            } else {
+                assert_eq!(refusal["data"], r#"["OK","second",false,"restricted"]"#);
+            }
+            assert!(!community.fi.snapshot().cache_admissions[0].allowed);
+            assert!(!community.fi.0.store.cache_admissions(&revision).unwrap()[0].allowed);
+            app.state::<Sockets>().clear();
+            server.await.unwrap();
+        }
     }
 
     /// The upgrade request carries exactly the issued assertion; the relay's

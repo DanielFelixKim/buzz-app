@@ -45,8 +45,7 @@ fn undiscovered(adapter_base: String, relay: &str) -> FederatedIdentity {
 impl FederatedIdentity {
     fn install(&self, session: Arc<super::Session>) {
         let mut state = self.state();
-        state.session = Some(session);
-        state.snapshot.status = Status::SignedIn;
+        self.install_session(&mut state, session);
         state.restored = true;
     }
     pub(crate) fn sign_out_for_test(&self) {

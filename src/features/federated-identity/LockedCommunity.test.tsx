@@ -7,6 +7,10 @@ import { LockedCommunity } from "./LockedCommunity";
 import { admits, relayGates } from "./lock";
 import { federatedFixture } from "./testing";
 
+const viewer = "a".repeat(64);
+const origin = "wss://relay.example";
+const proof = [{ viewer, relay: origin, allowed: true }];
+
 const ipc = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: ipc.invoke }));
 afterEach(() => {
@@ -17,25 +21,34 @@ afterEach(() => {
 it("admits a signed-in session, or an offline one only until its saved session ends", () => {
   const { service, publish } = federatedFixture();
   const now = Date.parse("2026-11-05T12:00:00Z");
-  expect(admits(service.snapshot(), now)).toBe(false);
-  publish({ status: "signed-in" });
-  expect(admits(service.snapshot(), now)).toBe(true);
+  expect(admits(service.snapshot(), viewer, origin, now)).toBe(false);
+  publish({
+    status: "signed-in",
+    cacheAdmissions: proof,
+    expiresAt: "2099-01-01T00:00:00Z",
+  });
+  expect(admits(service.snapshot(), viewer, origin, now)).toBe(true);
   publish({ status: "restoring" });
-  expect(admits(service.snapshot(), now)).toBe(false);
+  expect(admits(service.snapshot(), viewer, origin, now)).toBe(false);
   publish({
     status: "unavailable",
     failure: "network-unavailable",
     expiresAt: "2026-11-05T13:00:00Z",
   });
-  expect(admits(service.snapshot(), now)).toBe(true);
-  expect(admits(service.snapshot(), Date.parse("2026-11-05T13:00:01Z"))).toBe(
-    false,
-  );
+  expect(admits(service.snapshot(), viewer, origin, now)).toBe(true);
+  expect(
+    admits(
+      service.snapshot(),
+      viewer,
+      origin,
+      Date.parse("2026-11-05T13:00:01Z"),
+    ),
+  ).toBe(false);
   // Secure storage refusing is not the network: nothing to read offline.
   publish({ failure: "storage-unavailable" });
-  expect(admits(service.snapshot(), now)).toBe(false);
+  expect(admits(service.snapshot(), viewer, origin, now)).toBe(false);
   publish({ status: "reauthentication-required", failure: null });
-  expect(admits(service.snapshot(), now)).toBe(false);
+  expect(admits(service.snapshot(), viewer, origin, now)).toBe(false);
 });
 
 it("asks native which communities are the organization's, and ends offline reading on time", async () => {
@@ -45,7 +58,7 @@ it("asks native which communities are the organization's, and ends offline readi
   const { service, publish } = federatedFixture();
   const gate = relayGates(service)("wss://relay.example");
   if (!gate) throw new Error("Native gate expected");
-  expect(await gate.protects).toBe(true);
+  expect(await gate.protects()).toBe(true);
   expect(ipc.invoke).toHaveBeenCalledWith("federated_identity_protects", {
     relay: "wss://relay.example",
   });
@@ -55,12 +68,13 @@ it("asks native which communities are the organization's, and ends offline readi
     status: "unavailable",
     failure: "network-timeout",
     expiresAt: "2026-11-05T12:30:00Z",
+    cacheAdmissions: proof,
   });
-  expect(gate.admits()).toBe(true);
+  expect(gate.admits(viewer)).toBe(true);
   listener.mockClear();
   vi.advanceTimersByTime(30 * 60_000);
   expect(listener).toHaveBeenCalledOnce();
-  expect(gate.admits()).toBe(false);
+  expect(gate.admits(viewer)).toBe(false);
 });
 
 it("ends offline reading on time while native is still rechecking the session", async () => {
@@ -72,29 +86,30 @@ it("ends offline reading on time while native is still rechecking the session", 
     status: "unavailable",
     failure: "network-timeout",
     expiresAt: "2026-11-05T12:30:00Z",
+    cacheAdmissions: proof,
   });
   const gate = relayGates(service)("wss://relay.example");
   if (!gate) throw new Error("Native gate expected");
-  expect(await gate.protects).toBe(true);
+  expect(await gate.protects()).toBe(true);
   const listener = vi.fn();
   const unsubscribe = gate.subscribe(listener);
   try {
-    expect(gate.admits()).toBe(true);
+    expect(gate.admits(viewer)).toBe(true);
     vi.advanceTimersByTime(30 * 60_000 - 1_000);
     publish({ status: "restoring", failure: null });
     listener.mockClear();
     vi.advanceTimersByTime(999);
-    expect(gate.admits()).toBe(true);
+    expect(gate.admits(viewer)).toBe(true);
     expect(listener).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(1);
-    expect(gate.admits()).toBe(false);
+    expect(gate.admits(viewer)).toBe(false);
     expect(listener).toHaveBeenCalledOnce();
 
     publish({ status: "unavailable", failure: "network-timeout" });
-    expect(gate.admits()).toBe(false);
+    expect(gate.admits(viewer)).toBe(false);
     publish({ status: "signed-in", expiresAt: "2026-11-05T13:00:00Z" });
-    expect(gate.admits()).toBe(true);
+    expect(gate.admits(viewer)).toBe(true);
   } finally {
     unsubscribe();
   }
@@ -153,20 +168,64 @@ it("waits while the saved sign-in is checked, and explains an offline end", () =
 });
 
 it("keeps its verdict while native checks the saved session again", async () => {
-  ipc.invoke.mockRejectedValue(new Error("native-unavailable"));
+  ipc.invoke.mockResolvedValue(true);
   const { service, publish } = federatedFixture();
   publish({ status: "restoring" });
   const gate = relayGates(service)("wss://relay.example");
   if (!gate) throw new Error("Native gate expected");
-  // An IPC failure loses only the cache gate; native still refuses the relay.
-  expect(await gate.protects).toBe(false);
-  expect(gate.admits()).toBe(false);
-  publish({ status: "signed-in" });
-  expect(gate.admits()).toBe(true);
+  expect(await gate.protects()).toBe(true);
+  expect(gate.admits(viewer)).toBe(false);
+  publish({
+    status: "signed-in",
+    cacheAdmissions: proof,
+    expiresAt: "2099-01-01T00:00:00Z",
+  });
+  expect(gate.admits(viewer)).toBe(true);
   publish({ status: "restoring" });
-  expect(gate.admits()).toBe(true);
+  expect(gate.admits(viewer)).toBe(true);
   publish({ status: "reauthentication-required" });
-  expect(gate.admits()).toBe(false);
+  expect(gate.admits(viewer)).toBe(false);
   publish({ status: "restoring" });
-  expect(gate.admits()).toBe(false);
+  expect(gate.admits(viewer)).toBe(false);
+});
+
+it("keeps protection lookup failures locked, even signed in, and retries", async () => {
+  const { service, publish } = federatedFixture();
+  publish({
+    status: "signed-in",
+    expiresAt: "2099-01-01T00:00:00Z",
+    cacheAdmissions: proof,
+  });
+  ipc.invoke
+    .mockRejectedValueOnce(new Error("native-unavailable"))
+    .mockResolvedValueOnce(false);
+  const gate = relayGates(service)(origin);
+  if (!gate) throw new Error("Native gate expected");
+  expect(await gate.protects()).toBeUndefined();
+  expect(gate.admits(viewer)).toBe(false);
+  expect(await gate.protects()).toBe(false);
+  expect(gate.admits(viewer)).toBe(true);
+});
+
+it("requires native proof for the exact key/community and drops it on account change or refusal", async () => {
+  ipc.invoke.mockResolvedValue(true);
+  const { service, publish } = federatedFixture();
+  publish({ status: "signed-in", expiresAt: "2099-01-01T00:00:00Z" });
+  const gate = relayGates(service)(origin);
+  if (!gate) throw new Error("Native gate expected");
+  await gate.protects();
+  expect(gate.admits(viewer)).toBe(false);
+  publish({ cacheAdmissions: proof });
+  expect(gate.admits(viewer)).toBe(true);
+  expect(gate.admits("b".repeat(64))).toBe(false);
+  const other = relayGates(service)("wss://other.example");
+  if (!other) throw new Error("Native gate expected");
+  await other.protects();
+  expect(other.admits(viewer)).toBe(false);
+  publish({ revision: "other-account", cacheAdmissions: [] });
+  expect(gate.admits(viewer)).toBe(false);
+  publish({ failure: "binding-mismatch" });
+  expect(gate.admits(viewer)).toBe(false);
+  publish({ cacheAdmissions: [{ viewer, relay: origin, allowed: false }] });
+  expect(gate.canConnect?.(viewer)).toBe(false);
 });

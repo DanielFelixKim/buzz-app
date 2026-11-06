@@ -6,10 +6,50 @@ pub(super) struct Memory {
     pub(super) raw: Mutex<Option<Zeroizing<Vec<u8>>>>,
     pub(super) compare_gate: Mutex<Option<super::agent::grant::tests::Gate>>,
     refusal: Mutex<Option<String>>,
+    cache_gate: Mutex<
+        Option<(
+            tokio::sync::oneshot::Sender<()>,
+            std::sync::mpsc::Receiver<()>,
+        )>,
+    >,
+    cache: Mutex<std::collections::HashMap<String, Vec<super::cache::Admission>>>,
     denied: AtomicBool,
     reads: AtomicUsize,
 }
 impl Store for Memory {
+    fn cache_admissions(
+        &self,
+        revision: &str,
+    ) -> Result<Vec<super::cache::Admission>, &'static str> {
+        if self.denied.load(Ordering::SeqCst) {
+            return Err("storage-denied");
+        }
+        Ok(self
+            .cache
+            .lock()
+            .unwrap()
+            .get(revision)
+            .cloned()
+            .unwrap_or_default())
+    }
+    fn record_cache_admission(
+        &self,
+        revision: &str,
+        admission: super::cache::Admission,
+    ) -> Result<Vec<super::cache::Admission>, &'static str> {
+        if let Some((held, release)) = self.cache_gate.lock().unwrap().take() {
+            held.send(()).unwrap();
+            release.recv().unwrap();
+        }
+        if self.denied.load(Ordering::SeqCst) {
+            return Err("storage-denied");
+        }
+        let mut cache = self.cache.lock().unwrap();
+        let entries = cache.entry(revision.into()).or_default();
+        super::cache::record(entries, admission)?;
+        Ok(entries.clone())
+    }
+
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         Ok(self.raw.lock().unwrap().clone())
@@ -190,7 +230,8 @@ async fn corrupt_storage_is_unavailable_and_public_snapshots_have_no_secret() {
         state.snapshot.status = Status::SignedIn;
     }
     let public = serde_json::to_value(host.snapshot()).unwrap();
-    assert_eq!(public.as_object().unwrap().len(), 7);
+    assert_eq!(public.as_object().unwrap().len(), 8);
+    assert_eq!(public["cacheAdmissions"], serde_json::json!([]));
     assert!(!public.to_string().contains("fixture-session-token"));
 }
 
@@ -937,4 +978,180 @@ fn only_the_descriptors_community_hosts_are_protected() {
         Arc::new(Memory::default()),
     );
     assert!(!unconfigured.protects("wss://relay.example"));
+}
+
+fn admitted_cache_fixture() -> (Arc<Memory>, FederatedIdentity, Arc<Session>) {
+    let store = Arc::new(Memory::default());
+    let session = record();
+    *store.raw.lock().unwrap() = Some(session.raw.clone());
+    let owner = host(store.clone());
+    {
+        let mut state = owner.state();
+        owner.install_session(&mut state, session.clone());
+        state.restored = true;
+    }
+    (store, owner, session)
+}
+
+#[tokio::test]
+async fn cache_proof_survives_only_the_same_saved_session_offline() {
+    let (store, owner, session) = admitted_cache_fixture();
+    let viewer = "a".repeat(64);
+    assert!(owner.snapshot().cache_admissions.is_empty());
+    owner
+        .cache_result(
+            &session.record.revision,
+            &viewer,
+            "wss://relay.example",
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(owner.snapshot().cache_admissions[0].allowed);
+    let restarted = at_adapter(store.clone(), "http://127.0.0.1:1/".into());
+    let offline = restarted.restore().await;
+    assert!(offline.status == Status::Unavailable);
+    assert_eq!(offline.failure, Some("network-unavailable"));
+    assert_eq!(offline.expires_at, Some(session.record.expires_at.clone()));
+    assert_eq!(offline.cache_admissions, owner.snapshot().cache_admissions);
+
+    let replacement = record();
+    *store.raw.lock().unwrap() = Some(replacement.raw.clone());
+    owner.install_session(&mut owner.state(), replacement.clone());
+    assert!(owner.snapshot().cache_admissions.is_empty());
+    assert!(owner
+        .cache_result(
+            &session.record.revision,
+            &viewer,
+            "wss://relay.example",
+            true
+        )
+        .await
+        .is_err());
+    let other_account = at_adapter(store, "http://127.0.0.1:1/".into());
+    assert!(other_account.restore().await.cache_admissions.is_empty());
+}
+
+#[tokio::test]
+async fn cache_refusal_survives_restart_and_cannot_be_overwritten_by_late_success() {
+    let (store, owner, session) = admitted_cache_fixture();
+    let viewer = "a".repeat(64);
+    let revision = &session.record.revision;
+    owner
+        .cache_result(revision, &viewer, "wss://relay.example", true)
+        .await
+        .unwrap();
+    owner
+        .cache_result(revision, &viewer, "wss://relay.example", false)
+        .await
+        .unwrap();
+    owner
+        .cache_result(revision, &viewer, "wss://relay.example", true)
+        .await
+        .unwrap();
+    assert!(!owner.snapshot().cache_admissions[0].allowed);
+    let restarted = at_adapter(store, "http://127.0.0.1:1/".into());
+    assert!(!restarted.restore().await.cache_admissions[0].allowed);
+}
+
+#[tokio::test]
+async fn cache_storage_failure_never_grants_access_and_failed_refusal_retires_the_session() {
+    let (store, owner, session) = admitted_cache_fixture();
+    let viewer = "a".repeat(64);
+    store.denied.store(true, Ordering::SeqCst);
+    assert!(owner
+        .cache_result(
+            &session.record.revision,
+            &viewer,
+            "wss://relay.example",
+            true
+        )
+        .await
+        .is_err());
+    assert!(owner.snapshot().cache_admissions.is_empty());
+    store.denied.store(false, Ordering::SeqCst);
+    owner
+        .cache_result(
+            &session.record.revision,
+            &viewer,
+            "wss://relay.example",
+            true,
+        )
+        .await
+        .unwrap();
+    store.denied.store(true, Ordering::SeqCst);
+    assert!(owner
+        .cache_result(
+            &session.record.revision,
+            &viewer,
+            "wss://relay.example",
+            false
+        )
+        .await
+        .is_err());
+    assert!(owner.snapshot().cache_admissions.is_empty());
+    store.denied.store(false, Ordering::SeqCst);
+    let restarted = at_adapter(store, "http://127.0.0.1:1/".into());
+    assert!(restarted.restore().await.cache_admissions.is_empty());
+}
+
+#[tokio::test]
+async fn replacement_account_cannot_inherit_a_pending_admission_write() {
+    let (store, owner, session) = admitted_cache_fixture();
+    let (held, waiting) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    *store.cache_gate.lock().unwrap() = Some((held, released));
+    let proving = owner.clone();
+    let revision = session.record.revision.clone();
+    let pending = tokio::spawn(async move {
+        proving
+            .cache_result(&revision, &"a".repeat(64), "wss://relay.example", true)
+            .await
+    });
+    waiting.await.unwrap();
+    let replacement = record();
+    *store.raw.lock().unwrap() = Some(replacement.raw.clone());
+    owner.install_session(&mut owner.state(), replacement);
+    release.send(()).unwrap();
+    assert!(pending.await.unwrap().is_err());
+    assert!(owner.snapshot().cache_admissions.is_empty());
+    let restarted = at_adapter(store, "http://127.0.0.1:1/".into());
+    assert!(restarted.restore().await.cache_admissions.is_empty());
+}
+
+#[tokio::test]
+async fn socket_cancellation_cannot_cancel_durable_cache_refusal() {
+    let (store, owner, session) = admitted_cache_fixture();
+    let viewer = "a".repeat(64);
+    owner
+        .cache_result(
+            &session.record.revision,
+            &viewer,
+            "wss://relay.example",
+            true,
+        )
+        .await
+        .unwrap();
+    let (held, waiting) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    *store.cache_gate.lock().unwrap() = Some((held, released));
+    let refusing = owner.clone();
+    let revision = session.record.revision.clone();
+    let pending = tokio::spawn(async move {
+        refusing
+            .cache_result(&revision, &viewer, "wss://relay.example", false)
+            .await
+    });
+    waiting.await.unwrap();
+    assert!(!owner.snapshot().cache_admissions[0].allowed);
+    pending.abort();
+    assert!(pending.await.unwrap_err().is_cancelled());
+    store.denied.store(true, Ordering::SeqCst);
+    release.send(()).unwrap();
+    // Taking the owner's operation lock waits for the detached transaction.
+    let _settled = owner.0.cache_operation.lock().await;
+    assert!(owner.snapshot().status == Status::Unavailable);
+    store.denied.store(false, Ordering::SeqCst);
+    let restarted = at_adapter(store, "http://127.0.0.1:1/".into());
+    assert!(restarted.restore().await.cache_admissions.is_empty());
 }

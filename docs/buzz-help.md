@@ -76,8 +76,11 @@ the interface unless an available tool actually supports that action.
 - In organization builds, an organization community's conversations stay
   hidden while your organization sign-in has ended, including after a restart.
   Its pages show **Sign in to continue**, and selecting it opens the browser
-  sign-in. Offline, saved conversations stay readable until the sign-in would
-  have ended. Other communities are not affected.
+  sign-in. Signing in must also confirm access for your Buzz identity and that
+  community before saved conversations appear. **Try again** retries that check;
+  **Sign in again** lets you change the account. Offline, previously confirmed
+  conversations stay readable until the saved sign-in would have ended. A refused
+  account stays locked after restart. Other communities are not affected.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community.

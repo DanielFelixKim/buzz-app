@@ -29,6 +29,12 @@ export type SessionSnapshot = Readonly<{
   expiresAt: string | null;
   /** The session ends soon; signing in again now keeps the app open. */
   expiring: boolean;
+  /** Native relay admission for this saved organization session only. */
+  cacheAdmissions?: readonly Readonly<{
+    viewer: string;
+    relay: string;
+    allowed: boolean;
+  }>[];
 }>;
 export type AuthenticatedRequest = Readonly<{
   path: string;

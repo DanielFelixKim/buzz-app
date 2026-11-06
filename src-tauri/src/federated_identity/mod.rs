@@ -2,6 +2,7 @@
 pub(crate) mod access;
 pub(crate) mod agent;
 pub(crate) mod assertion;
+mod cache;
 pub(crate) mod config;
 pub(crate) mod protocol;
 pub(crate) mod socket;
@@ -61,6 +62,7 @@ pub(crate) struct Snapshot {
     expires_at: Option<String>,
     /// The session ends soon; signing in again now keeps the app open.
     expiring: bool,
+    cache_admissions: Vec<cache::Admission>,
 }
 
 // No Debug, no IPC serialization. Only the secure store serializes this record.
@@ -111,6 +113,7 @@ struct State {
     /// the same lock as the change itself: derived agent credentials minted
     /// or stored under an older value are retired.
     retirements: u64,
+    cache_epoch: u64,
 }
 struct Inner {
     config: Option<Config>,
@@ -120,6 +123,7 @@ struct Inner {
     store: Arc<dyn Store>,
     state: Mutex<State>,
     operation: AsyncMutex<()>,
+    cache_operation: AsyncMutex<()>,
     changes: watch::Sender<Snapshot>,
     account_changes: watch::Sender<Option<SessionChange>>,
     agent_tokens: Mutex<std::sync::Weak<agent::Inner>>,
@@ -178,6 +182,7 @@ impl FederatedIdentity {
             failure: None,
             expires_at: None,
             expiring: false,
+            cache_admissions: Vec::new(),
         };
         let (changes, _) = watch::channel(snapshot.clone());
         let (account_changes, _) = watch::channel(None);
@@ -194,12 +199,14 @@ impl FederatedIdentity {
                 restore_retry_at: None,
                 closed: false,
                 retirements: 0,
+                cache_epoch: 0,
                 cancellation: CancellationToken::new(),
                 callback: None,
                 renewal: None,
                 account: None,
             }),
             operation: AsyncMutex::new(()),
+            cache_operation: AsyncMutex::new(()),
             changes,
             account_changes,
             agent_tokens: Mutex::default(),
@@ -262,6 +269,8 @@ impl FederatedIdentity {
     }
     /// Make `session` current and watch for its expiry. The caller publishes.
     fn install_session(&self, state: &mut State, session: Arc<Session>) {
+        state.snapshot.cache_admissions.clear();
+        state.cache_epoch += 1;
         state.snapshot.status = Status::SignedIn;
         state.snapshot.revision = session.record.revision.clone();
         state.snapshot.email = session.record.email.clone();
@@ -372,6 +381,8 @@ impl FederatedIdentity {
         state.snapshot.failure = failure;
         state.snapshot.expires_at = None;
         state.snapshot.expiring = false;
+        state.snapshot.cache_admissions.clear();
+        state.cache_epoch += 1;
         let session = state.session.take();
         self.publish(state);
         session
@@ -548,6 +559,8 @@ impl FederatedIdentity {
         // A saved session that can't be checked still says when it would end,
         // so the app can keep offline reading no longer than the session.
         let mut unchecked_expiry = None;
+        let cache_epoch = self.state().cache_epoch;
+        let mut cache_admissions = Vec::new();
         let result = async {
             let (raw, refusal) = self.storage(|store| store.load()).await?;
             let Some(raw) = raw else {
@@ -577,9 +590,17 @@ impl FederatedIdentity {
                 self.remove(session).await?;
                 return Ok(None);
             }
+            let cache_revision = session.record.revision.clone();
+            let saved_admissions = self
+                .storage(move |store| store.cache_admissions(&cache_revision))
+                .await
+                .unwrap_or_default();
             let checked = self.verify(&session.record).await;
             match checked {
                 Ok(email) => {
+                    if email == session.record.email {
+                        cache_admissions = saved_admissions;
+                    }
                     record = serde_json::from_slice(&session.raw)
                         .map_err(|_| Failure::from("storage-corrupt"))?;
                     record.email = email;
@@ -594,6 +615,9 @@ impl FederatedIdentity {
                     Err(failure)
                 }
                 Err(failure) => {
+                    if matches!(failure.code, "network-unavailable" | "network-timeout") {
+                        cache_admissions = saved_admissions;
+                    }
                     unchecked_expiry = Some(session.record.expires_at.clone());
                     Err(failure)
                 }
@@ -624,6 +648,7 @@ impl FederatedIdentity {
             }
             _ => None,
         };
+        let cache_current = state.cache_epoch == cache_epoch;
         state.restored = true;
         match result {
             Ok(Some(session)) => self.install_session(&mut state, session),
@@ -644,6 +669,9 @@ impl FederatedIdentity {
                 // A failed read or check is not permission to overwrite unknown state.
                 state.restored = failure.session_denied;
             }
+        }
+        if cache_current {
+            state.snapshot.cache_admissions = cache_admissions;
         }
         self.publish(&state);
         revision

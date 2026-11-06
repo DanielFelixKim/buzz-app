@@ -81,6 +81,11 @@ function setup({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     scope: "primary",
+    subscribe: vi.fn(() => ({
+      update: () => {},
+      retry: () => {},
+      dispose: vi.fn(),
+    })),
     media: () => undefined,
     query: vi.fn(async (filters: readonly import("./events").ReadFilter[]) =>
       filters.some((f) => f.kinds?.includes(39002)) ? events : [],
@@ -280,12 +285,12 @@ it("disconnect during a coalesced cache clear does not reconnect", async () => {
 function organization(admitted: boolean, protects = true) {
   const listeners = new Set<() => void>();
   const gate = {
-    protects: Promise.resolve(protects),
+    protects: () => Promise.resolve(protects),
     admits: () => admitted,
-    subscribe(listener: () => void) {
+    subscribe: vi.fn((listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
-    },
+    }),
   };
   const admit = (next: boolean) => {
     admitted = next;
@@ -293,24 +298,40 @@ function organization(admitted: boolean, protects = true) {
   };
   return { gate, admit };
 }
-it("keeps a locked organization community's history on disk and out of memory until sign-in", async () => {
+it("keeps saved history out of memory while admission takes longer than eight seconds", async () => {
+  vi.useFakeTimers();
   const { gate, admit } = organization(false);
-  const { data, disk, connections, source, restored } = setup({ gate });
+  const { data, disk, connections, source } = setup({ gate });
   await vi.waitFor(() => expect(data.snapshot().locked).toBe(true));
   expect(data.snapshot()).toMatchObject({ status: "error" });
   expect(data.snapshot().cached).toBeUndefined();
   expect(data.snapshot().session.channels.list().channels).toEqual([]);
   expect(disk.clear).not.toHaveBeenCalled();
-  // The first attempt started before the gate answered; it can't unlock.
+  // A live transport can start authentication without hydrating its cache.
+  await vi.waitFor(() => expect(connections).toHaveLength(1));
   connections[0]?.resolve(source);
-  data.retry();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await vi.waitFor(() => expect(gate.subscribe).toHaveBeenCalledTimes(2));
+  expect(disk.readStartup).not.toHaveBeenCalled();
+  expect(disk.read).not.toHaveBeenCalled();
   expect(data.snapshot().locked).toBe(true);
   expect(connections).toHaveLength(1);
 
+  await vi.advanceTimersByTimeAsync(8_001);
+  expect(data.snapshot().error).not.toContain("timed out");
+  expect(disk.readStartup).not.toHaveBeenCalled();
+  expect(disk.read).not.toHaveBeenCalled();
+
   admit(true);
-  await restored();
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+  if (!source.subscribe) throw new Error("Missing live fixture");
+  expect(
+    vi.mocked(source.subscribe).mock.results[0]?.value.dispose,
+  ).toHaveBeenCalledOnce();
   expect(data.snapshot().locked).toBeUndefined();
+  data.snapshot().session.channels.ensure("alpha");
+  expect(
+    data.snapshot().session.channels.window("alpha").rows[0]?.content,
+  ).toBe("Saved history");
 });
 it("locks an open organization community when its session ends, keeping the disk", async () => {
   const { gate, admit } = organization(true);
@@ -331,4 +352,56 @@ it("leaves a community outside the organization alone", async () => {
   const { data, restored } = setup({ gate });
   await restored();
   expect(data.snapshot().locked).toBeUndefined();
+});
+
+it("disconnect closes a pending admission socket without loading saved history", async () => {
+  const { gate, admit } = organization(false);
+  const { data, disk, connections, source } = setup({ gate });
+  await vi.waitFor(() => expect(connections).toHaveLength(1));
+  connections[0]?.resolve(source);
+  if (!source.subscribe) throw new Error("Missing live fixture");
+  await vi.waitFor(() => expect(source.subscribe).toHaveBeenCalledOnce());
+  const proof = vi.mocked(source.subscribe).mock.results[0]?.value;
+  data.disconnect();
+  await vi.waitFor(() => expect(proof.dispose).toHaveBeenCalledOnce());
+  admit(true);
+  expect(data.snapshot().status).toBe("disconnected");
+  expect(disk.readStartup).not.toHaveBeenCalled();
+  expect(disk.read).not.toHaveBeenCalled();
+});
+
+it("does not load saved state when admission is revoked before its continuation runs", async () => {
+  const { gate, admit } = organization(false);
+  const { data, disk, connections, source } = setup({ gate });
+  await vi.waitFor(() => expect(connections).toHaveLength(1));
+  connections[0]?.resolve(source);
+  if (!source.subscribe) throw new Error("Missing live fixture");
+  await vi.waitFor(() => expect(source.subscribe).toHaveBeenCalledOnce());
+  const proof = vi.mocked(source.subscribe).mock.results[0]?.value;
+  admit(true);
+  admit(false);
+  await vi.waitFor(() => expect(proof.dispose).toHaveBeenCalledOnce());
+  expect(data.snapshot().locked).toBe(true);
+  expect(disk.readStartup).not.toHaveBeenCalled();
+  expect(disk.read).not.toHaveBeenCalled();
+  expect(source.subscribe).toHaveBeenCalledOnce();
+});
+
+it("ends the connection deadline before a slow ordinary cache restore", async () => {
+  vi.useFakeTimers();
+  const { gate } = organization(false, false);
+  const { data, disk, connections, source } = setup({ gate });
+  const startup = deferred<SavedStartup | undefined>();
+  if (!disk.readStartup) throw new Error("Missing startup fixture");
+  vi.mocked(disk.readStartup).mockImplementationOnce(() => startup.promise);
+  try {
+    await vi.waitFor(() => expect(disk.readStartup).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(connections).toHaveLength(1));
+    connections[0]?.resolve(source);
+    await vi.advanceTimersByTimeAsync(8_001);
+    expect(data.snapshot().error).not.toContain("timed out");
+  } finally {
+    startup.resolve(undefined);
+  }
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
 });
