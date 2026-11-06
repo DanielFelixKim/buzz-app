@@ -62,7 +62,18 @@ import {
   systemPrompt,
   turnPrompt,
 } from "./prompt";
-import { AgentSessions, localSessions, Spare } from "./sessions";
+import { AgentSessions, localSessions, Spare, type Forward } from "./sessions";
+import { type ClaudeForwarding, UNAVAILABLE } from "./forwarding";
+import {
+  bindSession,
+  isBuzzUuid,
+  isHex64,
+  type TurnContext,
+} from "../../features/agents/gateway/contract";
+import {
+  type EligibleRoute,
+  fallbackNotice,
+} from "../../features/agents/gateway/route";
 import { protectionHistoryEntry } from "./security";
 import {
   readSessionTitle,
@@ -208,6 +219,8 @@ export class ClaudeRuntime {
       event: string,
       input: unknown,
     ) => Promise<Record<string, unknown>> = async () => ({}),
+    /** Opens forwarded turns' generations; absent without a plugin owner. */
+    private readonly forwarding?: ClaudeForwarding,
   ) {}
 
   /** The host's own spawn, not a copy: history read with it is kept for it,
@@ -462,7 +475,23 @@ export class ClaudeRuntime {
       signal.throwIfAborted();
       if (action === "new") await entry.sessions.forget(key);
       else {
-        const result = await entry.sessions.compact(key);
+        // Where the agent's turns go through the gateway, so does Claude's
+        // compaction, under the control's own context; where a turn would
+        // fall back, it fails before anything runs.
+        const route = this.forwarding?.control(agent.key);
+        if (route?.kind === "blocked")
+          throw new Error(compactRefusal(fallbackNotice(route)));
+        const result = await entry.sessions.compact(
+          key,
+          route &&
+            this.forward(
+              entry,
+              agent.key,
+              { route, turn: controlTurn(place, config(agent.config).scope) },
+              signal,
+            ),
+          () => !signal.aborted,
+        );
         if (!result.ok) throw new Error(result.error);
       }
       signal.throwIfAborted();
@@ -494,6 +523,7 @@ export class ClaudeRuntime {
     superseded,
     interruptible,
     named,
+    gateway,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
@@ -644,6 +674,7 @@ export class ClaudeRuntime {
               ...(effort ? { effort } : {}),
             },
             admit,
+            ...forwarded(this.forward(entry, agent.key, gateway, signal)),
           });
           void delivered.then(
             (result) => {
@@ -750,9 +781,49 @@ export class ClaudeRuntime {
     entry.team = team ?? "";
     const refused = await this.refusal(agent.key, delivery.synced?.effort);
     if (refused) return { ok: false, error: refused };
-    const done = entry.sessions.runOnce(key, prompt, signal);
+    const forward = this.forward(
+      entry,
+      agent.key,
+      delivery.gateway,
+      signal,
+      true,
+    );
+    const done = entry.sessions.runOnce(key, prompt, signal, forward);
     this.notify();
     return done.finally(() => this.notify());
+  }
+
+  /** How a turn whose membership routes through the gateway opens its
+   * generation, for harness session `session`, at the route it was
+   * dispatched with. A turn that can't be forwarded fails visibly before
+   * anything spawns; it never runs on Claude's own configuration instead,
+   * and is never retried or replayed. */
+  private forward(
+    entry: Entry,
+    agent: AgentKey,
+    gateway: Readonly<{ route: EligibleRoute; turn: TurnContext }> | undefined,
+    signal: AbortSignal,
+    standalone = false,
+  ): Forward | undefined {
+    if (!gateway) return undefined;
+    return async (session, saved) => {
+      if (!this.forwarding) throw new Error(UNAVAILABLE);
+      // A protected run through the gateway is not yet proven to work.
+      if (entry.protected) throw new Error(FORWARDING_PROTECTED);
+      const bound = bindSession(
+        gateway.route,
+        saved,
+        standalone ? "standalone" : "resume",
+      );
+      if (!bound.ok) throw new Error(bound.message);
+      const generation = await this.forwarding.open(
+        agent,
+        gateway.route,
+        { binding: bound.binding, context: gateway.turn, session },
+        signal,
+      );
+      return { generation, binding: bound.binding };
+    };
   }
 
   /** Why a new process can't run a synced effort, which is the agent's on
@@ -1119,3 +1190,22 @@ export function modelName(model: string) {
   const name = family[0]?.toUpperCase() + family.slice(1);
   return id ? `${name} ${id[2]}${id[3] ? `.${id[3]}` : ""}` : name;
 }
+
+/** A control's error for a fallback notice: it never runs unforwarded. */
+const compactRefusal = (notice: string) =>
+  notice.replace(
+    /^Ran without the agent gateway: /,
+    "Couldn't compact through the agent gateway: ",
+  );
+/** A session control's own context: its channel, and its thread only for a
+ * thread's session; it carries no message. */
+const controlTurn = (place: SessionPlace, scope: string): TurnContext =>
+  Object.freeze({
+    channel_id: isBuzzUuid(place.channelId) ? place.channelId : null,
+    message_id: null,
+    thread_id: scope !== "channel" && isHex64(place.root) ? place.root : null,
+  });
+const FORWARDING_PROTECTED =
+  "Protected agents can't run through the agent gateway yet, so this turn didn't run.";
+const forwarded = (forward: Forward | undefined) =>
+  forward ? { forward } : {};

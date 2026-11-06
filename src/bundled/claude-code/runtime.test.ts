@@ -1,3 +1,12 @@
+import {
+  ClaudeForwarding,
+  CHANGED,
+  type ForwardNative,
+  UNAVAILABLE,
+} from "./forwarding";
+import type { ForwardOpen } from "../../features/host/forward";
+import type { GatewayRoute } from "../../features/agents/gateway/route";
+import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -82,6 +91,7 @@ function setup(
     nativeHistory?: readonly unknown[];
     /** Raw text after the history, as a line Claude is still writing. */
     nativeTail?: string;
+    forwarding?: ClaudeForwarding;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -192,6 +202,8 @@ function setup(
     config,
     () => added,
     options.repositories,
+    undefined,
+    options.forwarding,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -2957,6 +2969,305 @@ it("hands a session its own community repositories without changing its workspac
   } finally {
     runtime.dispose();
   }
+});
+
+/** A real ClaudeForwarding over a native side and route the test controls. */
+function gateway(
+  route: GatewayRoute,
+  push: () => Promise<void> = async () => {},
+) {
+  const opens: ForwardOpen[] = [];
+  const calls: string[] = [];
+  const native: ForwardNative = {
+    push: vi.fn(async () => {
+      await push();
+      return { type: "applied", revoked: 0 } as const;
+    }),
+    open: vi.fn(async (_owner, options) => {
+      opens.push(options);
+      return {
+        type: "opened" as const,
+        id: opens.length,
+        url: "http://127.0.0.1:9/h",
+      };
+    }),
+    seal: vi.fn(async (_owner, id) => void calls.push(`seal ${id}`)),
+    close: vi.fn(async (_owner, id) => {
+      calls.push(`close ${id}`);
+      opens[id - 1]?.onEvent({ type: "closed" });
+    }),
+  };
+  const forwarding = new ClaudeForwarding(
+    { id: "buzz.claude-code", revision: "r1" },
+    native,
+    { routeFor: () => route, subscribeRoute: () => () => {} },
+  );
+  return { forwarding, opens, calls, native };
+}
+const gatewayIdentity = {
+  community_id: "11111111-2222-4333-8444-555555555555",
+  human_pubkey: alice,
+  agent_pubkey: self,
+};
+const enabled = {
+  kind: "eligible",
+  revision: 2,
+  gatewayOrigin: "https://gateway.example",
+  identity: gatewayIdentity,
+  profile: VECTOR_PROFILE,
+  harnesses: ["claude-code"],
+} as const;
+const { headers } = VECTOR_PROFILE;
+
+/** A thread conversation with one ordinary turn done, ready to compact. */
+async function compactable(
+  forwarding: ClaudeForwarding,
+  settings: typeof DEFAULT_CONFIG = DEFAULT_CONFIG,
+) {
+  const f = setup([], { forwarding, hold: true });
+  const root = message("1", "Howzit");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: settings } as unknown as Agent;
+  await f.deliver({ type: "mention", event: root }, { config: settings });
+  await flush(10);
+  const process = f.claudes()[0];
+  if (!process) throw new Error("Expected Claude process");
+  await vi.waitFor(() => expect(process.prompts).toHaveLength(1));
+  process.finish();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  return { f, root, place, agent, process };
+}
+
+it("compacts through the gateway under the control's own context where the agent's turns go there", async () => {
+  const g = gateway(enabled);
+  const { f, root, place, agent, process } = await compactable(g.forwarding);
+  const compacted = f.runtime.session(agent, place, "compact");
+  await vi.waitFor(() => expect(f.claudes()).toHaveLength(2));
+  const forwarded = f.claudes()[1];
+  if (!forwarded) throw new Error("Expected a forwarded process");
+  await vi.waitFor(() => expect(forwarded.prompts).toEqual(["/compact"]));
+  expect(process.killed).toBe(true);
+  expect(process.prompts).toHaveLength(1);
+  const args = forwarded.options.args ?? [];
+  expect(args[args.indexOf("--settings") + 1]).toContain(
+    "http://127.0.0.1:9/h",
+  );
+  expect(args).toContain("--resume");
+  const [open] = g.opens;
+  // The control's channel isn't a UUID here, so only its thread is sent;
+  // it never carries a message.
+  expect(open?.inference[headers.thread_id]).toBe(root.id);
+  expect(open?.inference).not.toHaveProperty(headers.message_id);
+  expect(open?.inference).not.toHaveProperty(headers.channel_id);
+  forwarded.finish();
+  await compacted;
+  await vi.waitFor(() => expect(g.calls).toEqual(["seal 1", "close 1"]));
+});
+
+it("sends a channel session's compaction no thread", async () => {
+  const g = gateway(enabled);
+  const { f, place, agent } = await compactable(g.forwarding, {
+    ...DEFAULT_CONFIG,
+    scope: "channel",
+  });
+  const compacted = f.runtime.session(agent, place, "compact");
+  await vi.waitFor(() => expect(f.claudes()).toHaveLength(2));
+  const forwarded = f.claudes()[1];
+  await vi.waitFor(() => expect(forwarded?.prompts).toEqual(["/compact"]));
+  expect(g.opens[0]?.inference).not.toHaveProperty(headers.thread_id);
+  forwarded?.finish();
+  await compacted;
+});
+
+it("refuses compaction where a turn would fall back, before anything runs", async () => {
+  const blocked: GatewayRoute = {
+    kind: "blocked",
+    revision: 3,
+    gatewayOrigin: "https://gateway.example",
+    reason: "network",
+    message: "",
+  };
+  const g = gateway(blocked);
+  const { f, place, agent, process } = await compactable(g.forwarding);
+  await expect(f.runtime.session(agent, place, "compact")).rejects.toThrow(
+    "Couldn't compact through the agent gateway: Buzz couldn't reach the gateway.",
+  );
+  expect(g.native.push).not.toHaveBeenCalled();
+  expect(f.claudes()).toHaveLength(1);
+  expect(process.prompts).toHaveLength(1);
+});
+
+it("fails compaction visibly when forwarding can't start, spawning nothing for it", async () => {
+  const g = gateway(enabled, async () => {
+    throw new Error("native unavailable");
+  });
+  const { f, place, agent } = await compactable(g.forwarding);
+  await expect(f.runtime.session(agent, place, "compact")).rejects.toThrow(
+    UNAVAILABLE,
+  );
+  expect(g.native.open).not.toHaveBeenCalled();
+  expect(f.claudes()).toHaveLength(1);
+  expect(f.claudes().flatMap((claude) => claude.prompts)).toHaveLength(1);
+});
+
+it("stops a compaction interrupted while forwarding is admitted, leaving a queued turn uninterrupted", async () => {
+  let admit!: () => void;
+  const admission = new Promise<void>((resolve) => {
+    admit = resolve;
+  });
+  const g = gateway(enabled, () => admission);
+  const { f, root, place, agent } = await compactable(g.forwarding);
+  const compacted = f.runtime.session(agent, place, "compact");
+  const refused = expect(compacted).rejects.toThrow(
+    "Session action interrupted",
+  );
+  await vi.waitFor(() => expect(g.native.push).toHaveBeenCalled());
+  // A later turn queues behind the held compaction.
+  const queued = f.deliver({
+    type: "mention",
+    event: message("2", "queued behind compaction", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    }),
+  });
+  // The interrupt waits for the held admission to settle.
+  const interrupted = f.runtime.session(agent, place, "interrupt");
+  admit();
+  await interrupted;
+  await refused;
+  await queued;
+  const turn = () =>
+    f
+      .claudes()
+      .find((claude) =>
+        claude.prompts.some((prompt) =>
+          prompt.includes("queued behind compaction"),
+        ),
+      );
+  await vi.waitFor(() => expect(turn()).toBeDefined());
+  expect(g.native.open).not.toHaveBeenCalled();
+  expect(f.claudes().flatMap((claude) => claude.prompts)).not.toContain(
+    "/compact",
+  );
+  expect(
+    turn()?.received.filter(
+      (item) =>
+        item.type === "control_request" &&
+        (item.request as { subtype?: string }).subtype === "interrupt",
+    ),
+  ).toEqual([]);
+  turn()?.finish();
+  await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+});
+
+it("compacts on Claude's own configuration where the route doesn't forward its turns", async () => {
+  const g = gateway({ kind: "external", revision: 1 });
+  const { f, place, agent, process } = await compactable(g.forwarding);
+  const compacted = f.runtime.session(agent, place, "compact");
+  await vi.waitFor(() => expect(process.prompts.at(-1)).toBe("/compact"));
+  process.finish();
+  await compacted;
+  expect(g.native.push).not.toHaveBeenCalled();
+  expect(f.claudes()).toHaveLength(1);
+});
+
+/** The runner's frozen `gateway` for a mention at `route`. */
+const dispatched = (route: typeof enabled = enabled) =>
+  ({
+    gateway: {
+      route,
+      turn: { channel_id: null, message_id: "1".repeat(64), thread_id: null },
+      upstream: { base: "/claude" },
+    },
+  }) as unknown as Partial<Delivery>;
+
+it("forwards a dispatched gateway turn at the route it was dispatched with", async () => {
+  const g = gateway(enabled);
+  const f = setup([], { forwarding: g.forwarding, hold: true });
+  await f.deliver(
+    { type: "mention", event: message("1", "@Claude hi") },
+    dispatched(),
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().flatMap((claude) => claude.prompts)).toHaveLength(1),
+  );
+  expect(g.opens.map((open) => open.routeRevision)).toEqual([2]);
+  const [claude] = f.claudes();
+  const args = claude?.options.args ?? [];
+  expect(args[args.indexOf("--settings") + 1]).toContain(
+    "http://127.0.0.1:9/h",
+  );
+  claude?.finish();
+  await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+});
+
+it("fails a gateway turn visibly once the route moved past its dispatch, running nothing", async () => {
+  const g = gateway({ ...enabled, revision: 3 });
+  const f = setup([], { forwarding: g.forwarding, hold: true });
+  await f.deliver(
+    { type: "mention", event: message("1", "@Claude hi") },
+    dispatched(),
+  );
+  const results = await Promise.all(
+    f.workingUntil.mock.calls.map(([done]) => done),
+  );
+  expect(results).toEqual([
+    expect.objectContaining({ ok: false, error: CHANGED }),
+  ]);
+  expect(g.native.open).not.toHaveBeenCalled();
+  expect(f.claudes().flatMap((claude) => claude.prompts)).toEqual([]);
+});
+
+it("fails a protected agent's gateway turn visibly, never running it unforwarded", async () => {
+  const g = gateway(enabled);
+  const f = setup([], { forwarding: g.forwarding, hold: true });
+  f.runtime.sync([
+    {
+      key: self,
+      pubkey: self,
+      config: DEFAULT_CONFIG,
+      protection: { provider: "test", policy: {} },
+    },
+  ] as Agent[]);
+  await f.deliver(
+    { type: "mention", event: message("1", "@Claude hi") },
+    dispatched(),
+  );
+  const results = await Promise.all(
+    f.workingUntil.mock.calls.map(([done]) => done),
+  );
+  expect(results).toEqual([
+    expect.objectContaining({
+      ok: false,
+      error:
+        "Protected agents can't run through the agent gateway yet, so this turn didn't run.",
+    }),
+  ]);
+  expect(g.native.push).not.toHaveBeenCalled();
+  expect(f.claudes().flatMap((claude) => claude.prompts)).toEqual([]);
+});
+
+it("runs a fallen-back turn on Claude's own configuration, opening nothing", async () => {
+  const g = gateway(enabled);
+  const f = setup([], { forwarding: g.forwarding, hold: true });
+  await f.deliver({ type: "mention", event: message("1", "@Claude hi") }, {
+    gatewayFallback: {
+      reason: "network",
+      notice: "Ran without the agent gateway.",
+    },
+  } as unknown as Partial<Delivery>);
+  await vi.waitFor(() =>
+    expect(f.claudes().flatMap((claude) => claude.prompts)).toHaveLength(1),
+  );
+  expect(g.native.push).not.toHaveBeenCalled();
+  const args = f.claudes()[0]?.options.args ?? [];
+  expect(JSON.stringify(args)).not.toContain("127.0.0.1:9");
+  f.claudes()[0]?.finish();
+  await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
 });
 
 it("keeps an accepted Claude handoff past its deadline while compaction runs", async () => {
