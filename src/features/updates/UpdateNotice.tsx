@@ -84,7 +84,7 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
       <Button
         type="button"
         size="sm"
-        variant={offerIdle && working === 0 ? "prominent" : undefined}
+        variant={offerIdle && working === 0 ? "prominent" : "subtle"}
         loading={pending}
         onClick={() =>
           void (state === "ready" || state === "scheduled"
@@ -100,7 +100,7 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
         <Button
           type="button"
           size="sm"
-          variant={working > 0 ? "prominent" : undefined}
+          variant={working > 0 ? "prominent" : "subtle"}
           onClick={updates.installWhenIdle}
         >
           Update when agents are idle
