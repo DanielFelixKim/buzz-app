@@ -60,9 +60,14 @@ test("thread stays beside the channel whenever both panes fit", async ({
       "font-size",
       `${16 * scale}px`,
     );
-    const bounds = await channel.boundingBox();
-    const pane = await thread.boundingBox();
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(pane.x);
+    // Rows re-measure after the scale change; hold the settled layout to it.
+    await expect
+      .poll(async () => {
+        const bounds = await channel.boundingBox();
+        const pane = await thread.boundingBox();
+        return bounds.x + bounds.width - pane.x;
+      })
+      .toBeLessThanOrEqual(0);
     await expect(input).toHaveText(draft.trimEnd());
     await channel
       .getByRole("button", { name: "Send message", exact: true })

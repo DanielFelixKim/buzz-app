@@ -170,6 +170,10 @@ async function deepPage(page, app, perf, ids, browserName) {
   await perf.save(sample);
   expect(sample.work.wheels, "real wheel input").toBeGreaterThan(0);
   expect(sample.work.olderReadsDuring, "one older page").toBe(1);
+  expect(
+    sample.metrics.readingShiftPx,
+    "the reply being read holds its place",
+  ).toBeLessThan(1);
   // Ten pages of 50: without eviction the panel would hold every reply read.
   expect(
     sample.work.topLevelAfter,
@@ -295,8 +299,8 @@ for (const name of [
       expect(sample.work.olderReadsDuring, "history was already loaded").toBe(
         0,
       );
-      // Both gestures end at least 6000px above where they began, past about
-      // twenty median replies.
+      // Both gestures end at least 6000px above where they began: past 15 to
+      // 20 replies in these runs.
       expect(
         sample.work.repliesTraversed,
         "the gestures traverse history",

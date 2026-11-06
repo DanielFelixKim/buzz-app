@@ -2529,6 +2529,47 @@ it("releases bottom following after a jump that included child-only resizing", (
   expect(h.element.scrollTop).toBe(2000);
 });
 
+it("keeps the item holding an activity group mounted for an exact link to its later step", async () => {
+  const h = messagesHarness();
+  const step = (id: string, content: string, createdAt: number) => ({
+    ...row,
+    id: id.repeat(64),
+    content,
+    audience: "agents" as const,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt,
+  });
+  const target = step("d", "Second tool result", 3);
+  h.snapshot.replies = [
+    step("c", "First tool result", 2),
+    target,
+    {
+      ...row,
+      id: "e".repeat(64),
+      content: "Final response",
+      threadRootId: row.id,
+      replyParentId: row.id,
+      createdAt: 4,
+    },
+  ];
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  Object.assign(h.props, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  const shown = await screen.findByText("Second tool result");
+  // The step renders inside the group's first item; that item is the one kept.
+  const item = shown.closest("[data-thread-rows] > ol > li");
+  const list = item?.parentElement;
+  if (!item || !list) throw new Error("Missing virtual item");
+  const index = [...list.children].indexOf(item);
+  expect(list.dataset.keepMounted?.split(",")).toContain(String(index));
+});
 it("reveals a completed step selected by an exact thread link", async () => {
   const h = messagesHarness();
   const target = {

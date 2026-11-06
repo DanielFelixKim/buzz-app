@@ -17,8 +17,8 @@ type ItemElement = ReactElement<{
 export function ThreadItem({ children, style, ref }: CustomItemComponentProps) {
   const item = children as ItemElement;
   const own = item.props.ref;
-  // One ref per pair: a new callback each render would re-register the item
-  // with Virtua's resize observer.
+  // One ref per pair: a new callback each render would detach and attach the
+  // reply's own ref on every render.
   const merged = useMemo(() => mergeRefs(ref, own), [ref, own]);
   return cloneElement(item, {
     style: { ...item.props.style, ...style },

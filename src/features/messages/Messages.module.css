@@ -1010,7 +1010,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .threadHistory
   > [data-thread-rows]
   > ol
-  > li:is(:focus-within, :has([data-selected])) {
+  > li:is(:focus-within, [data-selected], :has([data-selected])) {
   /* biome-ignore lint/complexity/noImportantStyles: Must win over Virtua's inline style. */
   visibility: visible !important;
 }

@@ -12,11 +12,13 @@ export function Virtualizer({
   children,
   as = "div",
   item = "div",
+  keepMounted,
 }: VirtualizerProps) {
   const Item = item as ElementType;
   return createElement(
     as as ElementType,
-    {},
+    // What a real Virtualizer would keep mounted away from its viewport.
+    { "data-keep-mounted": keepMounted?.join(",") },
     Children.map(children as ReactNode, (child, index) =>
       typeof item === "string"
         ? createElement(Item, {}, child)

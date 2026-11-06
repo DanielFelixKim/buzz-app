@@ -355,8 +355,13 @@ test("newest window positions immediately; scrollback preserves the visible repl
       await page.mouse.wheel(0, -300);
       await expect.poll(() => threadReplyCount(history)).toBe(count);
     }
-    // One list item per reply: a repeated reply would add an item.
+    // One list item per reply: a repeated reply would add an item, and the
+    // mounted ones are distinct.
     expect(await threadReplyCount(history)).toBe(305);
+    const mounted = await history
+      .locator("ol [data-message-id]")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.messageId));
+    expect(new Set(mounted).size).toBe(mounted.length);
     expect(
       (await page.evaluate(() => window.messagesFixture.report.filters)).every(
         (f) => f.thread_window && f.thread_cursor === undefined,

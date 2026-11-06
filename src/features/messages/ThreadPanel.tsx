@@ -71,6 +71,10 @@ import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
 
+/** Virtua mounts a row at an estimated offset, hidden until it measures it:
+ * never a reading anchor. */
+const measured = (row: HTMLElement) =>
+  row.checkVisibility?.({ visibilityProperty: true }) ?? true;
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
@@ -740,7 +744,7 @@ function ThreadMessages({
     const top = element.getBoundingClientRect().top;
     const row = [
       ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-    ].find((row) => row.getBoundingClientRect().bottom > top);
+    ].find((row) => row.getBoundingClientRect().bottom > top && measured(row));
     resizePosition.current = {
       width: element.clientWidth,
       height: element.clientHeight,
@@ -1045,7 +1049,7 @@ function ThreadMessages({
     ids: readonly string[];
     items: ReadonlyMap<string, ReactElement>;
   }>({ ids: [], items: new Map() });
-  const [, restage] = useReducer((count: number) => count + 1, 0);
+  const [stagePass, restage] = useReducer((count: number) => count + 1, 0);
   const [replyFocus, setReplyFocus] = useState(0);
   useEffect(() => {
     if (!joining || (channelAccess !== "member" && channelAccess !== "guest"))
@@ -1423,7 +1427,7 @@ function ThreadMessages({
       captureResizePosition();
       setSent(undefined);
     }
-  }, [sent, snapshot.replies, expanded, captureResizePosition]);
+  }, [sent, snapshot.replies, expanded, captureResizePosition, stagePass]);
   // Parent commits already position history, exact targets and own sends. Save
   // their result; only child-only reflow and viewport resizing need correction.
   useLayoutEffect(() => {
@@ -1505,6 +1509,9 @@ function ThreadMessages({
   let previousDay = snapshot.root
     ? new Date(snapshot.root.createdAt * 1000).toDateString()
     : undefined;
+  // A top-level activity group renders its entries inside its first reply's
+  // item: that item, not the entry's own, holds them.
+  const itemOwners = new Map<string, string>();
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     const chronologicalSiblings = tree.children.get(parent) ?? [];
     // Outcome captions stay within one displayed level, so a collapsed branch
@@ -1525,6 +1532,9 @@ function ThreadMessages({
     );
     const siblings = chronologicalSiblings;
     const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
+    if (parent === undefined)
+      for (const group of groups)
+        for (const id of group.ids) itemOwners.set(id, group.ids[0] ?? id);
     const groupedIds = new Set(groups.flatMap((group) => group.ids));
     const hidden = new Set(
       groups.flatMap((group) =>
@@ -1746,9 +1756,13 @@ function ThreadMessages({
       ? (navigation?.position(THREAD_PLACE) as ThreadPlace | undefined)?.anchor
           ?.id
       : undefined;
+  const itemOf = (id: string) => {
+    const top = tree.ancestors(id).at(-1) ?? id;
+    return itemOwners.get(top) ?? top;
+  };
   const keptIds = new Set(
     [messageId, sent, focusedId, returnAnchor, ...pinnedIds.keys()].flatMap(
-      (id) => (id ? [tree.ancestors(id).at(-1) ?? id] : []),
+      (id) => (id ? [itemOf(id)] : []),
     ),
   );
   const keptIndices = listed.flatMap((item, index) =>
@@ -1770,7 +1784,7 @@ function ThreadMessages({
     ].find(
       (row) =>
         row.getBoundingClientRect().bottom >
-        element.getBoundingClientRect().top,
+          element.getBoundingClientRect().top && measured(row),
     );
     olderAnchor.current = row?.dataset.messageId
       ? {
@@ -1919,11 +1933,13 @@ function ThreadMessages({
         }}
         onPointerDown={keepReadingPosition}
         onFocus={(event) => {
-          const id = event.target
+          // The item, not its first message: a collapsed activity group's
+          // toggle has none.
+          const position = event.target
             .closest("[data-thread-rows] > ol > li")
-            ?.querySelector<HTMLElement>("[data-message-id]")
-            ?.dataset.messageId;
-          setFocusedId(id);
+            ?.getAttribute("aria-posinset");
+          const item = position ? listed[Number(position) - 1] : undefined;
+          setFocusedId(item ? String(item.key) : undefined);
         }}
         onBlur={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget))
