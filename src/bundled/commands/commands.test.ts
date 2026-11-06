@@ -174,10 +174,10 @@ it("retries a failed emoji catalog before reading an unknown shortcode, and refu
   ).resolves.toBe("Status set");
   expect(recovering.emoji.refresh).toHaveBeenCalledTimes(1);
   expect(recovering.emoji.ensure).not.toHaveBeenCalled();
-  expect(recovering.save).toHaveBeenCalledWith({
-    text: "ship",
-    emoji: ":party:",
-  });
+  expect(recovering.save).toHaveBeenCalledWith(
+    { text: "ship", emoji: ":party:" },
+    expect.any(AbortSignal),
+  );
 
   const stuck = statusSession({ status: "error", entries: [] });
   await expect(
@@ -201,6 +201,16 @@ it("does not save a status once the command is aborted", async () => {
     runStatus(":tada: ship", aborting.session, sheet, controller.signal),
   ).rejects.toThrow();
   expect(aborting.save).not.toHaveBeenCalled();
+
+  const passing = statusSession({ status: "ready", entries: [] });
+  const running = new AbortController();
+  await expect(
+    runStatus("clear", passing.session, sheet, running.signal),
+  ).resolves.toBe("Status cleared");
+  expect(passing.save).toHaveBeenCalledWith(
+    { text: "", emoji: "" },
+    running.signal,
+  );
 
   const plain = statusSession({ status: "ready", entries: [] });
   const early = new AbortController();

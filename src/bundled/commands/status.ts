@@ -73,9 +73,12 @@ export async function runStatus(
   if (!session.statuses)
     throw new Error("Status updates are unavailable in this community.");
   if (request.kind === "clear") {
-    await session.statuses.save({ text: "", emoji: "" });
+    await session.statuses.save({ text: "", emoji: "" }, signal);
     return "Status cleared";
   }
-  await session.statuses.save({ text: request.text, emoji: request.emoji });
+  await session.statuses.save(
+    { text: request.text, emoji: request.emoji },
+    signal,
+  );
   return "Status set";
 }
