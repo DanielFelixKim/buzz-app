@@ -1558,6 +1558,8 @@ it("observes a visible reply before its root resolves, then enables thread catch
 
   h.snapshot.root = row;
   h.render();
+  // Deliver the root insertion's mutation before advancing its measurement frame.
+  await act(async () => {});
   await act(() => vi.advanceTimersToNextFrame());
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
