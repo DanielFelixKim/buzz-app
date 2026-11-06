@@ -70,6 +70,8 @@ mod microphone;
 #[cfg(target_os = "macos")]
 mod mouse_nav;
 #[cfg(target_os = "macos")]
+mod render_rate;
+#[cfg(target_os = "macos")]
 mod reshow;
 
 mod notifications;
@@ -989,6 +991,12 @@ pub fn run() {
             mouse_nav::install(app.handle());
             #[cfg(target_os = "macos")]
             reshow::install(app.handle());
+            #[cfg(target_os = "macos")]
+            if let Some(main) = app.get_webview_window("main") {
+                if let Err(error) = main.with_webview(|webview| render_rate::install(&webview)) {
+                    eprintln!("Could not set the rendering rate: {error}");
+                }
+            }
             #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
