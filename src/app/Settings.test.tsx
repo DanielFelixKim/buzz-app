@@ -3212,3 +3212,25 @@ it("restores an explicit pane check after opting out during automatic discovery"
     await within(pane).findByRole("button", { name: /^Update$/ }),
   ).toBeVisible();
 });
+
+it("refreshes a new Manage plugins visit while the section stays mounted", async () => {
+  const navigation = {
+    entryId: "first",
+    target: { version: 1, kind: "settings", section: "plugins" },
+    complete: vi.fn(),
+  } as unknown as NonNullable<Parameters<typeof Settings>[0]["navigation"]>;
+  const fixture = reviewPluginFixture({ navigation });
+  Object.assign(fixture.external, { updateSource: savedGitSource });
+  let revision = "current";
+  const checkGit = vi.fn(async () => gitCheckResult(revision));
+  Object.assign(fixture.manager, { imports: { checkGit } });
+  act(fixture.publish);
+  await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+  revision = "new";
+  Object.assign(navigation, { entryId: "second" });
+  act(fixture.publish);
+  expect(
+    await screen.findByRole("button", { name: "Update Zebra external" }),
+  ).toBeVisible();
+  expect(checkGit).toHaveBeenCalledTimes(2);
+});

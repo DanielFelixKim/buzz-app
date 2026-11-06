@@ -1309,7 +1309,7 @@ export function Settings({
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [selected]);
+  }, [selected, navigation?.entryId]);
   useEffect(() => {
     refreshPluginSources(false);
   }, [refreshPluginSources]);
