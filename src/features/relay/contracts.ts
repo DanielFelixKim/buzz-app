@@ -367,6 +367,7 @@ export interface ChannelQueries {
     channelId: string,
     from: number,
     signal: AbortSignal,
+    fromId?: string,
   ): Promise<string | undefined>;
   /** Read the rows above a detached window; reattaches on reaching the head. */
   loadNewer?(channelId: string, anchorId?: string): void;

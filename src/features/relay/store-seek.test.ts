@@ -1157,6 +1157,61 @@ it("preserves joining continuity when live traffic evicts the newer tail", async
   ).toEqual([]);
 });
 
+it("recovers overlap roots that a large live reaction evicted below the forward ceiling", async () => {
+  const h = setup({ count: 100, maxHistoryBytes: 8 * 1024 * 1024 });
+  for (let i = 0; i < h.history.length; i++)
+    h.history[i] = message(h.alice, "c", `m${i}`, T0 + i * HOUR, [
+      ["metadata", "x".repeat(128 * 1024)],
+    ]);
+  await h.open();
+  for (let page = 0; !h.window().hasNewer && page < 8; page++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  expect(h.window().hasNewer).toBe(true);
+  const expected = h.window().rows.map((row) => row.id);
+  const target = h.window().rows[0];
+  assert.exists(target);
+  const reaction = signed(h.alice, {
+    kind: 7,
+    created_at: T0 + 101 * HOUR,
+    content: "+",
+    tags: [
+      ["h", "c"],
+      ["e", target.id],
+      ["metadata", "x".repeat(768 * 1024)],
+    ],
+  });
+  h.gate.aux = [reaction];
+  h.live.receive([reaction]);
+  const seen = new Set(h.window().rows.map((row) => row.id));
+  expect(expected.some((id) => !seen.has(id))).toBe(true);
+  for (let step = 0; h.window().hasNewer && step < 30; step++) {
+    h.channels.loadNewer?.("c");
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    for (const row of h.window().rows) seen.add(row.id);
+  }
+  expect(expected.filter((id) => !seen.has(id))).toEqual([]);
+});
+
+it("revalidates a retained cached target by its composite boundary in a dense second", async () => {
+  const h = setup({ count: 450, spacing: 0 });
+  await h.open();
+  const target = h.window().rows[10];
+  assert.exists(target);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.state({ status: "retrying", routes: [] });
+  expect(h.window().freshness).toBe("cached");
+  await h.channels.seek?.(
+    "c",
+    target.createdAt,
+    new AbortController().signal,
+    target.id,
+  );
+  expect(h.window().freshness).toBe("verified");
+  expect(h.window().rows.some((row) => row.id === target.id)).toBe(true);
+});
+
 it("preserves contact-only deletion authority in the joining backup", async () => {
   const h = setup({ count: 100, maxHistoryRows: 60 });
   const target = message(h.relay, "c", "relay contact", T0 + 80 * HOUR, [

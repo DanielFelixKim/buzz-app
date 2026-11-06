@@ -1180,6 +1180,7 @@ export function createChannelStore(
     state: WindowState,
     page: WindowPage,
     ceiling: number | null,
+    ceilingId?: string,
   ) {
     state.controller?.abort();
     state.controller = undefined;
@@ -1188,7 +1189,7 @@ export function createChannelStore(
     state.atHead = ceiling === null;
     state.sliding = false;
     state.ceiling = ceiling ?? undefined;
-    state.ceilingId = undefined;
+    state.ceilingId = ceilingId;
     state.floor = undefined;
     state.kept = undefined;
     state.restored = false;
@@ -3631,7 +3632,12 @@ export function createChannelStore(
       setWindow(state, { loadingOlder: true, error: undefined });
       void loadPage(state, state.cursor, anchorId);
     },
-    async seek(channelId: string, from: number, signal: AbortSignal) {
+    async seek(
+      channelId: string,
+      from: number,
+      signal: AbortSignal,
+      fromId?: string,
+    ) {
       const state = windows.get(channelId);
       if (
         disposed ||
@@ -3659,7 +3665,7 @@ export function createChannelStore(
       try {
         signal.throwIfAborted();
         const read = seekRead(channelId, controller.signal);
-        let located = await locate(read, from, nowSeconds(), from > 0);
+        let located = await locate(read, from, nowSeconds(), from > 0, fromId);
         if (located.kind === "newest" && state.ceiling !== undefined)
           located = {
             kind: "segment",
@@ -3670,7 +3676,7 @@ export function createChannelStore(
         if (!live(state, generation))
           throw new DOMException("Stale history seek", "AbortError");
         if (located.kind === "segment")
-          install(state, located.page, located.ceiling);
+          install(state, located.page, located.ceiling, located.ceilingId);
         return landing(state, from);
       } finally {
         signal.removeEventListener("abort", abort);
@@ -4083,6 +4089,15 @@ export function createChannelStore(
         if (retainedIds.has(event.id)) state.traffic.set(event.id, event);
       state.events = retained;
       if (limited) {
+        if (state.ceiling !== undefined) {
+          const newest = retained
+            .filter((event) => channelRowKind(event.kind))
+            .sort(newestFirst)[0];
+          if (newest) {
+            state.ceiling = newest.created_at;
+            state.ceilingId = newest.id;
+          }
+        }
         const oldest = retained
           .filter((event) => channelRowKind(event.kind))
           .sort(newestFirst)

@@ -593,7 +593,44 @@ it("revalidates a retained cached target at its timestamp without discarding the
     hasMore: true,
     hasNewer: true,
   });
-  expect(seek).toHaveBeenCalledWith("c", 123, expect.any(AbortSignal));
+  expect(seek).toHaveBeenCalledWith(
+    "c",
+    123,
+    expect.any(AbortSignal),
+    "target",
+  );
   expect(attach).not.toHaveBeenCalled();
   expect(view.result.current).toBe(true);
 });
+
+it.each(["unmount", "target"])(
+  "cancels cached-target revalidation on %s retirement",
+  async (retirement) => {
+    const c = channel([["target"]]);
+    let signal!: AbortSignal;
+    const seek = vi.fn(
+      (_channel: string, _from: number, current: AbortSignal) => {
+        signal = current;
+        return new Promise<string | undefined>(() => {});
+      },
+    );
+    const queries = { ...c.queries, attach: vi.fn(), seek };
+    const view = renderHook(
+      ({ target }) => useMessageOpening(queries, "c", target),
+      {
+        initialProps: { target: "target" },
+      },
+    );
+    c.set({
+      status: "ready",
+      freshness: "cached",
+      hasNewer: true,
+      rows: [{ id: "target", createdAt: 123 } as ChannelMessage],
+    });
+    expect(seek).toHaveBeenCalledOnce();
+    expect(signal.aborted).toBe(false);
+    if (retirement === "unmount") view.unmount();
+    else view.rerender({ target: "another" });
+    expect(signal.aborted).toBe(true);
+  },
+);

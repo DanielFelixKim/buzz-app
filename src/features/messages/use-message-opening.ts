@@ -51,10 +51,17 @@ export function useMessageOpening(
   // Each request ensures the channel first: past its freshness lease this
   // starts a head refresh, and the window shown before it may be replaced.
   const [ensured, setEnsured] = useState<string>();
+  const revalidation = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
     if (!key) return;
+    const controller = new AbortController();
+    revalidation.current = controller;
     channels.ensure(channelId);
     setEnsured(key);
+    return () => {
+      controller.abort();
+      if (revalidation.current === controller) revalidation.current = undefined;
+    };
   }, [channels, channelId, key]);
   const [decided, setDecided] = useState<{
     key: string;
@@ -107,10 +114,14 @@ export function useMessageOpening(
     if (needsHead) {
       pages.current.attached = true;
       const retained = window.rows.find((row) => row.id === messageId);
-      if (!verified && retained && channels.seek) {
+      const controller = revalidation.current;
+      if (!verified && retained && channels.seek && controller) {
         void channels
-          .seek(channelId, retained.createdAt, new AbortController().signal)
-          .catch(() => setDecided({ key, inTimeline: false }));
+          .seek(channelId, retained.createdAt, controller.signal, retained.id)
+          .catch(() => {
+            if (!controller.signal.aborted)
+              setDecided({ key, inTimeline: false });
+          });
         return;
       }
       channels.attach?.(channelId);
