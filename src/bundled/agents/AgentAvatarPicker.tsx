@@ -128,12 +128,16 @@ export function AgentAvatarPicker({
   };
   const [emojiOpen, setEmojiOpen] = useState(false);
   // The chosen file shows at once; it stays the artwork after its upload lands.
-  const [local, setLocal] = useState<{
+  type Local = {
     url: string;
     animated?: boolean;
     picture?: string;
     progress?: number;
-  } | null>(null);
+  };
+  const [local, setLocal] = useState<Local | null>(null);
+  // A replacement keeps the framed source until it lands, so a failed or
+  // canceled upload restores it.
+  const kept = useRef<Local | null>(null);
   // The crop lives in the selection so its owner can tell a reframe is a change.
   const crop = (selection.kind !== "gloopie" && selection.crop) || uncropped;
   const setCrop = (value: AvatarCrop) =>
@@ -146,7 +150,8 @@ export function AgentAvatarPicker({
   const localUrl = local?.url;
   useEffect(
     () => () => {
-      if (localUrl) URL.revokeObjectURL(localUrl);
+      if (localUrl && localUrl !== kept.current?.url)
+        URL.revokeObjectURL(localUrl);
     },
     [localUrl],
   );
@@ -237,7 +242,13 @@ export function AgentAvatarPicker({
     return () => surface.removeEventListener("wheel", wheel);
   }, []);
   const preview = useAvatarPreview(selected ? "" : picture, community, "small");
-  useEffect(() => () => pending.current?.abort(), []);
+  useEffect(
+    () => () => {
+      pending.current?.abort();
+      if (kept.current) URL.revokeObjectURL(kept.current.url);
+    },
+    [],
+  );
   const shown = local?.picture === picture ? local?.url : undefined;
   // Painting would keep only an animation's first frame, so those upload as chosen.
   const cropping = shown && !local?.animated ? shown : undefined;
@@ -283,26 +294,29 @@ export function AgentAvatarPicker({
     const request = new AbortController();
     pending.current = request;
     const url = URL.createObjectURL(file);
+    kept.current = local;
     setLocal({ url });
-    // The previous image's source is gone, so its framing can't be kept.
-    if (selection.kind === "image" && selection.crop)
-      onChange({ kind: "image", picture: selection.picture });
     onBusyChange(true);
     setError("");
     try {
-      const [value, animated] = await Promise.all([
-        uploadAvatar(file, community, request.signal, (sent, total) => {
+      const value = await uploadAvatar(
+        file,
+        community,
+        request.signal,
+        (sent, total) => {
           if (!request.signal.aborted && total)
             setLocal({ url, progress: sent / total });
-        }),
-        animatedImage(file).catch(() => true),
-      ]);
+        },
+      );
+      const animated = await animatedImage(file).catch(() => true);
       if (request.signal.aborted) return;
+      if (kept.current) URL.revokeObjectURL(kept.current.url);
+      kept.current = null;
       setLocal({ url, animated, picture: value });
       onChange({ kind: "image", picture: value });
     } catch (reason) {
       if (request.signal.aborted) return;
-      setLocal(null);
+      restore();
       setError(
         reason instanceof Error
           ? reason.message
@@ -315,10 +329,14 @@ export function AgentAvatarPicker({
       }
     }
   };
+  const restore = () => {
+    setLocal(kept.current);
+    kept.current = null;
+  };
   const cancelUpload = () => {
     pending.current?.abort();
     pending.current = null;
-    setLocal(null);
+    restore();
     onBusyChange(false);
   };
   const chooseImage = () => {

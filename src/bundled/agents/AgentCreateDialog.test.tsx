@@ -603,6 +603,44 @@ it("pans and zooms an uploaded image, then saves the framed crop", async () => {
   );
 });
 
+it("keeps the framed image when its replacement fails to upload", async () => {
+  const cropped = new File(["crop"], "avatar.png", { type: "image/png" });
+  vi.mocked(croppedAvatar).mockResolvedValueOnce(cropped);
+  vi.mocked(uploadAvatar)
+    .mockResolvedValueOnce("https://images.example/original.png")
+    .mockRejectedValueOnce(new Error("Upload failed"))
+    .mockResolvedValueOnce("https://images.example/cropped.png");
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  const choose = (name: string) =>
+    fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+      target: { files: [new File(["image"], name, { type: "image/png" })] },
+    });
+  choose("first.png");
+  await within(dialog).findByRole("application", { name: "Image position" });
+  fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
+    target: { value: "2" },
+  });
+  choose("second.png");
+  await within(dialog).findByText("Upload failed");
+  await user.click(createButton());
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        picture: "https://images.example/cropped.png",
+      }),
+    ),
+  );
+  expect(croppedAvatar).toHaveBeenCalledExactlyOnceWith(
+    expect.any(HTMLImageElement),
+    { zoom: 2, x: 0, y: 0 },
+  );
+});
+
 it.each([
   ["an unadjusted image", "image/png", "image", true],
   ["a GIF, keeping its animation", "image/gif", "GIF89a", false],
