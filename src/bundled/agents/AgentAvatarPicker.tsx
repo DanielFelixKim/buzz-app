@@ -64,6 +64,7 @@ const backgrounds = [
   "#A16207",
   "#334155",
   "#18181B",
+  "transparent",
 ] as const;
 
 export type AvatarSelection =
@@ -310,7 +311,7 @@ export function AgentAvatarPicker({
                     alt=""
                     fallback={lastAvatar.label}
                     size="fill"
-                    shape="circle"
+                    shape="squircle"
                   />
                 ),
               },
@@ -373,7 +374,7 @@ export function AgentAvatarPicker({
                   alt="Uploading avatar"
                   fallback={name}
                   size="fill"
-                  shape="circle"
+                  shape="squircle"
                 />
                 <span className={styles.uploadCancel}>
                   <IconButton
@@ -435,13 +436,18 @@ export function AgentAvatarPicker({
                   render={
                     <SurfaceButton
                       className={styles.emojiAvatarButton}
-                      style={{ backgroundColor: color }}
                       aria-label="Choose emoji"
                       disabled={locked}
                     />
                   }
                 >
-                  <EmojiSwap emoji={emoji} animate={animateEmoji} />
+                  <span
+                    data-avatar-shape="squircle"
+                    className={styles.emojiAvatarArtwork}
+                    style={{ backgroundColor: color }}
+                  >
+                    <EmojiSwap emoji={emoji} animate={animateEmoji} />
+                  </span>
                 </PopoverTrigger>
                 <PopoverPopup
                   aria-label="Choose emoji"
@@ -476,7 +482,7 @@ export function AgentAvatarPicker({
                 alt="Selected avatar"
                 fallback={name}
                 size="fill"
-                shape="circle"
+                shape="squircle"
               />
             )}
           </div>
@@ -496,7 +502,7 @@ export function AgentAvatarPicker({
                 {backgrounds.map((swatch) => (
                   <span key={swatch} className={styles.dockItem}>
                     <IconButton
-                      data-color-swatch=""
+                      data-color-swatch={swatch}
                       variant="primary"
                       shape="round"
                       size="sm"
@@ -512,7 +518,11 @@ export function AgentAvatarPicker({
                       }
                       aria-label={`Use ${swatch} background`}
                       aria-pressed={color === swatch}
-                      style={{ backgroundColor: swatch }}
+                      style={
+                        swatch === "transparent"
+                          ? undefined
+                          : { backgroundColor: swatch }
+                      }
                       onPointerDown={(event) => {
                         if (event.pointerType === "mouse")
                           event.preventDefault();

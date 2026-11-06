@@ -346,15 +346,24 @@
   position: absolute;
   inset: 0;
 }
-.emojiAvatarButton {
+.emojiAvatarButton,
+.emojiAvatarArtwork {
+  display: block;
   width: 100%;
   height: 100%;
-  border-radius: var(--radius-pill);
-  overflow: hidden;
+}
+.avatarDock [data-color-swatch="transparent"] {
+  color: var(--text-primary);
+  background:
+    repeating-conic-gradient(
+      var(--border-primary) 0 25%,
+      var(--surface-panel) 0 50%
+    )
+    50% / 0.75rem 0.75rem;
 }
 @media (prefers-reduced-motion: no-preference) {
   .avatarSurface[data-color-transition],
-  .avatarSurface[data-color-transition] .emojiAvatarButton {
+  .avatarSurface[data-color-transition] .emojiAvatarArtwork {
     transition: background-color var(--duration-state) var(--easing-state);
   }
 }
