@@ -237,6 +237,61 @@ it.each([false, true])(
   },
 );
 
+it("names the people in notices an older page reveals", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  const owner = createRelaySession(wire.transport, {
+    readStateFloor: () => 0,
+    prepared: false,
+  });
+  const q = owner.session.channels;
+  try {
+    q.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    q.ensure("a");
+    const hello = message(viewer, "a", "Hello", 20);
+    const row = addition(pinky.pubkey, 21);
+    // Below the head's floor, so it waits for the page that reaches it.
+    const below = addition(brain.pubkey, 19);
+    take(wire, isWindow).respond([
+      hello,
+      bounds(relay, "a", "head", {
+        has_more: true,
+        next_cursor: { created_at: hello.created_at, id: hello.id },
+      }),
+      row,
+      below,
+    ]);
+    await flush();
+    take(wire, isNames).respond([
+      profile(viewer, { name: "Wes" }),
+      profile(pinky, { name: "Pinky" }),
+    ]);
+    await flush();
+    q.loadOlder("a");
+    take(wire, isWindow).respond([
+      message(pinky, "a", "First", 18),
+      bounds(relay, "a", `20:${hello.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    expect(q.window("a").rows.map((r) => r.id)).toContain(below.id);
+    const names = take(wire, isNames);
+    expect(names.filters[0]?.authors).toContain(brain.pubkey);
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("reads notices in relay pages down to the window floor, and a failed read never errors the window", async () => {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
     notices: true,

@@ -720,7 +720,17 @@ export function createChannelStore(
     warmChannelId?: string,
   ) {
     try {
-      const ids = rows.flatMap(rowProfileIds);
+      // One ensure may ask for at most what the cache holds, and a window can
+      // show more people than that. Past it, ask for the ones still missing,
+      // oldest rows first, rather than none at all.
+      const unique = [...new Set(rows.flatMap(rowProfileIds))];
+      const limit = directory.queries.limit?.() ?? unique.length;
+      const ids =
+        unique.length > limit
+          ? unique
+              .filter((id) => !directory.queries.event?.(id))
+              .slice(0, limit)
+          : unique;
       relayDebug("profiles warm", ids.length, "ids");
       await directory.ensure(ids, "background");
       if (!disposed && intent) prepareMedia(intent);
@@ -1188,7 +1198,8 @@ export function createChannelStore(
         freshness: "verified",
       });
       void fillNotices(state, !cursor && !read);
-      void fetchProfiles(cursor ? rows : state.snapshot.rows);
+      // The snapshot holds the notices an older page reveals, too.
+      void fetchProfiles(state.snapshot.rows);
     } catch (error) {
       if (isAbort(error) || !live(state, generation)) return;
       // A denied revalidation must not keep exposing a cached head.
