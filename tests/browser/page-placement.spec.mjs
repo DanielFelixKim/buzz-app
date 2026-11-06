@@ -230,9 +230,16 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
 
   const sidebar = page.getByRole("complementary", { name: "Fixture sidebar" });
   await expect(sidebar).toContainText("Target: sidebar");
+  // The page's own sidebar replaces the Messages sidebar it is listed in, and
+  // Messages stays selected.
   await expect(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Apps dock" })
+      .getByRole("tab", { name: "Messages", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const wideSize = await sidebar.evaluate(
     (element) => element.getBoundingClientRect().width,
   );

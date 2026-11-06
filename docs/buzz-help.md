@@ -434,7 +434,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   sit at the bottom of the dock. Search stays wide in the top bar.
   Messages has All / Solo / Team sidebar filters; other apps use their main
   view unless they provide their own sidebar. Pages listed in the Messages
-  sidebar, such as Drafts & sent, keep Messages selected and its sidebar open.
+  sidebar, such as Drafts & sent, keep Messages selected in the dock. The
+  Messages sidebar stays open unless the page provides its own sidebar, which
+  replaces it.
   The sidebar and message pane share one surface with a persistent divider;
   panel headers also have bottom hairlines. Dock icons stay still, highlight
   on hover, and show instant labels to their right. Bestie uses your
