@@ -163,11 +163,10 @@ export function createMessages(
     authorization?: AgentOwnerAuthorization,
   ) => {
     const original = find(messageId);
-    if (!original || ![9, 40002, 45001, 45003].includes(original.kind))
+    if (!original || ![9, 40002].includes(original.kind))
       throw new Error("Load the message before editing it");
     const ownerEdit =
       !!viewer &&
-      [9, 40002].includes(original.kind) &&
       authorization?.ownerId === viewer &&
       authorization.agentId === messageAuthor(original, signingAuthority);
     if (!ownedMessage(original) && !ownerEdit)
@@ -480,7 +479,7 @@ export function createMessages(
     },
     react(messageId: string, content: string, emoji?: CustomEmoji) {
       const original = find(messageId);
-      if (!original || ![9, 40002, 40008, 45001, 45003].includes(original.kind))
+      if (!original || ![9, 40002, 40008].includes(original.kind))
         throw new Error("Load the message before reacting to it");
       const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
       if (!channelId) throw new Error("Message has no channel");

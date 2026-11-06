@@ -6,6 +6,9 @@ import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import type { ComposerInputElement } from "./composer-dom";
 import { MessageComposer } from "./MessageComposer";
+import { MessageRow } from "./MessageRow";
+import { lastEditableMessage } from "./useMessageEdit";
+import type { ComposerTool } from "../conversation/contracts";
 import {
   act,
   cleanup,
@@ -229,7 +232,7 @@ async function fixture(
         return [];
       },
       writer: {
-        kinds: [9, 40003, 5],
+        kinds: [9, 7, 40003, 5],
         async sign(template) {
           return signed(viewer, template);
         },
@@ -898,6 +901,75 @@ it("cancelling deletion never publishes", async () => {
   expect(h.publications).toHaveLength(0);
   expect(h.owner.session.channels.window("room").rows).toHaveLength(1);
 });
+
+it.each([9, 45001, 45003])(
+  "offers editing/reactions only for compatible chat rows, preserving forum deletion (kind %s)",
+  async (kind) => {
+    const h = await fixture(
+      true,
+      false,
+      false,
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      "member",
+      { kind },
+    );
+    const session = h.owner.session;
+    const rows = session.channels.window("room").rows;
+    const row = rows[0];
+    assert.exists(row);
+    expect(!!screen.queryByRole("menuitem", { name: "Edit message" })).toBe(
+      kind === 9,
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "Delete message" }),
+    ).toBeVisible();
+    expect(lastEditableMessage(session, rows)?.id).toBe(
+      kind === 9 ? row.id : undefined,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("menuitem", { name: "Delete message" }),
+      ).toBeNull(),
+    );
+    const none: never[] = [];
+    const tools: ComposerTool[] = [
+      {
+        key: "forum-test-picker",
+        pluginId: "forum-test-picker",
+        revision: "one",
+        id: "forum-test-picker",
+        title: "Picker",
+        component: () => null,
+        reactionComponent: () => <button type="button">Choose reaction</button>,
+      },
+    ];
+    render(
+      <MessageRow
+        row={row}
+        session={session}
+        scope="forum-compatibility"
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => tools, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    expect(!!screen.queryByRole("button", { name: "Choose reaction" })).toBe(
+      kind === 9,
+    );
+    expect(h.publications).toHaveLength(0);
+  },
+);
 
 it.each([9, 45001, 45003])(
   "recovers an uncertain deletion after the row and dialog disappear (kind %s)",

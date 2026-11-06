@@ -219,6 +219,8 @@ it("renders mobile Markdown/media, applies author overlays, and rejects foreign 
   expect(rows[0]?.attachments).toMatchObject([
     { url: "https://example.com/photo.png", kind: "image" },
   ]);
+  expect(rows.slice(0, 2).map((row) => row.forum)).toEqual([true, true]);
+  expect(rows[2]?.forum).toBeUndefined();
   expect(
     foldMessages(channel, relay.pubkey, [media, overlay(40003)])[0]?.content,
   ).toBe("Edited");
@@ -227,7 +229,7 @@ it("renders mobile Markdown/media, applies author overlays, and rejects foreign 
 });
 
 it.each([45001, 45003])(
-  "supports existing actions on an author's forum event (kind %s) without granting other authors access",
+  "keeps forum edits/reactions gated while allowing author deletion and reporting (kind %s)",
   async (kind) => {
     const own = signed(author, {
       kind,
@@ -263,11 +265,17 @@ it.each([45001, 45003])(
       report,
     );
     expect(() => messages.edit(foreign.id, "Forged", foreign.id)).toThrow(
-      "Only your own",
+      "Load the message before editing it",
     );
     expect(() => messages.remove([foreign.id])).toThrow("Only your own");
-    messages.edit(own.id, "Edited", own.id);
-    messages.react(foreign.id, "👍");
+    expect(() => messages.edit(own.id, "Edited", own.id)).toThrow(
+      "Load the message before editing it",
+    );
+    expect(() => messages.react(foreign.id, "👍")).toThrow(
+      "Load the message before reacting to it",
+    );
+    expect(writer.sign).not.toHaveBeenCalled();
+    expect(outbox.snapshot()).toEqual([]);
     messages.remove([own.id]);
     assert.exists(messages.report);
     await messages.report(foreign.id, "spam");
@@ -285,7 +293,7 @@ it.each([45001, 45003])(
         .snapshot()
         .map((item) => item.event.kind)
         .sort((a, b) => a - b),
-    ).toEqual([5, 7, 40003]);
+    ).toEqual([5]);
   },
 );
 
