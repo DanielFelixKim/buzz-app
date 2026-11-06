@@ -151,11 +151,8 @@ it.each([
     }
     if (action === "custody lost") {
       expect(screen.getByRole("button", { name: "Authorize" })).toBeDisabled();
-      await user.click(screen.getByRole("combobox", { name: "Agent" }));
-      await waitFor(() =>
-        expect(screen.getByRole("listbox").parentElement).toHaveFocus(),
-      );
-      await user.keyboard("{Home}");
+      act(() => screen.getByRole("combobox", { name: "Agent" }).focus());
+      await user.keyboard("{ArrowDown}");
       await waitFor(() =>
         expect(
           screen.getByRole("option", { name: "Test agent" }),
