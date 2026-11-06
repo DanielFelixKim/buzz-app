@@ -30,21 +30,22 @@ const extra = [
   "Next week is mostly follow-through: two reviews, one design session and the write-up for the wider group.",
 ];
 
-// Reply i's body. Every reply has a short heading and three to six items; one
-// in three adds a longer paragraph, one in five a quote, one in seven is plain
-// prose without Markdown.
+// Reply i's body, opening with its 1-based position in the thread ("Message
+// #142") so a reader can tell where they are. Every reply has a short heading
+// and three to six items; one in three adds a longer paragraph, one in five a
+// quote, one in seven is plain prose without Markdown.
 export function threadBody(i, names) {
   const pick = (n) => items[(i * 7 + n * 3) % items.length];
   const mention = names[(i * 5) % names.length];
   if (i % 7 === 3)
     return [
-      `Quick one from ${topics[i % topics.length]} this week.`,
+      `Message #${i + 1}. Quick one from ${topics[i % topics.length]} this week.`,
       `Mostly ${pick(0)}, plus ${pick(1)}. Nothing blocked.`,
       extra[i % extra.length],
     ].join("\n\n");
   const count = 3 + (i % 4);
   const lines = [
-    `**Week 45 update** from the ${topics[i % topics.length]} side`,
+    `**Message #${i + 1}** · Week 45 update from the ${topics[i % topics.length]} side`,
     "",
     `1. **Shipped:** ${pick(0)} and ${pick(1)} (see [the notes](https://example.com/notes/${i}))`,
     `2. **Learned:** ${pick(2)}; the \`retry()\` path mattered most`,

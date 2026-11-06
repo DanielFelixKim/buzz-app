@@ -271,7 +271,7 @@ expanding nested replies or live agent streaming.
 `--scenario thread-scroll` measures the long-thread workload behind the
 [thread scrolling targets](channels.md#targets). `tests/browser/perf/thread-corpus.mjs`
 fills the strict-window fixture thread with 5,000 weekly-update replies from 40
-authors: Markdown lists, bold text, inline code, mentions, links, quotes and plain
+authors, each opening with its position in the thread ("Message #142"): Markdown lists, bold text, inline code, mentions, links, quotes and plain
 prose, with every 25th reply in a collapsed branch. Their heights follow a real long
 thread's (median about 280px). Each worker signs the corpus once and every sample
 serves the same frozen events. Scroll samples open the thread and fill its window

@@ -32,6 +32,7 @@ test("nests every 25th reply and signs a corpus once per worker", () => {
   expect(replies).toHaveLength(100);
   expect(nested).toHaveLength(4);
   expect(replies.map((event) => event.content)).toEqual(bodies.slice(0, 100));
+  expect(replies[41].content).toMatch(/^\*\*Message #42\*\*/);
   expect(app.histories.get(`primary/${THREAD_CHANNEL}`)).toEqual([root]);
   expect(app.threadReplies.get(root.id)).toBe(replies);
   expect(app.inboxWindow.root).toBe(root);
@@ -45,8 +46,8 @@ test("nests every 25th reply and signs a corpus once per worker", () => {
 test("mixes plain prose, Markdown, mentions, links and quotes", () => {
   const share = (pattern) =>
     bodies.filter((body) => pattern.test(body)).length / bodies.length;
-  expect(share(/^\*\*Week 45 update\*\*/)).toBeGreaterThan(0.8);
-  expect(share(/^Quick one/)).toBeGreaterThan(0.1);
+  expect(share(/^\*\*Message #\d+\*\* · Week 45 update/)).toBeGreaterThan(0.8);
+  expect(share(/^Message #\d+\. Quick one/)).toBeGreaterThan(0.1);
   expect(share(/@Person \d+/)).toBeGreaterThan(0.8);
   expect(share(/https:\/\/example\.com\//)).toBeGreaterThan(0.8);
   expect(share(/^> /m)).toBeGreaterThan(0.15);
