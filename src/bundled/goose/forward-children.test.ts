@@ -23,12 +23,13 @@ function tracked(
 ) {
   const register = vi.fn((_call: string, _child: string) => outcome());
   const failed = vi.fn();
-  return { observe: forwardChildren({ register, failed }), register, failed };
+  const { observe, settled } = forwardChildren({ register, failed });
+  return { observe, settled, register, failed };
 }
 
 describe("forwardChildren", () => {
   it("registers a live delegate's child, and its resume under a new call", async () => {
-    const { observe, register, failed } = tracked();
+    const { observe, settled, register, failed } = tracked();
     observe(announced("call-1"), true);
     observe({ ...completed("call-1"), status: "in_progress" }, true);
     observe(completed("call-1"), true);
@@ -40,6 +41,7 @@ describe("forwardChildren", () => {
       ["call-2", "20261104_2"],
     ]);
     expect(failed).not.toHaveBeenCalled();
+    expect(await settled()).toBeUndefined();
   });
 
   it("ignores replay, other tools and calls it never saw announced", async () => {
@@ -62,7 +64,7 @@ describe("forwardChildren", () => {
       { type: "refused", reason: "child_cap" },
       { type: "refused", reason: "generation_revoked" },
     ];
-    const { observe, register, failed } = tracked(
+    const { observe, settled, register, failed } = tracked(
       async () => outcomes.shift() ?? { type: "registered" },
     );
     for (const call of ["call-1", "call-2", "call-3"]) {
@@ -72,6 +74,8 @@ describe("forwardChildren", () => {
     }
     expect(register).toHaveBeenCalledTimes(2);
     expect(failed.mock.calls).toEqual([["child_cap"], ["generation_revoked"]]);
+    // The turn fails for the first.
+    expect(await settled()).toBe("child_cap");
   });
 
   it("surfaces a rejected registration, leaving no promise unhandled", async () => {
@@ -96,7 +100,7 @@ describe("forwardChildren", () => {
 
 it("surfaces a registration that throws instead of returning a promise", () => {
   const failed = vi.fn();
-  const observe = forwardChildren({
+  const { observe } = forwardChildren({
     register: () => {
       throw new Error("ipc unavailable");
     },
@@ -113,19 +117,20 @@ describe("a failure reporter that throws", () => {
       throw new Error("turn already ended");
     });
 
-  it("is called once on a synchronous failure, and stops registration", () => {
+  it("is called once on a synchronous failure, and stops registration", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const failed = throwing();
       const register = vi.fn((_call: string, _child: string) => {
         throw new Error("ipc unavailable");
       });
-      const observe = forwardChildren({ register, failed });
+      const { observe, settled } = forwardChildren({ register, failed });
       observe(announced("call-1"), true);
       expect(() => observe(completed("call-1"), true)).not.toThrow();
       observe(announced("call-2"), true);
       observe(completed("call-2"), true);
       expect(failed).toHaveBeenCalledExactlyOnceWith("Error: ipc unavailable");
+      expect(await settled()).toBe("Error: ipc unavailable");
       expect(register).toHaveBeenCalledOnce();
       expect(logged).toHaveBeenCalledOnce();
     } finally {
@@ -149,7 +154,7 @@ describe("a failure reporter that throws", () => {
       try {
         const failed = throwing();
         const register = vi.fn((_call: string, _child: string) => outcome());
-        const observe = forwardChildren({ register, failed });
+        const { observe, settled } = forwardChildren({ register, failed });
         observe(announced("call-1"), true);
         observe(completed("call-1"), true);
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -157,6 +162,7 @@ describe("a failure reporter that throws", () => {
         observe(completed("call-2"), true);
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(failed).toHaveBeenCalledExactlyOnceWith(reason);
+        expect(await settled()).toBe(reason);
         expect(register).toHaveBeenCalledOnce();
         expect(logged).toHaveBeenCalledOnce();
         expect(unhandled).not.toHaveBeenCalled();
@@ -166,4 +172,74 @@ describe("a failure reporter that throws", () => {
       }
     },
   );
+});
+
+it("keeps a failure for the turn when the only child's report throws", async () => {
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { observe, settled } = forwardChildren({
+      register: async () => ({
+        type: "refused",
+        reason: "child_call_conflict",
+      }),
+      failed: () => {
+        throw new Error("turn already ended");
+      },
+    });
+    observe(announced("call-1"), true);
+    observe(completed("call-1"), true);
+    await flush();
+    // No later child request exists to be refused: only this signal remains.
+    expect(await settled()).toBe("child_call_conflict");
+  } finally {
+    logged.mockRestore();
+  }
+});
+
+it("fails the turn for a registration still unanswered when its prompt ends", async () => {
+  let answer!: (registered: ForwardChildRegistered) => void;
+  const { observe, settled, failed } = tracked(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  observe(announced("call-1"), true);
+  observe(completed("call-1"), true);
+  // The prompt has ended; the registration has not been answered.
+  let outcome: string | undefined | null = null;
+  const checking = settled().then((failure) => (outcome = failure));
+  await flush();
+  expect(outcome).toBeNull();
+  answer({ type: "refused", reason: "generation_ended" });
+  await checking;
+  expect(outcome).toBe("generation_ended");
+  expect(failed).toHaveBeenCalledExactlyOnceWith("generation_ended");
+});
+
+it("fails the turn for a held registration that rejects into a throwing notifier", async () => {
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    let reject!: (error: unknown) => void;
+    const failed = vi.fn(() => {
+      throw new Error("turn already ended");
+    });
+    const { observe, settled } = forwardChildren({
+      register: () => new Promise((_, rejected) => (reject = rejected)),
+      failed,
+    });
+    observe(announced("call-1"), true);
+    observe(completed("call-1"), true);
+    // The prompt settles while the IPC answer is held: success stays blocked.
+    let checked = false;
+    const checking = settled().then((failure) => {
+      checked = true;
+      return failure;
+    });
+    await flush();
+    expect(checked).toBe(false);
+    // No later child follows.
+    reject("ipc closed");
+    await expect(checking).resolves.toBe("ipc closed");
+    expect(failed).toHaveBeenCalledOnce();
+  } finally {
+    logged.mockRestore();
+  }
 });

@@ -11,7 +11,7 @@ export type ForwardChildren = Readonly<{
 }>;
 
 /** Registers the children goose delegates during one forwarded prompt, as
- * an `AcpSession.observe` of the generation's parent session. One per
+ * its `observe` as the generation's parent session's. One per
  * generation, so the delegate calls it trusts are this prompt's. Only a live
  * `delegate` call announced earlier in the prompt registers: goose strips
  * `subagentSessionId` from every other tool's result (goose 1.57.0
@@ -19,11 +19,14 @@ export type ForwardChildren = Readonly<{
 export function forwardChildren({ register, failed }: ForwardChildren) {
   const delegates = new Set<string>();
   let stopped = false;
-  // The turn's failure signal, called once per failure and never again from
-  // its own error. A reporter that throws stops registration too, so every
-  // later child's inference is refused (`child_unregistered`) instead of
-  // running unseen.
+  /** The first failure, kept whatever `failed` does with it. */
+  let failure: string | undefined;
+  /** Registrations not yet answered, none of which ever rejects. */
+  const pending = new Set<Promise<void>>();
+  // Kept first, then shown once and never again from its own error. A
+  // `failed` that throws stops registration too: nothing more is trusted.
   const report = (reason: string) => {
+    failure ??= reason;
     try {
       failed(reason);
     } catch (error) {
@@ -34,7 +37,7 @@ export function forwardChildren({ register, failed }: ForwardChildren) {
       });
     }
   };
-  return (update: Record<string, unknown>, prompting: boolean) => {
+  const observe = (update: Record<string, unknown>, prompting: boolean) => {
     if (!prompting || stopped) return;
     const call = update.toolCallId;
     if (typeof call !== "string") return;
@@ -60,7 +63,7 @@ export function forwardChildren({ register, failed }: ForwardChildren) {
       report(String(error));
       return;
     }
-    registering.then(
+    const answered = registering.then(
       (registered) => {
         if (registered.type === "registered") return;
         if (registered.reason === "generation_revoked") stopped = true;
@@ -68,5 +71,16 @@ export function forwardChildren({ register, failed }: ForwardChildren) {
       },
       (error) => report(String(error)),
     );
+    pending.add(answered);
+    void answered.finally(() => pending.delete(answered));
   };
+  /** The turn's registration failure, once every registration started has
+   * been answered. The caller awaits it after the prompt and before
+   * reporting success, so a failed registration fails the turn even when
+   * nothing else would notice. */
+  const settled = async () => {
+    while (pending.size) await Promise.all(pending);
+    return failure;
+  };
+  return { observe, settled };
 }
