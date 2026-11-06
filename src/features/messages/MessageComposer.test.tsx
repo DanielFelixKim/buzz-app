@@ -2698,54 +2698,85 @@ it("retains a remounted later edit conflict until clearing it and explicitly ret
   expect(h.publish).not.toHaveBeenCalled();
 });
 
-it("does not replace an active message edit when a remounted upload recovers", async () => {
-  const h = await mountUploadComposer({ editable: true });
-  attachByPaste(h.input(), attachmentFile("original.txt"));
-  await userEvent.type(h.input(), "original caption");
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  h.unmount();
-  const viewer = h.owner.session.viewer;
-  if (!viewer) throw new Error("Expected upload viewer");
-  const row = editableMessage({ authorId: viewer });
-  const again = render(
-    <MessageComposer
-      session={h.owner.session}
-      scope={h.scope}
-      channelId="channel"
-      channelName="General"
-      editMessages={[row]}
-    />,
-    { wrapper: ToastProvider },
-  );
-  const replacement = within(again.container).getByRole("textbox");
-  fireEvent.keyDown(replacement, { key: "ArrowUp" });
-  expect(replacement).toHaveAccessibleName("Edit message");
-  expect(replacement).toHaveValue("Original message");
-  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
-  expect(replacement).toHaveAccessibleName("Edit message");
-  expect(replacement).toHaveValue("Original message");
-  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
-    text: "original caption",
-  });
-  expect(
-    readOwnerDraft(h.scope, "channel", undefined, h.owner.session),
-  ).toMatchObject({ text: "original caption", source: "composer" });
-  const recoveredDraft = readView(h.scope, "draft:channel", null);
-  act(() => writeView(h.scope, "draft:channel", "Newer draft saved elsewhere"));
-  expect(() =>
-    readOwnerDraft(h.scope, "channel", undefined, h.owner.session),
-  ).toThrow("changed during message editing");
-  act(() => writeView(h.scope, "draft:channel", recoveredDraft));
-  fireEvent.click(
-    within(again.container).getByRole("button", { name: "Cancel edit" }),
-  );
-  await waitFor(() => expect(replacement).toHaveValue("original caption"));
-  await waitFor(() =>
-    expect(within(again.container).getByText("original.txt")).toBeVisible(),
-  );
-  expect(h.publish).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "reads deferred upload recovery over an untouched prefill: %s",
+  async (prefilled) => {
+    const agent = keypair();
+    const h = await mountUploadComposer({
+      editable: true,
+      members: [agent.pubkey],
+      profiles: [
+        signed(agent, {
+          kind: 0,
+          created_at: 1700000000,
+          tags: [],
+          content: JSON.stringify({ name: "Honey", is_agent: true }),
+        }),
+      ],
+    });
+    await h.owner.session.profiles.ensure([agent.pubkey], "background");
+    attachByPaste(h.input(), attachmentFile("original.txt"));
+    await userEvent.type(h.input(), "original caption");
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    h.unmount();
+    const viewer = h.owner.session.viewer;
+    if (!viewer) throw new Error("Expected upload viewer");
+    const row = editableMessage({ authorId: viewer, mentions: [agent.pubkey] });
+    let editScope: ReturnType<typeof useMessageEditScope>;
+    function Probe() {
+      editScope = useMessageEditScope();
+      return null;
+    }
+    const again = render(
+      <MessageEditScope>
+        <Probe />
+        <MessageComposer
+          session={h.owner.session}
+          scope={h.scope}
+          channelId="channel"
+          channelName="General"
+          threadSeed={prefilled ? row : undefined}
+          editMessages={[row]}
+        />
+      </MessageEditScope>,
+      { wrapper: ToastProvider },
+    );
+    const replacement = within(again.container).getByRole("textbox");
+    if (prefilled)
+      await waitFor(() => expect(replacement.textContent).toContain("Honey"));
+    act(() => editScope?.current?.(row));
+    expect(replacement).toHaveAccessibleName("Edit message");
+    expect(replacement).toHaveValue("Original message");
+    await act(async () =>
+      h.uploadCalls[0]?.result.reject(new Error("offline")),
+    );
+    expect(replacement).toHaveAccessibleName("Edit message");
+    expect(replacement).toHaveValue("Original message");
+    expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+      text: "original caption",
+    });
+    expect(
+      readOwnerDraft(h.scope, "channel", undefined, h.owner.session),
+    ).toMatchObject({ text: "original caption", source: "composer" });
+    const recoveredDraft = readView(h.scope, "draft:channel", null);
+    act(() =>
+      writeView(h.scope, "draft:channel", "Newer draft saved elsewhere"),
+    );
+    expect(() =>
+      readOwnerDraft(h.scope, "channel", undefined, h.owner.session),
+    ).toThrow("changed during message editing");
+    act(() => writeView(h.scope, "draft:channel", recoveredDraft));
+    fireEvent.click(
+      within(again.container).getByRole("button", { name: "Cancel edit" }),
+    );
+    await waitFor(() => expect(replacement).toHaveValue("original caption"));
+    await waitFor(() =>
+      expect(within(again.container).getByText("original.txt")).toBeVisible(),
+    );
+    expect(h.publish).not.toHaveBeenCalled();
+  },
+);
 
 it("defers a failed upload recovery until an empty active message edit ends", async () => {
   const h = await mountUploadComposer({ editable: true });

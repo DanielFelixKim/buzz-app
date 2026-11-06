@@ -1116,7 +1116,13 @@ function Composer({
     if (!editing.target) return valueRef.current;
     const parked = beforeEdit.current?.value;
     const recovered = deferredRecovery.current?.draft;
-    if (!parked || !recovered || !untouchedDraft(parked)) return parked;
+    if (
+      !parked ||
+      !recovered ||
+      (!untouchedDraft(parked) &&
+        automaticTag.current !== JSON.stringify(parked))
+    )
+      return parked;
     if (viewRevision(scope, draftKey) !== JSON.stringify(recovered))
       throw new Error(
         "The recovered draft changed during message editing. Finish or cancel the edit before reading it.",
