@@ -13,6 +13,7 @@ import {
 } from "@testing-library/react";
 import { createElement } from "react";
 import { attachmentDraft } from "../messages/attachment-draft";
+import { readOwnerDraft } from "../messages/draft-read";
 import { MessageComposer } from "../messages/MessageComposer";
 import { composerDOMFixture, typedDraft } from "../messages/composer-testing";
 import { followupDraft, mentionDraft } from "../messages/mention-draft";
@@ -746,4 +747,38 @@ it("carries the owner's profile purge generation so the companion rereads shown 
   expect(seen).toHaveBeenCalled();
   await remote.profiles.ensure(["cd".repeat(32)], "background");
   await vi.waitFor(() => expect(ensure).toHaveBeenCalledTimes(2));
+});
+
+it("refuses main-window draft reads while a detached Huddle composer may hold unsaved text", () => {
+  const h = harness();
+  writeView(h.scope, "draft:room", "Older saved Huddle text");
+  expect(() => readOwnerDraft(h.scope, "room", undefined, h.session)).toThrow(
+    "Huddle",
+  );
+  h.owner.dispose();
+  expect(readOwnerDraft(h.scope, "room", undefined, h.session)?.text).toBe(
+    "Older saved Huddle text",
+  );
+});
+
+it("keeps accepted Huddle text out of saved draft reads after failed cleanup and window close", async () => {
+  const h = harness();
+  const { remote, client } = await h.connect();
+  writeView(h.scope, "draft:room", {
+    text: "Accepted Huddle draft",
+    recipients: [],
+  });
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    await expect(
+      remote.messages.send("room", "Accepted Huddle draft"),
+    ).resolves.toBe("accepted-id");
+  } finally {
+    fail.mockRestore();
+  }
+  client.dispose();
+  h.owner.dispose();
+  expect(readOwnerDraft(h.scope, "room", undefined, h.session)).toBeUndefined();
 });

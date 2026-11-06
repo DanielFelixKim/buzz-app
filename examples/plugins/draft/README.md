@@ -8,5 +8,6 @@ enable this folder as an external plugin. Requires a host exposing the optional
 The tool returns text, recipient identities and whether the source is the live
 composer or saved draft. It does not send, clear or focus the composer. Attached
 file bytes and sent-message editing text are excluded. Conflicting mounted
-editors must be resolved in Buzz first. Plugins are trusted unsandboxed code;
+editors must be resolved in Buzz first. Close detached Huddle chat before
+reading its draft, because unsaved text in another window cannot be verified. Plugins are trusted unsandboxed code;
 load this plugin only when your local agents should be able to read your drafts.

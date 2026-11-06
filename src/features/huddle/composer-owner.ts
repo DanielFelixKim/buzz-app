@@ -1,7 +1,9 @@
+import { recoveryFor } from "../messages/composer-accepted";
+import { registerComposerDraft } from "../messages/draft-read";
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
 import { mentionDraft } from "../messages/mention-draft";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, viewRevision, writeView } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
 import { prepareAttachment } from "../messages/prepare-attachment";
@@ -283,8 +285,12 @@ export function createHuddleComposerOwner(
         // keeps the remembered agents in memory (see seedMentions).
         const scope = session.scope;
         const key = `draft:${room}`;
-        if (JSON.stringify(readView(scope, key, null)) === draft)
-          writeView(scope, key, mentionDraft(""));
+        if (JSON.stringify(readView(scope, key, null)) === draft) {
+          const revision = viewRevision(scope, key);
+          const next = mentionDraft("");
+          if (!writeView(scope, key, next))
+            recoveryFor(session).set(`${scope}:${key}`, { next, revision });
+        }
         for (const file of files) release(file);
         return id;
       }
@@ -478,6 +484,15 @@ export function createHuddleComposerOwner(
     extensions?.tools.subscribe(publish),
     extensions?.completions?.subscribe(publish),
   ];
+  const stopDraftRead = registerComposerDraft(
+    session.scope,
+    `draft:${room}`,
+    () => {
+      throw new Error(
+        "This draft may have unsaved text in the detached Huddle editor. Read it after closing Huddle chat.",
+      );
+    },
+  );
   return {
     token,
     refresh: publish,
@@ -485,6 +500,7 @@ export function createHuddleComposerOwner(
       if (closed) return;
       send({ kind: "closed", client });
       closed = true;
+      stopDraftRead();
       reset();
       for (const stop of stops) stop?.();
       channel.close();

@@ -609,7 +609,9 @@ community, rechecking the live owner, session and channel membership on each
 call. It returns `{ text, recipients, source }`, or `undefined` when there is
 no saved or mounted draft. `source` is `composer` for the live editor, including
 unsaved text, or `saved` for durable text when no editor holds it. Disagreeing
-mounted editors and unavailable storage fail explicitly. Sent-message editing
+mounted editors and unavailable storage fail explicitly. Detached Huddle editors
+are refused while their live text cannot be verified in the main window. Accepted
+send recovery prevents already-submitted text from reappearing as a saved draft. Sent-message editing
 text, attachment bytes and other owners' or communities' drafts are excluded.
 The capability is absent from `Agents.handle` and standalone clients. It does
 not read, send or synchronize anything through the relay. Installed plugins
