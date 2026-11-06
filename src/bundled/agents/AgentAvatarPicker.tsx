@@ -276,7 +276,12 @@ export function AgentAvatarPicker({
       pending.current = request;
       try {
         // Default framing keeps the original upload.
-        if (cropping) await image?.decode().catch(() => {});
+        if (cropping)
+          await image?.decode().catch(() => {
+            // Saving the original would silently drop the framing.
+            if (crop.zoom !== 1 || crop.x || crop.y)
+              throw new Error("Couldn't frame the image. Try again.");
+          });
         request.signal.throwIfAborted();
         const framed =
           cropping && image?.naturalWidth

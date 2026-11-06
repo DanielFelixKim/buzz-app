@@ -13,7 +13,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useLayoutEffect } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { useEffect } from "react";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -633,6 +633,40 @@ it("cancels a framed save when the dialog closes while the image decodes", async
   cleanup();
   await act(async () => decoded());
   expect(vi.mocked(croppedAvatar).mock.calls).toHaveLength(painted);
+  expect(agents.create).not.toHaveBeenCalled();
+});
+
+it("keeps a framed save from falling back to the original when the image fails to decode", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/original.png",
+  );
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["image"], "image.png", { type: "image/png" })],
+    },
+  });
+  await within(dialog).findByRole("application", { name: "Image position" });
+  fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
+    target: { value: "2" },
+  });
+  // The frame's image no longer decodes, so it has no size.
+  const width = vi
+    .spyOn(HTMLImageElement.prototype, "naturalWidth", "get")
+    .mockReturnValue(0);
+  onTestFinished(() => void width.mockReturnValue(100));
+  vi.spyOn(HTMLImageElement.prototype, "decode").mockRejectedValueOnce(
+    new Error("EncodingError"),
+  );
+  await user.click(createButton());
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Couldn't frame the image. Try again.",
+  );
   expect(agents.create).not.toHaveBeenCalled();
 });
 
