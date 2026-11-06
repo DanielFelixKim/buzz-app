@@ -85,7 +85,7 @@ An installed plugin injects `agentProtection`, then registers
 `{ processProtection, checkEvidence(metadata, source, signal), phases?(policy), runtimeProcesses? }`. Registration is owned by its
 plugin ID; replacing or unloading it revokes the old registration and pending
 checks. Only the exact boolean `true` permits an action. Exceptions, cancellation,
-missing providers, invalid/oversized requests and the bounded deadline deny it.
+missing providers, invalid evidence or metadata, and the bounded deadline deny it.
 A provider may instead deny with exactly `{allowed: false, reason}` to explain
 the denial to people. Buzz reduces the reason to one line of at most 300
 characters and uses it only when denying what a protected Codex agent reads (a
@@ -133,10 +133,13 @@ and the OS shell. Protected Claude reads through the same helper and runs its pi
 release as a declared artifact. Ordinary launch IDs and runtime PATH retain their
 prior behavior.
 
-`check` receives an immutable action (`kind`, `session`, `content`, optional
-`command`) plus host-captured `agent`, `relay`, `runtime` and `policy`. `kind` is
+Every provider implements `checkEvidence(metadata, source, signal)`. Metadata
+contains `kind`, `session`, optional `command`, and host-captured `agent`, `relay`,
+`runtime` and `policy`. The separate, pull-driven `TextSource` yields serialized
+JSON content through `read()`. There is no total evidence byte limit; the provider
+must consume the source completely before an allow is accepted. `kind` is
 `context`, `tool` or `tool-result`. Session metadata is not authorization or proof
-of the currently displayed conversation. Every provider implements `checkEvidence(metadata, source, signal)` and receives host-captured metadata separately from a pull-driven `TextSource` whose `read()` yields serialized JSON content. There is no total evidence byte limit on this path; the provider must consume the source completely before an allow is accepted. Optional `phases(policy)` returns a
+of the currently displayed conversation. Optional `phases(policy)` returns a
 boolean for every action kind; it is captured from the native policy at launch.
 Disabled phases still validate the provider lifetime, but send no inspection
 evidence and do not invoke a checker. Omitting it enables every phase. Plugins
