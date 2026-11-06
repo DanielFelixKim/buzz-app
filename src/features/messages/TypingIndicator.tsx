@@ -320,9 +320,10 @@ export function TypingIndicator({
   );
   const name = (pubkey: string) =>
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
-  const scopeLabel = (pubkey: string, workRoot?: string) => {
+  const scopeLabel = (pubkey: string, workRoot?: string | null) => {
     if (threadRootId) return undefined;
-    const roots = workRoot ? [workRoot] : (details.get(pubkey)?.roots ?? []);
+    const roots =
+      workRoot !== undefined ? [workRoot] : (details.get(pubkey)?.roots ?? []);
     const labels = roots.slice(0, 2).map((root) => {
       if (root === null) return "Channel conversation";
       if (!root) return "Work with unconfirmed thread";
@@ -359,7 +360,7 @@ export function TypingIndicator({
     pubkey: string,
     navigate: (target: string, origin?: MessageLinkOrigin) => void,
     work?: LocalWork,
-    workRoot?: string,
+    workRoot?: string | null,
   ) => {
     const detail = workRoot
       ? currentActivity(
@@ -414,7 +415,11 @@ export function TypingIndicator({
           onOpen={() =>
             navigate(
               target,
-              workRoot ? { rootId: workRoot } : activityOrigin(pubkey),
+              workRoot !== undefined
+                ? workRoot
+                  ? { rootId: workRoot }
+                  : undefined
+                : activityOrigin(pubkey),
             )
           }
         />

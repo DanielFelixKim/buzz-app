@@ -65,7 +65,7 @@ export function conversationWorkStops(
 ): {
   control: WorkStop;
   work?: LocalWork;
-  threadRootId?: string | undefined;
+  threadRootId?: string | null | undefined;
 }[] {
   if (!snapshot) return [];
   const local = (snapshot.local ?? []).filter(
@@ -101,7 +101,7 @@ export function conversationWorkStops(
           {
             control,
             work,
-            threadRootId: continuous ? undefined : work.threadRootId,
+            threadRootId: continuous ? null : work.threadRootId,
           },
         ]
       : [];

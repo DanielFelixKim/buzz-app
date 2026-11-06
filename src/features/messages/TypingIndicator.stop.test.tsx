@@ -374,6 +374,8 @@ it("opens the Solo conversation when the same agent also works in a thread", asy
     />,
   );
   await user.click(screen.getByRole("button", { name: "Reading first.txt" }));
+  expect(screen.queryByText(/Channel conversation \/ Thread/)).toBeNull();
+  expect(screen.getByText("Channel conversation")).toBeVisible();
   await user.click(
     screen.getByRole("button", { name: "Open conversation for Agent" }),
   );
