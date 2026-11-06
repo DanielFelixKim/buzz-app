@@ -238,7 +238,8 @@
   color: var(--text-subtle);
 }
 
-.preview {
+.preview,
+.reactionPreview {
   max-inline-size: 64ch;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -272,8 +273,5 @@
 }
 
 .reactionPreview {
-  max-inline-size: 64ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-line-clamp: 1;
 }

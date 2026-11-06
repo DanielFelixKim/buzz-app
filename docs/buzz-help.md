@@ -237,6 +237,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
   activity clears the loading error.
+  Each row previews its message as the conversation shows it, with formatting, mentions and custom emoji,
+  in up to two lines; a message with only attachments names what it attaches, such as “GIF” or “3 images”.
   A DM row whose unread messages are all in one thread opens that thread; later DM messages outside it stay
   unread until you open the whole DM, which its row then does.
   **Reactions** shows recent reactions to your messages, with shared emoji grouped together per message and each person’s remaining emoji in their own row; selecting it turns Unread off.
@@ -304,7 +306,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Message search** treats the last word you type as the start of a word, so
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
-  "no results". Filters narrow it, alone or with text:
+  "no results". Each result shows the message as originally sent, with its
+  formatting, mentions and custom emoji. Filters narrow it, alone or with text:
   - `from:me`, `from:@name`: messages by you or someone else.
   - `in:#channel`, `in:@person`: one channel, or your DM with someone
     (`in:@me` is your own). A name that matches several conversations, or
