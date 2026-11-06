@@ -846,3 +846,52 @@ it("refuses stale saved Huddle intent after acceptance with unreadable storage",
     "could not verify",
   );
 });
+
+it.each([true, false])(
+  "retires unknown Huddle acceptance only on its captured cleanup transition: %s",
+  async (matching) => {
+    const h = harness();
+    const { remote, client } = await h.connect();
+    const draft = typedDraft(
+      mentionDraft("Same caption after unreadable admission"),
+    );
+    writeView(h.scope, "draft:room", draft);
+    const fail = vi.spyOn(Storage.prototype, "getItem");
+    h.send.mockImplementation(() => {
+      fail.mockImplementation(() => {
+        throw Error("unavailable");
+      });
+      return "accepted-id";
+    });
+    try {
+      await expect(remote.messages.send("room", draft.text)).resolves.toBe(
+        "accepted-id",
+      );
+    } finally {
+      fail.mockRestore();
+    }
+    const key = `buzz-view.v1:${JSON.stringify([h.scope, "draft:room"])}`;
+    const revision = JSON.stringify(draft);
+    const cleaned = JSON.stringify(mentionDraft(""));
+    localStorage.setItem(key, cleaned);
+    localStorage.setItem(key, revision);
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        storageArea: localStorage,
+        key,
+        oldValue: matching ? revision : JSON.stringify("Unrelated prior draft"),
+        newValue: cleaned,
+      }),
+    );
+    client.dispose();
+    h.owner.dispose();
+    if (matching)
+      expect(readOwnerDraft(h.scope, "room", undefined, h.session)?.text).toBe(
+        draft.text,
+      );
+    else
+      expect(() =>
+        readOwnerDraft(h.scope, "room", undefined, h.session),
+      ).toThrow("could not verify");
+  },
+);

@@ -4,6 +4,8 @@ import type { ComposerSession } from "./composer-session";
 export type AcceptedDraft = {
   next: MentionDraft;
   revision: string | null | undefined;
+  /** Companion-captured revision, used only to verify a later cleanup event. */
+  cleanupRevision?: string;
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.

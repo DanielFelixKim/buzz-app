@@ -301,6 +301,7 @@ export function createHuddleComposerOwner(
             recoveryFor(session).set(`${scope}:${key}`, {
               next,
               revision,
+              cleanupRevision: draft,
             });
         }
         for (const file of files) release(file);
@@ -488,11 +489,11 @@ export function createHuddleComposerOwner(
     const recovery = recoveryFor(session);
     const key = `${session.scope}:draft:${room}`;
     const pending = recovery.get(key);
-    if (
-      pending &&
-      event.oldValue === pending.revision &&
-      event.newValue !== pending.revision
-    )
+    const revision =
+      pending?.revision === undefined
+        ? pending?.cleanupRevision
+        : pending.revision;
+    if (pending && event.oldValue === revision && event.newValue !== revision)
       recovery.delete(key);
   };
   window.addEventListener("storage", retireDraft);
