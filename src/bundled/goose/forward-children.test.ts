@@ -93,3 +93,16 @@ describe("forwardChildren", () => {
     }
   });
 });
+
+it("surfaces a registration that throws instead of returning a promise", () => {
+  const failed = vi.fn();
+  const observe = forwardChildren({
+    register: () => {
+      throw new Error("ipc unavailable");
+    },
+    failed,
+  });
+  observe(announced("call-1"), true);
+  expect(() => observe(completed("call-1"), true)).not.toThrow();
+  expect(failed).toHaveBeenCalledExactlyOnceWith("Error: ipc unavailable");
+});

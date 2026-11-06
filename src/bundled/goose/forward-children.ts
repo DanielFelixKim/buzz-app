@@ -36,13 +36,19 @@ export function forwardChildren({ register, failed }: ForwardChildren) {
       !delegates.has(call)
     )
       return;
-    register(call, child).then(
-      (registered) => {
-        if (registered.type === "registered") return;
-        if (registered.reason === "generation_revoked") revoked = true;
-        failed(registered.reason);
-      },
-      (error: unknown) => failed(String(error)),
-    );
+    // Nothing escapes the update: a throw, rejection or bad result fails
+    // the turn visibly instead.
+    const fail = (error: unknown) => failed(String(error));
+    try {
+      register(call, child)
+        .then((registered) => {
+          if (registered.type === "registered") return;
+          if (registered.reason === "generation_revoked") revoked = true;
+          failed(registered.reason);
+        })
+        .catch(fail);
+    } catch (error) {
+      fail(error);
+    }
   };
 }
