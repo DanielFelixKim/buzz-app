@@ -5,13 +5,20 @@ import styles from "./AppearancePreview.module.css";
 export function AppearancePreview({
   messageWidth,
   density,
+  embedded = false,
 }: {
   messageWidth: MessageWidth;
   density: MessageDensity;
+  /** Join the preview to the related preference group. */
+  embedded?: boolean;
 }) {
   const effectiveWidth = density === "compact" ? "wide" : messageWidth;
   return (
-    <figure className={styles.preview} aria-label="Appearance preview">
+    <figure
+      className={styles.preview}
+      data-embedded={embedded || undefined}
+      aria-label="Appearance preview"
+    >
       <div className={styles.scene} inert aria-hidden="true">
         <div className={styles.sidebar}>
           <div className={styles.workspace}>

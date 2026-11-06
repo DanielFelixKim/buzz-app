@@ -329,38 +329,37 @@ export function AppearanceSettings({
               />
             }
           />
-          <PreferenceRow
-            title="Message width"
-            subtitle={
-              density === "compact"
-                ? "Available with Default density."
-                : undefined
-            }
-            disabled={density === "compact"}
-            trailing={
-              <Select
-                variant="compact"
-                label="Message width"
-                value={messageWidth}
-                disabled={density === "compact"}
-                groups={[
-                  {
-                    label: "Width",
-                    options: [
-                      { value: "narrow", label: "Narrow" },
-                      { value: "wide", label: "Wide" },
-                    ],
-                  },
-                ]}
-                onValueChange={(value) => {
-                  if (value === "narrow" || value === "wide")
-                    appearance.setMessageWidth(value);
-                }}
-              />
-            }
+          {density === "default" && (
+            <PreferenceRow
+              title="Message width"
+              trailing={
+                <Select
+                  variant="compact"
+                  label="Message width"
+                  value={messageWidth}
+                  groups={[
+                    {
+                      label: "Width",
+                      options: [
+                        { value: "narrow", label: "Narrow" },
+                        { value: "wide", label: "Wide" },
+                      ],
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    if (value === "narrow" || value === "wide")
+                      appearance.setMessageWidth(value);
+                  }}
+                />
+              }
+            />
+          )}
+          <AppearancePreview
+            messageWidth={messageWidth}
+            density={density}
+            embedded
           />
         </SettingsGroup>
-        <AppearancePreview messageWidth={messageWidth} density={density} />
         <div className="mt-4">
           <SettingsGroup>
             <PreferenceRow

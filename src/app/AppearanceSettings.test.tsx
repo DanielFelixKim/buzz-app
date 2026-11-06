@@ -504,9 +504,7 @@ it("switches message density, restores it, and retries a failed save", async () 
     "data-message-width",
     "wide",
   );
-  expect(
-    screen.getByRole("combobox", { name: "Message width" }),
-  ).toBeDisabled();
+  expect(screen.queryByRole("combobox", { name: "Message width" })).toBeNull();
   expect(document.documentElement.dataset.messageDensity).toBe("compact");
   expect(localStorage.getItem("buzz-message-density.v1")).toBe("compact");
   const restored = createAppearance();
