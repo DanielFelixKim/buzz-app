@@ -14,7 +14,7 @@ export type Entry = {
   createdAt?: number;
   /** Sent: Buzz's millisecond send order (`ms` tag), so same-second messages sort as Buzz shows them. */
   createdAtMs?: number;
-  /** Sent: the message as the timeline renders it. */
+  /** The message as the timeline renders it. */
   row?: ChannelMessage | undefined;
 };
 

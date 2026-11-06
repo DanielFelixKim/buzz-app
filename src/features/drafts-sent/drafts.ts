@@ -18,6 +18,8 @@ import type { Entry } from "./model";
 export type DraftEntry = Entry & {
   /** No typed text: the row shows what the draft holds instead. */
   placeholder?: true;
+  /** The people the draft's text mentions. */
+  mentions?: readonly string[];
   signature: string;
 };
 export type DraftSnapshot = Readonly<{
@@ -117,6 +119,9 @@ export function readDrafts(
           ? `${count} attached file${count === 1 ? "" : "s"}`
           : "Attached chat or GIF"),
       ...(text ? {} : { placeholder: true as const }),
+      ...(draft.recipients.length
+        ? { mentions: draft.recipients.map((recipient) => recipient.pubkey) }
+        : {}),
       createdAt: activity[key]?.[1] ?? nowSeconds,
       signature: fingerprint,
     });

@@ -376,7 +376,24 @@ function ScopedPage({
     // A draft has no send time: others' messages never count as "after" it.
     const { createdAt: _, ...unsent } = entry;
     return {
-      entry,
+      // Its Markdown and mentions, as the timeline will show it once sent.
+      entry: !entry.placeholder
+        ? {
+            ...entry,
+            row: {
+              id: entry.id,
+              channelId: entry.channelId,
+              authorId: viewer,
+              createdAt: entry.createdAt ?? 0,
+              content: entry.text,
+              mentions: entry.mentions ?? [],
+              attachments: [],
+              participants: [],
+              reactions: [],
+              replyCount: 0,
+            },
+          }
+        : entry,
       place: where,
       shape,
       placeholder: entry.placeholder,
@@ -407,8 +424,8 @@ function ScopedPage({
     for (const key of row.activity?.people.slice(0, 4) ??
       row.place.members.slice(0, 3))
       people.add(key);
-  // And the people sent messages mention.
-  for (const { entry } of sentRows)
+  // And the people your messages mention.
+  for (const { entry } of [...draftRows, ...sentRows])
     for (const key of entry.row ? rowProfileIds(entry.row) : [])
       people.add(key);
   const missing = [...people]

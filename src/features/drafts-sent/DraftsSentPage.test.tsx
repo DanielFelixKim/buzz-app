@@ -978,3 +978,22 @@ it("shows a sent message as its timeline row, named by its plain text", async ()
   expect(row).not.toHaveTextContent("https://example.com/pr");
   expect(within(row).queryByRole("link")).toBeNull();
 });
+
+it("shows a draft with its formatting and mentions, named by its plain text", () => {
+  const ada = "6".repeat(64);
+  saved("draft:team", {
+    text: "**Ship** it, @Ada",
+    recipients: [{ pubkey: ada, name: "Ada", start: 13, end: 17 }],
+  });
+  const h = harness();
+  const Page = h.page.component;
+  render(<Page />);
+  const row = screen.getByRole("button", {
+    name: /Continue draft in #launch-room: Ship it, @Ada/,
+  });
+  expect(within(row).getByText("Ship").tagName).toBe("STRONG");
+  expect(row).not.toHaveTextContent("**");
+  expect(h.session.profiles.ensure).toHaveBeenCalledWith(
+    expect.arrayContaining([ada]),
+  );
+});
