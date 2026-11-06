@@ -66,7 +66,7 @@ const drag = async (page, locator, dx, dy) => {
 test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+  await page.goto("/tests/fixtures/agent-avatar-picker.html");
   await splitImage(page);
   const frame = page.getByRole("application", { name: "Image position" });
   await expect(frame).toBeVisible();
@@ -91,7 +91,7 @@ test("pans and zooms an uploaded agent avatar into the saved artwork", async ({
 });
 
 test("a drag past the avatar selects no page text", async ({ page }) => {
-  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+  await page.goto("/tests/fixtures/agent-avatar-picker.html");
   await splitImage(page);
   const frame = page.getByRole("application", { name: "Image position" });
   await expect(frame).toBeVisible();
@@ -102,7 +102,7 @@ test("a drag past the avatar selects no page text", async ({ page }) => {
 test("the zoom slider appears over the avatar without moving the card", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+  await page.goto("/tests/fixtures/agent-avatar-picker.html");
   const dock = page.getByRole("group", { name: "Agent avatars" });
   const before = await dock.boundingBox();
   await splitImage(page);
@@ -128,7 +128,7 @@ test("the zoom slider appears over the avatar without moving the card", async ({
 test("pans and zooms an emoji over a transparent background", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/agent-avatar-crop.html");
+  await page.goto("/tests/fixtures/agent-avatar-picker.html");
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
   await page
     .getByRole("button", { name: "Use transparent background" })
