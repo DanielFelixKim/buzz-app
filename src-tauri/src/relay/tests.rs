@@ -837,16 +837,22 @@ fn isolated_agent_ipc_probe() {
         }
     })).is_err());
     let id = "11111111-1111-4111-8111-111111111111";
-    assert!(invoke(
+    let agent_deletion = invoke(
         "relay_sign",
         serde_json::json!({
             "community": "https://relay.test", "event": {
                 "kind": 5, "created_at": 123,
                 "tags": [["h", id], ["a", format!("30620:{}:{id}", "a".repeat(64))]], "content": ""
             }
-        })
+        }),
     )
-    .is_err());
+    .unwrap();
+    verify(&agent_deletion);
+    assert_eq!(agent_deletion["pubkey"], public);
+    assert_eq!(
+        agent_deletion["tags"][1][1],
+        format!("30620:{}:{id}", "a".repeat(64))
+    );
     let deletion = invoke("relay_sign", serde_json::json!({
         "community": "https://relay.test", "event": {
             "kind": 5, "created_at": 123,
@@ -2620,6 +2626,43 @@ async fn truncated_whole_videos_fail_and_are_fetched_again() {
 }
 
 #[tokio::test]
+async fn a_failed_spool_still_answers_the_bytes_it_wrote() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let block = media_blocks::BLOCK;
+    let blob = media_blob(2 * block);
+    let length = 3 * block;
+    let (base, _, _) = whole_media_server(blob.clone(), Some(length), Duration::ZERO);
+    let url = base
+        .join(&format!("/media/{}.mp4", "b".repeat(64)))
+        .unwrap();
+    let upstream = reqwest::Client::new()
+        .get(url.clone())
+        .header("Range", "bytes=0-")
+        .send()
+        .await
+        .unwrap();
+    let spool = media_spool::open(&url, upstream, WHOLE_VIDEO_MAX)
+        .await
+        .unwrap();
+    // The tail never arrives, so this returns only once the copy has failed.
+    assert_eq!(
+        media_spool::read(spool.clone(), length - 4, length - 1)
+            .await
+            .unwrap_err(),
+        502
+    );
+    // A read that starts after the failure, and so never sees the copy's
+    // progress, still gets the bytes written before it.
+    let first = media_spool::read(spool, 0, block - 1).await.unwrap();
+    assert_eq!(first.body(), &blob[..block as usize]);
+    assert_eq!(
+        first.headers()["content-range"],
+        format!("bytes 0-{}/{length}", block - 1)
+    );
+    spool_files_deleted().await;
+}
+
+#[tokio::test]
 async fn abandoned_whole_video_downloads_stop_and_delete_their_file() {
     let _serial = SPOOL_TESTS.lock().await;
     let blob = media_blob(16 * media_blocks::BLOCK);
@@ -4348,4 +4391,19 @@ async fn finished_native_reads_release_their_cancel_slot() {
             Err(error) => assert_eq!(error.to_string(), "relay down"),
         }
     }
+}
+
+#[test]
+fn reaction_author_address_is_accepted_by_packaged_signing() {
+    let event = EventTemplate {
+        kind: 7,
+        created_at: 123,
+        content: "❤️".into(),
+        tags: vec![
+            vec!["h".into(), "room".into()],
+            vec!["e".into(), "a".repeat(64)],
+            vec!["p".into(), "b".repeat(64)],
+        ],
+    };
+    assert!(validate_event("https://relay.test", &event).is_ok());
 }
