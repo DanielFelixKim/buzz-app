@@ -123,11 +123,13 @@ import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
 import {
+  agentCardRoute,
   agentProviderRoute,
   agentProviderTarget,
   agentRoute,
   conversationOpener,
 } from "./routes";
+import { AgentCardCreate } from "./AgentCardCreate";
 import { writeClipboardText } from "../../shared/clipboard";
 
 const message = (error: unknown) =>
@@ -279,6 +281,30 @@ export function AgentsPage({
         target,
       );
     }
+  };
+  // Opened from an agent card's link: Create agent, filled in from the card.
+  const card =
+    routed && navigation.target.kind === "page"
+      ? agentCardRoute(navigation.target.route?.params)
+      : undefined;
+  const closeCard = () => {
+    if (
+      !navigation ||
+      !navigator ||
+      navigation.signal.aborted ||
+      navigation.target.kind !== "page" ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    const target = agentProviderTarget(navigation.target);
+    const pageKey = targetKey(target);
+    navigator.dismiss(
+      (visit) =>
+        visit.kind === "page" &&
+        agentCardRoute(visit.route?.params) === card &&
+        targetKey(agentProviderTarget(visit)) === pageKey,
+      target,
+    );
   };
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
@@ -809,6 +835,23 @@ export function AgentsPage({
           }}
         />
       )}
+      {card && (
+        <AgentCardCreate
+          key={`${routedEntry}:${card}`}
+          card={card}
+          agents={agents}
+          types={types}
+          community={
+            connection.status === "ready" ? connection.origin : undefined
+          }
+          onClose={closeCard}
+          onCreated={(agent) => {
+            closeCard();
+            changeTab("yours");
+            build(agent.pubkey);
+          }}
+        />
+      )}
       {providerKey && (
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
@@ -838,6 +881,8 @@ type InventoryProps = {
   /** The agent explicitly saved as this community's Bestie. */
   bestie?: string | undefined;
   onMakeBestie?: ((pubkey: string) => void) | undefined;
+  /** Asks before saving no Bestie; absent where none can be saved. */
+  onRemoveBestie?: ((pubkey: string, name: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
   /** The community connection Share publishes through, while it is ready. */
   session?: RelaySession;
@@ -872,6 +917,7 @@ function DefaultAgentInventory({
           new Set(bestie.choices.selectable.map((agent) => agent.pubkey))
         }
         onMakeBestie={bestie.make}
+        onRemoveBestie={bestie.remove}
       />
       {bestie.view}
     </>
@@ -990,6 +1036,7 @@ function InventoryGrid({
   bestie,
   defaultChoices,
   onMakeBestie,
+  onRemoveBestie,
   session,
   onViewListing,
   dragging,
@@ -1070,6 +1117,10 @@ function InventoryGrid({
                           selected: isBestie,
                           available: !!defaultChoices?.has(agent.pubkey),
                           onMake: () => onMakeBestie(agent.pubkey),
+                          ...(onRemoveBestie && {
+                            onRemove: () =>
+                              onRemoveBestie(agent.pubkey, agent.name),
+                          }),
                         }
                       : undefined
                   }
@@ -1144,7 +1195,14 @@ function InventoryCard({
   onViewListing?: ((agent: SharedAgent) => void) | undefined;
   /** Whether it is the community's Bestie or can be made it. */
   bestie?:
-    | { selected: boolean; available: boolean; onMake(): void }
+    | {
+        selected: boolean;
+        available: boolean;
+        onMake(): void;
+        /** Removing it as Bestie, which edits only the account, so it is
+         * offered wherever the agent runs. */
+        onRemove?: (() => void) | undefined;
+      }
     | undefined;
 }) {
   const agent = props.agent;
@@ -1175,6 +1233,12 @@ function InventoryCard({
           <MenuItem disabled={!bestie.available} onClick={bestie.onMake}>
             Make my bestie
           </MenuItem>
+          <MenuSeparator />
+        </>
+      )}
+      {bestie?.selected && bestie.onRemove && (
+        <>
+          <MenuItem onClick={bestie.onRemove}>Remove as bestie</MenuItem>
           <MenuSeparator />
         </>
       )}

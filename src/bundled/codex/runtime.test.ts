@@ -3811,6 +3811,41 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   });
 });
 
+it("reads a file outside its turns in its resolved saved workspace, but not on an execution target", async () => {
+  type Saved = Parameters<CodexRuntime["workspaceFile"]>[0];
+  const agent = {
+    key: pubkey,
+    pubkey,
+    config: { workspace: "~/.buzz", model: "test-model" },
+  } as unknown as Saved;
+  const f = fixture();
+  const bytes = await f.runtime.workspaceFile(
+    agent,
+    "notes.txt",
+    new AbortController().signal,
+  );
+  expect(new TextDecoder().decode(bytes)).toBe("FILE CONTENT");
+  expect(f.fileReads).toEqual([{ cwd: "/home/test/.buzz", path: "notes.txt" }]);
+  const remote = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => ({ provider: "test/guest" }),
+  );
+  await expect(
+    remote.runtime.workspaceFile(
+      agent,
+      "notes.txt",
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("only in a conversation on its execution target");
+  expect(remote.fileReads).toEqual([]);
+});
 it("returns a failed send to Codex for correction without ending its turn", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -3939,13 +3974,29 @@ it.each([false, true])(
   },
 );
 
-it.each(["accepted", "rejected"] as const)(
-  "moves same-thread activity only after steering is accepted: %s",
-  async (outcome) => {
+it.each([
+  { outcome: "accepted", dm: false },
+  { outcome: "rejected", dm: false },
+  { outcome: "accepted", dm: true },
+  { outcome: "rejected", dm: true },
+])(
+  "moves activity only after steering is accepted: $outcome, dm=$dm",
+  async ({ outcome, dm }) => {
     const f = fixture();
+    if (dm)
+      f.snapshot.session.channels.list = () => ({
+        status: "ready",
+        channels: [{ id: "channel", name: "DM", channelType: "dm" }],
+      });
+    const delivery = (text: string) => {
+      const request = f.delivery(text);
+      if (dm && request.trigger.type === "mention")
+        request.trigger.event.tags = [["h", "channel"]];
+      return request;
+    };
     const first = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
     const next = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
-    await f.runtime.run({ ...f.delivery("first"), ...first });
+    await f.runtime.run({ ...delivery("first"), ...first });
     await vi.waitFor(() => expect(first.acknowledged).toHaveBeenCalledOnce());
     const started = f.starts()[0];
     if (!started) throw new Error("Expected started turn");
@@ -3976,7 +4027,7 @@ it.each(["accepted", "rejected"] as const)(
       await write(data);
     };
     try {
-      await f.runtime.run({ ...f.delivery("follow-up"), ...next });
+      await f.runtime.run({ ...delivery("follow-up"), ...next });
       await requested.promise;
       step("ls");
       expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
@@ -4026,74 +4077,89 @@ it.each(["accepted", "rejected"] as const)(
   },
 );
 
-it("keeps each thread's activity in a shared session and does not move it to watches", async () => {
-  const f = fixture();
-  const first = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
-  const second = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
-  const delivery = (text: string, threadRoot: string) => {
-    const d = f.delivery(text, threadRoot);
-    return { ...d, config: { ...(d.config as object), scope: "channel" } };
-  };
-  await f.runtime.run({ ...delivery("first thread", root), ...first });
-  await vi.waitFor(() => expect(first.acknowledged).toHaveBeenCalledOnce());
-  await f.runtime.run({
-    ...delivery("second thread", "e".repeat(64)),
-    ...second,
-  });
-  await vi.waitFor(() => expect(second.acknowledged).toHaveBeenCalledOnce());
-  expect(first.superseded).not.toHaveBeenCalled();
-  const watch = delivery("watched message", root);
-  if (watch.trigger.type !== "mention") throw new Error("Expected mention");
-  const watched = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
-  f.wake({
-    ...watch,
-    ...watched,
-    trigger: {
-      type: "watch",
-      event: watch.trigger.event,
-      slug: "watch/test",
-      watch: {
-        type: "event",
-        enabled: true,
-        interest_id: "test",
-        since: 0,
-        channels: "all",
-        kinds: [9],
+it.each(["stream", "dm"])(
+  "keeps each thread's activity in a shared %s session and does not move it to watches",
+  async (channelType) => {
+    const f = fixture();
+    f.snapshot.session.channels.list = () => ({
+      status: "ready",
+      channels: [{ id: "channel", name: "test", channelType }],
+    });
+    const first = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+    const second = {
+      step: vi.fn(),
+      acknowledged: vi.fn(),
+      superseded: vi.fn(),
+    };
+    const delivery = (text: string, threadRoot: string) => {
+      const d = f.delivery(text, threadRoot);
+      return { ...d, config: { ...(d.config as object), scope: "channel" } };
+    };
+    await f.runtime.run({ ...delivery("first thread", root), ...first });
+    await vi.waitFor(() => expect(first.acknowledged).toHaveBeenCalledOnce());
+    await f.runtime.run({
+      ...delivery("second thread", "e".repeat(64)),
+      ...second,
+    });
+    await vi.waitFor(() => expect(second.acknowledged).toHaveBeenCalledOnce());
+    expect(first.superseded).not.toHaveBeenCalled();
+    const watch = delivery("watched message", root);
+    if (watch.trigger.type !== "mention") throw new Error("Expected mention");
+    const watched = {
+      step: vi.fn(),
+      acknowledged: vi.fn(),
+      superseded: vi.fn(),
+    };
+    f.wake({
+      ...watch,
+      ...watched,
+      trigger: {
+        type: "watch",
+        event: watch.trigger.event,
+        slug: "watch/test",
+        watch: {
+          type: "event",
+          enabled: true,
+          interest_id: "test",
+          since: 0,
+          channels: "all",
+          kinds: [9],
+        },
       },
-    },
-  });
-  // The watch runs as a one-off turn of its own, never steered into a
-  // conversation; this one has no saved watch, so it does not run at all.
-  const wakeDone = f.workingUntil.mock.calls.at(-1)?.[0];
-  await expect(wakeDone).resolves.toEqual({ ok: true });
-  await vi.waitFor(() =>
-    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
-  );
-  expect(f.sent.filter((w) => w.method === "thread/start")).toHaveLength(1);
-  // A tool call waits for the steering chain, establishing that it was taken.
-  await f.tool("send", {
-    audience: "everyone",
-    text: "Progress",
-    final: false,
-  });
-  const started = f.starts()[0];
-  if (!started) throw new Error("Expected started turn");
-  const threadId = (started.params as { threadId: string }).threadId;
-  f.emit({
-    method: "item/started",
-    params: { threadId, item: { type: "reasoning" } },
-  });
-  expect(first.step).toHaveBeenLastCalledWith("Thinking", undefined);
-  expect(second.step).toHaveBeenLastCalledWith("Thinking", undefined);
-  expect(first.superseded).not.toHaveBeenCalled();
-  expect(second.superseded).not.toHaveBeenCalled();
-  expect(watched.acknowledged).not.toHaveBeenCalled();
-  expect(watched.step).not.toHaveBeenCalled();
-  await f.complete();
-  await vi.waitFor(() =>
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-  );
-});
+    });
+    // The watch runs as a one-off turn of its own, never steered into a
+    // conversation; this one has no saved watch, so it does not run at all.
+    const wakeDone = f.workingUntil.mock.calls.at(-1)?.[0];
+    await expect(wakeDone).resolves.toEqual({ ok: true });
+    await vi.waitFor(() =>
+      expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
+    );
+    expect(f.sent.filter((w) => w.method === "thread/start")).toHaveLength(1);
+    // A tool call waits for the steering chain, establishing that it was taken.
+    await f.tool("send", {
+      audience: "everyone",
+      text: "Progress",
+      final: false,
+    });
+    const started = f.starts()[0];
+    if (!started) throw new Error("Expected started turn");
+    const threadId = (started.params as { threadId: string }).threadId;
+    f.emit({
+      method: "item/started",
+      params: { threadId, item: { type: "reasoning" } },
+    });
+    expect(first.step).toHaveBeenLastCalledWith("Thinking", undefined);
+    expect(second.step).toHaveBeenLastCalledWith("Thinking", undefined);
+    expect(first.superseded).not.toHaveBeenCalled();
+    expect(second.superseded).not.toHaveBeenCalled();
+    expect(watched.acknowledged).not.toHaveBeenCalled();
+    expect(watched.step).not.toHaveBeenCalled();
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
+  },
+);
 
 it("delivers pending owner steering after a final send and posts its own answer", async () => {
   const f = fixture();
@@ -6465,5 +6531,61 @@ it.each(["conversation", "standalone", "preview"])(
     await rejected;
     expect(f.spawn).not.toHaveBeenCalled();
     expect(execution).not.toHaveBeenCalled();
+  },
+);
+
+it.each([true, false])(
+  "lists and runs the owner tools only for a run with owner access: %s",
+  async (owned) => {
+    const f = fixture();
+    const executedAs = { agent: "agent", owner: "owner", community: "c" };
+    const ownerAccess = {
+      channels: vi.fn(async () => ({
+        execution: executedAs,
+        channels: [],
+        partial: false,
+      })),
+      channel: vi.fn(),
+      members: vi.fn(),
+      held: vi.fn(),
+    };
+    const delivery = f.delivery("@Codex list my channels");
+    await f.runtime.run({
+      ...delivery,
+      agent: {
+        ...delivery.agent,
+        ...(owned ? { ownerAccess } : {}),
+      } as typeof delivery.agent,
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const thread = f.sent.find((wire) => wire.method === "thread/start")
+      ?.params as {
+      dynamicTools: {
+        description: string;
+        tools: { name: string; deferLoading?: boolean }[];
+      }[];
+    };
+    const listed = thread.dynamicTools[0]?.tools.filter((tool) =>
+      tool.name.startsWith("owner_"),
+    );
+    expect(listed).toEqual(
+      owned
+        ? ["owner_channel_list", "owner_channel_get", "owner_member_list"].map(
+            (name) => expect.objectContaining({ name, deferLoading: true }),
+          )
+        : [],
+    );
+    // A name the model remembers or guesses is checked against the run's
+    // own access on every call.
+    const reply = (await f.tool("owner_channel_list", {}))?.result as {
+      success: boolean;
+      contentItems: { text: string }[];
+    };
+    expect(reply.success).toBe(owned);
+    expect(reply.contentItems[0]?.text).toContain(
+      owned ? '"executedAs"' : "nothing was read",
+    );
+    expect(ownerAccess.channels).toHaveBeenCalledTimes(owned ? 1 : 0);
+    await f.complete();
   },
 );

@@ -102,6 +102,9 @@ only the captured agent's runtime and launches through that provider's captured
 host scope. It always supplies the captured containment. Missing engines refuse
 launch; provider replacement/unload kills its processes, including a launch that
 finishes after revocation. Adapters keep ownership of sessions and credentials.
+Native records the agent such a launch is for, after checking that agent's saved
+protection names the provider, so the adapter can still bind that process's Buzz
+credential to it, and to no other agent.
 
 Manifest processes may declare `artifact: {path, sha256, siblings?}` instead of
 `bundled`. Contained launches require one of these declarations; PATH-only
@@ -110,6 +113,8 @@ named siblings into a generation under the storage owner's shared Agents folder,
 then executes that worker-read-only copy. Corrupt generations fail closed;
 verification/copying runs off the async runtime. Symbolic links remain rejected.
 These paths come from the installed plugin manifest, never from model input or PATH.
+Host commands may also declare `artifact`; they are never contained, so each run
+verifies the installed bytes in place instead of copying them.
 
 `processProtection` contains `readOnlyPaths` and `hiddenPaths`, absolute or under
 the user's home written `~/…`. Hidden paths must exist. A read-only path may lack

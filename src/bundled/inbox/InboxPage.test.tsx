@@ -12,7 +12,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { PageTabs } from "../channels/PageTabs";
 import { InboxPage } from "./InboxPage";
@@ -1688,10 +1688,13 @@ it.each([false, true])(
     h.addEvent(progress);
     act(() => h.emit([response, progress]));
     if (selectProgress) {
-      const progressRow = rows().find((row) =>
-        row.textContent?.includes("Ordinary progress"),
-      );
-      if (!progressRow) throw new Error("Missing ordinary progress row");
+      const progressRow = await waitFor(() => {
+        const row = rows().find((candidate) =>
+          candidate.textContent?.includes("Ordinary progress"),
+        );
+        if (!row) throw new Error("Missing ordinary progress row");
+        return row;
+      });
       fireEvent.click(
         within(progressRow).getByRole("button", { name: /^Open / }),
       );
@@ -1827,7 +1830,7 @@ it("excludes archived-channel mentions and threads without hiding active DMs", a
   // The sender avatar reuses the thumbnail message rows load, not the original.
   expect(rows()[0]?.querySelector("img")).toHaveAttribute(
     "src",
-    alicePicture.replace(/\.png$/, ".thumb.jpg"),
+    alicePicture.replace(/\.png$/, ".thumb.webp"),
   );
   await chooseFilter("Mentions");
   expect(rows()).toHaveLength(0);
@@ -2893,7 +2896,13 @@ it("combines the existing filter choices without placeholder actions", async () 
   expect(screen.queryByRole("combobox")).toBeNull();
   // Inbox's own tab holds the list; its only other tabs are the type filter.
   expect(tabs("Activity tabs")).toEqual(["Activity"]);
-  expect(tabs("Activity type")).toEqual(["All", "Threads", "Mentions", "DMs"]);
+  expect(tabs("Activity type")).toEqual([
+    "All",
+    "Threads",
+    "Mentions",
+    "DMs",
+    "Reactions",
+  ]);
   expect(activityType()).toBe("All");
   expect(
     within(screen.getByRole("tabpanel", { name: "Activity" }))
@@ -4106,6 +4115,327 @@ it("opens a DM row's whole conversation in a tab", async () => {
   expect(h.open).not.toHaveBeenCalled();
 });
 
+/** A DM with Alice holding `messages`, beside the fixture's channel rows. */
+function seedDm(
+  h: ReturnType<typeof fixture>,
+  messages: readonly RelayEvent[],
+) {
+  const dm = [
+    roster(h.relayKey, "dm-room", [h.viewer.pubkey, h.alice.pubkey], 10),
+    metadata(h.relayKey, "dm-room", "Direct message", 10, [
+      ["t", "dm"],
+      ["hidden"],
+    ]),
+    ...messages,
+  ];
+  for (const event of dm) h.addEvent(event);
+  h.emit(dm);
+  return {
+    row: () =>
+      h.owner.session.unread
+        .inbox()
+        .items.find((item) => item.channelId === "dm-room"),
+    open: () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
+      ),
+  };
+}
+/** jsdom has no layout or window focus. Lays out thread history alone, each
+ * element one visible box, so an opened thread's reveal completes and the
+ * thread settles; the window stays unfocused, so nothing reads yet. The
+ * returned `dwellIn` focuses the window and `reader`, then runs a controlled
+ * clock until `read` holds: a thread still settling, or reflowed by the focus,
+ * starts its 300 ms dwell a frame later. The wait is bounded in fake time
+ * (2 s), not by how fast the runner checks. */
+function threadLayout() {
+  const windowFocus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+  const box = new DOMRect(0, 0, 500, 500);
+  const laidOut = (element: Element) =>
+    !!element.closest('[aria-label="Thread messages"]');
+  const { getBoundingClientRect, getClientRects } = Element.prototype;
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: Element) {
+      return laidOut(this) ? box : getBoundingClientRect.call(this);
+    },
+  );
+  vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function (
+    this: Element,
+  ) {
+    return laidOut(this)
+      ? ([box] as unknown as DOMRectList)
+      : getClientRects.call(this);
+  });
+  // A reveal's completion notice does not bubble, so capture it.
+  const positioned = new Set<Element>();
+  const notice = (event: Event) => {
+    if (event.target instanceof Element) positioned.add(event.target);
+  };
+  document.addEventListener("reading-positioned", notice, true);
+  onTestFinished(() =>
+    document.removeEventListener("reading-positioned", notice, true),
+  );
+  return async (reader: HTMLElement, read: () => void) => {
+    // The fake clock below never runs a frame requested before it, so first
+    // let this reader's reveal finish on the real one: it notifies reading
+    // once its row is placed and verified.
+    await waitFor(() =>
+      expect(
+        [...positioned].some(
+          (target) =>
+            target.isConnected &&
+            (target.contains(reader) || reader.contains(target)),
+        ),
+      ).toBe(true),
+    );
+    windowFocus.mockReturnValue(true);
+    vi.useFakeTimers({
+      toFake: [
+        "setTimeout",
+        "clearTimeout",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+      ],
+    });
+    try {
+      await act(async () => reader.focus());
+      for (let elapsed = 50; ; elapsed += 50) {
+        await act(() => vi.advanceTimersByTimeAsync(50));
+        try {
+          read();
+          break;
+        } catch (error) {
+          if (elapsed >= 2000) throw error;
+        }
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+}
+/** The open DM tab's shape: its whole timeline, or one of its threads. */
+async function dmTabShows(shape: "whole" | "thread") {
+  await waitFor(() =>
+    expect(sideTabs()).toEqual([
+      shape === "whole" ? "Alice" : "Thread · Alice",
+    ]),
+  );
+  const tab = await screen.findByRole("region", {
+    name: "Conversation in Alice",
+  });
+  const [present, absent] =
+    shape === "whole"
+      ? ["Channel message history", "Thread messages"]
+      : ["Thread messages", "Channel message history"];
+  expect(
+    within(tab).getByRole("region", { name: present }),
+  ).toBeInTheDocument();
+  expect(
+    within(tab).queryByRole("region", { name: absent }),
+  ).not.toBeInTheDocument();
+  return tab;
+}
+
+it("opens a DM row resuming at a thread reply in that thread, at the reply", async () => {
+  const h = fixture();
+  // Alice's only DM activity is a reply under the viewer's DM message.
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = seedDm(h, [root, reply]);
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  dm.open();
+  const tab = await dmTabShows("thread");
+  await waitFor(() =>
+    expect(
+      tab.querySelector(`[data-message-id="${reply.id}"]`),
+    ).toBeInTheDocument(),
+  );
+  expect(h.open).not.toHaveBeenCalled();
+});
+
+it("opens a DM whole when an older unread thread reply precedes newer top-level messages, and re-clicking keeps it whole", async () => {
+  const h = fixture();
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const one = message(h.alice, "dm-room", "Top level one", 25);
+  const two = message(h.alice, "dm-room", "Top level two", 26);
+  const dm = seedDm(h, [root, reply, one, two]);
+  render(h.view);
+  await waitFor(() =>
+    expect(dm.row()).toMatchObject({ messageId: reply.id, unreadCount: 3 }),
+  );
+  expect(dm.row()?.threadOnly).toBeUndefined();
+  // Reading the row reads the whole DM, so its tab shows the top-level messages.
+  dm.open();
+  await dmTabShows("whole");
+  // Read, the row resumes at its newest, top-level message.
+  await waitFor(() =>
+    expect(dm.row()).toMatchObject({ messageId: two.id, unreadCount: 0 }),
+  );
+  dm.open();
+  await act(async () => {});
+  await dmTabShows("whole");
+  expect(h.open).not.toHaveBeenCalled();
+});
+
+it("opens a DM whole when an older unread top-level message precedes a newer thread reply, and re-clicking keeps it whole once read", async () => {
+  const h = fixture();
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const top = message(h.alice, "dm-room", "A top-level message", 24);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 25, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = seedDm(h, [root, top, reply]);
+  render(h.view);
+  await waitFor(() =>
+    expect(dm.row()).toMatchObject({ messageId: top.id, unreadCount: 2 }),
+  );
+  dm.open();
+  await dmTabShows("whole");
+  // Read, the row would now open its newest message's thread, but
+  // re-clicking keeps the whole DM it opened.
+  await waitFor(() =>
+    expect(dm.row()).toMatchObject({
+      messageId: reply.id,
+      threadOnly: true,
+      unreadCount: 0,
+    }),
+  );
+  dm.open();
+  await act(async () => {});
+  await dmTabShows("whole");
+});
+
+it("re-clicking a DM row opened as a thread opens the whole DM once a top-level message arrives", async () => {
+  const h = fixture();
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = seedDm(h, [root, reply]);
+  render(h.view);
+  await waitFor(() => expect(dm.row()?.threadOnly).toBe(true));
+  dm.open();
+  const thread = await dmTabShows("thread");
+  await waitFor(() =>
+    expect(
+      thread.querySelector(`[data-message-id="${reply.id}"]`),
+    ).toBeInTheDocument(),
+  );
+  const top = message(h.alice, "dm-room", "A new top-level message", 25);
+  h.addEvent(top);
+  act(() => h.emit([top]));
+  await waitFor(() => expect(dm.row()?.messageIds).toContain(top.id));
+  expect(dm.row()?.threadOnly).toBeUndefined();
+  // The captured thread would hide the row's current message.
+  dm.open();
+  await dmTabShows("whole");
+});
+
+it.each([false, true])(
+  "a DM thread tab's dwell reads only up to a top-level message it never showed (returned to Activity: %s)",
+  async (returned) => {
+    const h = fixture();
+    const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+    const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const dm = seedDm(h, [root, reply]);
+    const dwellIn = threadLayout();
+    const view = render(h.view);
+    await waitFor(() => expect(dm.row()?.threadOnly).toBe(true));
+    dm.open();
+    await dmTabShows("thread");
+    // The row's own read covers the DM through the click.
+    await waitFor(() => expect(dm.row()?.unreadCount).toBe(0));
+    if (returned) view.unmount();
+    // Alice then replies in the thread and posts at the top level.
+    const now = Math.floor(Date.now() / 1000);
+    const later = message(h.alice, "dm-room", "A later thread reply", now + 5, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const top = message(
+      h.alice,
+      "dm-room",
+      "A new top-level message",
+      now + 10,
+    );
+    for (const event of [later, top]) h.addEvent(event);
+    act(() => h.emit([later, top]));
+    await waitFor(() => expect(dm.row()?.messageIds).toContain(top.id));
+    // Returning to Activity restores the thread tab, which still reads.
+    if (returned) render(h.view);
+    const tab = await dmTabShows("thread");
+    // The thread shows its new reply, but never `top`.
+    await waitFor(() =>
+      expect(
+        tab.querySelector(`[data-message-id="${later.id}"]`),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      tab.querySelector(`[data-message-id="${top.id}"]`),
+    ).not.toBeInTheDocument();
+    // A dwell reads the thread's new reply, but stops just before `top`.
+    await dwellIn(
+      within(tab).getByRole("region", { name: "Thread messages" }),
+      () => expect(h.journal()?.state.frontiers["dm-room"]).toBe(now + 9),
+    );
+    expect(dm.row()).toMatchObject({
+      messageId: top.id,
+      previewMessageId: top.id,
+      unreadCount: 1,
+    });
+    const row = rows().find((item) =>
+      item.textContent?.includes("A new top-level message"),
+    );
+    if (!row) throw new Error("Missing DM row");
+    expect(
+      within(row).getByRole("img", { name: "Unread" }),
+    ).toBeInTheDocument();
+    // Re-clicking opens the whole DM, which shows it.
+    dm.open();
+    await dmTabShows("whole");
+  },
+);
+
+it("a DM row opened as its thread reads only up to a top-level message it never showed", async () => {
+  const h = fixture();
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = seedDm(h, [root, reply]);
+  render(h.view);
+  const shown = () =>
+    rows().find((row) => row.textContent?.includes("DM · Alice"))?.textContent;
+  await waitFor(() => expect(shown()).toContain("A DM thread reply"));
+  expect(dm.row()?.threadOnly).toBe(true);
+  // Alice's top-level message reaches the unread owner after the row's last
+  // render, and the click comes before the next one: the row still opens as
+  // the thread.
+  const top = message(h.alice, "dm-room", "A new top-level message", 25);
+  h.addEvent(top);
+  act(() => {
+    h.emit([top]);
+    expect(dm.row()?.messageIds).toContain(top.id);
+    expect(dm.row()?.threadOnly).toBeUndefined();
+    expect(shown()).toContain("A DM thread reply");
+    dm.open();
+  });
+  await dmTabShows("thread");
+  // The click reads the thread, but stops just before `top`.
+  await waitFor(() => expect(h.journal()?.state.frontiers["dm-room"]).toBe(24));
+  expect(dm.row()).toMatchObject({ messageId: top.id, unreadCount: 1 });
+  // Re-clicking opens the whole DM, which shows it.
+  dm.open();
+  await dmTabShows("whole");
+});
+
 it.each([false, true])(
   "opening a conversation's tab preserves channel forced-unread intent (left channel: %s)",
   async (leftChannel) => {
@@ -4375,7 +4705,7 @@ it("moves through the Activity type tabs with arrows, Home and End, then tabs ou
   const focusable = () => tab().filter((item) => item.tabIndex === 0);
   expect(focusable()).toHaveLength(1);
   expect(focusable()[0]).toHaveAttribute("aria-selected", "true");
-  const [all, , , last] = tab();
+  const [all, , , , last] = tab();
   if (!all || !last) throw new Error("Missing Activity type tabs");
   act(() => all.focus());
   await user.keyboard("{ArrowRight}");
@@ -4447,3 +4777,331 @@ it.each([
     expect(editor).toHaveFocus();
   },
 );
+
+it("shows reactions without unread actions and turns Unread off when selecting Reactions", async () => {
+  const h = fixture();
+  const root = h.root;
+  if (!root) throw new Error("Missing fixture root");
+  h.addEvent(
+    signed(h.alice, {
+      kind: 7,
+      content: "❤️",
+      created_at: 30,
+      tags: [
+        ["e", root.id],
+        ["p", h.viewer.pubkey],
+      ],
+    }),
+  );
+  render(h.view);
+  const reaction = await screen.findByRole("button", {
+    name: /Alice reacted with heart to your message: Our discussion/,
+  });
+  expect(reaction.closest("li")).not.toHaveAttribute("data-unread");
+  const row = reaction.closest("li");
+  if (!row) throw new Error("Missing reaction row");
+  expect(
+    within(row).queryByRole("button", {
+      name: /Mark as read/,
+    }),
+  ).not.toBeInTheDocument();
+  await chooseFilter("Unread only", "Attention");
+  expect(
+    screen.queryByRole("button", { name: /reacted with/ }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Reactions" }));
+  expect(screen.getByRole("switch", { name: "Unread" })).not.toBeChecked();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Alice reacted with/ }),
+  );
+  await findReader();
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${root.id}"]`),
+    ).toBeInTheDocument(),
+  );
+});
+
+it("explains an empty Reactions tab", async () => {
+  const h = fixture();
+  render(h.view);
+  fireEvent.click(screen.getByRole("tab", { name: "Reactions" }));
+  expect(await screen.findByText("No reactions yet.")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "When someone reacts to your messages, you’ll see it here.",
+    ),
+  ).toBeInTheDocument();
+});
+
+it("names all three reactors instead of saying one others", async () => {
+  const h = fixture();
+  if (!h.root) throw new Error("Missing fixture root");
+  const reactors = [h.alice, h.agent, h.unknown];
+  for (const [index, person] of reactors.entries()) {
+    h.addEvent(
+      profile(
+        person,
+        { name: ["Alice", "Bob", "Carol"][index], is_agent: index === 1 },
+        29,
+      ),
+    );
+    h.addEvent(
+      signed(person, {
+        kind: 7,
+        content: "❤️",
+        created_at: 30 + index,
+        tags: [
+          ["e", h.root.id],
+          ["p", h.viewer.pubkey],
+        ],
+      }),
+    );
+  }
+  h.addEvent(
+    signed(h.alice, {
+      kind: 7,
+      content: "👍",
+      created_at: 33,
+      tags: [
+        ["e", h.root.id],
+        ["p", h.viewer.pubkey],
+      ],
+    }),
+  );
+  render(h.view);
+  const row = await screen.findByRole("button", {
+    name: /reacted with heart to your message: Our discussion/,
+  });
+  expect(row).toHaveTextContent(/Carol, Bob and Alice reacted/);
+  expect(row).not.toHaveTextContent("1 others");
+  const solo = await screen.findByRole("button", {
+    name: /Alice reacted with \+1/,
+  });
+  fireEvent.click(solo);
+  expect(solo).toHaveAttribute("aria-current", "page");
+  expect(row).not.toHaveAttribute("aria-current");
+  await chooseFilter("Agents", "Sender");
+  expect(
+    await screen.findByRole("button", { name: /Bob reacted with heart/ }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Alice reacted with/ }),
+  ).not.toBeInTheDocument();
+});
+
+it.each(["solo", "dm", "thread"] as const)(
+  "opens a reaction in its existing %s context and places context after the preview",
+  async (kind) => {
+    const h = fixture({
+      soloChannel: kind === "solo",
+      withDm: kind === "dm",
+      withWriter: true,
+    });
+    const channelId = kind === "dm" ? "dm-room" : "room";
+    const target = message(
+      h.viewer,
+      channelId,
+      "My acknowledged message",
+      25,
+      kind === "thread" ? [["e", h.root?.id ?? "", "", "reply"]] : [],
+    );
+    h.addEvent(target);
+    h.addEvent(
+      signed(h.alice, {
+        kind: 7,
+        content: "❤️",
+        created_at: 30,
+        tags: [
+          ["e", target.id],
+          ["p", h.viewer.pubkey],
+        ],
+      }),
+    );
+    render(h.view);
+    const row = await screen.findByRole("button", {
+      name: /Alice reacted with heart/,
+    });
+    const context = within(row).getByText(
+      kind === "dm"
+        ? "in DM with Alice"
+        : kind === "solo"
+          ? "in Design"
+          : "in #Design",
+    );
+    const preview = within(row).getByText("My acknowledged message");
+    expect(
+      preview.compareDocumentPosition(context) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(row);
+    const detail = await findReader();
+    const history = await within(detail).findByRole("region", {
+      name: kind === "thread" ? "Thread messages" : "Channel message history",
+    });
+    if (kind !== "thread") {
+      // jsdom has no layout, so the virtualized timeline's message visibility
+      // is exercised in inbox-tabs.spec.mjs in both real browser engines.
+      expect(history).toHaveAttribute("data-channel-timeline", channelId);
+      expect(
+        within(detail).queryByRole("region", { name: "Thread messages" }),
+      ).not.toBeInTheDocument();
+      await waitFor(() => expect(h.historyRequests).toContain(channelId));
+    } else {
+      await waitFor(() =>
+        expect(
+          history.querySelector(`[data-message-id="${target.id}"]`),
+        ).toBeInTheDocument(),
+      );
+      expect(
+        history.querySelector(`[data-message-id="${h.root?.id}"]`),
+      ).toBeInTheDocument();
+    }
+  },
+);
+
+it("mixes hover reactions by time, preserves unread filtering, and opens the exact target", async () => {
+  const h = fixture();
+  const target = message(h.viewer, "room", "Acknowledged reply", 24, [
+    ["e", h.root?.id ?? "", "", "reply"],
+  ]);
+  h.addEvent(target);
+  h.addEvent(
+    signed(h.alice, {
+      kind: 7,
+      content: "❤️",
+      created_at: 30,
+      tags: [
+        ["e", target.id],
+        ["p", h.viewer.pubkey],
+      ],
+    }),
+  );
+  const close = vi.fn();
+  render(previewAt(h, close));
+  const reaction = await screen.findByRole("button", {
+    name: /Alice reacted with heart/,
+  });
+  await waitFor(() => expect(previewRows()).toHaveLength(3));
+  expect(previewRows()[0]).toContainElement(reaction);
+  fireEvent.click(screen.getByRole("switch", { name: "Unread only" }));
+  expect(
+    screen.queryByRole("button", { name: /reacted with/ }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("switch", { name: "Unread only" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Alice reacted with heart/ }),
+  );
+  expect(close).toHaveBeenCalledOnce();
+  expect(h.open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope: h.scope,
+    channelId: "room",
+    messageId: target.id,
+    threadRootId: h.root?.id,
+  });
+});
+
+it("bounds mixed hover activity to 50 rows after sorting", async () => {
+  const h = fixture();
+  for (let index = 0; index < 50; index++) {
+    const target = message(
+      h.viewer,
+      "room",
+      `Acknowledged ${index}`,
+      100 + index,
+    );
+    h.addEvent(target);
+    h.addEvent(
+      signed(h.alice, {
+        kind: 7,
+        content: "❤️",
+        created_at: 200 + index,
+        tags: [
+          ["e", target.id],
+          ["p", h.viewer.pubkey],
+        ],
+      }),
+    );
+  }
+  render(previewAt(h));
+  await screen.findByRole("button", {
+    name: /Alice reacted with heart to your message: Acknowledged 49$/,
+  });
+  expect(previewRows()).toHaveLength(50);
+  expect(previewRows()[0]).toHaveTextContent("Acknowledged 49");
+  expect(previewRows()[49]).toHaveTextContent("Acknowledged 0");
+});
+
+it("retries failed reaction settlement from the hover card", async () => {
+  const h = fixture();
+  h.addEvent(
+    signed(h.alice, {
+      kind: 7,
+      content: "❤️",
+      created_at: 30,
+      tags: [
+        ["e", h.root?.id ?? ""],
+        ["p", h.viewer.pubkey],
+      ],
+    }),
+  );
+  h.failAux();
+  render(previewAt(h));
+  await screen.findByRole("alert");
+  expect(
+    screen.queryByRole("button", { name: /reacted with/ }),
+  ).not.toBeInTheDocument();
+  h.failAux(false);
+  fireEvent.click(screen.getByRole("button", { name: "Retry activity" }));
+  await screen.findByRole("button", { name: /Alice reacted with heart/ });
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+});
+
+it("moves solo emoji into a shared row and back after a live removal", async () => {
+  const h = fixture();
+  const root = h.root;
+  if (!root) throw new Error("Missing root");
+  const reaction = (person: typeof h.alice, content: string, at: number) =>
+    signed(person, {
+      kind: 7,
+      content,
+      created_at: at,
+      tags: [
+        ["e", root.id],
+        ["p", h.viewer.pubkey],
+      ],
+    });
+  h.addEvent(reaction(h.alice, "❤️", 30));
+  h.addEvent(reaction(h.alice, "👍", 31));
+  render(h.view);
+  const label = /Alice reacted with heart, \+1/;
+  expect(
+    await screen.findByRole("button", { name: label }),
+  ).toBeInTheDocument();
+  const shared = reaction(h.agent, "❤️", 32);
+  h.addEvent(shared);
+  act(() => h.emit([shared]));
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("button", { name: /reacted with/ }),
+    ).toHaveLength(2),
+  );
+  const deletion = signed(h.agent, {
+    kind: 5,
+    content: "",
+    created_at: 33,
+    tags: [["e", shared.id]],
+  });
+  h.addEvent(deletion);
+  act(() => h.emit([deletion]));
+  expect(
+    await screen.findByRole("button", { name: label }),
+  ).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: /reacted with/ })).toHaveLength(
+    1,
+  );
+});

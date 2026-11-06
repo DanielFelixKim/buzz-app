@@ -1,6 +1,6 @@
 # Bestie
 
-Bestie is the account-saved agent pinned in Buzz's left navigation. The
+Bestie is the account-saved agent pinned in Buzz's left Apps dock. The
 selection is the private `main-agent` record shared with Solo's default-agent
 owner; this plugin adds presentation and a conversation destination, not another
 selection store.
@@ -9,7 +9,7 @@ selection store.
 
 ### Pinned conversation
 
-When the account has a saved eligible Bestie, the sidebar row adopts that
+When the account has a saved eligible Bestie, the dock shortcut adopts that
 agent's name and avatar and opens their canonical direct message. The canonical
 conversation is the newest verified, unarchived, non-cached DM whose roster
 contains the viewer and exactly that one other public key. A Solo chat, group DM,
@@ -21,7 +21,11 @@ selectable agent. Known-archived agents and agents confirmed absent from a compl
 inventory do not keep a pinned conversation.
 
 The page uses the ordinary conversation owners for history, drafts, sending,
-threads and unread state. Thread visits bind to their originating DM. Restoring
+threads and unread state. `BestieConversation` owns the local welcome. Its
+workspace reuses Messages’ tab state and tab host, with a retained main timeline/composer and a resizable side pane.
+Threads follow the device’s thread placement preference and support the same
+move, rename, close and pane-collapse controls. Profile and plugin links open
+in the tab workspace. Thread visits bind to their originating DM. Restoring
 one after the Bestie or canonical DM changes retires incompatible thread visits
 and shows the current Bestie's chat; it never reads an old thread in the new DM.
 While that exact DM is promoted, Messages omits its
@@ -29,7 +33,7 @@ ordinary row and clears any old device-local hidden-DM intent. Replacing or
 deleting the Bestie, disabling the plugin, changing communities, or losing the
 exact roster match releases the promotion and restores the ordinary DM row.
 
-The pinned row and Search Buzz destination show the agent's name and avatar.
+The pinned shortcut and Search Buzz destination show the agent's name and avatar.
 Search adds **Bestie** as supporting text and matches either name, so the pinned
 DM remains recognizable without presenting a placeholder identity. Agent rows
 remain separate **New chat** actions; namesakes stay distinct by exact public key
@@ -44,7 +48,9 @@ on another device, can be your Bestie too. Change, **Make my bestie** and **Make
 my Bestie again** offer it, and say before saving that some bestie features
 aren't available with remote agents, as **Choosing a Bestie** does: one
 question, the replacement's, when it replaces your Bestie. A Bestie on another
-device shows no tab, as its instructions and timers aren't on this device. A
+device shows no tab, as its instructions and timers aren't on this device; its
+card's **Remove as bestie** still removes it, as that saves only to your
+account. A
 hosted Bestie shows the tab, and its provider can hold its instructions: where
 it does (Builderlab does), **Remembers you** reads and saves them through the
 provider, as a local agent's synced instructions are, and the row says why
@@ -60,10 +66,11 @@ this device saw it as Bestie, and it shows **Former Bestie** while its memory
 section is on or it is in one of your private channels. If its latest read
 fails, even after an earlier one found memory off, the tab stays until a read
 succeeds, so its Retry can read again; a read that
-started before the newest one recorded never replaces it. **Remove as Bestie** asks,
-then saves no Bestie to your account: the agent stays, its check-ins stop, and
-its memory section and private channels stay, which its Former Bestie tab can
-turn off.
+started before the newest one recorded never replaces it. **Remove as Bestie**,
+in the tab or as **Remove as bestie** in the agent card's menu, asks, then saves
+no Bestie to your account: the agent stays, its check-ins stop, and its memory
+section and private channels stay, which its Former Bestie tab can turn off.
+Both need an account to save none to.
 
 **Remembers you** adds memory rules to the agent's instructions, in a section
 marked `<!-- buzz:bestie/memory v1 -->` … `<!-- /buzz:bestie/memory -->`, and
@@ -140,11 +147,11 @@ the same chooser appears in place instead of sending the owner to another menu.
 
 Setup is opt-in from the pinned Bestie destination; it does not take over the
 initial destination or send an automatic message. With no saved choice, the
-sidebar cycles through the same Fuzzies, Gloopies and Figgies as mobile, using
+dock cycles through the same Fuzzies, Gloopies and Figgies as mobile, using
 bundled stills. The artwork pauses for reduced motion and hidden documents.
 
 Once the account read confirms no saved Bestie and inventory/archive reads settle,
-the rotating sidebar shortcut reads **Create an agent**, even when the shared
+the rotating dock shortcut reads **Create an agent**, even when the shared
 inventory offers existing agents. When no eligible agents are available, the page
 shows **Create your first agent**, with matching character artwork, the description
 “Buzz is better with your agents. Create one to get started.” and a **Create an

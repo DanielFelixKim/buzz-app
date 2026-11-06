@@ -152,8 +152,10 @@ it.each([false, true])(
         if (property === "protect")
           return protectedSession ? protect : undefined;
         if (property === "nativeToolGate") return undefined;
-        // The tool list checks whether settings can change here.
-        if (property === "settings") return undefined;
+        // The tool list checks whether settings can change and owner tools
+        // apply here.
+        if (property === "settings" || property === "ownerAccess")
+          return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
       },
     });
@@ -4409,5 +4411,24 @@ it("saves a canvas of exactly the live limit in UTF-8 bytes, and refuses one byt
       content: `${exact.slice(1)}xyz`,
     }),
   ).rejects.toThrow(`over its limit of ${LIVE_CANVAS_BYTES} bytes`);
+  expect(published).toHaveLength(1);
+});
+
+it("addresses a new reaction to the actual message author and fails before publishing if the target is unavailable", async () => {
+  const { client, published } = fake([event({ id: root, pubkey: alice })]);
+  await callTool(client, {}, "react", { id: root, emoji: "❤️" });
+  expect(published).toEqual([
+    {
+      kind: 7,
+      content: "❤️",
+      tags: [
+        ["e", root],
+        ["p", alice],
+      ],
+    },
+  ]);
+  await expect(
+    callTool(client, {}, "react", { id: nested, emoji: "❤️" }),
+  ).rejects.toThrow("No message");
   expect(published).toHaveLength(1);
 });

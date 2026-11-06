@@ -33,6 +33,8 @@ import type {
   TurnResult,
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
+import { CREDENTIAL_ENV } from "../../features/host/service";
+import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
@@ -91,6 +93,8 @@ type Request = {
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
+  /** Presentation scope, independent of the harness session and reply routing. */
+  activityScope: string;
   /** A plugin's wake, for which `event` is its local anchor. */
   wake?: ConversationWake;
   wakeText?: Delivery["wakeText"];
@@ -728,6 +732,22 @@ export class CodexRuntime {
     return ready;
   }
 
+  /** A file as the agent's turns read one here: in its saved workspace. On
+   * an execution target only a conversation's session can read it. */
+  async workspaceFile(agent: Agent, path: string, signal: AbortSignal) {
+    if (this.target || (await this.inspect?.(agent.key)))
+      throw new Error(
+        `This agent reads files only in a conversation on its execution target, not ${path}`,
+      );
+    const saved = this.resolveConfig(agent.config).workspace;
+    if (!validWorkspace(saved))
+      throw new Error(
+        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+      );
+    const workspace = await this.workspace(saved);
+    signal.throwIfAborted();
+    return readFile(this.spawn, workspace, path, signal);
+  }
   private async workspace(path: string) {
     if (this.target) return this.target.resolveDirectory(this.target.workspace);
     if (absoluteWorkspace(path)) return path;
@@ -1432,6 +1452,10 @@ export class CodexRuntime {
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
       ...(delivery.synced ? { synced: delivery.synced } : {}),
+      activityScope: topLevel
+        ? channelId
+        : (threadReference(event)?.rootId ??
+          (channel?.dm ? channelId : event.id)),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
@@ -1687,7 +1711,7 @@ export class CodexRuntime {
         {
           ...params,
           ephemeral: true,
-          dynamicTools: dynamicTools(this.added()),
+          dynamicTools: dynamicTools(this.added(), !!agent.ownerAccess),
         },
       );
       once.threadId = started.thread.id;
@@ -1786,9 +1810,7 @@ export class CodexRuntime {
    * and a top-level chat is one scope. */
   private acknowledgeActivity(active: Active, request: Request) {
     if (!request.step) return;
-    const scope = request.conversation.topLevel
-      ? request.conversation.channelId
-      : rootOf(request.event);
+    const scope = request.activityScope;
     const prior = active.activity.get(scope);
     if (prior === request) return;
     prior?.superseded?.();
@@ -1937,7 +1959,7 @@ export class CodexRuntime {
     if (
       !turn ||
       call.namespace !== "buzz" ||
-      !sessionTools(this.added()).some((tool) => tool.name === call.tool)
+      !sessionTools(this.added(), true).some((tool) => tool.name === call.tool)
     )
       throw new Error("No active Buzz tool for this thread and turn");
     const check = () => {
@@ -2203,7 +2225,7 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "key" | "name" | "pubkey">,
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
@@ -2265,6 +2287,8 @@ export class CodexRuntime {
           hookAdapter.run(agent.key, session, event, input),
         )
       : undefined;
+    // Codex sets it on this thread's commands only; app-server has none.
+    const credential = await rpc.toolCredential(agent);
     const params = {
       model,
       cwd: workspace,
@@ -2279,6 +2303,9 @@ export class CodexRuntime {
         mcp_servers: { ...mcp, ...bridge?.config },
         "features.plugins": false,
         "features.apps": false,
+        ...(credential && {
+          [`shell_environment_policy.set.${CREDENTIAL_ENV}`]: credential,
+        }),
       },
     };
     // Ask for reasoning summaries unless the user chose a summary mode.
@@ -2358,14 +2385,15 @@ export class CodexRuntime {
       // Resume restores the thread's tools, so one started with other added
       // tools starts fresh.
       const added = this.added();
-      const tools = addedKey(added);
+      const owner = !!agent.ownerAccess;
+      const tools = addedKey(added) + (owner ? ":owner" : "");
       const resuming =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
       type Started = { thread: { id: string; cwd: string } };
       const start = () =>
         rpc.request<Started>("thread/start", {
           ...params,
-          dynamicTools: dynamicTools(added),
+          dynamicTools: dynamicTools(added, owner),
         });
       const resume = (threadId: string) =>
         rpc.request<Started>("thread/resume", {
@@ -2660,12 +2688,12 @@ function follow(
  * keeps a deferred tool from the model until its tool search finds it. Every
  * model in Codex's catalog has tool search (supports_search_tool); one
  * without it would not see deferred tools. */
-const dynamicTools = (added: readonly AddedTool[]) => [
+const dynamicTools = (added: readonly AddedTool[], owner: boolean) => [
   {
     type: "namespace",
     name: "buzz",
-    description: sessionHint(added),
-    tools: sessionTools(added).map(({ load, ...tool }) => ({
+    description: sessionHint(added, owner),
+    tools: sessionTools(added, owner).map(({ load, ...tool }) => ({
       type: "function",
       ...tool,
       ...(load === "search" ? { deferLoading: true } : {}),

@@ -67,7 +67,33 @@ export function apply(ctx) {
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
-| `pluginInstaller` (optional) | Ask the owner to install another plugin | `await ctx.reflect.get("pluginInstaller")?.requestInstall({ repository, reference, path?, commit? })` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"`. It never installs silently. |
+| `pluginInstaller` (optional) | Ask the owner to install another plugin or check installation status | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. |
+
+The installation-status methods may be missing on older hosts even when `pluginInstaller` is available, so feature-check each method before calling it. `getInstallationStatus` returns `"installed"` when the manifest ID is in the ready catalog, `"absent"` when it is not, and `"unavailable"` while the catalog is not ready. Installed status is independent of whether the plugin is enabled, contributes UI, or came from a particular install source. A subscription reports later status changes; subscribe first, then read the current status to avoid missing a change between the read and subscription. Own the subscription with `ctx.effect`:
+
+```js
+const installer = ctx.reflect.get("pluginInstaller");
+if (typeof installer?.getInstallationStatus === "function") {
+  const status = installer.getInstallationStatus("example.hello");
+  // Use "installed", "absent" or "unavailable"; a missing method is not "absent".
+}
+
+ctx.effect(() => {
+  const installer = ctx.reflect.get("pluginInstaller");
+  if (typeof installer?.subscribeInstallationStatus !== "function") return;
+  const unsubscribe = installer.subscribeInstallationStatus(
+    "example.hello",
+    (status) => {
+      // Respond to a status change.
+    },
+  );
+  if (typeof installer.getInstallationStatus === "function") {
+    const current = installer.getInstallationStatus("example.hello");
+    // Read the current status after subscribing.
+  }
+  return unsubscribe;
+});
+```
 
 ## Host access (`manifest.host`)
 
@@ -89,7 +115,7 @@ Everything beyond the services above must be declared in `manifest.json`; the ow
 
 Add `"host"` to `inject`, then:
 
-- `await ctx.host.runCommand("status", input?)` runs a declared command (no shell, 5 s deadline, stdin only if `maxInputBytes` is declared). It returns stdout (4096 bytes by default, up to `maxOutputBytes`, at most 1048576), or `null` on failure or when output exceeds the bound.
+- `await ctx.host.runCommand("status", input?)` runs a declared command (no shell, 5 s deadline, stdin only if `maxInputBytes` is declared). It returns stdout (4096 bytes by default, up to `maxOutputBytes`, at most 1048576), or `null` on failure or when output exceeds the bound. A command may declare `artifact: { path, sha256, siblings?: [{ name, sha256 }] }` (an absolute or `~/…` path, lowercase SHA-256 hex, and files beside it that must match too) to run only those verified bytes, never a program on PATH; `program` is then just its label and the declared `args` are passed to it. Interpreters and programs it calls by name are still found on PATH, so give it an absolute shebang such as `#!/bin/sh` and call programs by absolute path.
 - `await ctx.host.request({ url, method?, headers?, body?, timeoutMs? })` returns `{ status, headers, body }` and throws on an undeclared origin or timeout. `url` must use an exact declared HTTPS origin (origin only in the manifest: scheme + host, no path or trailing slash). No redirects, no cookies. Plain `fetch` to other origins is blocked by the app's content security policy, so use this.
 - `ctx.host.spawn?.(id, { args?, cwd?, env?, onStdout?, onStderr? })` starts a declared `processes` entry (desktop only; check it exists). Returns `{ write, end, kill, exited }`. Your `args` follow the declared ones.
 - `files: true` enables `ctx.host.readFile(path, { cwd? })` (bytes, at most 50 MB) and `ctx.host.resolveDirectory(path)`. Other grants: `mcp: true` (`host.serveMcp`), `managedFiles: true`, `agentHooks: ["plugin/kind", ...]` (agent type keys such as `buzz.claude-code/claude-code`).

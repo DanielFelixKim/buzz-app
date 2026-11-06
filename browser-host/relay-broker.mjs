@@ -2235,7 +2235,7 @@ export function relayBrokerPlugin({
               cancel.signal,
               AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
             ]);
-            const upstream = await fetchUpstream(target, {
+            const init = {
               headers: {
                 Authorization:
                   "Nostr " +
@@ -2244,7 +2244,20 @@ export function relayBrokerPlugin({
               },
               redirect: "error",
               signal: mediaDeadline,
-            });
+            };
+            let upstream = await fetchUpstream(target, init);
+            // Relays before WebP thumbnails, and images uploaded before them,
+            // have only the `.thumb.jpg` that every relay writes.
+            if (
+              upstream.status === 404 &&
+              target.pathname.endsWith(".thumb.webp")
+            ) {
+              await upstream.body?.cancel();
+              upstream = await fetchUpstream(
+                new URL(target.href.replace(/\.thumb\.webp$/, ".thumb.jpg")),
+                init,
+              );
+            }
             stats.media++;
             if (!upstream.ok) {
               await upstream.body?.cancel();
