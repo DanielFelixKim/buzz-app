@@ -60,7 +60,8 @@ export function useAvatarPan(
 }
 
 /** Drag or use the arrow keys to pan an image inside its avatar shape. The
- * shape clips only the artwork, so the focus ring stays visible. */
+ * shape clips only the artwork, so the focus ring stays visible. Without
+ * `onChange` it only shows the framed image. */
 export function AvatarCropFrame({
   src,
   shape,
@@ -74,15 +75,36 @@ export function AvatarCropFrame({
   crop: AvatarCrop;
   disabled?: boolean;
   imageRef?: Ref<HTMLImageElement>;
-  onChange(crop: AvatarCrop): void;
+  onChange?(crop: AvatarCrop): void;
 }) {
   const [aspect, setAspect] = useState(1);
   const box = avatarCropBox(aspect, crop);
   const pan = useAvatarPan(
     box.crop,
-    (x, y) => onChange(avatarCropBox(aspect, { ...crop, x, y }).crop),
+    (x, y) => onChange?.(avatarCropBox(aspect, { ...crop, x, y }).crop),
     disabled,
   );
+  const artwork = (
+    <div data-avatar-shape={shape} className={styles.artwork}>
+      <img
+        ref={imageRef}
+        src={src}
+        alt="Avatar preview"
+        draggable={false}
+        onLoad={(event) => {
+          const image = event.currentTarget;
+          setAspect(image.naturalWidth / image.naturalHeight || 1);
+        }}
+        style={{
+          width: `${box.width * 100}%`,
+          height: `${box.height * 100}%`,
+          left: `${box.left * 100}%`,
+          top: `${box.top * 100}%`,
+        }}
+      />
+    </div>
+  );
+  if (!onChange) return artwork;
   return (
     <div
       // A 2D pan has no widget role; the description gives its keys.
@@ -94,24 +116,7 @@ export function AvatarCropFrame({
       className={styles.frame}
       {...pan.handlers}
     >
-      <div data-avatar-shape={shape} className={styles.artwork}>
-        <img
-          ref={imageRef}
-          src={src}
-          alt="Avatar preview"
-          draggable={false}
-          onLoad={(event) => {
-            const image = event.currentTarget;
-            setAspect(image.naturalWidth / image.naturalHeight || 1);
-          }}
-          style={{
-            width: `${box.width * 100}%`,
-            height: `${box.height * 100}%`,
-            left: `${box.left * 100}%`,
-            top: `${box.top * 100}%`,
-          }}
-        />
-      </div>
+      {artwork}
     </div>
   );
 }

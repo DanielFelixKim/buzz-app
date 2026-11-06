@@ -1,5 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
+import { AvatarCropFrame } from "../../features/profiles/AvatarCrop";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { BuilderlabLogoIcon } from "../../shared/design-system/icons";
 import type { AvatarSelection } from "./AgentAvatarPicker";
 import { AgentPortrait } from "./AgentCard";
@@ -33,6 +35,13 @@ export function RemoteAgentIntroduction({
 }) {
   const [finish] = useState(
     () => endings[Math.floor(Math.random() * endings.length)] ?? endings[0],
+  );
+  // The picture is still the original upload; the crop is painted on save.
+  const crop = avatar.kind === "image" ? avatar.crop : undefined;
+  const framed = useAvatarPreview(
+    crop && avatar.kind === "image" ? avatar.picture : "",
+    community,
+    "small",
   );
   const hello = `Hi, I’m ${name}.`;
   const opening = builderlab
@@ -159,6 +168,8 @@ export function RemoteAgentIntroduction({
               animate={false}
             />
           </div>
+        ) : crop && framed ? (
+          <AvatarCropFrame src={framed} shape="squircle" crop={crop} />
         ) : (
           <AgentPortrait
             agent={{ name, picture: avatar.picture }}

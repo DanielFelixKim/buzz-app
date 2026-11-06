@@ -213,3 +213,20 @@ it("describes another remote runtime without promising Builderlab capabilities",
     transform: "none",
   });
 });
+
+it("shows an uploaded image with its framing", () => {
+  const { container } = render(
+    <RemoteAgentIntroduction
+      name="Nova"
+      avatar={{
+        kind: "image",
+        picture: "https://images.example/nova.png",
+        crop: { zoom: 2, x: 0.25, y: 0 },
+      }}
+      builderlab={false}
+    />,
+  );
+  expect(
+    container.querySelector('img[src="https://images.example/nova.png"]'),
+  ).toHaveStyle({ width: "200%", height: "200%", left: "-25%", top: "-50%" });
+});

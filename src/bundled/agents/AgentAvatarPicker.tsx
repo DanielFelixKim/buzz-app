@@ -28,6 +28,7 @@ import {
   croppedAvatar,
   emojiAvatar,
   emojiAvatarScale,
+  avatarCropBox,
   uncropped,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
@@ -242,6 +243,12 @@ export function AgentAvatarPicker({
   useImperativeHandle(avatarRef, () => ({
     async prepare() {
       const image = cropImage.current;
+      // Default framing keeps the original upload, as does artwork this
+      // browser can't decode (HEIC outside WebKit), which the host converts.
+      const framed =
+        cropping && image?.naturalWidth
+          ? avatarCropBox(image.naturalWidth / image.naturalHeight, crop).crop
+          : uncropped;
       const paint =
         selection.kind === "emoji"
           ? () =>
@@ -252,7 +259,7 @@ export function AgentAvatarPicker({
                 crop.y,
                 crop.x,
               )
-          : cropping && image && crop !== uncropped
+          : image && (framed.zoom !== 1 || framed.x || framed.y)
             ? () => croppedAvatar(image, crop)
             : undefined;
       if (!paint) return selection.kind === "emoji" ? "" : selection.picture;

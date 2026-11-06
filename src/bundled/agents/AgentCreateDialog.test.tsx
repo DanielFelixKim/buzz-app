@@ -72,6 +72,13 @@ vi.mock("motion/react", async (actual) => ({
 }));
 
 afterEach(cleanup);
+// jsdom decodes no images; each upload is a square.
+vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(
+  100,
+);
+vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(
+  100,
+);
 // jsdom has no object URLs; an upload previews its file through one.
 beforeEach(() => {
   vi.stubGlobal(
@@ -81,10 +88,13 @@ beforeEach(() => {
       revokeObjectURL: vi.fn(),
     }),
   );
+  // jsdom has no pointer capture; dragging the emoji captures the pointer.
+  Element.prototype.setPointerCapture = () => {};
 });
 // jsdom lacks both; tests that need them install stubs, removed here along
 // with stubbed frames and media queries.
 afterEach(() => {
+  Reflect.deleteProperty(Element.prototype, "setPointerCapture");
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   Reflect.deleteProperty(Element.prototype, "animate");
   vi.unstubAllGlobals();
@@ -615,6 +625,12 @@ it.each([
   expect(!!within(dialog).queryByRole("slider", { name: "Zoom" })).toBe(
     croppable,
   );
+  // A square at 100% has nowhere to move.
+  if (croppable)
+    fireEvent.keyDown(
+      within(dialog).getByRole("application", { name: "Image position" }),
+      { key: "ArrowRight" },
+    );
   await user.click(createButton());
   await waitFor(() =>
     expect(agents.create).toHaveBeenCalledExactlyOnceWith(
