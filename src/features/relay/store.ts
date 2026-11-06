@@ -4074,6 +4074,16 @@ export function createChannelStore(
         }
       }
       if (state.joining) {
+        // Incoming-page roots may only be known through another reader. Keep
+        // their accepted overlays until the page identifies its roots too.
+        for (const event of events)
+          if (
+            [40003, 5, 9005, 7, 39005].includes(event.kind) &&
+            event.tags.some(
+              ([name, id]) => name === "h" && id === state.channelId,
+            )
+          )
+            state.joining.set(event.id, event);
         const roots = new Set(
           [...state.joining.values()]
             .filter((event) => channelRowKind(event.kind))

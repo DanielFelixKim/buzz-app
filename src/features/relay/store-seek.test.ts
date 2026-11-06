@@ -1580,3 +1580,47 @@ it("restarts a pending forward seek from a ceiling retreated by live byte evicti
   }
   expect(expected.filter((id) => !seen.has(id))).toEqual([]);
 });
+
+it.each([40003, 5])(
+  "preserves incoming-page overlay %s when live eviction moves the older cursor",
+  async (kind) => {
+    const h = setup({ count: 100, maxHistoryRows: 40 });
+    await h.open();
+    const target = h.history[75];
+    assert.exists(target);
+    await h.owner.session.read([{ ids: [target.id], limit: 1 }]);
+    let release!: () => void;
+    h.gate.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const before = h.reads.length;
+    h.channels.loadOlder("c");
+    try {
+      await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+      h.live.receive([
+        signed(h.alice, {
+          kind,
+          created_at: T0 + 101 * HOUR,
+          tags: [
+            ["h", "c"],
+            ["e", target.id],
+          ],
+          content: kind === 40003 ? "edited incoming page" : "",
+        }),
+      ]);
+      h.live.receive(
+        Array.from({ length: 21 }, (_, i) =>
+          message(h.alice, "c", `new${i}`, T0 + 102 * HOUR + i),
+        ),
+      );
+    } finally {
+      release();
+      h.gate.hold = undefined;
+      await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    }
+    const row = h.window().rows.find((row) => row.id === target.id);
+    if (kind === 40003) expect(row?.content).toBe("edited incoming page");
+    else expect(row?.content).not.toBe(target.content);
+  },
+);
+
