@@ -14,7 +14,7 @@ import {
 } from "./platform";
 import { afterPresentation } from "./presentation";
 import { DEFAULT_SOUND, resolveCategorySound, type SoundRef } from "./sound";
-import { createSoundRegistry } from "./sounds";
+import { createSoundRegistry, type SoundPackDescriptor } from "./sounds";
 import { pluginNotificationText, type NotificationText } from "./content";
 
 export type NotificationCategoryDescriptor = Readonly<{
@@ -41,6 +41,11 @@ export interface Notifications {
   /** While registered, only targets every gate allows may alert. Returns a
    * remover; disabling the plugin removes it too. */
   gate(gate: NotificationGate): () => void;
+  /** Adds a group of sounds to every category's choices in Settings. Returns a
+   * remover; disabling the plugin removes the pack too. */
+  readonly sounds: Readonly<{
+    register(pack: SoundPackDescriptor): () => void;
+  }>;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -84,7 +89,7 @@ export class NotificationsService extends Service implements Notifications {
   readonly indicator = createUnreadIndicator();
   private readonly contributions;
   private readonly gates;
-  readonly soundRegistry = createSoundRegistry();
+  readonly soundRegistry;
   private readonly playSound: (ref: SoundRef) => void;
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Set<Candidate>();
@@ -116,6 +121,7 @@ export class NotificationsService extends Service implements Notifications {
     this.contributions =
       createContributions<NotificationCategoryDescriptor>(ctx);
     this.gates = createContributions<NotificationGate>(ctx);
+    this.soundRegistry = createSoundRegistry(ctx);
     this.state = Object.freeze({
       viewer: undefined,
       ...preferences.snapshot(),
@@ -278,6 +284,14 @@ export class NotificationsService extends Service implements Notifications {
         return true;
       }
     });
+  }
+  get sounds() {
+    // Bind the calling plugin's scope so its packs end with it.
+    const ctx = this.ctx;
+    return {
+      register: (pack: SoundPackDescriptor) =>
+        this.soundRegistry.register(ctx, pack),
+    };
   }
   subscribeGates = (listener: () => void) => this.gates.subscribe(listener);
   gate(gate: NotificationGate) {

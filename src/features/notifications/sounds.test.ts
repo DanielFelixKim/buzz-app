@@ -1,14 +1,25 @@
+import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
+import { PluginRuntime } from "../../plugins/runtime";
 import { SOUND_NAMES, isSoundName } from "./sound";
 import { createSoundRegistry } from "./sounds";
 
-afterEach(() => {
+const contexts: Context[] = [];
+afterEach(async () => {
+  for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
   vi.unstubAllGlobals();
 });
+function bundledOnly() {
+  const ctx = new Context();
+  contexts.push(ctx);
+  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
+  ctx.effect(() => () => runtime.dispose());
+  return createSoundRegistry(ctx);
+}
 
 it("playback without an Audio constructor reports null, never throws", () => {
   // Bare Node has no Audio global; delivery sound stays best-effort.
-  expect(createSoundRegistry().play("doong")).toBeNull();
+  expect(bundledOnly().play("doong")).toBeNull();
 });
 
 it("playback restarts a cached bundled clip", () => {
@@ -25,7 +36,7 @@ it("playback restarts a cached bundled clip", () => {
       }
     },
   );
-  const registry = createSoundRegistry();
+  const registry = bundledOnly();
   const first = registry.play("ping");
   expect(instances[0]?.src).toBe("/sounds/ping.mp3");
   expect(first).toBe(instances[0]);
@@ -45,7 +56,7 @@ it("playback restarts a cached bundled clip", () => {
 it("Silent is valid and never creates or plays an audio asset", () => {
   const audio = vi.fn();
   vi.stubGlobal("Audio", audio);
-  const registry = createSoundRegistry();
+  const registry = bundledOnly();
   expect(isSoundName("silent")).toBe(true);
   expect(registry.isAvailable("silent")).toBe(true);
   expect(registry.source("silent")).toBeNull();
@@ -54,7 +65,11 @@ it("Silent is valid and never creates or plays an audio asset", () => {
 });
 
 it("bundled sounds play from public/sounds", () => {
-  const registry = createSoundRegistry();
+  const registry = bundledOnly();
   expect(registry.isAvailable("ping")).toBe(true);
   expect(registry.source("ping")).toBe("/sounds/ping.mp3");
+  expect(registry.isAvailable("example.sound-pack/chime")).toBe(false);
+  expect(registry.source("example.sound-pack/chime")).toBeNull();
+  expect(registry.play("example.sound-pack/chime")).toBeNull();
+  expect(registry.snapshot()).toEqual([]);
 });
