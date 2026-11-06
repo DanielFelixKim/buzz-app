@@ -700,10 +700,19 @@ mod tests {
             "hasNewer": true, "rows": []
         });
         let decoded: View = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(serde_json::to_value(decoded).unwrap()["discussion"]["hasNewer"], true);
-        value["discussion"].as_object_mut().unwrap().remove("hasNewer");
+        assert_eq!(
+            serde_json::to_value(decoded).unwrap()["discussion"]["hasNewer"],
+            true
+        );
+        value["discussion"]
+            .as_object_mut()
+            .unwrap()
+            .remove("hasNewer");
         let decoded: View = serde_json::from_value(value).unwrap();
-        assert_eq!(serde_json::to_value(decoded).unwrap()["discussion"]["hasNewer"], false);
+        assert_eq!(
+            serde_json::to_value(decoded).unwrap()["discussion"]["hasNewer"],
+            false
+        );
     }
     #[test]
     fn native_completion_retires_only_its_own_presentation() {
