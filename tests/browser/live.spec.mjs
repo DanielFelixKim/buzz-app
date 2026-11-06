@@ -244,8 +244,10 @@ test("post-reconnect finite catch-up keeps paged history, cursor and reading pos
   await settle(page);
   await expectAnchor(page, reading);
   await edge(page, -1);
-  await expect.poll(() => app.pending.length).toBe(1);
-  const pageTwo = app.pending.shift();
+  // The fixture retains receipts for reads cancelled by reconnect.
+  const pending = () => app.pending.filter((read) => !read.aborted);
+  await expect.poll(() => pending().length).toBe(1);
+  const pageTwo = pending()[0];
   expect(pageTwo.filter.until).toBeLessThan(pageOne.filter.until);
   pageTwo.release();
   await end(page);
