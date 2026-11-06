@@ -13,7 +13,10 @@ import type {
 } from "../../host/service";
 import {
   AgentSessions,
+  association,
+  type Exclusive,
   type SavedConversation,
+  savedConversation,
   ServerPool,
   SHARED_POOL,
 } from "./agent-sessions";
@@ -1038,7 +1041,7 @@ describe("holding a conversation", () => {
     ).rejects.toThrow("Harness was stopped");
   });
 
-  it("blocks the conversation, not others, until a session its work left running exits", async () => {
+  it("queues the conversation's holds and messages, not others, until a session its work left running exits", async () => {
     const harness = fakeHarness({ capabilities: CLOSES });
     const { sessions } = held(harness, await start(harness));
     const exited = deferred<number | null>();
@@ -1046,24 +1049,23 @@ describe("holding a conversation", () => {
       outlives(exited.promise);
     });
     const work = vi.fn(async () => undefined);
-    await expect(sessions.exclusive("chat", work)).rejects.toThrow(
-      "Harness has not retired this conversation's session",
-    );
+    const holding = sessions.exclusive("chat", work);
     const waiting = sessions.deliver("chat", "after", 1);
+    // A whole turn elsewhere: time enough for an unblocked one to run.
     await expect(
       sessions.deliver("other", "meanwhile", 1),
     ).resolves.toMatchObject({ ok: true });
-    await flush();
     expect(sessions.active("chat")).toBe(true);
+    expect(work).not.toHaveBeenCalled();
     expect(harness.turns.map((turn) => turn.text)).toEqual(["meanwhile"]);
     exited.resolve(0);
+    await holding;
+    expect(work).toHaveBeenCalledOnce();
     await expect(waiting).resolves.toMatchObject({ ok: true });
     expect(harness.turns.map((turn) => turn.text)).toEqual([
       "meanwhile",
       "after",
     ]);
-    await sessions.exclusive("chat", work);
-    expect(work).toHaveBeenCalledOnce();
   });
 
   it("keeps both paths refused when a left-running session's exit cannot be observed", async () => {
@@ -1084,7 +1086,7 @@ describe("holding a conversation", () => {
       });
       const work = vi.fn(async () => undefined);
       await expect(sessions.exclusive("chat", work)).rejects.toThrow(
-        "Harness has not retired this conversation's session",
+        "Harness could not confirm this conversation's session ended",
       );
       expect(work).not.toHaveBeenCalled();
       expect(harness.turns).toEqual([]);
@@ -1201,13 +1203,16 @@ describe("holding a conversation", () => {
   it("keeps a session only while it holds the conversation, and releases it on failure", async () => {
     const harness = fakeHarness({ capabilities: CLOSES });
     const { sessions, saved } = held(harness, await start(harness));
-    let late: ((id: string) => void) | undefined;
+    let late: ((id: string, binding: unknown) => boolean) | undefined;
     await sessions.exclusive("chat", async ({ keep }) => {
-      keep("saved-1");
+      expect(keep("saved-1", "b1")).toBe(true);
       late = keep;
     });
-    expect(saved.get("chat")?.sessions).toEqual(["saved-1"]);
-    late?.("saved-2");
+    expect(saved.get("chat")).toMatchObject({
+      sessions: ["saved-1"],
+      binding: { session: "saved-1", value: "b1" },
+    });
+    expect(late?.("saved-2", "b2")).toBe(false);
     expect(saved.get("chat")?.sessions).toEqual(["saved-1"]);
     await expect(
       sessions.exclusive("chat", async ({ saved: newest }) => {
@@ -1215,5 +1220,359 @@ describe("holding a conversation", () => {
       }),
     ).rejects.toThrow("could not load saved-1");
     expect(sessions.active("chat")).toBe(false);
+  });
+
+  it("ends a hold queued behind a left-running session on interrupt, never running it", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions } = held(harness, await start(harness));
+    const exited = deferred<number | null>();
+    await sessions.exclusive("chat", async ({ outlives }) => {
+      outlives(exited.promise);
+    });
+    const work = vi.fn(async () => undefined);
+    const queued = sessions.exclusive("chat", work);
+    await flush();
+    await sessions.interrupt("chat");
+    await expect(queued).rejects.toThrow("Harness was stopped");
+    exited.resolve(0);
+    await flush();
+    expect(work).not.toHaveBeenCalled();
+    expect(sessions.active("chat")).toBe(false);
+  });
+
+  it("ends a queued hold on its caller's signal, or on dispose", async () => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const { sessions } = held(harness, await start(harness));
+    await sessions.exclusive("chat", async ({ outlives }) => {
+      outlives(new Promise(() => {}));
+    });
+    const work = vi.fn(async () => undefined);
+    const giving = new AbortController();
+    const given = sessions.exclusive("chat", work, giving.signal);
+    const stopped = sessions.exclusive("chat", work);
+    await flush();
+    giving.abort();
+    await expect(given).rejects.toThrow("Harness was stopped");
+    sessions.dispose();
+    await expect(stopped).rejects.toThrow("Harness was stopped");
+    expect(work).not.toHaveBeenCalled();
+  });
+
+  it("refuses a hold queued behind a left-running session whose exit then cannot be observed", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const harness = fakeHarness({ capabilities: CLOSES });
+      const { sessions } = held(harness, await start(harness));
+      const exited = deferred<number | null>();
+      await sessions.exclusive("chat", async ({ outlives }) => {
+        outlives(exited.promise);
+      });
+      const work = vi.fn(async () => undefined);
+      const queued = sessions.exclusive("chat", work);
+      await flush();
+      exited.reject(new Error("exit unobservable"));
+      await expect(queued).rejects.toThrow(
+        "Harness could not confirm this conversation's session ended",
+      );
+      expect(work).not.toHaveBeenCalled();
+    } finally {
+      warned.mockRestore();
+    }
+  });
+});
+
+describe("saved sessions under holds", () => {
+  const CLOSES = {
+    mcpCapabilities: { http: true },
+    sessionCapabilities: { close: {} },
+  };
+  const deferred = <T = void>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    return { promise, resolve, reject };
+  };
+  const sessionsWith = (saved = new Map<string, SavedConversation>()) => {
+    const harness = fakeHarness({ capabilities: CLOSES });
+    const acp = start(harness);
+    const sessions = new AgentSessions({
+      label: "Harness",
+      resolveDirectory: async (path) => path,
+      tools,
+      process: { get: () => acp },
+      launch: async () => ({ workspace: "/work", systemPrompt: "" }),
+      choice: () => ({ provider: "", model: "" }),
+      fingerprint: () => "",
+      store: {
+        get: (key) => saved.get(key),
+        set: (key, value) => saved.set(key, value),
+      },
+    });
+    return { sessions, saved, harness };
+  };
+  /** What held work is given for `key`, taking nothing. */
+  const read = (sessions: AgentSessions, key = "chat") =>
+    sessions.exclusive(key, async (held) => ({
+      saved: held.saved,
+      reset: held.reset,
+      binding: held.binding,
+    }));
+
+  it("reads what held work saved only with the session it saved it with", () => {
+    const at = 1;
+    expect(association(undefined)).toBeUndefined();
+    expect(association({ at, sessions: ["s1"] })).toBeUndefined();
+    expect(
+      association({
+        at,
+        sessions: ["s1"],
+        binding: { session: "s1", value: { v: 1 } },
+      }),
+    ).toEqual({ value: { v: 1 } });
+    // A value that can't be read is still that session's: never none.
+    expect(
+      association({
+        at,
+        sessions: ["s1"],
+        binding: { session: "s1", value: null },
+      }),
+    ).toEqual({ value: null });
+    expect(
+      association({
+        at,
+        sessions: ["s2", "s1"],
+        binding: { session: "s1", value: 1 },
+      }),
+    ).toBeUndefined();
+    for (const binding of [
+      null,
+      "s1",
+      ["s1", 1],
+      {},
+      { session: "s1" },
+      { value: 1 },
+      { session: "s1", value: 1, extra: 1 },
+      { session: 1, value: 1 },
+      { session: "", value: 1 },
+      { session: "s".repeat(257), value: 1 },
+    ])
+      expect(association({ at, sessions: ["s1"], binding })).toBe("malformed");
+  });
+
+  it("reads what is stored raw, however damaged, and the reset marker only as written", () => {
+    const binding = { session: 7, junk: [1] };
+    const read = savedConversation({
+      at: 1,
+      sessions: ["s1"],
+      binding,
+      next: "new",
+    });
+    expect(read).toEqual({ at: 1, sessions: ["s1"], binding, next: "new" });
+    expect(read?.binding).toBe(binding);
+    expect(savedConversation({ at: 1, binding: null })).toEqual({
+      at: 1,
+      binding: null,
+    });
+    expect(savedConversation({ at: 1, next: "other" })).toEqual({ at: 1 });
+  });
+
+  it("gives a forwarded session's value back, but a fresh one after an ordinary session replaced it", async () => {
+    const { sessions, saved } = sessionsWith();
+    await sessions.exclusive("chat", async ({ keep }) => {
+      expect(keep("g1", { b: "B" })).toBe(true);
+    });
+    expect(await read(sessions)).toEqual({
+      saved: "g1",
+      reset: false,
+      binding: { value: { b: "B" } },
+    });
+    await expect(
+      sessions.deliver("chat", "ordinary", 1),
+    ).resolves.toMatchObject({ ok: true });
+    const ordinary = saved.get("chat")?.sessions?.[0];
+    expect(ordinary).not.toBe("g1");
+    expect(saved.get("chat")?.binding).toEqual({
+      session: "g1",
+      value: { b: "B" },
+    });
+    expect(await read(sessions)).toEqual({
+      saved: ordinary,
+      reset: false,
+      binding: undefined,
+    });
+  });
+
+  it("gives the same value back after a reload, whatever its turn did", async () => {
+    const saved = new Map<string, SavedConversation>();
+    const first = sessionsWith(saved).sessions;
+    await expect(
+      first.exclusive("chat", async ({ keep }) => {
+        expect(keep("g1", { b: "B" })).toBe(true);
+        throw new Error("the prompt failed");
+      }),
+    ).rejects.toThrow("the prompt failed");
+    first.dispose();
+    const reloaded = sessionsWith(
+      new Map(JSON.parse(JSON.stringify([...saved]))),
+    ).sessions;
+    expect(await read(reloaded)).toEqual({
+      saved: "g1",
+      reset: false,
+      binding: { value: { b: "B" } },
+    });
+  });
+
+  it("does not count a session as saved unless the store reads it back", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { sessions, saved } = sessionsWith();
+      const set = vi.spyOn(saved, "set");
+      set.mockImplementationOnce(() => saved);
+      set.mockImplementationOnce(() => {
+        throw new Error("quota");
+      });
+      await sessions.exclusive("chat", async ({ keep }) => {
+        expect(keep("g1", "B")).toBe(false);
+        expect(keep("g1", "B")).toBe(false);
+        expect(keep("g1", "B")).toBe(true);
+      });
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("starts New session over, reading nothing stored, and keeps every session listed until one replaces it", async () => {
+    const saved = new Map<string, SavedConversation>([
+      ["chat", { at: 1, sessions: ["g1", "g0"], binding: { session: 7 } }],
+    ]);
+    const { sessions } = sessionsWith(saved);
+    expect((await read(sessions)).binding).toBe("malformed");
+    await expect(sessions.reset("chat", "new")).resolves.toEqual({ ok: true });
+    expect(saved.get("chat")).toEqual({
+      at: 1,
+      sessions: ["g1", "g0"],
+      binding: { session: 7 },
+      next: "new",
+    });
+    expect(await read(sessions)).toEqual({
+      saved: undefined,
+      reset: true,
+      binding: undefined,
+    });
+    // A replacement that fails to start keeps it all.
+    await expect(
+      sessions.exclusive("chat", async () => {
+        throw new Error("could not start");
+      }),
+    ).rejects.toThrow("could not start");
+    expect(saved.get("chat")?.next).toBe("new");
+    await sessions.exclusive("chat", async ({ keep }) => {
+      expect(keep("g2", "C")).toBe(true);
+    });
+    expect(saved.get("chat")).toMatchObject({
+      sessions: ["g2", "g1", "g0"],
+      binding: { session: "g2", value: "C" },
+    });
+    expect(saved.get("chat")).not.toHaveProperty("next");
+  });
+
+  it("lets an ordinary session that replaces the newest end New session, and nothing else", async () => {
+    const saved = new Map<string, SavedConversation>([
+      [
+        "chat",
+        { at: 1, sessions: ["g1"], binding: { session: "g1", value: "B" } },
+      ],
+    ]);
+    const { sessions } = sessionsWith(saved);
+    await sessions.reset("chat", "new");
+    await expect(
+      sessions.deliver("chat", "ordinary", 1),
+    ).resolves.toMatchObject({ ok: true });
+    const record = saved.get("chat");
+    expect(record?.sessions?.[1]).toBe("g1");
+    expect(record).not.toHaveProperty("next");
+    expect(record?.binding).toEqual({ session: "g1", value: "B" });
+  });
+
+  it("refuses New session, writing nothing, once a left-running session could not be confirmed ended", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const saved = new Map<string, SavedConversation>();
+      const { sessions } = sessionsWith(saved);
+      const exited = deferred<number | null>();
+      await sessions.exclusive("chat", async ({ keep, outlives }) => {
+        keep("g1", "B");
+        outlives(exited.promise);
+      });
+      exited.reject(new Error("exit unobservable"));
+      await flush();
+      const before = saved.get("chat");
+      await expect(sessions.reset("chat", "new")).resolves.toEqual({
+        ok: false,
+        error: "Harness could not confirm this conversation's session ended",
+      });
+      expect(saved.get("chat")).toBe(before);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("waits for a held turn before New session marks the conversation", async () => {
+    const saved = new Map<string, SavedConversation>();
+    const { sessions } = sessionsWith(saved);
+    const working = deferred();
+    const turn = sessions.exclusive("chat", async ({ keep }) => {
+      await working.promise;
+      keep("g1", "B");
+    });
+    await flush();
+    const resetting = sessions.reset("chat", "new");
+    await flush();
+    expect(saved.get("chat")).toBeUndefined();
+    working.resolve();
+    await turn;
+    await expect(resetting).resolves.toEqual({ ok: true });
+    expect(saved.get("chat")?.next).toBe("new");
+  });
+
+  it("chooses compaction under the hold: the open session, a forwarded one, or nothing", async () => {
+    const saved = new Map<string, SavedConversation>();
+    const { sessions } = sessionsWith(saved);
+    const forwarded = vi.fn(
+      async (_held: Exclusive) => ({ ok: true }) as const,
+    );
+    // Nothing saved: nothing to do.
+    await expect(sessions.reset("chat", "compact", forwarded)).resolves.toEqual(
+      {
+        ok: true,
+      },
+    );
+    expect(forwarded).not.toHaveBeenCalled();
+    await sessions.exclusive("chat", async ({ keep }) => {
+      keep("g1", "B");
+    });
+    await expect(sessions.reset("chat", "compact", forwarded)).resolves.toEqual(
+      {
+        ok: true,
+      },
+    );
+    expect(forwarded).toHaveBeenCalledOnce();
+    expect(forwarded.mock.calls[0]?.[0]).toMatchObject({
+      saved: "g1",
+      binding: { value: "B" },
+    });
+    // Damage goes to the forwarded path, which refuses it, never to nothing.
+    saved.set("chat", { at: 1, sessions: ["g1"], binding: { session: 7 } });
+    await sessions.reset("chat", "compact", forwarded);
+    expect(forwarded.mock.calls[1]?.[0]).toMatchObject({
+      binding: "malformed",
+    });
+    // After New session there is nothing to compact.
+    await sessions.reset("chat", "new");
+    await sessions.reset("chat", "compact", forwarded);
+    expect(forwarded).toHaveBeenCalledTimes(2);
   });
 });

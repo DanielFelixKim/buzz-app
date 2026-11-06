@@ -1160,6 +1160,42 @@ it("repeats a failed kill on the next retirement", async () => {
   await shutdown.work;
 });
 
+it("keeps what held work saved, and New session, as stored across every write", () => {
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const damaged = { session: 7, junk: [1] };
+  data.set(
+    "buzz.goose.sessions.v1",
+    JSON.stringify({
+      one: {
+        broken: { at: 1, sessions: ["s1"], binding: damaged, next: "new" },
+      },
+    }),
+  );
+  const one = localSessions(storage, "one");
+  // Another conversation's write rewrites every record, leaving this raw.
+  one.set("other", {
+    at: 2,
+    sessions: ["g1"],
+    binding: { session: "g1", value: { v: 1 } },
+  });
+  const reloaded = localSessions(storage, "one");
+  expect(reloaded.get("broken")).toEqual({
+    at: 1,
+    sessions: ["s1"],
+    binding: damaged,
+    next: "new",
+  });
+  expect(reloaded.get("other")).toEqual({
+    at: 2,
+    sessions: ["g1"],
+    binding: { session: "g1", value: { v: 1 } },
+  });
+});
+
 it("keeps saved conversations per agent in storage, most recent first", () => {
   const data = new Map<string, string>();
   const storage = {
