@@ -6,7 +6,12 @@ import {
   ChatsCircleIcon,
   RobotIcon,
 } from "../../shared/design-system/icons/index";
-import { pagePlacement, orderPages, pagePresentation } from "./presentation";
+import {
+  navigationOwner,
+  pagePlacement,
+  orderPages,
+  pagePresentation,
+} from "./presentation";
 
 function page(key: string, title: string, icon?: string): RegisteredPage {
   const separator = key.indexOf("/");
@@ -135,3 +140,57 @@ test.each([undefined, "toolbar"] as const)(
     ).toBe("topbar");
   },
 );
+
+describe("navigation owner", () => {
+  // Mirrors the bundled registrations' navigation fields.
+  const primary = (
+    key: string,
+    fields: Partial<RegisteredPage> = {},
+  ): RegisteredPage => ({ ...page(key, key), primary: true, ...fields });
+  const entries = [
+    primary(messages.key, { placement: "topbar" }),
+    primary(inbox.key),
+    primary(bestie.key),
+    primary("buzz.reminders/reminders"),
+    primary("buzz.agents/agents"),
+    primary("buzz.workflows/workflows"),
+    primary("buzz.relay-notes/notes", { placement: "topbar" }),
+    primary("buzz.drafts-sent/drafts-sent"),
+    primary("buzz.usage/usage"),
+    primary("buzz.link-lab/link-lab"),
+    primary("buzz.repos/repos", { primary: false }),
+    primary("example.sidebar/main"),
+    primary("example.listed/main", { placement: "sidebar" }),
+    primary("example.own-sidebar/main", { sidebar: () => null }),
+    primary("example.header/main", { placement: "topbar" }),
+    primary("example.tools/main", { placement: "toolbar" }),
+    primary("example.linked/main", { primary: false, placement: "sidebar" }),
+  ];
+  test.each([
+    // Channels, DMs, threads and Solo chats all open the Messages page.
+    [messages.key, messages.key],
+    // Every page listed in the Messages sidebar keeps Messages selected.
+    ["buzz.drafts-sent/drafts-sent", messages.key],
+    ["buzz.usage/usage", messages.key],
+    ["buzz.link-lab/link-lab", messages.key],
+    ["example.sidebar/main", messages.key],
+    ["example.listed/main", messages.key],
+    ["example.own-sidebar/main", messages.key],
+    // Dock apps own themselves.
+    [inbox.key, inbox.key],
+    [bestie.key, bestie.key],
+    ["buzz.reminders/reminders", "buzz.reminders/reminders"],
+    ["buzz.agents/agents", "buzz.agents/agents"],
+    ["buzz.workflows/workflows", "buzz.workflows/workflows"],
+    ["buzz.relay-notes/notes", "buzz.relay-notes/notes"],
+    ["example.header/main", "example.header/main"],
+    ["example.tools/main", "example.tools/main"],
+    // Destinations without a navigation entry select nothing in the dock.
+    ["buzz.repos/repos", "buzz.repos/repos"],
+    ["example.linked/main", "example.linked/main"],
+    ["settings", "settings"],
+    ["missing/page", "missing/page"],
+  ])("%s belongs to %s", (selected, owner) => {
+    expect(navigationOwner(entries, selected)).toBe(owner);
+  });
+});
