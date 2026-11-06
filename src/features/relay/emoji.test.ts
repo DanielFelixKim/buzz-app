@@ -108,11 +108,35 @@ it("unions latest complete member sets; empty replacements and ties survive stal
     emojiTags(sameA.id < sameB.id ? sameA : sameB)[0]?.url,
   );
 });
-it("actual session cold send is draft-safe; A/B sends, replies and signed retries pin original URLs", async () => {
+it("sends literal shortcodes while the cold emoji catalog is still loading", async () => {
+  const h = session("cold", true);
+  const loading = h.session.emoji.ensure();
+  const catalog = h.wire.next();
+  expect(h.session.emoji.snapshot().status).toBe("loading");
+  try {
+    const id = h.session.messages.send("c", "hello :party:");
+    await flush();
+    expect(h.publish).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        content: "hello :party:",
+        pubkey: viewer.pubkey,
+      }),
+      expect.anything(),
+    );
+    expect(id).toMatch(/^[0-9a-f]{64}$/);
+    expect(
+      h.publish.mock.calls[0]?.[0].tags.filter(([name]) => name === "emoji"),
+    ).toEqual([]);
+    expect(h.session.emoji.snapshot().status).toBe("loading");
+  } finally {
+    catalog.respond([set()]);
+    await loading;
+  }
+});
+it("A/B sends, replies and signed retries pin original URLs", async () => {
   const a = session("a"),
     b = session("b");
-  expect(() => a.session.messages.send("c", ":party:")).toThrow(/isn't ready/);
-  expect(a.session.outbox?.snapshot()).toHaveLength(0);
+  void a.session.emoji.ensure();
   expect(b.wire.pending).toHaveLength(0);
   const aRead = a.wire.next();
   const bReady = b.session.emoji.ensure();
@@ -292,7 +316,7 @@ it("custom emoji reactions are colon-wrapped, bounded, tagged, and retry origina
     h.session.messages.react(root.id, `:${"x".repeat(65)}:`),
   ).toThrow(/long/);
 });
-it("plain sends do not acquire a palette; a custom send retries a cold failure while passive demand does not", async () => {
+it("plain sends do not acquire a palette; a shortcode send retries a cold failure while passive demand does not", async () => {
   const h = session();
   const reads = () =>
     h.query.mock.calls.filter(([filters]) =>
@@ -314,13 +338,13 @@ it("plain sends do not acquire a palette; a custom send retries a cold failure w
   await flush();
   expect(h.session.emoji.snapshot().status).toBe("error");
   expect(reads()).toBe(1);
-  // A refused send starts one retry cycle; repeated sends and demand share it.
-  expect(() =>
-    h.session.messages.reply("c", "a".repeat(64), ":party:"),
-  ).toThrow(/isn't ready/);
+  // A literal shortcode send starts one retry cycle; repeated sends and demand share it.
+  expect(h.session.messages.reply("c", "a".repeat(64), ":party:")).toMatch(
+    /^[0-9a-f]{64}$/,
+  );
   expect(h.session.emoji.snapshot().status).toBe("loading");
   const retry = h.session.emoji.ensure();
-  expect(() => h.session.messages.send("c", ":party:")).toThrow(/isn't ready/);
+  expect(h.session.messages.send("c", ":party:")).toMatch(/^[0-9a-f]{64}$/);
   expect(h.session.emoji.ensure()).toBe(retry);
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   expect(reads()).toBe(2);
@@ -358,10 +382,8 @@ it("explicit retries jump background traffic that starves the passive catalog lo
     h.wire.pending.splice(0);
     busy(h, relay);
     await vi.advanceTimersByTimeAsync(0);
-    // The refused send's retry dispatches despite the busy lane.
-    expect(() => h.session.messages.send("c", ":party:")).toThrow(
-      /isn't ready/,
-    );
+    // The send's catalog retry dispatches despite the busy lane.
+    expect(h.session.messages.send("c", ":party:")).toMatch(/^[0-9a-f]{64}$/);
     await vi.advanceTimersByTimeAsync(0);
     catalog(h)?.respond([set()]);
     await vi.advanceTimersByTimeAsync(0);
@@ -558,7 +580,7 @@ it("exposes read-cap and retained-byte limits rather than evicting replacement e
   // Overflow would repeat on every read, so demand and sends leave it to Retry.
   await directory.queries.ensure();
   await directory.queries.ensure("foreground");
-  expect(() => directory.tags(":party:")).toThrow(/Retry message preparation/);
+  expect(directory.tags(":party:")).toEqual([]);
   expect(reader.read).toHaveBeenCalledTimes(1);
   directory.accept([set(member, 1)]);
   expect(directory.queries.snapshot().entries).toEqual([]);
