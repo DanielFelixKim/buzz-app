@@ -1,5 +1,13 @@
 import { test, expect } from "./fixture.mjs";
-import { anchor, end, expectAnchor, open, settle, upper } from "./timeline.mjs";
+import {
+  anchor,
+  end,
+  expectAnchor,
+  open,
+  settle,
+  upper,
+  wheel,
+} from "./timeline.mjs";
 
 // A link stays in the channel timeline only for a top-level message without
 // replies inside the latest 20 rows; any other link opens a thread, whose
@@ -221,11 +229,15 @@ test("Back between two links in one channel returns to the reader's place; the s
       .nth(index);
   await follow(page, link(0));
   await expectRevealed(page, first.id);
-  // Revealing a loaded target positions the reader without asking for older
-  // history. A later upward reading gesture owns that demand.
+  // Revealing a loaded target does not page. Deliberate upward input loads
+  // the final older row so later navigation cannot race a held history read.
+  expect(app.pending).toHaveLength(0);
+  await history(page).hover();
+  await wheel(page, -250);
+  await expect.poll(() => app.pending.length).toBe(1);
+  app.pending.shift().release();
   await expectVerifiedAlpha(page, app);
   await settle(page);
-  expect(app.pending).toHaveLength(0);
   await end(page);
   await follow(page, link(1));
   await expectRevealed(page, second.id);
