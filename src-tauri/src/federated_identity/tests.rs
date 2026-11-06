@@ -1717,3 +1717,106 @@ async fn a_renewal_ended_after_saving_puts_back_the_session_it_replaced() {
     // The other copy's record is back, not this copy's old one.
     assert_eq!(store.raw.lock().unwrap().as_deref(), Some(&*other.raw));
 }
+
+#[tokio::test]
+async fn policy_expiry_stays_locked_across_restart_but_accepts_only_a_fresh_proof() {
+    let (store, owner, session) = admitted_cache_fixture();
+    let identity = crate::identity::IdentityHost::fixture();
+    let old = owner
+        .cache_proof(&identity, "wss://relay.example")
+        .await
+        .unwrap()
+        .unwrap();
+    owner
+        .cache_update(&old.revision, old.admission.clone())
+        .await
+        .unwrap();
+    owner
+        .cache_update(
+            &old.revision,
+            super::cache::Admission {
+                allowed: false,
+                retryable: true,
+                ..old.admission.clone()
+            },
+        )
+        .await
+        .unwrap();
+    let restarted = at_adapter(store.clone(), "http://127.0.0.1:1/".into());
+    let offline = restarted.restore().await;
+    assert!(!offline.cache_admissions[0].allowed);
+    assert!(offline.cache_admissions[0].retryable);
+    assert!(owner
+        .cache_update(&old.revision, old.admission)
+        .await
+        .is_err());
+    let fresh = owner
+        .cache_proof(&identity, "wss://relay.example")
+        .await
+        .unwrap()
+        .unwrap();
+    owner
+        .cache_update(&fresh.revision, fresh.admission.clone())
+        .await
+        .unwrap();
+    assert!(owner.snapshot().cache_admissions[0].allowed);
+    owner
+        .cache_result(
+            &session.record.revision,
+            &fresh.admission.viewer,
+            "wss://relay.example",
+            false,
+        )
+        .await
+        .unwrap();
+    owner
+        .cache_update(&fresh.revision, fresh.admission)
+        .await
+        .unwrap();
+    assert!(!owner.snapshot().cache_admissions[0].allowed);
+    assert!(!owner.snapshot().cache_admissions[0].retryable);
+}
+
+#[tokio::test]
+async fn another_instances_policy_expiry_does_not_retire_the_shared_session() {
+    let (store, first, session) = admitted_cache_fixture();
+    let second = host(store.clone());
+    {
+        let mut state = second.state();
+        second.install_session(&mut state, session.clone());
+        state.restored = true;
+    }
+    let identity = crate::identity::IdentityHost::fixture();
+    let proof = first
+        .cache_proof(&identity, "wss://relay.example")
+        .await
+        .unwrap()
+        .unwrap();
+    let expired = super::cache::Admission {
+        allowed: false,
+        retryable: true,
+        ..proof.admission.clone()
+    };
+    first
+        .cache_update(&proof.revision, expired.clone())
+        .await
+        .unwrap();
+    assert!(second.cache_update(&proof.revision, expired).await.is_err());
+    assert!(second.snapshot().status == Status::SignedIn);
+    assert_eq!(second.snapshot().revision, session.record.revision);
+    assert_eq!(
+        second.snapshot().cache_admissions,
+        first.snapshot().cache_admissions
+    );
+    assert!(store.raw.lock().unwrap().is_some());
+    let fresh = second
+        .cache_proof(&identity, "wss://relay.example")
+        .await
+        .unwrap()
+        .unwrap();
+    second
+        .cache_update(&fresh.revision, fresh.admission)
+        .await
+        .unwrap();
+    assert!(second.snapshot().cache_admissions[0].allowed);
+}

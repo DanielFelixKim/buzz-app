@@ -37,6 +37,7 @@ export type SessionSnapshot = Readonly<{
     viewer: string;
     relay: string;
     allowed: boolean;
+    retryable?: boolean;
   }>[];
   /** A retired session's record is still stored because removing it
    * failed (`unavailable`); signing out again retries the removal. */

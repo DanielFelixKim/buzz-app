@@ -14,6 +14,7 @@ import {
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 import type { ReadTransport } from "./transport";
+import { liveReconnectDelay } from "./live";
 const WAKE_TICK_MS = 5_000;
 const WAKE_GAP_MS = 15_000;
 
@@ -95,6 +96,8 @@ export function provideRelay(
   // failure keeps its error visible and waits for the user.
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnects = 0;
+  // A policy bounce can follow successful AUTH, so it must survive `ready`.
+  let admissionReconnects = 0;
   /** Whether the latest connection failure can clear without anyone acting.
    * Later publishes of the same failure (cache handoff) keep it. */
   let transientFailure = false;
@@ -235,7 +238,16 @@ export function provideRelay(
       };
     },
     retry() {
-      if (disposed || !connect || connecting || clearing) return;
+      if (disposed || !connect || clearing) return;
+      if (connecting) {
+        if (guarded === undefined && gate) {
+          const current = generation;
+          void gate.protects().then((value) => {
+            if (!disposed && current === generation) guarded = value;
+          });
+        }
+        return;
+      }
       const retained = snapshot.cached;
       if (!retained) reset();
       connecting = true;
@@ -527,7 +539,22 @@ export function provideRelay(
     const check = () => {
       if (disposed || guarded === false) return;
       if (shut()) {
-        if (!snapshot.locked) lock();
+        if (!snapshot.locked) {
+          const reconnect = gate.canConnect?.(
+            resume?.viewer ?? snapshot.viewer,
+          );
+          lock();
+          if (reconnect) {
+            const backoff =
+              RECOVERY_DELAYS_MS[
+                Math.min(admissionReconnects++, RECOVERY_DELAYS_MS.length - 1)
+              ] ?? 30_000;
+            reconnectTimer = setTimeout(
+              () => service.retry(),
+              liveReconnectDelay(1008, backoff, Math.random),
+            );
+          }
+        }
       } else if (snapshot.locked) service.retry();
     };
     void gate.protects().then((protects) => {

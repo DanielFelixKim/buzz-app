@@ -639,6 +639,8 @@ mod tests {
             viewer: "a".repeat(64),
             relay: "wss://relay.example".into(),
             allowed: true,
+            retryable: false,
+            generation: 0,
         };
         assert!(first.cache_admissions(&revision).unwrap().is_empty());
         first

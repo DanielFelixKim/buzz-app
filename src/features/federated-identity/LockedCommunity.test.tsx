@@ -122,7 +122,7 @@ it("protects nothing without native identity", () => {
   ).toBeUndefined();
 });
 
-it("opens the browser sign-in once when a locked community is selected", async () => {
+it("opens browser sign-in once when reauthentication is required", async () => {
   const user = userEvent.setup();
   const { service, publish } = federatedFixture();
   publish({ status: "reauthentication-required" });
@@ -270,4 +270,31 @@ it("lets account switching own sign-in after a refused signed-in session", async
     .click(screen.getByRole("button", { name: "Switch account" }));
   expect(service.signOut).toHaveBeenCalledOnce();
   expect(service.signIn).toHaveBeenCalledOnce();
+});
+
+it("leaves explicit sign-out locked until the person chooses sign-in", async () => {
+  const { service } = federatedFixture();
+  render(<LockedCommunity identity={service} />);
+  expect(service.signIn).not.toHaveBeenCalled();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Sign in" }));
+  expect(service.signIn).toHaveBeenCalledOnce();
+});
+
+it("allows reauthorization after policy expiry without admitting cached history", async () => {
+  ipc.invoke.mockResolvedValue(true);
+  const { service, publish } = federatedFixture();
+  publish({
+    status: "signed-in",
+    expiresAt: "2099-01-01T00:00:00Z",
+    cacheAdmissions: [
+      { viewer, relay: origin, allowed: false, retryable: true },
+    ],
+  });
+  const gate = relayGates(service)(origin);
+  if (!gate) throw new Error("Native gate expected");
+  await gate.protects();
+  expect(gate.admits(viewer)).toBe(false);
+  expect(gate.canConnect?.(viewer)).toBe(true);
 });

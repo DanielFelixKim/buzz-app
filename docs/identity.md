@@ -1199,20 +1199,28 @@ Admission is saved with the native session revision. Offline
 (`network-unavailable`/`network-timeout` while checking the saved session), only
 previously admitted history stays readable, before that session's `expiresAt`.
 An older installation without saved admission needs one online connection.
-Explicit issuer refusals (including `binding-mismatch`), rejected NIP-42 AUTH,
-HTTP 403 and socket policy close 1008 revoke admission for that key/community;
-restart and late success cannot undo the refusal. A fresh sign-in can try again.
+Explicit issuer refusals (including `binding-mismatch`), rejected NIP-42 AUTH
+and HTTP 403 persist denial for that key/community; restart and late success
+cannot undo it. A fresh sign-in can try again. Policy close 1008 instead invalidates
+admission and permits fresh authorization, because it also signals ordinary
+connection lifetime expiry. History stays locked across restart until a new AUTH
+succeeds; a proof started before invalidation cannot restore access. Recovery
+uses capped, jittered backoff, including repeated expiry after successful AUTH.
 
 Before admission, the relay service opens a temporary authentication socket
 without constructing any owners that load saved history, sidebar data or outbox.
 This adds one socket for a fresh admission, reusing native assertion issuance;
-existing admission uses the ordinary connection. Native open keeps its 90-second
-budget plus 10 seconds for authentication. Lost admission drops the community's
+existing admission uses the ordinary connection. Covered communities whose
+discovery disables NIP-FI also use a native socket, without an assertion header,
+so native observes their AUTH receipt and binds it to the current session and key.
+Uncovered ordinary communities keep their public socket. Native open keeps its
+90-second budget plus 10 seconds for authentication. Lost admission drops the community's
 in-memory session (timeline, threads, previews, unread counts, search), keeping
-its disk cache. Its pages show **Sign in to continue**; selecting it after the
-session ends opens browser sign-in once (`LOCKED_SIGN_IN` in
-`features/federated-identity/lock.ts`). A valid sign-in without confirmed access
-offers **Try again** and **Sign in again**. History returns only after admission.
+its disk cache. Its pages show **Sign in to continue**. Reauthentication-required
+can open browser sign-in once (`LOCKED_SIGN_IN` in `features/federated-identity/lock.ts`);
+explicit sign-out and cancellation require the person to choose sign-in. A valid
+sign-in without confirmed access offers **Try again** and **Sign in again**.
+History returns only after admission.
 
 The Node development host retains its supported broker flow.
 

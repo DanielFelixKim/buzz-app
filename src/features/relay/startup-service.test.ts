@@ -12,6 +12,7 @@ const roots: Context[] = [];
 afterEach(async () => {
   for (const ctx of roots.splice(0)) await ctx.fiber.dispose();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -404,4 +405,73 @@ it("ends the connection deadline before a slow ordinary cache restore", async ()
     startup.resolve(undefined);
   }
   await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+});
+
+it.each(["retry", "focus"])(
+  "rechecks unknown protection during pending admission on %s",
+  async (trigger) => {
+    const window = new EventTarget();
+    vi.stubGlobal("window", window);
+    let known: boolean | undefined;
+    let announced = false;
+    const listeners = new Set<() => void>();
+    const gate = {
+      protects: vi.fn(async () => {
+        if (known !== undefined && !announced) {
+          announced = true;
+          for (const listener of listeners) listener();
+        }
+        return known;
+      }),
+      admits: () => known === false,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    };
+    const { data, disk, connections, source } = setup({ gate });
+    await vi.waitFor(() => expect(connections).toHaveLength(1));
+    connections[0]?.resolve(source);
+    await vi.waitFor(() => expect(source.subscribe).toHaveBeenCalledOnce());
+    expect(disk.readStartup).not.toHaveBeenCalled();
+    known = false;
+    if (trigger === "retry") data.retry();
+    else window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+    expect(connections).toHaveLength(1);
+  },
+);
+
+it("backs off repeated policy bounces even when each AUTH succeeds", async () => {
+  vi.useFakeTimers();
+  const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const { gate, admit } = organization(true);
+  const { data, disk, connections, source, restored } = setup({
+    gate: { ...gate, canConnect: () => true },
+  });
+  try {
+    await restored();
+    connections[0]?.resolve(source);
+    await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+    for (const [index, delay] of [750, 1500].entries()) {
+      const reads = vi.mocked(disk.read).mock.calls.length;
+      admit(false);
+      expect(data.snapshot().locked).toBe(true);
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(connections).toHaveLength(index + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(connections).toHaveLength(index + 2);
+      connections[index + 1]?.resolve(source);
+      await vi.waitFor(() =>
+        expect(gate.subscribe).toHaveBeenCalledTimes(index + 2),
+      );
+      expect(vi.mocked(disk.read).mock.calls.length).toBe(reads);
+      admit(true);
+      await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+    }
+  } finally {
+    random.mockRestore();
+  }
 });

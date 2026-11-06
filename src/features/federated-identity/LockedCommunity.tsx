@@ -7,10 +7,8 @@ import { LOCKED_SIGN_IN } from "./lock";
 import type { Membership } from "../communities/service";
 import type { FederatedIdentity } from "./service";
 
-/** Takes the place of an organization community's pages while its saved
- * history is locked. Keyed by community, so selecting one is a new visit:
- * with `LOCKED_SIGN_IN` at `selection`, that visit opens the browser
- * sign-in once; a cancel or failure leaves the button to the person. */
+/** Hides saved history until admission. Expiry can prompt once; explicit
+ * sign-out and cancellation always leave the next sign-in to the person. */
 export function LockedCommunity({
   identity,
   retry,
@@ -34,16 +32,18 @@ export function LockedCommunity({
       setFailure(error instanceof Error ? error.message : "sign-in-failed"),
     );
   };
-  const ended =
-    state.status === "signed-out" ||
-    state.status === "reauthentication-required";
   const started = useRef(false);
   useEffect(() => {
     if (state.status === "signed-in") started.current = true;
-    if (LOCKED_SIGN_IN !== "selection" || started.current || !ended) return;
+    if (
+      LOCKED_SIGN_IN !== "reauthentication" ||
+      started.current ||
+      state.status !== "reauthentication-required"
+    )
+      return;
     started.current = true;
     void identity.signIn().catch(() => {});
-  }, [ended, identity, state.status]);
+  }, [identity, state.status]);
 
   const organization = state.authority?.organization;
   const signingIn = state.status === "signing-in";

@@ -3,7 +3,7 @@ import { relayOrigin } from "../communities/destination";
 import type { RelayGate } from "../relay/service";
 import type { FederatedIdentity, SessionSnapshot } from "./service";
 
-export const LOCKED_SIGN_IN: "selection" | "button" = "selection";
+export const LOCKED_SIGN_IN: "reauthentication" | "button" = "reauthentication";
 
 function networkUnavailable(state: SessionSnapshot) {
   return (
@@ -82,8 +82,9 @@ export function relayGates(
       canConnect: (viewer) => {
         if (protectedState === false) return true;
         const state = current();
+        const proof = admission(state, viewer, origin);
         return (
-          admission(state, viewer, origin)?.allowed !== false &&
+          (proof?.allowed !== false || proof.retryable === true) &&
           (state.status === "signed-in" ||
             state.status === "restoring" ||
             networkUnavailable(state))

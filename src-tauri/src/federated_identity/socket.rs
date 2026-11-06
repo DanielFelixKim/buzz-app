@@ -72,6 +72,7 @@ pub(crate) async fn relay_socket_connect(
 ) -> Result<SocketMode, String> {
     uuid::Uuid::parse_str(&id).map_err(|_| "Invalid socket connection")?;
     let relay = canonical_relay(&relay)?;
+    let proof = fi.cache_proof(identity.inner(), &relay).await?;
     let stop = CancellationToken::new();
     let (sender, mut outgoing) = mpsc::channel(16);
     let (start, started) = oneshot::channel();
@@ -100,6 +101,18 @@ pub(crate) async fn relay_socket_connect(
         stop.clone(),
     );
     let result = tokio::select! { _ = stop.cancelled() => Err("Native socket canceled".into()), result = connect => result };
+    if result
+        .as_ref()
+        .is_err_and(|error| error == "relay-forbidden")
+    {
+        if let Some(proof) = &proof {
+            let admission = super::cache::Admission {
+                allowed: false,
+                ..proof.admission.clone()
+            };
+            let _ = fi.cache_update(&proof.revision, admission).await;
+        }
+    }
     let (mut socket, assertion, unsigned, cancel) = match result {
         Ok(Some(connection)) => connection,
         result => {
@@ -111,6 +124,7 @@ pub(crate) async fn relay_socket_connect(
             return result.map(|_| SocketMode::Public);
         }
     };
+    let cancel = proof.as_ref().map_or(cancel, |proof| proof.cancel.clone());
     let host = fi.inner().clone();
     let identity = identity.inner().clone();
     let registry = sockets.0.clone();
@@ -141,9 +155,15 @@ pub(crate) async fn relay_socket_connect(
                             let Some(data) = data else { break; };
                             if let Some(assertion) = &assertion {
                                 if host.admit_assertion(&identity, assertion).await.is_err() { break; }
-                                // FI and NIP-42 must bind the same native key.
+                            }
+                            if let Some(proof) = &proof {
+                                if identity.viewer().await.ok().as_deref() != Some(proof.admission.viewer.as_str()) { break; }
+                            }
+                            let bound_viewer = proof.as_ref().map(|proof| proof.admission.viewer.as_str())
+                                .or_else(|| assertion.as_ref().map(|assertion| assertion.viewer.as_str()));
+                            if let Some(viewer) = bound_viewer {
                                 if let Ok(serde_json::Value::Array(frame)) = serde_json::from_str::<serde_json::Value>(&data) {
-                                    if frame.first().and_then(|v| v.as_str()) == Some("AUTH") && frame.get(1).and_then(|v| v.get("pubkey")).and_then(|v| v.as_str()) != Some(assertion.viewer.as_str()) { break; }
+                                    if frame.first().and_then(|v| v.as_str()) == Some("AUTH") && frame.get(1).and_then(|v| v.get("pubkey")).and_then(|v| v.as_str()) != Some(viewer) { break; }
                                 }
                             }
                             let sent_auth = auth_id(&data);
@@ -156,9 +176,11 @@ pub(crate) async fn relay_socket_connect(
                             }
                             match frame {
                                 Some(Ok(Message::Text(data))) => {
-                                    if let (Some(assertion), Some(allowed)) = (&assertion, auth_result(authentication.as_deref(), &data)) {
+                                    if let (Some(proof), Some(allowed)) = (&proof, auth_result(authentication.as_deref(), &data)) {
                                         authentication = None;
-                                        if host.cache_result(&assertion.revision, &assertion.viewer, &assertion.relay, allowed).await.is_err() { break; }
+                                        if identity.viewer().await.ok().as_deref() != Some(proof.admission.viewer.as_str()) { break; }
+                                        let admission = super::cache::Admission { allowed, ..proof.admission.clone() };
+                                        if host.cache_update(&proof.revision, admission).await.is_err() { break; }
                                     }
                                     refused = missing_evidence(unsigned, &data);
                                     if refused.is_some() || on_event.send(SocketEvent::Text {data:data.to_string()}).is_err() { break; }
@@ -188,20 +210,20 @@ pub(crate) async fn relay_socket_connect(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id);
-        // A policy close may end an expired or refused assertion: never reuse it.
-        if let Some(assertion) = assertion
-            .as_ref()
-            .filter(|_| closing.as_ref().is_some_and(|(code, _)| *code == 1008))
-        {
-            let _ = host
-                .cache_result(
-                    &assertion.revision,
-                    &assertion.viewer,
-                    &assertion.relay,
-                    false,
-                )
-                .await;
-            host.reject_assertion(assertion).await;
+        // 1008 also means ordinary lifetime expiry. Keep history locked while
+        // allowing a fresh connection; an older in-flight proof cannot reopen it.
+        if closing.as_ref().is_some_and(|(code, _)| *code == 1008) {
+            if let Some(assertion) = &assertion {
+                host.reject_assertion(assertion).await;
+            }
+            if let Some(proof) = &proof {
+                let admission = super::cache::Admission {
+                    allowed: false,
+                    retryable: true,
+                    ..proof.admission.clone()
+                };
+                let _ = host.cache_update(&proof.revision, admission).await;
+            }
         }
         let (code, reason) = match closing {
             Some((code, reason)) => (Some(code), Some(reason)),
@@ -295,7 +317,7 @@ fn missing_evidence(unsigned: Option<&'static str>, data: &str) -> Option<&'stat
     (text.as_str()? == MISSING_EVIDENCE).then_some(unsigned)
 }
 /// The native upgrade to `relay`, or `None` when the community does not
-/// advertise NIP-FI and the renderer connects instead. An advertising relay
+/// advertise NIP-FI and is not covered by an organization. An advertising relay
 /// is upgraded natively even without a token, so its missing-evidence `401`
 /// can become the sign-in prompt; a shadow relay admits that upgrade.
 async fn upgrade(
@@ -308,7 +330,7 @@ async fn upgrade(
     let url = url::Url::parse(relay).map_err(|_| "Invalid relay")?;
     let authorization = fi.assertion_for_socket(identity, &url, id, stop).await?;
     let (assertion, unsigned) = (authorization.assertion, authorization.unsigned);
-    if assertion.is_none() && unsigned.is_none() {
+    if assertion.is_none() && unsigned.is_none() && !fi.server_for(relay)?.protects(relay) {
         return Ok(None);
     }
     let cancel = match &assertion {
@@ -358,12 +380,7 @@ async fn upgrade(
                         // Missing evidence: the relay requires a token after all.
                         None => unsigned.unwrap_or("relay-unauthorized"),
                     },
-                    403 => {
-                        if let Some(assertion) = &assertion {
-                            let _ = fi.cache_result(&assertion.revision, &assertion.viewer, &assertion.relay, false).await;
-                        }
-                        "relay-forbidden"
-                    },
+                    403 => "relay-forbidden",
                     503 => "relay-unavailable",
                     _ => "Native socket upgrade refused",
                 }
@@ -434,8 +451,9 @@ mod tests {
     #[tokio::test]
     async fn socket_worker_records_only_matching_auth_and_persists_refusal() {
         use tauri::{ipc::InvokeResponseBody, Manager};
-        for policy_close in [false, true] {
-            let community = community(true).await;
+        for (requires, policy_close) in [(true, false), (true, true), (false, false), (false, true)]
+        {
+            let community = community(requires).await;
             let viewer = community.host.viewer().await.unwrap();
             let destination = relay(&community);
             let (close, closing) = oneshot::channel();
@@ -522,9 +540,58 @@ mod tests {
                 assert_eq!(refusal["data"], r#"["OK","second",false,"restricted"]"#);
             }
             assert!(!community.fi.snapshot().cache_admissions[0].allowed);
-            assert!(!community.fi.0.store.cache_admissions(&revision).unwrap()[0].allowed);
+            let saved = community.fi.0.store.cache_admissions(&revision).unwrap();
+            assert!(!saved[0].allowed);
+            assert_eq!(saved[0].retryable, policy_close);
             app.state::<Sockets>().clear();
             server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn forbidden_covered_upgrade_revokes_admission_with_or_without_fi() {
+        use tauri::Manager;
+        for requires in [true, false] {
+            let community = community(requires).await;
+            let destination = relay(&community);
+            let proof = community
+                .fi
+                .cache_proof(&community.host, &destination)
+                .await
+                .unwrap()
+                .unwrap();
+            community
+                .fi
+                .cache_update(&proof.revision, proof.admission)
+                .await
+                .unwrap();
+            let server = community.serve(vec![reply("403 Forbidden", "{}")]);
+            let app = tauri::test::mock_builder()
+                .manage(community.fi.clone())
+                .manage(community.host.clone())
+                .manage(Sockets::default())
+                .build(crate::app_context())
+                .unwrap();
+            let result = relay_socket_connect(
+                app.state(),
+                app.state(),
+                app.state(),
+                uuid::Uuid::new_v4().to_string(),
+                destination,
+                Channel::new(|_| Ok(())),
+            )
+            .await;
+            assert_eq!(result.err().as_deref(), Some("relay-forbidden"));
+            assert!(!community.fi.snapshot().cache_admissions[0].allowed);
+            let saved = community
+                .fi
+                .0
+                .store
+                .cache_admissions(&proof.revision)
+                .unwrap();
+            assert!(!saved[0].allowed);
+            assert!(!saved[0].retryable);
+            server.heads().await;
         }
     }
 
@@ -565,8 +632,9 @@ mod tests {
     async fn upgrade_omits_for_ordinary_discovery() {
         let community = community(false).await;
         let server = community.serve(vec![reply("403 Forbidden", "{}")]);
+        let public = super::super::tests::host(Arc::new(super::super::tests::Memory::default()));
         let result = upgrade(
-            &community.fi,
+            &public,
             &community.host,
             &relay(&community),
             uuid::Uuid::new_v4().to_string(),

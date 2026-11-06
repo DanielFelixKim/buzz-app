@@ -97,12 +97,14 @@ the interface unless an available tool actually supports that action.
   **Settings → Buzz → Identity → Organization sign-in**.
 - In organization builds, an organization community's conversations stay
   hidden while your organization sign-in has ended, including after a restart.
-  Its pages show **Sign in to continue**, and selecting it opens the browser
-  sign-in. Signing in must also confirm access for your Buzz identity and that
+  Its pages show **Sign in to continue**. An expired sign-in can open the browser
+  once; after you sign out or cancel, choose **Sign in** to start again.
+  Signing in must also confirm access for your Buzz identity and that
   community before saved conversations appear. **Try again** retries that check;
   **Sign in again** lets you change the account. Offline, previously confirmed
   conversations stay readable until the saved sign-in would have ended. A refused
-  account stays locked after restart. Other communities are not affected.
+  account stays locked after restart. A connection lifetime expiry keeps history
+  hidden while Buzz confirms access again. Other communities are not affected.
 - When a community requires organization sign-in, the sidebar or join dialog
   explains why and offers **Sign in with** the organization’s name or server
   address. Complete sign-in to reconnect; in the join dialog, choose **Continue**.
