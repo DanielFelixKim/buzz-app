@@ -7,10 +7,7 @@ mod browser;
 #[cfg(target_os = "macos")]
 mod close_menu;
 mod oauth_callback;
-use oauth_callback::{
-    oauth_callback_begin, oauth_callback_cancel, oauth_callback_complete, oauth_callback_wait,
-    OAuthCallbackHost,
-};
+use oauth_callback::OAuthCallbackHost;
 #[cfg(test)]
 mod browser_permissions_tests;
 mod pairing;
@@ -78,6 +75,7 @@ mod relaunch;
 mod relay;
 mod relay_admin;
 mod sign_out;
+mod system_clock;
 use identity::{
     identity_create, identity_export, identity_import, identity_import_legacy,
     identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
@@ -673,6 +671,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_prepare_remote_agent_authorization,
         identity_sign_builderlab_binding,
         federated_identity::federated_identity_snapshot,
+        federated_identity::federated_identity_servers,
         federated_identity::federated_identity_sign_in,
         federated_identity::federated_identity_cancel_sign_in,
         federated_identity::federated_identity_sign_out,
@@ -724,6 +723,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         clipboard::clipboard_write_text,
         media_stream_base,
         get_os_idle_seconds,
+        system_clock::system_hour_cycle,
         workspace_pick_folder,
         repositories_folder_validate,
         legacy_communities,
@@ -756,10 +756,6 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_close,
         plugin_host_read_file,
         plugin_host_resolve_directory,
-        oauth_callback_begin,
-        oauth_callback_wait,
-        oauth_callback_cancel,
-        oauth_callback_complete,
         nsec_backup_available,
         nsec_backup_session,
         nsec_backup_retry,

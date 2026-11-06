@@ -8,12 +8,10 @@ import { createServer } from "vite";
 import { expect, it } from "vitest";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 
-/** Runs `body` against the real Vite config in a fresh Node process, so it
- * exercises real config imports, not Vitest's resolver. Each run has isolated
- * .env files, no local Buzz settings and its own time limit. `body` may use
- * `assert`, `writeFileSync`, `rmSync`, `loadConfigFromFile`, `resolveConfig`
- * and `configFile`. */
-function loadConfig(body) {
+it("loads the broker's Vite config without native-compatibility warnings", () => {
+  // A fresh Node process exercises real config imports, not Vitest's resolver.
+  // Loading and resolving config never invoke configureServer, so they cannot
+  // read the Keychain, open a server, or contact a relay.
   const result = spawnSync(
     process.execPath,
     [
@@ -31,40 +29,6 @@ function loadConfig(body) {
           const cwd = process.cwd();
           try {
             process.chdir(directory);
-${body}
-          } finally {
-            process.chdir(cwd);
-            rmSync(directory, { recursive: true, force: true });
-          }
-        `,
-    ],
-    {
-      cwd: fileURLToPath(new URL("../", import.meta.url)),
-      env: {
-        // Keep local Buzz credentials out of the config subprocess.
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([key]) => !key.startsWith("BUZZ_"),
-          ),
-        ),
-        BUZZ_DEV_VIEWER: "a".repeat(64),
-        BUZZ_RELAY_URL: "",
-        BUZZ_COMMUNITY_ALIASES: "",
-        VITE_CONFIG_NATIVE_IGNORE_WARNING: "",
-      },
-      encoding: "utf8",
-      timeout: 30_000,
-    },
-  );
-  expect(result.error).toBeUndefined();
-  expect(result.status, result.stderr).toBe(0);
-  return result;
-}
-
-it("loads the broker's Vite config without native-compatibility warnings", () => {
-  // Loading and resolving config never invoke configureServer, so they cannot
-  // read the Keychain, open a server, or contact a relay.
-  const result = loadConfig(`
             const loaded = await loadConfigFromFile(
               { command: 'serve', mode: 'development' }, configFile,
             );
@@ -201,6 +165,47 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
             }
             delete process.env.BUZZ_DATABRICKS_HOST;
+            // The gateway descriptor is read from the process only (never
+            // .env files), compiled canonically, and off when unset.
+            const descriptor = (communities, gateway = 'https://gateway.example') => ({
+              version: 2, gateway, communities, access_path: '/v9/access', launcher_client: 'client-a',
+              headers: Object.fromEntries(
+                ['launcher_client', 'launcher_session'].map(role => [role, 'x-gw-' + role.replace('_', '-')]).concat(
+                  ['human_pubkey', 'agent_pubkey', 'community_id', 'channel_id', 'message_id', 'thread_id']
+                    .map(role => [role, 'x-gw-ctx-' + role.replace('_', '-')]),
+                ),
+              ),
+              reserved_prefixes: ['x-gw-ctx-'],
+              upstreams: { pi: { base: '/upstream/pi' } },
+            });
+            const gateway = (communities) => JSON.stringify(descriptor(communities));
+            const id = '22222222-2222-4222-8222-222222222222';
+            writeFileSync('.env.production', 'BUZZ_AGENT_GATEWAY=' + gateway([{ id, origin: 'wss://env.example' }]));
+            for (const [raw, expected] of [
+              [undefined, ''],
+              ['', ''],
+              ['  ', ''],
+              [gateway([{ id, origin: 'wss://relay.example/' }]), gateway([{ id, origin: 'https://relay.example' }])],
+            ]) {
+              if (raw === undefined) delete process.env.BUZZ_AGENT_GATEWAY;
+              else process.env.BUZZ_AGENT_GATEWAY = raw;
+              const result = await loadConfigFromFile({ command: 'build', mode: 'production' }, configFile);
+              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY'], JSON.stringify(expected));
+            }
+            rmSync('.env.production');
+            // Anything else must be a valid version 2 descriptor, and the
+            // build's error never echoes it.
+            for (const invalid of [
+              descriptor([{ id, origin: 'wss://relay.example' }], 'https://u:secret@gateway.example'),
+              { version: 1, gateway: 'https://secret.example', communities: [{ id, origin: 'wss://relay.example' }] },
+            ]) {
+              process.env.BUZZ_AGENT_GATEWAY = JSON.stringify(invalid);
+              await assert.rejects(
+                loadConfigFromFile({ command: 'build', mode: 'production' }, configFile),
+                error => !String(error).includes('secret') && /BUZZ_AGENT_GATEWAY/.test(String(error)),
+              );
+            }
+            delete process.env.BUZZ_AGENT_GATEWAY;
             // A fresh checkout uses production for both dev and packaged frontends.
             // Explicit empty values retain the deployment opt-out.
             for (const local of ['', 'BUZZ_BUILDERLAB_URL=']) {
@@ -296,37 +301,33 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
               /BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL/,
             );
-  `);
+          } finally {
+            process.chdir(cwd);
+            rmSync(directory, { recursive: true, force: true });
+          }
+        `,
+    ],
+    {
+      cwd: fileURLToPath(new URL("../", import.meta.url)),
+      env: {
+        // Keep local Buzz credentials out of the config subprocess.
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([key]) => !key.startsWith("BUZZ_"),
+          ),
+        ),
+        BUZZ_DEV_VIEWER: "a".repeat(64),
+        BUZZ_RELAY_URL: "",
+        BUZZ_COMMUNITY_ALIASES: "",
+        VITE_CONFIG_NATIVE_IGNORE_WARNING: "",
+      },
+      encoding: "utf8",
+      timeout: 30_000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
   expect(result.stderr).not.toContain("configLoader: 'native'");
-}, 35_000);
-
-it("compiles the Workforce descriptor from the process environment only", () => {
-  loadConfig(`
-            // The Workforce descriptor is read from the process only (never
-            // .env files), compiled canonically, and off when unset.
-            const workforce = (communities) => JSON.stringify({
-              version: 1, gateway: 'https://gateway.example', communities,
-            });
-            const id = '22222222-2222-4222-8222-222222222222';
-            writeFileSync('.env.production', 'BUZZ_WORKFORCE_GATEWAY=' + workforce([{ id, origin: 'wss://env.example' }]));
-            for (const [raw, expected] of [
-              [undefined, ''],
-              ['', ''],
-              [workforce([{ id, origin: 'wss://block.example/' }]), workforce([{ id, origin: 'https://block.example' }])],
-            ]) {
-              if (raw === undefined) delete process.env.BUZZ_WORKFORCE_GATEWAY;
-              else process.env.BUZZ_WORKFORCE_GATEWAY = raw;
-              const result = await loadConfigFromFile({ command: 'build', mode: 'production' }, configFile);
-              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_WORKFORCE_GATEWAY'], JSON.stringify(expected));
-            }
-            rmSync('.env.production');
-            process.env.BUZZ_WORKFORCE_GATEWAY = JSON.stringify({ version: 1, gateway: 'https://u:secret@gateway.example', communities: [] });
-            await assert.rejects(
-              loadConfigFromFile({ command: 'build', mode: 'production' }, configFile),
-              error => !String(error).includes('secret') && /BUZZ_WORKFORCE_GATEWAY/.test(String(error)),
-            );
-            delete process.env.BUZZ_WORKFORCE_GATEWAY;
-  `);
 }, 35_000);
 
 it("refuses exposed Vite servers before reading identity and serves the broker on loopback", async () => {

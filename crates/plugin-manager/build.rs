@@ -10,36 +10,48 @@ mod federated_identity_config;
 const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
 const BUILDERLAB_APPS_DOMAIN_KEY: &str = "BUZZ_BUILDERLAB_APPS_DOMAIN";
 const BUILDERLAB_API_BASE_PATH_KEY: &str = "BUZZ_BUILDERLAB_API_BASE_PATH";
-const WORKFORCE_KEY: &str = "BUZZ_WORKFORCE_GATEWAY";
+const GATEWAY_KEY: &str = "BUZZ_AGENT_GATEWAY";
 
-/// The gateway origin the public `BUZZ_WORKFORCE_GATEWAY` descriptor names,
-/// or empty when it is unset. Like the FI descriptor, it is read from the
-/// process only; Vite validates the whole descriptor for the frontend.
-fn workforce_gateway(process: Option<String>) -> Result<String, &'static str> {
+/// The gateway origin the `BUZZ_AGENT_GATEWAY` descriptor names, or empty
+/// when it is unset. Like the FI descriptor, it is read from the process
+/// only. This checks the version 2 shape and the origin, which is all the
+/// grant needs; Vite validates the whole descriptor for the frontend. Errors
+/// never echo the descriptor.
+fn descriptor_gateway(process: Option<String>) -> Result<String, &'static str> {
     let Some(raw) = process.filter(|raw| !raw.trim().is_empty()) else {
         return Ok(String::new());
     };
     let value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|_| "Workforce descriptor isn't JSON")?;
-    let keys: Vec<_> = value
+        serde_json::from_str(&raw).map_err(|_| "Agent gateway descriptor isn't JSON")?;
+    let object = value
         .as_object()
-        .map(|o| o.keys().collect())
-        .unwrap_or_default();
-    if keys != ["communities", "gateway", "version"]
-        || value.get("version") != Some(&serde_json::Value::from(1))
-        || !value["communities"]
-            .as_array()
-            .is_some_and(|c| !c.is_empty())
-    {
-        return Err("Workforce descriptor needs exactly version 1, a gateway and communities");
+        .ok_or("Agent gateway descriptor isn't an object")?;
+    if object.get("version").and_then(serde_json::Value::as_f64) != Some(2.0) {
+        return Err("Agent gateway descriptor must be version 2");
     }
-    let gateway = value
+    let mut keys: Vec<_> = object.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    if keys
+        != [
+            "access_path",
+            "communities",
+            "gateway",
+            "headers",
+            "launcher_client",
+            "reserved_prefixes",
+            "upstreams",
+            "version",
+        ]
+    {
+        return Err("Agent gateway descriptor has the wrong keys");
+    }
+    let gateway = object
         .get("gateway")
         .and_then(serde_json::Value::as_str)
-        .ok_or("Workforce descriptor needs a gateway")?;
-    let url = url::Url::parse(gateway).map_err(|_| "Invalid Workforce gateway")?;
+        .ok_or("Agent gateway descriptor needs a gateway")?;
+    let url = url::Url::parse(gateway).map_err(|_| "Invalid agent gateway")?;
     if url.scheme() != "https" || url.origin().ascii_serialization() != gateway {
-        return Err("Workforce gateway must be an https:// origin without a path or credentials");
+        return Err("Agent gateway must be an https:// origin without a path or credentials");
     }
     Ok(gateway.into())
 }
@@ -111,6 +123,40 @@ fn builderlab_apps_domain(
     Ok(domain.into())
 }
 
+const FI: &str = "BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG";
+const DEV_VIEWER: &str = "BUZZ_DEV_VIEWER";
+
+/// The build's Builderlab sign-in server, its first, when it has one. A
+/// `tauri dev` run's pinned viewer is the frontend's development broker.
+/// Tauri's `DEP_TAURI_DEV` reaches only builds with the `app` feature; a
+/// standalone build has none, so it drops the pin and keeps NIP-FI.
+fn federated_identity(
+    local: &Path,
+    env: impl Fn(&str) -> Option<String>,
+) -> Option<federated_identity_config::Config> {
+    let added = env(FI);
+    let mut values = build_env::load(local, &[BUILDERLAB_URL_KEY, DEV_VIEWER], &env)
+        .expect("Invalid Builderlab build configuration");
+    let builderlab_url = values.remove(BUILDERLAB_URL_KEY);
+    let dev_viewer = federated_identity_config::dev_viewer(
+        values.remove(DEV_VIEWER),
+        env("DEP_TAURI_DEV").as_deref(),
+    );
+    if added.as_deref().is_some_and(|raw| !raw.is_empty())
+        && builderlab_url.as_deref().is_some_and(|url| !url.is_empty())
+    {
+        panic!("BUZZ_BUILDERLAB_URL must be removed when FI is configured");
+    }
+    federated_identity_config::compiled(
+        added.as_deref(),
+        builderlab_url.as_deref(),
+        dev_viewer.as_deref(),
+    )
+    .expect("Invalid FI deployment descriptor")
+    .into_iter()
+    .next()
+}
+
 #[cfg_attr(test, allow(dead_code))]
 fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
@@ -122,20 +168,14 @@ fn main() {
         "cargo:rerun-if-changed={}",
         root.join("crates/build_env.rs").display()
     );
-    let process = |key| match std::env::var(key) {
+    let process = |key: &str| match std::env::var(key) {
         Ok(value) => Some(value),
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => panic!("Native build inputs must be UTF-8"),
     };
-    const FI: &str = "BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG";
     println!("cargo:rerun-if-env-changed={FI}");
-    let fi = std::env::var(FI)
-        .ok()
-        .filter(|raw| !raw.is_empty())
-        .map(|raw| {
-            federated_identity_config::Config::parse(&raw)
-                .expect("Invalid FI deployment descriptor")
-        });
+    println!("cargo:rerun-if-env-changed={DEV_VIEWER}");
+    let fi = federated_identity(&local, process);
     println!(
         "cargo:rustc-env={FI}={}",
         fi.as_ref()
@@ -144,19 +184,7 @@ fn main() {
     );
     // An FI build signs in to Builderlab through its NIP-FI identity origin.
     let (origin, api_base_path) = match &fi {
-        Some(config) => {
-            let legacy = build_env::load(&local, &[BUILDERLAB_URL_KEY], |_| {
-                process(BUILDERLAB_URL_KEY)
-            })
-            .expect("Invalid Builderlab build configuration");
-            if legacy
-                .get(BUILDERLAB_URL_KEY)
-                .is_some_and(|url| !url.is_empty())
-            {
-                panic!("BUZZ_BUILDERLAB_URL must be removed when FI is configured");
-            }
-            (config.identity_origin.clone(), config.api_base_path.clone())
-        }
+        Some(config) => (config.identity_origin.clone(), config.api_base_path.clone()),
         None => builderlab_target(&local, process(BUILDERLAB_URL_KEY))
             .expect("Invalid Builderlab build configuration"),
     };
@@ -165,27 +193,60 @@ fn main() {
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_ORIGIN={origin}");
     println!("cargo:rustc-env={BUILDERLAB_API_BASE_PATH_KEY}={api_base_path}");
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_APPS_DOMAIN={apps_domain}");
-    println!("cargo:rerun-if-env-changed={WORKFORCE_KEY}");
-    let gateway =
-        workforce_gateway(process(WORKFORCE_KEY)).expect("Invalid Workforce build configuration");
-    println!("cargo:rustc-env=BUZZ_WORKFORCE_GATEWAY_ORIGIN={gateway}");
+    println!("cargo:rerun-if-env-changed={GATEWAY_KEY}");
+    let gateway = descriptor_gateway(process(GATEWAY_KEY))
+        .expect("Invalid agent gateway build configuration");
+    println!("cargo:rustc-env=BUZZ_AGENT_GATEWAY_ORIGIN={gateway}");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Tauri's metadata in each build mode: `tauri dev` builds without
+    /// `custom-protocol`; `tauri build`, `--debug` or not, builds with it; a
+    /// standalone build, without the `app` feature, gets none.
     #[test]
-    fn workforce_grant_is_only_the_descriptor_gateway_origin() {
-        assert_eq!(workforce_gateway(None).unwrap(), "");
-        assert_eq!(workforce_gateway(Some(" ".into())).unwrap(), "");
+    fn pinned_viewer_turns_off_nip_fi_only_in_tauri_dev() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join(".env.local");
+        std::fs::write(&local, "BUZZ_DEV_VIEWER=viewer.example\n").unwrap();
+        for (mode, tauri_dev, fi) in [
+            ("dev", Some("true"), None),
+            ("packaged debug", Some("false"), Some("bb-public")),
+            ("packaged release", Some("false"), Some("bb-public")),
+            ("standalone", None, Some("bb-public")),
+        ] {
+            let env = |key: &str| {
+                (key == "DEP_TAURI_DEV")
+                    .then(|| tauri_dev.map(String::from))
+                    .flatten()
+            };
+            let selected = federated_identity(&local, env).map(|config| config.id);
+            assert_eq!(selected.as_deref(), fi, "{mode}");
+        }
+    }
+
+    #[test]
+    fn gateway_grant_is_only_the_descriptor_gateway_origin() {
+        assert_eq!(descriptor_gateway(None).unwrap(), "");
+        assert_eq!(descriptor_gateway(Some(" ".into())).unwrap(), "");
         let descriptor = |gateway: &str| {
             Some(format!(
-                r#"{{"version":1,"gateway":"{gateway}","communities":[{{}}]}}"#
+                r#"{{"version":2,"gateway":"{gateway}","communities":[],"access_path":"/a","launcher_client":"c","headers":{{}},"reserved_prefixes":[],"upstreams":{{}}}}"#
             ))
         };
         assert_eq!(
-            workforce_gateway(descriptor("https://gateway.example")).unwrap(),
+            descriptor_gateway(descriptor("https://gateway.example")).unwrap(),
+            "https://gateway.example"
+        );
+        assert_eq!(
+            descriptor_gateway(Some(
+                descriptor("https://gateway.example")
+                    .unwrap()
+                    .replace(r#""version":2"#, r#""version":2.0"#)
+            ))
+            .unwrap(),
             "https://gateway.example"
         );
         for gateway in [
@@ -196,18 +257,24 @@ mod tests {
             "https://GATEWAY.example",
             "gateway.example",
         ] {
-            assert!(workforce_gateway(descriptor(gateway)).is_err(), "{gateway}");
+            assert!(
+                descriptor_gateway(descriptor(gateway)).is_err(),
+                "{gateway}"
+            );
         }
-        assert!(workforce_gateway(Some("not json".into())).is_err());
-        assert!(workforce_gateway(Some(
-            r#"{"version":2,"gateway":"https://gateway.example","communities":[{}]}"#.into()
-        ))
-        .is_err());
         for raw in [
-            r#"{"version":1,"gateway":"https://gateway.example","communities":[]}"#,
-            r#"{"version":1,"gateway":"https://gateway.example","communities":[{}],"token":"x"}"#,
+            "not json".to_owned(),
+            "[]".to_owned(),
+            r#"{"version":1,"gateway":"https://gateway.example","communities":[{}]}"#.to_owned(),
+            descriptor("https://gateway.example")
+                .unwrap()
+                .replace(r#""version":2"#, r#""version":3"#),
+            descriptor("https://gateway.example")
+                .unwrap()
+                .replace(r#""upstreams":{}"#, r#""upstreams":{},"token":"x""#),
         ] {
-            assert!(workforce_gateway(Some(raw.into())).is_err(), "{raw}");
+            let error = descriptor_gateway(Some(raw.clone())).unwrap_err();
+            assert!(!error.contains("gateway.example"), "{raw}");
         }
     }
 

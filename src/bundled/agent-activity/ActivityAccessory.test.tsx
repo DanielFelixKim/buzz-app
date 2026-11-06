@@ -686,14 +686,14 @@ it("notes a finished local request that ran without its gateway, and nothing for
     act(() => {
       const work = begin();
       work.notice(
-        "Ran without the Workforce gateway: Buzz couldn't reach the gateway.",
+        "Ran without the agent gateway: Buzz couldn't reach the gateway.",
       );
       work.started();
       work.finish({ ok: true });
     });
     expect(
       screen.getByText(
-        "Blossom · Ran without the Workforce gateway: Buzz couldn't reach the gateway.",
+        "Blossom · Ran without the agent gateway: Buzz couldn't reach the gateway.",
       ),
     ).toBeInTheDocument();
   } finally {
@@ -715,7 +715,7 @@ it("keeps a fallback turn's outcome beside its notice when it is stopped or fail
       agent: A,
     });
   const NOTICE =
-    "Ran without the Workforce gateway: Buzz couldn't reach the gateway.";
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
   try {
     act(() => {
       const work = begin();

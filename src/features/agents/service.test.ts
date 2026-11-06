@@ -57,6 +57,7 @@ import {
   type Delivery,
   type Trigger,
   fromOwner,
+  HOSTED_INSTRUCTIONS_CHANGED,
   teamPrompt,
 } from "./service";
 import {
@@ -83,9 +84,10 @@ import {
 } from "../../shared/device-settings";
 import {
   type EligibleRoute,
-  WorkforceRoutes,
-  workforceRoutes,
-} from "./workforce/route";
+  GatewayRoutes,
+  gatewayRoutes,
+} from "./gateway/route";
+import { VECTOR_PROFILE } from "./gateway/vectors";
 import {
   bot,
   channel,
@@ -5186,7 +5188,7 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     type: "example/echo",
     name: " Echo ",
     picture,
-    config: { reply: "chosen" },
+    config: { reply: "chosen", model: "model-b", effort: "high" },
   });
   expect(native.create).toHaveBeenCalledWith(
     "https://relay.example.test",
@@ -5199,17 +5201,23 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     picture,
   );
   expect(agent).toMatchObject({ pubkey: bot, name: "Echo", picture });
-  expect(agent.config).toEqual({ reply: "chosen" });
+  expect(agent.config).toEqual({
+    reply: "chosen",
+    model: "model-b",
+    effort: "high",
+  });
   expect(service.find(bot)).toMatchObject({
     picture,
-    config: { reply: "chosen" },
+    config: { reply: "chosen", model: "model-b", effort: "high" },
   });
   // Everything but the config still starts from the type's defaults.
   expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
     "interest/default",
     "watch/channel",
   ]);
-  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain("chosen");
+  expect(
+    JSON.parse(storage.getItem(`buzz.agent.v1:${bot}`) ?? "null").config,
+  ).toEqual({ reply: "chosen", model: "model-b", effort: "high" });
 });
 
 it("keeps a new agent whose picture could not be set", async () => {
@@ -9546,6 +9554,66 @@ it("has a hosted agent's provider stop its turn in one conversation", async () =
   ).resolves.toBe(true);
 });
 
+it("reads and replaces a hosted agent's instructions through its provider", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  const instructions = {
+    get: vi.fn(
+      async (_: { pubkey: string; community: string; signal: AbortSignal }) =>
+        "Be brief.",
+    ),
+    set: vi.fn(
+      async (_: {
+        pubkey: string;
+        community: string;
+        instructions: string;
+        signal: AbortSignal;
+      }) => {},
+    ),
+  };
+  plugin.agents.register({ ...type, remote: { ...remote, instructions } });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  const hosted = service.hostedInstructions(hostedKey);
+  await expect(hosted?.get()).resolves.toBe("Be brief.");
+  await hosted?.set("Be kind.", "Be brief.");
+  expect(instructions.get).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
+  expect(instructions.set).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    instructions: "Be kind.",
+    signal: expect.any(AbortSignal),
+  });
+  // An edit saved elsewhere since the caller read is never replaced.
+  instructions.set.mockClear();
+  await expect(hosted?.set("Be kind.", "Be terse.")).rejects.toThrow(
+    HOSTED_INSTRUCTIONS_CHANGED,
+  );
+  expect(instructions.set).not.toHaveBeenCalled();
+  // A caller's own signal stops the call too.
+  const stop = new AbortController();
+  await hosted?.get(stop.signal);
+  const signal = instructions.get.mock.calls.at(-1)?.[0].signal;
+  if (!signal) throw new Error("The provider was not called.");
+  expect(signal.aborted).toBe(false);
+  stop.abort();
+  expect(signal.aborted).toBe(true);
+  // A local agent, or one nobody has, has none.
+  await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.hostedInstructions(bot)).toBeUndefined();
+  expect(service.hostedInstructions("f".repeat(64))).toBeUndefined();
+});
+
+it("offers no instructions for a hosted agent whose provider has none", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.hostedInstructions(hostedKey)).toBeUndefined();
+});
+
 it("refuses to stop a hosted agent whose provider cannot", async () => {
   const { service, plugin } = await setup();
   const { type } = cloud();
@@ -13334,6 +13402,333 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
   },
 );
 
+describe("external private Solo creation", () => {
+  async function fixture(
+    scopes: readonly import("./external-connection").ExternalScope[] = [
+      "create",
+    ],
+  ) {
+    vi.stubEnv(
+      "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
+      "https://relay.example.test",
+    );
+    const f = await setup();
+    const saved = vi.fn<NonNullable<RelaySession["mainAgent"]>["read"]>(
+      async () => sibling,
+    );
+    const libraryRead = vi.fn(async () => ({
+      definitions: [],
+      identities: [{ pubkey: sibling, name: "Saved remote Bestie" }],
+    }));
+    const lifetime = new AbortController();
+    const choices = createAgentChoices({
+      scope: `https://relay.example.test:${viewer}`,
+      library: createAgentLibrary(libraryRead).queries,
+      native: {
+        snapshot: f.service.local,
+        subscribe: f.service.subscribe,
+        refresh: () => f.service.refresh(),
+      },
+      archives: {
+        snapshot: () => ({
+          status: "ready",
+          archived: [...f.archives.archived],
+        }),
+        subscribe: () => () => {},
+        state: (key) => f.archives.state(key),
+        ensure: f.archives.ensure,
+        refresh: f.archives.refresh,
+      },
+      signal: lifetime.signal,
+    });
+    Object.assign(f.session, {
+      mainAgent: { read: saved, write: vi.fn(async () => {}) },
+      agentChoices: choices,
+    });
+    let handler: import("../host/service").McpHandler | undefined;
+    const closed = runnerGate();
+    const close = vi.fn(async () => closed.resolve());
+    f.ctx.provide("host", {
+      serveMcp: async (receive: import("../host/service").McpHandler) => {
+        handler = receive;
+        return {
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [],
+          closed: closed.promise,
+          close,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const owner = f.ctx.extend({
+      pluginOwner: { id: "buzz.agents", revision: "one" },
+    });
+    const controller = new AbortController();
+    const server = await owner.agents.connectExternal(
+      bot,
+      controller.signal,
+      () => {},
+      scopes,
+    );
+    const call = handler;
+    if (!call) throw new Error("Missing external server handler");
+    f.native.publish.mockClear();
+    f.native.query.mockImplementation(async (_member, filters) => {
+      const created = f.native.publish.mock.calls.find(
+        ([, value]) => value.kind === 9007,
+      )?.[1];
+      if (!created) return [];
+      const id = created.tags?.find(([key]) => key === "h")?.[1] as string;
+      const kind = (filters[0] as { kinds?: number[] } | undefined)?.kinds?.[0];
+      if (kind === 39000)
+        return [
+          event("metadata", {
+            kind,
+            tags: [
+              ["d", id],
+              ["name", "Triage"],
+              ["private"],
+              ["t", "stream"],
+              ["t", "buzz.solo"],
+              ["t", "buzz.session.named"],
+            ],
+          }),
+        ];
+      if (kind === 39002)
+        return [
+          event("roster", {
+            kind,
+            tags: [
+              ["d", id],
+              ["p", bot, "", "owner"],
+              ...(created.tags ?? [])
+                .filter(([key]) => key === "p")
+                .map((tag) => [...tag]),
+            ],
+          }),
+        ];
+      return [];
+    });
+    return {
+      ...f,
+      saved,
+      libraryRead,
+      controller,
+      close,
+      create: (args: Record<string, unknown> = { name: "Triage" }) =>
+        call({
+          id: 1,
+          method: "tools/call",
+          params: { name: "channel_create", arguments: args },
+        }),
+      cleanup: async () => {
+        await server.close();
+        lifetime.abort();
+        await f.ctx.fiber.dispose();
+      },
+    };
+  }
+
+  it.each([sibling, bot])(
+    "uses native owner/caller and the account-saved worker %s",
+    async (worker) => {
+      const f = await fixture();
+      try {
+        f.saved.mockResolvedValueOnce(worker);
+        const reply = await f.create();
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringMatching(/^created /),
+        );
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.not.stringContaining("did not keep the Solo label"),
+        );
+        expect(f.saved).toHaveBeenCalledOnce();
+        expect(f.libraryRead).toHaveBeenCalledOnce();
+        expect(f.native.publish).toHaveBeenCalledOnce();
+        expect(f.native.publish).toHaveBeenCalledWith(
+          { pubkey: bot, relay: "wss://relay.example.test" },
+          {
+            kind: 9007,
+            content: "",
+            tags: [
+              ["h", expect.any(String)],
+              ["name", "Triage"],
+              ["visibility", "private"],
+              ["channel_type", "stream"],
+              ["t", "buzz.solo"],
+              ["t", "buzz.session.named"],
+              ["p", viewer],
+              ...(worker === bot ? [] : [["p", worker]]),
+            ],
+          },
+        );
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringContaining(`added ${viewer}`),
+        );
+        if (worker !== bot)
+          expect(reply).toHaveProperty(
+            "result.content.0.text",
+            expect.stringContaining(`added ${worker}`),
+          );
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it.each([
+    "unset",
+    "missing",
+    "invalid",
+    "unavailable",
+    "archived",
+    "unreadable",
+    "unsupported",
+  ])(
+    "fails before publication when the configured worker is %s",
+    async (reason) => {
+      const f = await fixture();
+      try {
+        if (reason === "unset") f.saved.mockResolvedValueOnce(undefined);
+        else if (reason === "missing") f.saved.mockResolvedValueOnce(null);
+        else if (reason === "invalid")
+          f.saved.mockResolvedValueOnce("not-a-key");
+        else if (reason === "unavailable")
+          f.saved.mockResolvedValueOnce("e".repeat(64));
+        else if (reason === "archived") f.archives.archived.add(sibling);
+        else if (reason === "unreadable")
+          f.saved.mockRejectedValueOnce(new Error("offline"));
+        else Object.assign(f.session, { mainAgent: undefined });
+        const reply = await f.create();
+        expect(reply).toHaveProperty("result.isError", true);
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringMatching(
+            /Bestie.*Buzz|Bestie could not be read|Bestie is not available/,
+          ),
+        );
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it("requires new consent without even looking up the configured worker", async () => {
+    const f = await fixture(["read", "post"]);
+    try {
+      expect(await f.create()).toHaveProperty("result._meta.buzz/error", {
+        code: "authorization_required",
+        required_scopes: ["create"],
+      });
+      expect(f.saved).not.toHaveBeenCalled();
+      expect(f.libraryRead).not.toHaveBeenCalled();
+      expect(f.native.publish).not.toHaveBeenCalled();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it.each(["library", "refresh"])(
+    "offers retry guidance when the worker's %s lookup fails",
+    async (source) => {
+      const f = await fixture();
+      try {
+        if (source === "library")
+          f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
+        else
+          vi.spyOn(f.service, "refresh").mockRejectedValueOnce(
+            new Error("inventory offline"),
+          );
+        const reply = await f.create();
+        expect(reply).toHaveProperty("result.isError", true);
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          "Your saved Bestie could not be checked. Check the community connection and try again.",
+        );
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it("uses a verified local Bestie despite a partial library failure", async () => {
+    const f = await fixture();
+    try {
+      f.saved.mockResolvedValueOnce(bot);
+      f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
+      expect(await f.create()).toHaveProperty(
+        "result.content.0.text",
+        expect.stringMatching(/^created /),
+      );
+      expect(f.native.publish).toHaveBeenCalledOnce();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it("reports native publication refusal without claiming that a Solo exists", async () => {
+    const f = await fixture();
+    try {
+      f.native.publish.mockRejectedValueOnce(
+        new Error("This member cannot join the Solo."),
+      );
+      const reply = await f.create();
+      expect(reply).toHaveProperty("result.isError", true);
+      expect(reply).toHaveProperty(
+        "result.content.0.text",
+        "This member cannot join the Solo.",
+      );
+      expect(f.native.publish).toHaveBeenCalledOnce();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it.each(["account", "inventory"])(
+    "revokes creation during the pending %s lookup",
+    async (stage) => {
+      const f = await fixture();
+      const started = runnerGate(),
+        release = runnerGate();
+      if (stage === "account")
+        f.saved.mockImplementationOnce(async () => {
+          started.resolve();
+          await release.promise;
+          return sibling;
+        });
+      else
+        f.libraryRead.mockImplementationOnce(async () => {
+          started.resolve();
+          await release.promise;
+          return {
+            definitions: [],
+            identities: [{ pubkey: sibling, name: "Bestie" }],
+          };
+        });
+      const outcome = f.create().catch((error) => error);
+      try {
+        await started.promise;
+        f.controller.abort();
+      } finally {
+        release.resolve();
+      }
+      try {
+        expect(await outcome).toBeInstanceOf(Error);
+        await vi.waitFor(() => expect(f.close).toHaveBeenCalled());
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+});
+
 it.each(["return", "throw"])(
   "revokes source commands on %s without losing queued output",
   async (ending) => {
@@ -14992,28 +15387,28 @@ describe("Buzz settings", () => {
   );
 });
 
-describe("Workforce routing", () => {
+describe("gateway routing", () => {
   const COMMUNITY = "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
-  const route = (key: string) => workforceRoutes.routeFor(key as never);
+  const route = (key: string) => gatewayRoutes.routeFor(key as never);
   let configured: MockInstance<() => boolean>;
-  let set: MockInstance<typeof workforceRoutes.setMembership>;
-  let removed: MockInstance<typeof workforceRoutes.removeMembership>;
+  let set: MockInstance<typeof gatewayRoutes.setMembership>;
+  let removed: MockInstance<typeof gatewayRoutes.removeMembership>;
   /** What was fed for `key`, in order. */
   const fed = (key: string = bot) =>
     set.mock.calls.map(([member]) => member).filter((m) => m.key === key);
   beforeEach(() => {
     configured = vi
-      .spyOn(workforceRoutes, "configured", "get")
+      .spyOn(gatewayRoutes, "configured", "get")
       .mockReturnValue(true);
-    set = vi.spyOn(workforceRoutes, "setMembership");
-    removed = vi.spyOn(workforceRoutes, "removeMembership");
+    set = vi.spyOn(gatewayRoutes, "setMembership");
+    removed = vi.spyOn(gatewayRoutes, "removeMembership");
   });
   afterEach(() => {
     configured.mockRestore();
     set.mockRestore();
     removed.mockRestore();
     // Routing state is a singleton; leave no membership behind.
-    workforceRoutes.removeMembership(bot as never);
+    gatewayRoutes.removeMembership(bot as never);
   });
 
   it("feeds a local agent with the live session and the community ID it read", async () => {
@@ -15104,7 +15499,7 @@ describe("Workforce routing", () => {
       );
   });
 
-  it("feeds nothing for hosted agents, and nothing at all when the build has no Workforce configuration", async () => {
+  it("feeds nothing for hosted agents, and nothing at all when the build has no gateway configuration", async () => {
     const f = await setup();
     const { type } = cloud();
     f.plugin.agents.register(type);
@@ -15143,9 +15538,9 @@ describe("Workforce routing", () => {
   });
 });
 
-describe("Workforce gateway gate", () => {
+describe("agent gateway gate", () => {
   const GATEWAY_BLOCKED =
-    "Buzz couldn't reach the Workforce gateway. Check your network or VPN connection, then try again.";
+    "Buzz couldn't reach the agent gateway. Check your network connection, then try again.";
   const eligible: EligibleRoute = Object.freeze({
     kind: "eligible",
     revision: 3,
@@ -15155,7 +15550,7 @@ describe("Workforce gateway gate", () => {
       human_pubkey: viewer,
       agent_pubkey: bot,
     }),
-    access: "unrestricted",
+    profile: VECTOR_PROFILE,
     harnesses: Object.freeze(["relay"]),
   });
   const blockedRoute = Object.freeze({
@@ -15173,20 +15568,28 @@ describe("Workforce gateway gate", () => {
     ],
   });
   let configured: MockInstance<() => boolean>;
-  let ready: MockInstance<typeof workforceRoutes.routeForTurn>;
+  let ready: MockInstance<typeof gatewayRoutes.routeForTurn>;
+  let upstream: MockInstance<typeof gatewayRoutes.upstream>;
+  const RELAY_UPSTREAM = Object.freeze({ base: "/upstream/relay" });
   beforeEach(() => {
     configured = vi
-      .spyOn(workforceRoutes, "configured", "get")
+      .spyOn(gatewayRoutes, "configured", "get")
       .mockReturnValue(true);
-    ready = vi.spyOn(workforceRoutes, "routeForTurn");
+    ready = vi.spyOn(gatewayRoutes, "routeForTurn");
+    upstream = vi
+      .spyOn(gatewayRoutes, "upstream")
+      .mockImplementation((harness) =>
+        harness === "relay" ? RELAY_UPSTREAM : undefined,
+      );
   });
   afterEach(() => {
     configured.mockRestore();
     ready.mockRestore();
-    workforceRoutes.removeMembership(bot as never);
+    upstream.mockRestore();
+    gatewayRoutes.removeMembership(bot as never);
   });
 
-  /** An agent of `workforce`-capable (or not) type, mentioned once. */
+  /** An agent of `gateway`-capable (or not) type, mentioned once. */
   async function mentioned(
     capable: boolean,
     asked = mention,
@@ -15206,14 +15609,14 @@ describe("Workforce gateway gate", () => {
       defaults: () => ({ config: {} }),
       run,
       models,
-      ...(capable ? { workforce: { harness: "relay" } } : {}),
+      ...(capable ? { gateway: { harness: "relay" } } : {}),
     });
     await f.service.create({ type: "example/relay", name: "Relay" });
     f.emit({ events: [asked], channelId });
     return { ...f, run, models };
   }
   const NOTICE =
-    "Ran without the Workforce gateway: Buzz couldn't reach the gateway.";
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
 
   it("runs a blocked membership's harness with its own configuration and notes that on the turn", async () => {
     ready.mockReturnValue(blockedRoute);
@@ -15221,12 +15624,12 @@ describe("Workforce gateway gate", () => {
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(ready).toHaveBeenCalledWith(bot);
     const delivery = f.run.mock.calls[0]?.[0];
-    expect(delivery).not.toHaveProperty("workforce");
-    expect(delivery?.workforceFallback).toEqual({
+    expect(delivery).not.toHaveProperty("gateway");
+    expect(delivery?.gatewayFallback).toEqual({
       reason: "network",
       notice: NOTICE,
     });
-    expect(Object.isFrozen(delivery?.workforceFallback)).toBe(true);
+    expect(Object.isFrozen(delivery?.gatewayFallback)).toBe(true);
     expect(f.activity.reader.work()[0]).toMatchObject({
       messageId: mention.id,
       notice: NOTICE,
@@ -15235,10 +15638,13 @@ describe("Workforce gateway gate", () => {
 
   it("falls back at once while a readiness probe hangs, never waiting on the gateway", async () => {
     const id = "22222222-2222-4222-8222-222222222222";
-    const routes = new WorkforceRoutes(() => ({
-      version: 1,
+    const routes = new GatewayRoutes(() => ({
+      version: 2,
       gateway: "https://gateway.example.test",
       communities: [{ id, origin: "wss://relay.example.test" }],
+      access_path: "/v9/access",
+      ...VECTOR_PROFILE,
+      upstreams: { pi: { base: "/upstream/pi" } },
     }));
     const request = vi.fn(() => new Promise<never>(() => {}));
     routes.bindRequest(request);
@@ -15253,10 +15659,10 @@ describe("Workforce gateway gate", () => {
     ready.mockImplementation((key) => routes.routeForTurn(key));
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    expect(f.run.mock.calls[0]?.[0]?.workforceFallback).toEqual({
+    expect(f.run.mock.calls[0]?.[0]?.gatewayFallback).toEqual({
       reason: "readiness_pending",
       notice:
-        "Ran without the Workforce gateway: Workforce access was still being checked.",
+        "Ran without the agent gateway: gateway access was still being checked.",
     });
   });
 
@@ -15266,7 +15672,7 @@ describe("Workforce gateway gate", () => {
     f.plugin.agents.register({
       ...f.type,
       id: "watcher",
-      workforce: { harness: "relay" },
+      gateway: { harness: "relay" },
     });
     await f.service.create({ type: "example/watcher", name: "Watcher" });
     await f.service.save(bot, {
@@ -15281,8 +15687,8 @@ describe("Workforce gateway gate", () => {
       type: "watch",
       event: { id: watched.id },
     });
-    expect(delivery).not.toHaveProperty("workforce");
-    expect(delivery?.workforceFallback).toEqual({
+    expect(delivery).not.toHaveProperty("gateway");
+    expect(delivery?.gatewayFallback).toEqual({
       reason: "network",
       notice: NOTICE,
     });
@@ -15298,7 +15704,7 @@ describe("Workforce gateway gate", () => {
       f.plugin.agents.register({
         ...f.type,
         id: "timed",
-        workforce: { harness: "relay" },
+        gateway: { harness: "relay" },
       });
       await f.service.create({ type: "example/timed", name: "Timed" });
       await f.service.save(bot, {
@@ -15320,9 +15726,9 @@ describe("Workforce gateway gate", () => {
       expect(f.run).toHaveBeenCalledTimes(1);
       const delivery = f.run.mock.calls[0]?.[0];
       expect(delivery?.trigger.type).toBe("timer");
-      expect(delivery).not.toHaveProperty("workforce");
+      expect(delivery).not.toHaveProperty("gateway");
       expect(delivery).not.toHaveProperty("channelId");
-      expect(delivery?.workforceFallback).toEqual({
+      expect(delivery?.gatewayFallback).toEqual({
         reason: "network",
         notice: NOTICE,
       });
@@ -15347,7 +15753,7 @@ describe("Workforce gateway gate", () => {
     );
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(f.models).toHaveBeenCalled();
-    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
     expect(f.activity.reader.work()[0]?.notice).toBe(NOTICE);
   });
 
@@ -15357,8 +15763,8 @@ describe("Workforce gateway gate", () => {
       const f = await mentioned(true);
       await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
       expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
-      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforceFallback");
-      workforceRoutes.removeMembership(bot as never);
+      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+      gatewayRoutes.removeMembership(bot as never);
     }
   });
 
@@ -15366,8 +15772,20 @@ describe("Workforce gateway gate", () => {
     ready.mockReturnValue(blockedRoute);
     const f = await mentioned(false);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
-    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforceFallback");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+    expect(ready).not.toHaveBeenCalled();
+  });
+
+  it("runs a harness this build gives no upstream unchanged, without a notice or asking for a route", async () => {
+    ready.mockReturnValue(blockedRoute);
+    upstream.mockReturnValue(undefined);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    expect(upstream).toHaveBeenCalledWith("relay");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
+    expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
     expect(ready).not.toHaveBeenCalled();
   });
 
@@ -15375,8 +15793,8 @@ describe("Workforce gateway gate", () => {
     ready.mockReturnValue({ ...eligible, harnesses: ["pi"] });
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
-    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforceFallback");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gatewayFallback");
   });
 
   it("hands an eligible route and the turn's frozen context to a type that routes through the gateway", async () => {
@@ -15384,15 +15802,16 @@ describe("Workforce gateway gate", () => {
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     const delivery = f.run.mock.calls[0]?.[0];
-    expect(delivery?.workforce?.route).toBe(eligible);
-    expect(delivery?.workforce?.turn).toEqual({
+    expect(delivery?.gateway?.route).toBe(eligible);
+    expect(delivery?.gateway?.upstream).toBe(RELAY_UPSTREAM);
+    expect(delivery?.gateway?.turn).toEqual({
       channel_id: channel,
       message_id: mention.id,
       thread_id: mention.id,
     });
     expect(Object.isFrozen(delivery)).toBe(true);
-    expect(Object.isFrozen(delivery?.workforce)).toBe(true);
-    expect(Object.isFrozen(delivery?.workforce?.turn)).toBe(true);
+    expect(Object.isFrozen(delivery?.gateway)).toBe(true);
+    expect(Object.isFrozen(delivery?.gateway?.turn)).toBe(true);
   });
 
   /** The turn context of the one run `asked` started in `channelId`. */
@@ -15404,7 +15823,7 @@ describe("Workforce gateway gate", () => {
     ready.mockReturnValue(eligible);
     const f = await mentioned(true, asked, channelId, prepare);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    return f.run.mock.calls[0]?.[0].workforce?.turn;
+    return f.run.mock.calls[0]?.[0].gateway?.turn;
   };
   const root = "e".repeat(64);
   const reply = (id: string, h: string) =>
@@ -15464,19 +15883,20 @@ describe("Workforce gateway gate", () => {
     });
   });
 
-  it("adds no Workforce field and asks for no route when the build has no configuration", async () => {
+  it("adds no gateway field and asks for no route when the build has no configuration", async () => {
     configured.mockReturnValue(false);
+    upstream.mockReturnValue(undefined);
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
     expect(ready).not.toHaveBeenCalled();
   });
 
-  it("adds no Workforce field for an external membership, even for a harness", async () => {
+  it("adds no gateway field for an external membership, even for a harness", async () => {
     ready.mockReturnValue(external);
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("workforce");
+    expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
     expect(ready).toHaveBeenCalledTimes(1);
   });
 });

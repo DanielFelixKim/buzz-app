@@ -198,12 +198,12 @@ import {
 } from "../solo/default-agent";
 import type { AgentPlugins } from "../../plugins/requests";
 import type { DeviceSettings } from "../../shared/device-settings";
-import type { TurnContext } from "./workforce/contract";
+import type { TurnContext } from "./gateway/contract";
 import {
   type BlockedReason,
   type EligibleRoute,
-  workforceRoutes,
-} from "./workforce/route";
+  gatewayRoutes,
+} from "./gateway/route";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -321,7 +321,7 @@ export type AgentViewProps<Config = unknown> = {
  * starting config, from `defaults`, to fill in. The app owns its key, name and
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
-  /** Existing cards supply their membership and scoped settings action. */
+  /** Existing agent when editing saved config or rendering a library card. */
   agent?: Agent<Config>;
   openSettings?: () => void;
   /** Model fields may use the compact card treatment in the library. */
@@ -341,9 +341,10 @@ export type AgentTab<Config = unknown> = Readonly<{
   splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
-/** A tab a plugin adds to the settings of every agent running on this device,
- * whatever its type, or only those `when` accepts. It reads the agent and
- * saves through the plugin's own `agents`. */
+/** A tab a plugin adds to the settings of every agent shown on this device,
+ * whatever its type or place, or only those `when` accepts: a tab for local
+ * agents only says so in its `when`. It reads the agent and saves through the
+ * plugin's own `agents`. */
 export type AgentAddedTab = Readonly<{
   id: string;
   title: string;
@@ -673,17 +674,22 @@ export type Delivery<Config = unknown> = Readonly<{
   named?(title: string): void;
   /** Rebuilds an addressed subscription prompt after harness readiness or a queue wait. */
   wakeText?(): Promise<string | undefined>;
-  /** This membership routes inference through the Workforce gateway: its
-   * eligible route and this turn's context, both frozen at dispatch. Absent
-   * when it doesn't: an external community, Workforce off in this build, a
-   * type that names no harness or one the gateway doesn't enable, or a
-   * blocked route (see `workforceFallback`). */
-  workforce?: Readonly<{ route: EligibleRoute; turn: TurnContext }>;
+  /** This membership routes inference through the agent gateway: its
+   * eligible route, this turn's context and the upstream base this build
+   * configures for the type's harness, all frozen at dispatch. Absent when it
+   * doesn't: an external community, gateway routing off in this build, a
+   * type that names no harness, one this build gives no upstream or one the
+   * gateway doesn't enable, or a blocked route (see `gatewayFallback`). */
+  gateway?: Readonly<{
+    route: EligibleRoute;
+    turn: TurnContext;
+    upstream: Readonly<{ base: string }>;
+  }>;
   /** A blocked route sent this turn to the type's own configuration, decided
-   * before dispatch; never with `workforce`. The host owns the decision and
+   * before dispatch; never with `gateway`. The host owns the decision and
    * `notice`; a type shows `notice` in this turn's visible activity where the
    * host can't (any turn but a mention, whose request it already notes). */
-  workforceFallback?: Readonly<{ reason: BlockedReason; notice: string }>;
+  gatewayFallback?: Readonly<{ reason: BlockedReason; notice: string }>;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a
@@ -816,6 +822,8 @@ export type AgentType<Config = unknown> = {
   ProfileActions?: ComponentType<{ children: ReactNode }>;
   /** Compact model field for creation and library cards; the type owns discovery and configuration. */
   CreateModel?: ComponentType<AgentCreateProps<Config>>;
+  /** Compact Thinking control for creation; the type owns its values and default representation. */
+  CreateThinking?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,
    * provider identity, modal framing and focus behavior. */
   provider?: AgentProvider;
@@ -879,11 +887,12 @@ export type AgentType<Config = unknown> = {
    * again marked `resumed` if the owner chooses to resume it, to carry on in
    * the conversation's saved session, or in a new one shown the conversation. */
   resumes?: boolean;
-  /** The type can route inference through the Workforce gateway with
-   * `Delivery.workforce`, under this stable harness name (e.g. "pi"). It does
-   * only for memberships whose gateway enables the harness; otherwise, and
-   * for types without it, turns keep their existing behavior. */
-  workforce?: Readonly<{ harness: string }>;
+  /** The type can route inference through the agent gateway with
+   * `Delivery.gateway`, under this stable harness name (e.g. "pi"). It does
+   * only when this build configures an upstream for the harness and the
+   * membership's gateway enables it; otherwise, and for types without it,
+   * turns keep their existing behavior. */
+  gateway?: Readonly<{ harness: string }>;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
@@ -940,11 +949,43 @@ export type RemoteAgentType = Readonly<{
       signal: AbortSignal;
     }>,
   ): Promise<boolean>;
+  /** Reads and replaces the instructions its provider holds for the agent,
+   * so a plugin can edit them as a local agent's are. `set` rejects what the
+   * provider refuses, such as instructions too long. Without it, its
+   * instructions can only be edited in the provider's own settings. */
+  instructions?: Readonly<{
+    get(
+      input: Readonly<{
+        pubkey: string;
+        community: string;
+        signal: AbortSignal;
+      }>,
+    ): Promise<string>;
+    set(
+      input: Readonly<{
+        pubkey: string;
+        community: string;
+        instructions: string;
+        signal: AbortSignal;
+      }>,
+    ): Promise<void>;
+  }>;
   /** Stops it and deletes its key. An agent already gone counts as removed. */
   remove(
     input: Readonly<{ pubkey: string; community: string; signal: AbortSignal }>,
   ): Promise<void>;
 }>;
+/** A hosted agent's instructions, read and replaced through its provider. */
+export type HostedInstructions = Readonly<{
+  get(signal?: AbortSignal): Promise<string>;
+  /** Replaces them only while the provider still holds `base`, the copy the
+   * caller last read; otherwise it rejects and replaces nothing, so an edit
+   * saved elsewhere is never overwritten from an older copy. */
+  set(instructions: string, base: string, signal?: AbortSignal): Promise<void>;
+}>;
+/** A hosted agent's instructions changed since the caller read them. */
+export const HOSTED_INSTRUCTIONS_CHANGED =
+  "Its instructions were changed elsewhere. Check the latest, then try again.";
 export type RegisteredAgentType = Contribution<AgentType>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
@@ -1288,6 +1329,10 @@ export type Agents = {
   leave(agent: AgentKey): Promise<void>;
   /** Whether the owner can stop a hosted agent's turns through its provider. */
   interruptible(agent: AgentKey): boolean;
+  /** A hosted agent's instructions, through its provider; undefined unless
+   * the agent is hosted here and its provider offers them. Each call stops
+   * with the agent's community connection. */
+  hostedInstructions(agent: AgentKey): HostedInstructions | undefined;
   /** Session controls are available only in the copy holding this agent. */
   sessionState(agent: AgentKey, place: SessionPlace): SessionState;
   session(
@@ -1715,8 +1760,8 @@ export class AgentsService extends Service implements Agents {
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
   private bound = new Map<string, Bound>();
-  /** The local memberships Workforce routing was last told about. */
-  private workforceKeys = new Set<AgentKey>();
+  /** The local memberships gateway routing was last told about. */
+  private gatewayKeys = new Set<AgentKey>();
   private readonly runners: AgentRunners;
   private readonly coreMemory: CoreMemoryCache;
   /** Counts list requests, so only the latest one is applied. */
@@ -2842,7 +2887,52 @@ export class AgentsService extends Service implements Agents {
           });
           return (message) => {
             check();
-            return respondExternal(client, message, connected, scopes);
+            return respondExternal(
+              client,
+              message,
+              connected,
+              scopes,
+              async () => {
+                check();
+                if (!session.mainAgent)
+                  throw new Error(
+                    "Your saved Bestie is unavailable in this copy of Buzz.",
+                  );
+                let worker: string | null | undefined;
+                try {
+                  worker = await session.mainAgent.read();
+                } catch {
+                  check();
+                  throw new Error(
+                    "Your saved Bestie could not be read. Check the community connection and try again.",
+                  );
+                }
+                check();
+                if (!worker || !/^[0-9a-f]{64}$/.test(worker))
+                  throw new Error(
+                    "Choose and save a Bestie in Buzz, then try again.",
+                  );
+                const unavailable =
+                  "Your saved Bestie could not be checked. Check the community connection and try again.";
+                try {
+                  await session.agentChoices.refresh(true, { fresh: true });
+                } catch {
+                  check();
+                  throw new Error(unavailable);
+                }
+                check();
+                const choices = session.agentChoices.snapshot();
+                if (
+                  !choices.selectable.some((agent) => agent.pubkey === worker)
+                )
+                  throw new Error(
+                    choices.complete
+                      ? "Your saved Bestie is not available in this community. Choose another in Buzz, then try again."
+                      : unavailable,
+                  );
+                return worker;
+              },
+            );
           };
         },
         lifetime,
@@ -3867,6 +3957,35 @@ export class AgentsService extends Service implements Agents {
     );
     return !!this.types().find((entry) => entry.key === agent?.type)?.remote
       ?.interrupt;
+  }
+  hostedInstructions(pubkey: AgentKey): HostedInstructions | undefined {
+    const agent = this.state.agents.find(
+      (entry) => entry.pubkey === pubkey && entry.place === "hosted",
+    );
+    const provider = this.types().find((entry) => entry.key === agent?.type)
+      ?.remote?.instructions;
+    if (!provider) return undefined;
+    const call = (signal?: AbortSignal) => {
+      const { agent, binding } = this.hosted(pubkey);
+      return {
+        pubkey,
+        community: agent.relay,
+        signal: signal
+          ? AbortSignal.any([signal, binding.controller.signal])
+          : binding.controller.signal,
+      };
+    };
+    return {
+      get: (signal) => provider.get(call(signal)),
+      async set(instructions, base, signal) {
+        // No provider offers compare-and-swap, so read again just before
+        // replacing. An edit saved between this read and the write can still
+        // be lost; one saved before the owner acted cannot.
+        if ((await provider.get(call(signal))) !== base)
+          throw new Error(HOSTED_INSTRUCTIONS_CHANGED);
+        await provider.set({ ...call(signal), instructions });
+      },
+    };
   }
   /** Stops the hosted agent's turn in `place`; false when none was running. */
   async interrupt(
@@ -5373,10 +5492,10 @@ export class AgentsService extends Service implements Agents {
       ? binding
       : undefined;
   }
-  /** Tells Workforce routing each local membership and the community ID its
+  /** Tells gateway routing each local membership and the community ID its
    * live relay session's transport read. Hosted agents never route there. */
-  private syncWorkforce(identities: readonly Member[]) {
-    if (!workforceRoutes.configured) return;
+  private syncGateway(identities: readonly Member[]) {
+    if (!gatewayRoutes.configured) return;
     const types = new Map(this.types().map((type) => [type.key, type]));
     const present = new Set<AgentKey>();
     for (const identity of identities) {
@@ -5385,7 +5504,7 @@ export class AgentsService extends Service implements Agents {
         continue;
       const binding = this.bindingOf(identity);
       present.add(identity.key);
-      workforceRoutes.setMembership({
+      gatewayRoutes.setMembership({
         key: identity.key,
         origin,
         owner: identity.owner,
@@ -5396,9 +5515,9 @@ export class AgentsService extends Service implements Agents {
         },
       });
     }
-    for (const key of this.workforceKeys)
-      if (!present.has(key)) workforceRoutes.removeMembership(key);
-    this.workforceKeys = present;
+    for (const key of this.gatewayKeys)
+      if (!present.has(key)) gatewayRoutes.removeMembership(key);
+    this.gatewayKeys = present;
   }
   /** Whether the agent stays running: it is the viewer's, and its community is
    * joined and not disconnected. A reconnect does not stop it. */
@@ -5838,7 +5957,7 @@ export class AgentsService extends Service implements Agents {
         })),
       new Map(this.types().map((type) => [type.key, type])),
     );
-    this.syncWorkforce(identities);
+    this.syncGateway(identities);
     const left = this.runners.interrupted();
     // Only the copy that holds an agent may resume or forget its turns.
     const interrupted = running.filter(
