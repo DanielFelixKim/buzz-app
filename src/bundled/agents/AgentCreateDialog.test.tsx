@@ -509,6 +509,36 @@ it("previews an upload in place with progress and cancel, keeping Name editable"
   );
 });
 
+it("moves the hidden-scrollbar avatar dock with a vertical mouse wheel", () => {
+  const { dialog } = setup([echo]);
+  const dock = within(dialog).getByRole("group", { name: "Agent avatars" });
+  Object.defineProperties(dock, {
+    clientWidth: { configurable: true, value: 500 },
+    scrollWidth: { configurable: true, value: 3000 },
+  });
+  const scrollBy = vi.fn();
+  dock.scrollBy = scrollBy;
+  const slot = within(dock).getAllByRole("button")[0];
+  if (!slot) throw new Error("The dock has an avatar");
+  const down = new WheelEvent("wheel", {
+    deltaY: 120,
+    bubbles: true,
+    cancelable: true,
+  });
+  slot.dispatchEvent(down);
+  expect(down.defaultPrevented).toBe(true);
+  expect(scrollBy).toHaveBeenCalledWith({ left: 120, behavior: "instant" });
+  // At the start, scrolling back stays native so the gesture is not swallowed.
+  const up = new WheelEvent("wheel", {
+    deltaY: -120,
+    bubbles: true,
+    cancelable: true,
+  });
+  slot.dispatchEvent(up);
+  expect(up.defaultPrevented).toBe(false);
+  expect(scrollBy).toHaveBeenCalledOnce();
+});
+
 it("keeps every bundled avatar available after switching from an uploaded image", async () => {
   const { dialog, user } = setup([echo], undefined, "https://a.example");
   const dock = within(dialog).getByRole("group", { name: "Agent avatars" });
@@ -739,6 +769,57 @@ it("shows registered logos in the harness value and choices with independent SVG
   expect(select.querySelector("svg")).not.toBeNull();
   expect(select.querySelector("mask")).toBeNull();
 });
+
+it.each([false, true])(
+  "applies a suggested configuration without starting the draft (remote: %s)",
+  async (remote) => {
+    const suggesting: RegisteredAgentType = {
+      ...notes,
+      ...(remote ? { remote: remoteEcho.remote } : {}),
+      key: "test/suggesting",
+      title: "Suggesting",
+      CreateConfiguration: function Suggest({
+        config,
+        onChange,
+        onReadyChange,
+        harnessControl,
+      }) {
+        // biome-ignore lint/correctness/useExhaustiveDependencies: suggests once on mount.
+        useEffect(() => {
+          onChange(
+            { ...(config as object), model: "suggested" },
+            { suggested: true },
+          );
+          onReadyChange?.(true);
+        }, []);
+        return <SettingsGroup>{harnessControl}</SettingsGroup>;
+      },
+    };
+    const first = setup([suggesting]);
+    await first.user.type(within(first.dialog).getByLabelText("Name"), "Nova");
+    await first.user.click(createButton());
+    if (remote) {
+      expect(first.agents.create).not.toHaveBeenCalled();
+      const intro = screen.getByRole("dialog", {
+        name: "Meet your remote agent",
+      });
+      await first.user.click(
+        within(intro).getByRole("button", { name: "Let’s go" }),
+      );
+    }
+    await waitFor(() =>
+      expect(first.agents.create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ model: "suggested" }),
+        }),
+      ),
+    );
+    cleanup();
+    const second = setup([suggesting]);
+    await second.user.click(document.body);
+    await waitFor(() => expect(second.onClose).toHaveBeenCalledOnce());
+  },
+);
 
 it("keeps keyboard focus on Harness when switching into and out of a configuration group", async () => {
   const grouped: RegisteredAgentType = {

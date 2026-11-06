@@ -381,6 +381,7 @@ const BUILDERLAB_FI_ROUTES: &[&str] = &[
     "v3/beekeeper/list-agents",
     "v3/beekeeper/get-model-catalog",
     "v3/beekeeper/cancel-agent-turn",
+    "v3/beekeeper/get-agent-turn-status",
     "GET v1/auth/me",
     "v1/buzz/nostr-identities/current",
     "v1/buzz/nostr-identities/delete",
@@ -467,10 +468,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("github manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
             .expect("valid Inbox manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/drafts-sent/manifest.json"
-        ))
-        .expect("drafts-sent manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
             .expect("reminders manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
@@ -538,7 +535,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.watching"
             | "buzz.pairing"
             | "buzz.inbox"
-            | "buzz.drafts-sent"
             | "buzz.repos"
             | "buzz.agents"
             | "buzz.claude-code"
@@ -2501,6 +2497,7 @@ mod tests {
                 .collect();
             assert!(operations.contains(&format!("GET {base}v1/auth/me")));
             assert!(operations.contains(&format!("POST {base}v3/beekeeper/register-agent")));
+            assert!(operations.contains(&format!("POST {base}v3/beekeeper/get-agent-turn-status")));
             assert!(operations.contains(&format!("POST {base}v1/buzz/nsec-backups/status")));
             assert_eq!(operations.len(), super::BUILDERLAB_FI_ROUTES.len());
         }
