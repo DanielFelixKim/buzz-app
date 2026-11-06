@@ -260,6 +260,12 @@ type PendingEvent = {
   event: RelayEvent;
   channelId?: string;
   done?: ReadonlySet<string>;
+  /** Whether it arrived as it would have with no watch keeping channels live
+   * (`unattended`), kept from arrival so a channel closed while it waits does
+   * not change what it wakes. */
+  addressable: boolean;
+  /** Replayed history: it wakes no watch whose stream starts after it. */
+  replay?: true;
 };
 type Heard = { triggers: Trigger[]; held?: true; discarded?: string[] };
 
@@ -354,7 +360,10 @@ export type Connection = {
 /** An agent's community while it is live: one object for as long as its
  * session lasts. */
 export type LiveCommunity = {
-  readonly session: Pick<RelaySession, "read" | "readRemote" | "live">;
+  readonly session: Pick<
+    RelaySession,
+    "read" | "readRemote" | "live" | "attendPending"
+  >;
   /** Aborts when the session is replaced, so no work outlives it. */
   readonly controller: AbortController;
   readonly connection: Connection;
@@ -415,8 +424,15 @@ export type RunnerHost = {
   /** Whether the agent is in the event's channel, or undefined while its
    * roster is only the one saved on disk and the relay has not confirmed it. */
   member(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
+  /** Whether the agent may read the event's channel: it is in it, or the
+   * channel is public; undefined as for `member`. Only a member may be
+   * delivered to. */
+  reads(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
+  /** Whether the event came as it would have with no watch keeping channels
+   * live or looking them up; one heard `live`, or read by catch-up. */
+  unattended(agent: Agent, event: RelayEvent, live: boolean): boolean;
   /** While the owner is still starting this chat, settles once it can take
    * the agent's events; undefined otherwise. */
   starting?(agent: Agent, channelId: string): Promise<void> | undefined;
@@ -546,6 +562,9 @@ export type RunnerHost = {
 };
 
 export class AgentRunners {
+  /** Whether each event catch-up read may address its agent, as `unattended`
+   * said when it was read: one waiting for room keeps what it arrived as. */
+  private readonly readAddressable = new WeakMap<RelayEvent, boolean>();
   private readonly sourceJobs = new Map<Job, string>();
   private readonly failedSources = new WeakSet<AttentionObject>();
   /** A terminal producer retains its registration until every queued turn settles. */
@@ -594,6 +613,10 @@ export class AgentRunners {
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
+  /** When each stream started in this copy: turned on, added, or shown. A
+   * route its watch's channel then gets replays a few minutes from before
+   * that, which must not wake it. */
+  private started = new Map<string, number>();
   /** Whether startup is over for Attention: plugins have finished starting,
    * or Attention has been shown, since this copy started. */
   private settled = false;
@@ -1037,6 +1060,8 @@ export class AgentRunners {
         runner.backlog.push({
           event,
           ...(batch.channelId ? { channelId: batch.channelId } : {}),
+          addressable: this.host.unattended(agent, event, true),
+          replay: true,
         });
       }
       if (overflow)
@@ -1045,6 +1070,21 @@ export class AgentRunners {
         );
       if (batch.replay) this.admit(runner);
     }
+  }
+  /** The agent's watches whose streams started after a replayed `event`.
+   * Asked as it is admitted: an attention change starts its streams in the
+   * same call that saves it, before anything is admitted again. */
+  private before(runner: Runner, agent: Agent, event: RelayEvent) {
+    return new Set(
+      this.watches(runner, agent).flatMap(({ slug, watch }) => {
+        const started = this.started.get(
+          streamOf(runner.key, { slug, watch, event }),
+        );
+        return started !== undefined && event.created_at < started
+          ? [slug]
+          : [];
+      }),
+    );
   }
   private hasSeen(runner: Runner, id: string, channel: string | undefined) {
     return (
@@ -1159,16 +1199,30 @@ export class AgentRunners {
       this.submit(runner, agent, job);
     }
     while (runner.backlog.length) {
-      const { event, channelId, done } = runner
+      const { event, channelId, addressable, replay, ...entry } = runner
         .backlog[0] as Runner["backlog"][0];
-      const heard = this.heard(runner, agent, event, done);
+      // Matched against the watches as they are now: one turned on while a
+      // replay waited does not wake for it.
+      const done = replay
+        ? new Set([...(entry.done ?? []), ...this.before(runner, agent, event)])
+        : entry.done;
+      const heard = this.heard(runner, agent, event, addressable, done);
       if (
         (heard.held && runner.held.size >= HELD_LIMIT) ||
         !this.takes(runner, heard.triggers)
       )
         return;
       runner.backlog.shift();
-      this.deliver(runner, agent, event, channelId, heard, done);
+      this.deliver(
+        runner,
+        agent,
+        event,
+        channelId,
+        addressable,
+        heard,
+        done,
+        replay,
+      );
     }
   }
   /** Gives the agent `event` once, however many times it arrives. */
@@ -1182,7 +1236,13 @@ export class AgentRunners {
     if (this.hasSeen(runner, event.id, channel)) return;
     this.markSeen(runner, event.id, channel);
     if (this.isOwn(agent, event)) return;
-    this.deliver(runner, agent, event, channelId);
+    this.deliver(
+      runner,
+      agent,
+      event,
+      channelId,
+      this.host.unattended(agent, event, true),
+    );
   }
   /** Saves `event` as heard by each of the agent's streams it is in and has
    * not passed yet, so catch-up after a restart does not give it again. */
@@ -1281,6 +1341,7 @@ export class AgentRunners {
           // Saved too, so one turned on after a restart starts from about
           // when this copy last saw it off, or from when Attention is shown.
           this.quiet.add(stream.key);
+          this.started.delete(stream.key);
           if (
             (checkpoint?.through ?? 0) < now ||
             (!shown && !checkpoint?.hidden)
@@ -1290,11 +1351,19 @@ export class AgentRunners {
           this.quiet.delete(stream.key) ||
           !checkpoint ||
           checkpoint.hidden
-        )
+        ) {
           // A stream new to catch-up, as every one is on an upgrade, starts
           // now: an earlier `since` does not replay older events.
           move(stream.key, { through: now });
-        else reading.push(stream);
+          this.started.set(stream.key, now);
+        }
+        // Until its channel's metadata is known, a read returns none of its
+        // events: it waits, with its checkpoint where it was.
+        else if (
+          stream.channel === undefined ||
+          !community?.session.attendPending(stream.channel)
+        )
+          reading.push(stream);
       }
       const pass = this.passes.get(runner.key);
       const since = community?.connection.since;
@@ -1515,11 +1584,20 @@ export class AgentRunners {
         signal,
         priority: "background",
         fresh: true,
+        // Of every channel: a public one the session does not know yet too.
+        ...(filter["#h"] ? {} : { resolveChannels: true }),
       });
       signal.throwIfAborted();
       // Only what the relay signed: a read also returns the owner's own
       // messages not yet sent, which can be older than its page.
-      return events.filter(hasEventProof) as RelayEvent[];
+      const signed = events.filter(hasEventProof) as RelayEvent[];
+      const agent = this.host.agent(runner.key);
+      for (const event of signed)
+        this.readAddressable.set(
+          event,
+          !!agent && this.host.unattended(agent, event, false),
+        );
+      return signed;
     };
     const progress = (key: string, checkpoint: Checkpoint) => {
       this.setCheckpoint(key, checkpoint);
@@ -1651,7 +1729,14 @@ export class AgentRunners {
         (!fanning && this.hasSeen(runner, event.id, channel)) ||
         event.pubkey === agent.pubkey
           ? { triggers: [] }
-          : this.heard(runner, agent, event, fanning?.done);
+          : this.heard(
+              runner,
+              agent,
+              event,
+              this.readAddressable.get(event) ??
+                this.host.unattended(agent, event, false),
+              fanning?.done,
+            );
       if (heard.discarded?.length) {
         this.heardLive(agent, event, new Set(heard.discarded));
         runner.fanning = {
@@ -1851,8 +1936,10 @@ export class AgentRunners {
     agent: Agent,
     event: RelayEvent,
     channelId: string | undefined,
-    heard = this.heard(runner, agent, event),
+    addressable: boolean,
+    heard = this.heard(runner, agent, event, addressable),
     done: ReadonlySet<string> = new Set(),
+    replay?: true,
   ) {
     const { triggers } = heard;
     const completed = new Set([
@@ -1867,6 +1954,8 @@ export class AgentRunners {
         event,
         ...(channelId ? { channelId } : {}),
         done: completed,
+        addressable,
+        ...(replay && { replay }),
       });
       if (runner.held.size > HELD_LIMIT) {
         runner.held.delete(runner.held.keys().next().value as string);
@@ -2094,11 +2183,15 @@ export class AgentRunners {
     return pass ? result : undefined;
   }
   /** What `event` wakes now, and whether other matching watches still wait
-   * for its channel's roster to be confirmed. */
+   * for its channel's roster to be confirmed. Mentions wake an agent only in
+   * what the owner's app hears for the owner: an event it has only because
+   * watches keep its channel live, or looked the channel up, is not
+   * `addressable`, and only watches hear it. */
   private heard(
     runner: Runner,
     agent: Agent,
     event: RelayEvent,
+    addressable: boolean,
     done: ReadonlySet<string> = new Set(),
   ): Heard {
     if (this.stopped[runner.key]?.[event.id] !== undefined)
@@ -2108,15 +2201,17 @@ export class AgentRunners {
     // turn, and a reaction is not conversation. A group DM still needs the
     // mention.
     if (
+      addressable &&
       event.kind === 9 &&
       event.pubkey !== agent.pubkey &&
       this.host.dm(agent, event)
     )
       return { triggers: [{ type: "mention", event }] };
-    // Addressed events never reach a watch. Only conversation starts a run, not
-    // an encrypted DM (kind 4) it cannot read yet. A reaction to its message is
-    // not addressed, so a watch can still hear it.
-    if (addressedTo(event, agent.pubkey))
+    // An addressed event the owner's app hears for the owner never reaches a
+    // watch. Only conversation starts a run, not an encrypted DM (kind 4) it
+    // cannot read yet. A reaction to its message is not addressed, so a watch
+    // can still hear it.
+    if (addressable && addressedTo(event, agent.pubkey))
       return CHAT_KINDS.includes(event.kind)
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
@@ -2142,9 +2237,9 @@ export class AgentRunners {
       this.heldForStartup = true;
       return { triggers: [], held: true, discarded };
     }
-    const member = this.host.member(agent, event);
-    if (member === undefined) return { triggers: [], held: true };
-    if (!member) return { triggers: [] };
+    const reads = this.host.reads(agent, event);
+    if (reads === undefined) return { triggers: [], held: true };
+    if (!reads) return { triggers: [] };
     const destinations = matches.map(({ watch }) =>
       watch.channel
         ? this.host.member(agent, { tags: [["h", watch.channel]] })
