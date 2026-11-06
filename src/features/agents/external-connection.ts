@@ -18,7 +18,7 @@ export function externalMcpEnabled(community: string | null) {
   }
 }
 
-export type ExternalScope = "read" | "post" | "create";
+export type ExternalScope = "agent" | "read" | "post" | "create";
 export type ExternalAuthorization = McpAuthorization &
   Readonly<{
     version: 1 | 2;
@@ -78,8 +78,13 @@ export function parseExternalAuthorization(
       value.code_challenge_method !== "S256" ||
       !scope.length ||
       new Set(scope).size !== scope.length ||
+      (scope.includes("agent") && scope.length !== 1) ||
       scope.some(
-        (item) => item !== "read" && item !== "post" && item !== "create",
+        (item) =>
+          item !== "agent" &&
+          item !== "read" &&
+          item !== "post" &&
+          item !== "create",
       )
     )
       return null;

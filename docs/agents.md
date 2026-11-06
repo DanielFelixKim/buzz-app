@@ -76,13 +76,26 @@ permission. **Settings > External apps** shows the connection and **Revoke acces
 Keys stay in Buzz. Closing Settings keeps access active.
 
 Version 1 links contain `version=1`, the requesting `client` display name,
-`callback`, random `state`, `scope` (a space-separated selection of `read`, `post`,
-and `create`), `code_challenge`,
+`callback`, random `state`, `scope` (`agent` alone, or a space-separated selection
+of legacy `read`, `post`, and `create`), `code_challenge`,
 and `code_challenge_method=S256`. The callback must be exactly
 `http://127.0.0.1:<port>/buzz/authorize`, with a port from 1024 through 65535.
 State and challenge each encode 32 bytes as unpadded base64url. The client name
 is supplied by the requesting app; Buzz does not attest its identity.
 Requests expire after five minutes. Duplicate or unknown parameters are rejected.
+
+Clients such as Nexus request `scope=agent` for full access to the selected
+agent's Buzz tools, including tools from enabled plugins. This scope must appear
+alone. Buzz shows the requested full access before the owner approves it, and uses
+the ordinary Buzz tool dispatcher, channel access checks and tool confirmations.
+Runtime harness hooks do not run through this connection. Local file and memory
+reads remain unavailable, as on legacy connections. Repository tools can return
+short-lived Git credentials for repositories the selected agent can access;
+private identity keys remain in Buzz. The owner sees these limits in consent.
+Its catalog reports `["agent"]` in `buzz/grantedScopes`, `buzz/supportedScopes`
+and each tool's `buzz/requiredScopes`. Legacy read/post/create approvals keep
+their limited catalog and behavior below; they never gain full access implicitly.
+Version 2 approval and reconnection preserve the exact approved scopes.
 
 After consent, Buzz sends a JSON POST to the callback with `version: 1`, `state`,
 and `outcome: "authorized"`, plus `code` and `exchange_url`. Denial sends
@@ -103,7 +116,7 @@ identity change, or the end of the owning agent runtime, plugin, or app also
 stops it. A version 1 client needs new setup after its session ends. Version 2
 can use saved approval to create another session.
 
-The read scope allows `channel_list`, `channel_get`, and `read`. The post scope
+For legacy limited grants, the read scope allows `channel_list`, `channel_get`, and `read`. The post scope
 allows `send` and `reply_in_subthread`. The create scope allows only
 `channel_create({name})`: a private Solo with the authenticated owner, connected
 agent and the owner's account-saved Bestie. Buzz derives these identities and
@@ -118,7 +131,7 @@ Buzz classifies each built-in tool through
 its trusted external-access policy. Unclassified tools cannot run. Runtime plugin
 tools cannot enroll in this policy.
 
-`tools/list` returns all classified tools in one page. It rejects a supplied
+For legacy grants, `tools/list` returns all classified tools in one page. It rejects a supplied
 `cursor`. Each tool has `_meta["buzz/requiredScopes"]`. The list result has
 `_meta["buzz/grantedScopes"]` and `_meta["buzz/supportedScopes"]`; the supported
 set is `read`, `post`, and `create`. One authorization can request all three.
@@ -134,7 +147,7 @@ it already has. For example, an app with `read` that needs `post` requests
 The app must not retry the call automatically after approval. New classified tools
 use this same contract.
 
-External clients must accept `create` in `buzz/grantedScopes`,
+Legacy external clients must accept `create` in `buzz/grantedScopes`,
 `buzz/supportedScopes` and per-tool `buzz/requiredScopes` before this catalog is
 advertised. Older Nexus clients that accept only read/post reject an unknown
 supported scope even when their grant still contains only read/post.

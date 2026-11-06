@@ -2,6 +2,85 @@ import { expect, it, vi } from "vitest";
 import type { BuzzClient, BuzzEvent, Filter, Template } from "./client";
 import type { ExternalScope } from "../features/agents/external-connection";
 import { respondExternal } from "./external";
+import { respond } from "./rpc";
+import type { AddedTool } from "./session-tools";
+
+it("gives an explicitly approved agent grant the ordinary agent catalog and plugin dispatcher", async () => {
+  const { client } = fixture();
+  const call = vi.fn(async (agent: BuzzClient) => `called as ${agent.pubkey}`);
+  const added: AddedTool[] = [
+    {
+      name: "example_echo",
+      description: "Test plugin tool",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      call,
+    },
+  ];
+  const request = { id: 1, method: "tools/list" };
+  const ordinary = await respond(client, {}, request, added);
+  const full = await respondExternal(
+    client,
+    request,
+    () => {},
+    ["agent"],
+    undefined,
+    added,
+  );
+  const ordinaryTools = (ordinary as { result: { tools: object[] } }).result
+    .tools;
+  expect(full).toHaveProperty(
+    "result.tools",
+    ordinaryTools.map((tool) => ({
+      ...tool,
+      _meta: { "buzz/requiredScopes": ["agent"] },
+    })),
+  );
+  expect(full).toHaveProperty("result._meta", {
+    "buzz/grantedScopes": ["agent"],
+    "buzz/supportedScopes": ["agent"],
+  });
+  const invocation = {
+    id: 2,
+    method: "tools/call",
+    params: { name: "example_echo", arguments: {} },
+  };
+  expect(
+    await respondExternal(
+      client,
+      invocation,
+      () => {},
+      ["read", "post", "create"],
+      undefined,
+      added,
+    ),
+  ).toHaveProperty("result.isError", true);
+  expect(call).not.toHaveBeenCalled();
+  expect(
+    await respondExternal(
+      client,
+      invocation,
+      () => {},
+      ["agent"],
+      undefined,
+      added,
+    ),
+  ).toHaveProperty("result.content.0.text", `called as ${client.pubkey}`);
+  expect(call).toHaveBeenCalledOnce();
+  expect(
+    await respondExternal(
+      client,
+      { ...invocation, params: { name: "missing_tool" } },
+      () => {},
+      ["agent"],
+      undefined,
+      added,
+    ),
+  ).toHaveProperty("result.isError", true);
+});
 
 function fixture(events: BuzzEvent[] = []) {
   const query = vi.fn(async (_filters: readonly Filter[]) => events);

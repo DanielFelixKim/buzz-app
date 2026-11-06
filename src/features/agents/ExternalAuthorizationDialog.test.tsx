@@ -24,6 +24,7 @@ afterEach(() => {
 it.each([
   ["Authorize", true],
   ["Create", true],
+  ["Agent", true],
   ["Deny", true],
   ["unavailable runtime", false],
   ["custody lost", true],
@@ -31,11 +32,16 @@ it.each([
 ] as const)(
   "handles %s without an unintended authorization",
   async (requestedAction, runtimeReady) => {
-    const action = requestedAction === "Create" ? "Authorize" : requestedAction;
+    const action =
+      requestedAction === "Create" || requestedAction === "Agent"
+        ? "Authorize"
+        : requestedAction;
     const scopes =
       requestedAction === "Create"
         ? (["read", "post", "create"] as const)
-        : (["read", "post"] as const);
+        : requestedAction === "Agent"
+          ? (["agent"] as const)
+          : (["read", "post"] as const);
     const user = userEvent.setup();
     const key = "a".repeat(64),
       secondKey = "c".repeat(64),
@@ -132,6 +138,16 @@ it.each([
     expect(connect).not.toHaveBeenCalled();
     expect(deny).not.toHaveBeenCalled();
     const access = screen.getByText(/Requested access:/);
+    if (requestedAction === "Agent") {
+      expect(access).toHaveTextContent(
+        "full access to the selected agent’s Buzz tools",
+      );
+      expect(access).toHaveTextContent("tool confirmations still apply");
+      expect(access).toHaveTextContent("short-lived Git credentials");
+      expect(access).toHaveTextContent(
+        "Local file and memory reads remain unavailable",
+      );
+    }
     if (requestedAction === "Create")
       expect(access).toHaveTextContent(
         "create private Solo chats with you, the selected agent and your saved Bestie",

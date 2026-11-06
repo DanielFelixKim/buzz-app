@@ -61,18 +61,19 @@ pub(crate) struct Approval {
 
 impl Approval {
     fn valid_scopes(&self) -> bool {
-        !self.scopes.is_empty()
-            && self.scopes.len() <= 3
-            && self
-                .scopes
-                .iter()
-                .all(|scope| scope == "read" || scope == "post" || scope == "create")
-            && self
-                .scopes
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                == self.scopes.len()
+        self.scopes == ["agent"]
+            || (!self.scopes.is_empty()
+                && self.scopes.len() <= 3
+                && self
+                    .scopes
+                    .iter()
+                    .all(|scope| scope == "read" || scope == "post" || scope == "create")
+                && self
+                    .scopes
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+                    == self.scopes.len())
     }
 }
 
@@ -426,6 +427,7 @@ mod tests {
     fn approval_scopes_accept_create_without_widening_access() {
         let mut approval = grant().approval;
         for scopes in [
+            vec!["agent"],
             vec!["read"],
             vec!["post"],
             vec!["read", "post"],
@@ -438,6 +440,8 @@ mod tests {
             assert!(approval.valid_scopes(), "{scopes:?}");
         }
         for scopes in [
+            vec!["agent", "read"],
+            vec!["agent", "agent"],
             vec![],
             vec!["manage"],
             vec!["create", "manage"],

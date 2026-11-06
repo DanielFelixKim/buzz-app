@@ -39,7 +39,7 @@ afterEach(() => vi.useRealTimers());
 it("parses the generic authorization request without a bearer", () => {
   expect(parseExternalAuthorization(uri())).toEqual(request);
 });
-it.each(["read", "post", "create", "read create", "read post create"])(
+it.each(["agent", "read", "post", "create", "read create", "read post create"])(
   "parses explicitly requested access without adding scopes (%s)",
   (scope) => {
     const url = new URL(uri());
@@ -60,6 +60,9 @@ it.each([
   ["scope", "read read"],
   ["scope", "create create"],
   ["scope", "create manage"],
+  ["scope", "agent read"],
+  ["scope", "post agent"],
+  ["scope", "agent agent"],
   ["state", "short"],
   ["client", ""],
   ["version", "3"],
@@ -87,30 +90,47 @@ const resumeRequest: ExternalAuthorization = {
   resume: { id: savedPairing.id, counter: 1, proof: "A".repeat(43) },
 };
 
-it("restores saved approval and closes only the session on unload", async () => {
-  const server = transport();
-  const pairing = vi.fn(async (_operation: string) => savedPairing);
-  const connection = createExternalApps();
-  const unbind = connection.bind({
-    connect: async () => server,
-    deny: async () => {},
-    pairing,
-  });
-  await vi.waitFor(() =>
-    expect(connection.snapshot().pairing).toEqual(savedPairing),
-  );
-  connection.open(resumeRequest, "viewer");
-  await vi.waitFor(() => expect(server.authorize).toHaveBeenCalledOnce());
-  await vi.waitFor(() =>
-    expect(connection.snapshot().grant?.phase).toBe("waiting"),
-  );
-  expect(connection.snapshot().pending).toBeUndefined();
-  unbind();
-  expect(server.close).toHaveBeenCalled();
-  expect(pairing.mock.calls.map((call) => call[0])).not.toContain("revoke");
-});
+it.each(["read", "agent"] as const)(
+  "restores saved %s approval and closes only the session on unload",
+  async (scope) => {
+    const server = transport();
+    const saved = {
+      ...savedPairing,
+      approval: { ...savedPairing.approval, scopes: [scope] },
+    };
+    const pairing = vi.fn(async (_operation: string) => saved);
+    const connection = createExternalApps();
+    const connect = vi.fn(async () => server);
+    const unbind = connection.bind({
+      connect,
+      deny: async () => {},
+      pairing,
+    });
+    await vi.waitFor(() =>
+      expect(connection.snapshot().pairing).toEqual(saved),
+    );
+    connection.open({ ...resumeRequest, scope: [scope] }, "viewer");
+    await vi.waitFor(() => expect(server.authorize).toHaveBeenCalledOnce());
+    expect(connect).toHaveBeenCalledWith(
+      saved.approval.agent,
+      expect.any(AbortSignal),
+      expect.any(Function),
+      [scope],
+    );
+    expect(server.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ approval: saved.approval }),
+    );
+    await vi.waitFor(() =>
+      expect(connection.snapshot().grant?.phase).toBe("waiting"),
+    );
+    expect(connection.snapshot().pending).toBeUndefined();
+    unbind();
+    expect(server.close).toHaveBeenCalled();
+    expect(pairing.mock.calls.map((call) => call[0])).not.toContain("revoke");
+  },
+);
 
-it.each(["revoked", "proof", "viewer", "scope"])(
+it.each(["revoked", "proof", "viewer", "scope", "upgrade"])(
   "refuses %s resume before connection",
   async (reason) => {
     const connect = vi.fn(async () => transport());
@@ -125,7 +145,9 @@ it.each(["revoked", "proof", "viewer", "scope"])(
     connection.open(
       reason === "scope"
         ? { ...resumeRequest, scope: ["read", "post"] }
-        : resumeRequest,
+        : reason === "upgrade"
+          ? { ...resumeRequest, scope: ["agent"] }
+          : resumeRequest,
       reason === "viewer" ? "other-viewer" : "viewer",
     );
     await vi.waitFor(() =>

@@ -2916,6 +2916,7 @@ export class AgentsService extends Service implements Agents {
                   );
                 return worker;
               },
+              this.tools(),
             );
           };
         },

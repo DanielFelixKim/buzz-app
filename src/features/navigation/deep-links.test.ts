@@ -223,26 +223,33 @@ const inboxOn = { status: () => "on" as const, subscribe: () => () => {} };
 const ready: Client = { status: "ready", viewer, selected: origin };
 const loading: Client = { status: "loading", selected: null };
 
-it("holds external authorization through startup without adding handshake data to navigation", async () => {
-  const link = `buzz://mcp-authorize?${new URLSearchParams({ version: "1", client: "Test app", callback: "http://127.0.0.1:1234/buzz/authorize", state: "A".repeat(43), scope: "read post", code_challenge: "A".repeat(43), code_challenge_method: "S256" })}`;
-  const t = harness(loading, [link]);
-  try {
-    await vi.waitFor(() => expect(t.take).toHaveBeenCalled());
-    expect(t.host.authorize).not.toHaveBeenCalled();
-    t.become({ status: "ready", viewer, selected: null });
-    await vi.waitFor(() => expect(t.host.authorize).toHaveBeenCalledOnce());
-    expect(t.host.authorize).toHaveBeenCalledWith(
-      expect.objectContaining({ client: "Test app", scope: ["read", "post"] }),
-      viewer,
-    );
-    expect(t.host.navigation.open).not.toHaveBeenCalled();
-    expect(JSON.stringify(t.controller.navigation.snapshot())).not.toContain(
-      "code_challenge",
-    );
-  } finally {
-    t.stop();
-  }
-});
+it.each(["read post", "agent"])(
+  "holds external authorization (%s) through startup without adding handshake data to navigation",
+  async (scope) => {
+    const link = `buzz://mcp-authorize?${new URLSearchParams({ version: "2", client: "Nexus", callback: "http://127.0.0.1:1234/buzz/authorize", state: "A".repeat(43), scope, code_challenge: "A".repeat(43), code_challenge_method: "S256" })}`;
+    const t = harness(loading, [link]);
+    try {
+      await vi.waitFor(() => expect(t.take).toHaveBeenCalled());
+      expect(t.host.authorize).not.toHaveBeenCalled();
+      t.become({ status: "ready", viewer, selected: null });
+      await vi.waitFor(() => expect(t.host.authorize).toHaveBeenCalledOnce());
+      expect(t.host.authorize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: "Nexus",
+          version: 2,
+          scope: scope.split(" "),
+        }),
+        viewer,
+      );
+      expect(t.host.navigation.open).not.toHaveBeenCalled();
+      expect(JSON.stringify(t.controller.navigation.snapshot())).not.toContain(
+        "code_challenge",
+      );
+    } finally {
+      t.stop();
+    }
+  },
+);
 const channelOpen = `open:${JSON.stringify({
   version: 1,
   kind: "conversation",

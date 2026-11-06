@@ -13341,7 +13341,14 @@ it.each(["disabled runtime", "lost custody"])(
   },
 );
 
-it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
+it.each([
+  "community selection",
+  "reconnect",
+  "identity",
+  "runtime",
+  "revoke",
+  "full agent access",
+])(
   "ends an external grant on %s and refuses later tool calls",
   async (reason) => {
     vi.stubEnv(
@@ -13349,6 +13356,25 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
       "https://relay.example.test",
     );
     const f = await setup();
+    const readFile = vi.fn(async () => new Uint8Array([42]));
+    const readMemory = vi.spyOn(f.session.agentMemories, "read");
+    const pluginCall = vi.fn(
+      async (
+        client: import("../../buzz-mcp/client").BuzzClient,
+        _context: unknown,
+        args: Record<string, unknown>,
+      ) => {
+        if (args.kind === "file") await client.read("/fixture.txt");
+        if (args.kind === "memory") await client.memories();
+        return "plugin reached";
+      },
+    );
+    f.plugin.agents.addTool({
+      name: "fixture_external",
+      description: "External connection fixture",
+      inputSchema: { type: "object", properties: { kind: { type: "string" } } },
+      call: pluginCall,
+    });
     Object.assign(f.session.agentChoices, {
       snapshot: () => ({ selectable: [{ pubkey: bot }] }),
       subscribe: () => () => {},
@@ -13359,6 +13385,7 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
       closed.resolve();
     });
     f.ctx.provide("host", {
+      readFile,
       serveMcp: async (receive: import("../host/service").McpHandler) => {
         handler = receive;
         return {
@@ -13380,6 +13407,7 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
       bot,
       controller.signal,
       admitted,
+      reason === "full agent access" ? ["agent"] : ["read", "post"],
     );
     const call = handler;
     if (!call) throw new Error("Missing server handler");
@@ -13390,6 +13418,38 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
         params: { protocolVersion: "2025-06-18" },
       }),
     ).toHaveProperty("result.protocolVersion", "2025-06-18");
+    const full = reason === "full agent access";
+    const discovery = await call({ id: 3, method: "tools/list" });
+    const listed = (discovery as { result: { tools: { name: string }[] } })
+      .result.tools;
+    expect(listed.some((tool) => tool.name === "fixture_external")).toBe(full);
+    const plugin = (kind: string) =>
+      call({
+        id: 4,
+        method: "tools/call",
+        params: { name: "fixture_external", arguments: { kind } },
+      });
+    if (full) {
+      expect(await plugin("echo")).toHaveProperty(
+        "result.content.0.text",
+        "plugin reached",
+      );
+      expect(await plugin("file")).toHaveProperty(
+        "result.content.0.text",
+        "External connections cannot read files.",
+      );
+      expect(await plugin("memory")).toHaveProperty(
+        "result.content.0.text",
+        "External connections cannot read memory.",
+      );
+      expect(pluginCall).toHaveBeenCalledTimes(3);
+    } else {
+      expect(await plugin("file")).toHaveProperty("result.isError", true);
+      expect(await plugin("memory")).toHaveProperty("result.isError", true);
+      expect(pluginCall).not.toHaveBeenCalled();
+    }
+    expect(readFile).not.toHaveBeenCalled();
+    expect(readMemory).not.toHaveBeenCalled();
     const post = {
       id: 2,
       method: "tools/call",
@@ -13418,7 +13478,7 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
     const outcome = call(post).catch((error) => error);
     try {
       await entered.promise;
-      if (reason === "community selection")
+      if (reason === "community selection" || reason === "full agent access")
         f.select("https://other.example.test");
       else if (reason === "reconnect") f.connect(true);
       else if (reason === "identity") f.signIn(other);

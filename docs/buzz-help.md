@@ -142,11 +142,18 @@ Desktop preview releases enable bb-block only. Other communities cannot grant ac
 
 Start setup in the external app. Buzz desktop shows an **Authorize app**
 dialog. Select a community and an agent, check the requested access, then select
-**Authorize**. The app completes setup automatically. Keys stay in Buzz.
+**Authorize**. The app completes setup automatically. Private identity keys stay in Buzz.
 Only authorize an app when you started its setup. The displayed name comes from
 that app. Protected agents cannot use this connection. Keep Buzz open.
 An unavailable agent cannot authorize access. Enable its runtime plugin or use
 the Buzz copy that runs it.
+
+Nexus requests full access to the selected agent's Buzz tools, including tools
+from enabled plugins. Buzz’s channel access checks and tool confirmations still
+apply. Repository tools can provide short-lived Git credentials for repositories
+the agent can access. Local file and memory reads remain unavailable. Check this
+in the approval dialog. Older limited approvals do not gain full access without
+a new approval.
 
 Use **Settings → External apps → Revoke access** to stop it. Changing community
 or identity also ends access. If a connection ends, start setup in the external
@@ -154,7 +161,7 @@ app again. Never put connection credentials in a chat or file.
 An app can discover tools that need more access. Start its access request and
 approve the requested scopes in Buzz. After approval, make the tool call again.
 Each approval replaces prior access. Request all access the app still needs.
-Creating Solo chats needs create access. An app can request it with read and
+With a limited legacy grant, creating Solo chats needs create access. An app can request it with read and
 post in one approval; existing read/post access never gains it without your
 approval. Buzz includes you, the selected agent and your saved Bestie
 automatically. Choose and save an available Bestie in this community first; the

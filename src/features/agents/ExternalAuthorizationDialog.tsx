@@ -134,14 +134,19 @@ function ConsentDialog({
             Requested access:{" "}
             {request.scope
               .map((scope) =>
-                scope === "read"
-                  ? "read channels, messages and threads"
-                  : scope === "post"
-                    ? "post text as the selected agent"
-                    : "create private Solo chats with you, the selected agent and your saved Bestie",
+                scope === "agent"
+                  ? "full access to the selected agent’s Buzz tools, including tools from enabled plugins"
+                  : scope === "read"
+                    ? "read channels, messages and threads"
+                    : scope === "post"
+                      ? "post text as the selected agent"
+                      : "create private Solo chats with you, the selected agent and your saved Bestie",
               )
               .join("; ")}
-            . Keys stay in Buzz.
+            .{" "}
+            {request.scope.includes("agent")
+              ? "Buzz’s channel access checks and tool confirmations still apply. Repository tools can provide short-lived Git credentials for repositories the agent can access. Local file and memory reads remain unavailable. Private identity keys stay in Buzz."
+              : "Keys stay in Buzz."}
             {request.version === 2 &&
               " The app can renew valid approval for another 30 days. Approval expires after 30 days without renewal. The app can restore this access after either app restarts. You can revoke it in External apps."}
           </p>
