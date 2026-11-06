@@ -372,6 +372,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   the viewer, including copying comment code and native image/video menu
   downloads, show their result inside the open viewer. Comment actions such as
   Stop and copying code report results in the app if the viewer closes first.
+  If another viewer hides that feedback, its expiry pauses until it is visible again.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.

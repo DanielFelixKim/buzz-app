@@ -58,6 +58,10 @@ async function nativeUpdater(
       invoke: async (command, args) => {
         if (command === "clipboard_write_text") {
           window.clipboardWrites++;
+          if (window.holdClipboard)
+            await new Promise((_, reject) => {
+              window.rejectClipboard = reject;
+            });
           if (window.clipboardFails) throw new Error("Clipboard denied");
           return;
         }
@@ -227,6 +231,10 @@ test("image review hides the ready update notice until the viewer closes", async
       value: {
         writeText: async () => {
           window.clipboardWrites++;
+          if (window.holdClipboard)
+            await new Promise((_, reject) => {
+              window.rejectClipboard = reject;
+            });
           if (window.clipboardFails) throw new Error("Clipboard denied");
         },
       },
@@ -254,6 +262,56 @@ test("image review hides the ready update notice until the viewer closes", async
     await expect(feedback).toBeHidden();
   }
   expect(await page.evaluate(() => window.clipboardWrites)).toBe(2);
+
+  // A result from the closed viewer targets the app host, which the next viewer
+  // hides. Its finite lifetime must wait until that destination is visible.
+  await page.evaluate(() => {
+    window.holdClipboard = true;
+  });
+  await viewer
+    .getByRole("button", { name: "Copy code block", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => typeof window.rejectClipboard))
+    .toBe("function");
+  try {
+    await viewer
+      .getByRole("button", { name: "Close fullscreen viewer" })
+      .click();
+    await expect(viewer).toHaveCount(0);
+    await opener.click();
+    await expect(viewer).toBeVisible();
+    await expect(host).toHaveAttribute("inert", "");
+    await page.evaluate(() => {
+      window.rejectClipboard(new Error("Deferred clipboard failure"));
+      delete window.rejectClipboard;
+    });
+    const lateFeedback = host.getByText("Failed to copy code", { exact: true });
+    await expect(lateFeedback).toBeAttached();
+    await expect(lateFeedback).toBeHidden();
+    await page.clock.fastForward(6000);
+    await expect(lateFeedback).toBeAttached();
+    await expect(lateFeedback).toBeHidden();
+    await viewer
+      .getByRole("button", { name: "Close fullscreen viewer" })
+      .click();
+    await expect(viewer).toHaveCount(0);
+    await expect(lateFeedback).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath("late-feedback-after-reopen.png"),
+    });
+    await page.mouse.move(0, 0);
+    await page.clock.runFor(4300);
+    await expect(lateFeedback).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => {
+      window.rejectClipboard?.(new Error("Fixture cleanup"));
+      delete window.rejectClipboard;
+      window.holdClipboard = false;
+    });
+  }
+  await opener.click();
+  await expect(viewer).toBeVisible();
 
   await page.screenshot({ path: info.outputPath("viewer-notice-hidden.png") });
   for (const key of ["Tab", "Shift+Tab", "F6"]) {

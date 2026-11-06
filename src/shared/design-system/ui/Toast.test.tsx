@@ -480,3 +480,71 @@ it.each(["success", "error"] as const)(
     }
   },
 );
+
+it.each(["before hiding", "while hidden"])(
+  "preserves the remaining lifetime of late feedback arriving %s",
+  async (arrival) => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    let notify!: ReturnType<typeof useToastNotification>;
+    function Action() {
+      notify = useToastNotification();
+      return null;
+    }
+    const ancestor = document.createElement("div");
+    const portal = document.createElement("div");
+    ancestor.append(portal);
+    document.body.append(ancestor);
+    const view = render(
+      <StrictMode>
+        <ToastProvider portalContainer={portal}>
+          <ToastProvider>
+            <Action />
+          </ToastProvider>
+        </ToastProvider>
+      </StrictMode>,
+    );
+    try {
+      view.rerender(
+        <StrictMode>
+          <ToastProvider portalContainer={portal}>{null}</ToastProvider>
+        </StrictMode>,
+      );
+      const publish = async () => {
+        act(() => {
+          notify("Stop failed after closing", "error");
+        });
+        await act(() => vi.advanceTimersByTimeAsync(0));
+      };
+      if (arrival === "before hiding") {
+        await publish();
+        await act(() => vi.advanceTimersByTimeAsync(1000));
+      }
+      await act(async () => {
+        ancestor.setAttribute("inert", "");
+      });
+      if (arrival === "while hidden") await publish();
+      await act(() => vi.advanceTimersByTimeAsync(10000));
+      expect(portal).toContainElement(
+        screen.getByText("Stop failed after closing"),
+      );
+      await act(async () => {
+        ancestor.removeAttribute("inert");
+      });
+      const remaining = arrival === "before hiding" ? 3000 : 4000;
+      await act(() => vi.advanceTimersByTimeAsync(remaining - 1));
+      const item = screen
+        .getByText("Stop failed after closing")
+        .closest("[data-sonner-toast]");
+      expect(item).toHaveAttribute("data-removed", "false");
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(item).toHaveAttribute("data-removed", "true");
+      view.unmount();
+      await act(() => vi.advanceTimersByTimeAsync(300));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      view.unmount();
+      ancestor.remove();
+    }
+  },
+);
