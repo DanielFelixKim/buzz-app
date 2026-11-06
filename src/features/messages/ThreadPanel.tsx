@@ -1057,6 +1057,9 @@ function ThreadMessages({
           ) {
             follow.current = previousFollow;
             resizePosition.current = previousPosition;
+          } else {
+            // Capture-phase cancellation runs before the native scroll handler.
+            captureResizePosition();
           }
           setReplyParent((current) => (current === next ? previous : current));
         },
@@ -1242,16 +1245,16 @@ function ThreadMessages({
     // Native scroll anchoring is off here, so this panel owns ordinary reading
     // too. With no explicit anchor, keep the saved first visible row in place
     // through this commit's layout shift. A scroll since that save is newer
-    // reader intent and wins. A drop in scrollTop while the scroll range shrank
-    // is the browser clamping it during this commit's layout, not the reader;
-    // nor is any change while the reader was hidden, where WebKit drops the
-    // offset under display: none and would show the reader at its top.
+    // reader intent and wins. An offset beyond the new scroll range can be
+    // clamped during this commit before later rows grow the range again.
+    // A hidden reader can also lose its offset under display: none in WebKit;
+    // restore it when shown rather than treating that reset as reader input.
     const reading = resizePosition.current;
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
     const clamped =
       reading !== undefined &&
-      element.scrollTop < reading.scrollTop &&
-      element.scrollHeight - element.clientHeight <
-        reading.contentHeight - reading.height;
+      reading.scrollTop > maxScrollTop &&
+      element.scrollTop < reading.scrollTop;
     const reshown = active && !shown.current;
     shown.current = active;
     // Back/Forward returns once to where this visit was left: its row, with
@@ -1438,9 +1441,17 @@ function ThreadMessages({
         previous.contentHeight === element.scrollHeight
       )
         return;
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const clamped =
+        previous.scrollTop > maxScrollTop &&
+        Math.abs(element.scrollTop - maxScrollTop) <= 1;
       if (follow.current) {
         element.scrollTop = element.scrollHeight;
-      } else if (previous.anchor && element.contains(previous.anchor.element)) {
+      } else if (
+        (previous.scrollTop === element.scrollTop || clamped) &&
+        previous.anchor &&
+        element.contains(previous.anchor.element)
+      ) {
         correctScrollTop(element, readingDrift(element, previous.anchor));
       }
       // Exact-history restoration must start from this corrected geometry,
@@ -1848,7 +1859,12 @@ function ThreadMessages({
             80;
           if (jumpingToLatest.current) return;
           captureResizePosition();
-          follow.current = bottom;
+          // A shallow upward wheel step must not resume a paused bottom reader.
+          follow.current =
+            bottom &&
+            (follow.current ||
+              !previous ||
+              element.scrollTop > previous.scrollTop);
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);
           loadOlder();

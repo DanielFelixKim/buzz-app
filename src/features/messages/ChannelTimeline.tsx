@@ -1426,6 +1426,7 @@ function Timeline({
         if (!restore && !follow.current) {
           settled.current = true;
           readingPositioned(scroller.current);
+          if (scroller.current) updateJumpToLatest(scroller.current);
           return;
         }
         restorePosition();
@@ -1607,6 +1608,8 @@ function Timeline({
             intent.current === previewIntent &&
             edges.current.order.every((id) => previewRows.has(id))
           ) {
+            // Retire queued positioning work owned by the withdrawn preview.
+            intent.current++;
             follow.current = previous.follow;
             savedPosition.current = previous.position;
             restoredAnchor.current = previous.anchor;
