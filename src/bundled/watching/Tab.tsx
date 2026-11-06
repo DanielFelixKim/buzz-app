@@ -15,7 +15,7 @@ import { Switch as SharedSwitch } from "../../shared/design-system/ui/Switch";
 import type { Context } from "../../plugins/author";
 import type { Agent } from "./model";
 import type { RelaySession } from "../../features/relay/session";
-import { InstructionsMarkdown } from "./InstructionsMarkdown";
+import { InstructionsMarkdown, OpenLink } from "./InstructionsMarkdown";
 import { title, heading, type Channel } from "./presentation";
 import { problem, useAction } from "./actions";
 import { AttentionSonar } from "./AttentionSonar";
@@ -25,6 +25,13 @@ export { heading, describe } from "./presentation";
 import "./AttentionPage.css";
 
 const button = { variant: "ghost" as const, size: "sm" as const };
+/** The watches of an Interest that this app skipped, such as ones over the
+ * limit. They still belong to it. */
+const skippedWatches = (agent: Agent, id: string) =>
+  Object.values(agent.skipped ?? {}).filter(
+    (object) =>
+      (object.value as { interest_id?: unknown } | null)?.interest_id === id,
+  );
 /** Uses the host’s controls and surface roles. */
 export function createAttentionComponents({
   agents,
@@ -84,18 +91,21 @@ export function createAttentionComponents({
         const focused = document.activeElement;
         const expected = agent.attention[slug];
         if (!expected) throw new Error("This interest no longer exists.");
+        const id = slug.slice("interest/".length);
         const watches = Object.values(agent.attention).filter(
           (object) =>
-            object.value.type !== "interest" &&
-            object.value.interest_id === slug.slice("interest/".length),
+            object.value.type !== "interest" && object.value.interest_id === id,
         );
+        // A watch skipped here, such as one over the limit, still belongs to
+        // this Interest and could run once there is room for it.
+        const skipped = skippedWatches(agent, id);
         await agents.save(agent.key, {
           attentionExpected: Object.fromEntries([
             ...watches.map((watch) => [watch.slug, watch]),
             [slug, expected],
           ]),
           attention: Object.fromEntries([
-            ...watches.map((watch) => [watch.slug, null]),
+            ...[...watches, ...skipped].map((watch) => [watch.slug, null]),
             [slug, null],
           ]),
         });
@@ -174,7 +184,7 @@ export function createAttentionComponents({
                   loading={action.pending}
                   onClick={() => void remove()}
                 >
-                  Delete interest and watches
+                  Delete
                 </Button>
               </>
             }
@@ -238,7 +248,9 @@ export function createAttentionComponents({
         : "No instructions saved.";
     const firstLine =
       instructions.split("\n").find((line) => line.trim()) || "";
-    const label = /^#+\s/.test(firstLine) ? heading(firstLine).text : title(id);
+    const label =
+      (interest?.type === "interest" && interest.title) ||
+      (/^#+\s/.test(firstLine) ? heading(firstLine).text : title(id));
     return (
       <SettingsGroup layout="cards">
         <section
@@ -251,10 +263,17 @@ export function createAttentionComponents({
               agent={agent}
               slug={object.slug}
               label={label}
-              hasWatches={subscriptions.length > 0}
+              hasWatches={
+                subscriptions.length > 0 || skippedWatches(agent, id).length > 0
+              }
               returnFocus={returnFocus}
             />
           </div>
+          {interest?.type === "interest" && interest.summary && (
+            <p className="attention-interest-summary text-body-sm text-subtle">
+              {interest.summary}
+            </p>
+          )}
           {subscriptions.length > 0 && (
             <div className="attention-column-headings text-caption text-subtle">
               <h5 className="text-caption">Triggers</h5>
@@ -420,7 +439,15 @@ export function createAttentionComponents({
       </div>
     );
   }
-  function WatchingTab({ agent: { key } }: { agent: { key: string } }) {
+  function WatchingTab({
+    agent: { key },
+    open,
+    canOpen,
+  }: {
+    agent: { key: string };
+    open?: ((target: string) => boolean) | undefined;
+    canOpen?: ((target: string) => boolean) | undefined;
+  }) {
     const page = React.useRef<HTMLElement>(null);
     const snapshot = React.useSyncExternalStore(
       agents.subscribe,
@@ -476,13 +503,15 @@ export function createAttentionComponents({
               </p>
             )}
           {agent && here ? (
-            <AgentPanel
-              agent={agent}
-              returnFocus={page}
-              channels={channels}
-              scope={connection.scope}
-              session={connection.session}
-            />
+            <OpenLink.Provider value={open && canOpen && { open, canOpen }}>
+              <AgentPanel
+                agent={agent}
+                returnFocus={page}
+                channels={channels}
+                scope={connection.scope}
+                session={connection.session}
+              />
+            </OpenLink.Provider>
           ) : (
             <p
               className="text-body-sm text-secondary"

@@ -154,13 +154,13 @@ it("recovers from failed or missing reads and respects a replaced profile head",
 });
 
 describe("communities the build restricts", () => {
-  const block = "wss://buzz.block.builderlab.xyz";
+  const restricted = "wss://restricted.example.test";
   const direct = (key = owner, tags: string[][] = []) =>
     eventDto(signed(key, { kind: 9, content: "@target do it", tags }));
   beforeEach(() => {
     vi.stubEnv(
       "VITE_BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES",
-      "https://buzz.block.builderlab.xyz",
+      "https://restricted.example.test",
     );
   });
   afterEach(() => {
@@ -170,7 +170,7 @@ describe("communities the build restricts", () => {
   it("deny every workflow mention there and keep delegation elsewhere", async () => {
     const f = directory();
     try {
-      const blocked = { ...f.context, community: block };
+      const blocked = { ...f.context, community: restricted };
       expect(await fromOwner(prompt(), owner.pubkey, blocked)).toBe(false);
       expect(await fromOwner(prompt(), creator.pubkey, blocked)).toBe(false);
       expect(f.read).not.toHaveBeenCalled();
@@ -191,7 +191,7 @@ describe("communities the build restricts", () => {
     expect(
       await fromOwner(direct(owner, workflow), owner.pubkey, {
         ...blocked,
-        community: block,
+        community: restricted,
       }),
     ).toBe(false);
     expect(
@@ -201,12 +201,15 @@ describe("communities the build restricts", () => {
       }),
     ).toBe(true);
     expect(
-      await fromOwner(direct(), owner.pubkey, { ...blocked, community: block }),
+      await fromOwner(direct(), owner.pubkey, {
+        ...blocked,
+        community: restricted,
+      }),
     ).toBe(true);
     expect(
       await fromOwner(direct(creator, [auth()]), owner.pubkey, {
         ...blocked,
-        community: block,
+        community: restricted,
       }),
     ).toBe(true);
   });

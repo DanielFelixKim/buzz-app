@@ -5118,6 +5118,22 @@ const tick = {
   },
 } as const;
 
+it("records each timer wake in its activity", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() =>
+    expect(service.find(bot)?.attentionHistory?.["watch/tick"]).toEqual({
+      lastWokeAt: 1_060,
+      events: [{ at: 1_060, text: "check in" }],
+    }),
+  );
+});
+
 it("pauses an interest's timer without changing its enabled setting and resumes overdue work", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run } = await setup();
@@ -16684,4 +16700,35 @@ describe("Owner tools", () => {
       }
     },
   );
+});
+
+it("tells a transcript only of an agent's new or changed steps", async () => {
+  const f = await setup();
+  const pubkey = "a".repeat(64);
+  const listener = vi.fn();
+  const stop = f.service.subscribeSteps(`${pubkey}@other.example`, listener);
+  const begin = (messageId: string, agent = pubkey) =>
+    f.activity.begin({
+      scope: "s",
+      agent,
+      channelId: "c",
+      messageId,
+      threadRootId: messageId,
+    });
+  const one = begin("m1");
+  const two = begin("m2");
+  expect(listener).not.toHaveBeenCalled();
+  one.step("Read", "a.txt");
+  two.step("Bash", "ls");
+  expect(listener).toHaveBeenCalledTimes(2);
+  // The same step again, another agent's step, or a turn ending is no new step.
+  one.step("Read", "a.txt");
+  begin("m3", "b".repeat(64)).step("Read");
+  one.finish({ ok: true });
+  expect(listener).toHaveBeenCalledTimes(2);
+  two.step("Edit", "b.txt");
+  expect(listener).toHaveBeenCalledTimes(3);
+  stop();
+  two.step("Read", "c.txt");
+  expect(listener).toHaveBeenCalledTimes(3);
 });
