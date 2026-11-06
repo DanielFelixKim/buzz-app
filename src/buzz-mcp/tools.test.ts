@@ -20,7 +20,10 @@ import { PLUGIN_TOOLS } from "./plugins";
 import { SETTINGS_TOOLS } from "./settings";
 import { SOLO_WORKER_TOOLS } from "./solo-worker";
 import { Context } from "@deepseek-ai/cordis";
-import { AgentProtectionService } from "../features/agent-protection/service";
+import {
+  AgentProtectionService,
+  MAX_PROTECTED_ACTION_BYTES,
+} from "../features/agent-protection/service";
 import type { Agent } from "../features/agents/service";
 
 function gate<T>() {
@@ -401,7 +404,7 @@ it("refuses an oversized captured file before review or publication", async () =
   client.protect = (action) =>
     protection.check(action, new AbortController().signal);
   client.read = vi.fn(async () =>
-    new TextEncoder().encode("x".repeat(256 * 1024)),
+    new TextEncoder().encode("x".repeat(MAX_PROTECTED_ACTION_BYTES)),
   );
   try {
     await expect(
