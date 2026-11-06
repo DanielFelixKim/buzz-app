@@ -143,9 +143,9 @@ test("hovering the dock Activity tab previews recent conversations and opens one
       const header = await card.locator("header").boundingBox();
       expect(Math.abs(box.x - (row.x + row.width + 6))).toBeLessThanOrEqual(1);
       // The first dock item can be too high for header-line alignment; the
-      // shared popup then keeps its 8px viewport gutter instead.
+      // shared popup then clears the native window controls instead.
       const alignedTop = row.y - (header.y - box.y) - header.height + 1;
-      expect(Math.abs(box.y - Math.max(8, alignedTop))).toBeLessThanOrEqual(1);
+      expect(Math.abs(box.y - Math.max(40, alignedTop))).toBeLessThanOrEqual(1);
     } else
       expect(box.y >= row.y + row.height || box.x >= row.x + row.width).toBe(
         true,

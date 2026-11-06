@@ -269,6 +269,8 @@ function PagePreview({
         padding="list"
         side="right"
         align="start"
+        // Leave room for native window controls above the first dock row.
+        collisionPadding={{ top: 40, right: 8, bottom: 8, left: 8 }}
         // 6px beside the row's hover background, lifted so the line under the
         // preview's header meets the background's top edge. Offsets ignore the
         // open animation's transform.
