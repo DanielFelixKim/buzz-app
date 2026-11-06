@@ -262,9 +262,19 @@ test.extend({ companionFixture: true })(
         // widths or with enlarged text, main can't take focus: start from
         // Search instead.
         if (!keys.apple) {
-          const covered = await dock.evaluate(
-            (element) => getComputedStyle(element).position === "absolute",
-          );
+          // Measured, so this checks the hook rather than repeating it. The
+          // click waited for the tab, and so the pane, to stop moving.
+          const [pane, main] = await Promise.all([
+            dock.boundingBox(),
+            conversation.boundingBox(),
+          ]);
+          const covered =
+            Math.min(pane.x + pane.width, main.x + main.width) -
+              Math.max(pane.x, main.x) >
+              1 &&
+            Math.min(pane.y + pane.height, main.y + main.height) -
+              Math.max(pane.y, main.y) >
+              1;
           if (covered) await expect(conversation).toHaveAttribute("inert", "");
           else await expect(conversation).not.toHaveAttribute("inert");
           const start = covered ? search : members;
@@ -529,11 +539,12 @@ test.extend({ readState: true, threadUnread: true })(
   },
 );
 
-// Reading follows focus. A covered conversation can't hold it, so a message
-// that arrives under the pane stays unread until the pane closes, while the
-// thread that took focus keeps reading.
+// Reading follows focus. Narrowing hands it to the thread's tab, so the thread
+// keeps reading, and a message that arrives in the conversation meanwhile
+// waits until closing the pane returns focus there. The journey above checks
+// that covering keeps focus out.
 test.extend({ readState: true, threadUnread: true })(
-  "a covered conversation reads nothing until it is uncovered",
+  "narrowing hands reading to the thread tab until the pane closes",
   async ({ page, app }) => {
     const frontiers = async () =>
       (await readJournal(page))?.state.frontiers ?? {};
@@ -606,7 +617,7 @@ test.extend({
 })(
   "an Activity tab covering the page keeps focus out and still closes all tabs",
   async ({ page, app }) => {
-    await page.setViewportSize({ width: 600, height: 900 });
+    await page.setViewportSize({ width: 1100, height: 900 });
     await open(page, app);
     await page
       .getByRole("navigation", { name: "Apps dock", exact: true })
@@ -614,19 +625,28 @@ test.extend({
       .click();
     const inbox = page.getByRole("region", { name: "Activity", exact: true });
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-    await inbox
+    const row = inbox
       .getByRole("list", { name: "Activity", exact: true })
       .getByRole("listitem")
       .filter({ hasText: "Unread reply 1" })
-      .getByRole("button", { name: /^Open / })
-      .click();
+      .getByRole("button", { name: /^Open / });
+    await row.click();
     const side = page.locator("[data-panel-workspace]");
     const tab = side.getByRole("tab", { selected: true });
     await expect(tab).toBeVisible();
-    await settlePanelMotion(page);
     const covered = inbox.locator(
       'div[tabindex="-1"]:has(> [data-main-workspace])',
     );
+    // Beside the tab the page stays live. Narrowing from it hands focus to
+    // the tab. Opening lands on the reply first; let it, or it takes focus
+    // back from the row.
+    await expect(covered).not.toHaveAttribute("inert");
+    await expect(side.locator("[data-message-id]:focus")).toHaveCount(1);
+    await row.focus();
+    await expect(row).toBeFocused();
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(tab).toBeFocused();
+    await settlePanelMotion(page);
     await expect(covered).toHaveAttribute("inert", "");
     await expect(covered).toHaveAttribute("aria-hidden", "true");
     await tab.focus();
@@ -652,18 +672,14 @@ test.extend({
   },
 );
 
-// A pane that stays open over the conversation keeps focus when another closes.
+// A companion over the conversation takes focus on itself, where a typed key
+// does nothing: as the cover starts, and when a tab closes under it.
 test.extend({ companionFixture: true })(
-  "closing a tab under the companion keeps focus in the dock",
+  "a companion covering the conversation takes focus itself, not its Close button",
   async ({ page, app }) => {
-    await page.setViewportSize({ width: 600, height: 900 });
+    await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, app);
-    await openChannelDetails(page);
-    const close = page.getByRole("button", {
-      name: "Close Channel settings tab",
-      exact: true,
-    });
-    await expect(close).toBeVisible();
+    const conversation = page.locator('article[aria-label="Conversation"]');
     await page
       .getByRole("button", { name: "Companion fixture", exact: true })
       .click();
@@ -671,14 +687,37 @@ test.extend({ companionFixture: true })(
       name: "Companion fixture",
       exact: true,
     });
+    const closeCompanion = companion.getByRole("button", {
+      name: "Close Companion fixture panel",
+      exact: true,
+    });
     await expect(companion).toBeVisible();
+    await expect(conversation).not.toHaveAttribute("inert");
+    await page
+      .getByRole("textbox", { name: "Message #Alpha", exact: true })
+      .click();
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(companion).toBeFocused();
+    await expect(closeCompanion).not.toBeFocused();
+    await expect(conversation).toHaveAttribute("inert", "");
+    await page.keyboard.press("Space");
+    await expect(companion).toBeVisible();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(conversation).not.toHaveAttribute("inert");
+    await openChannelDetails(page);
+    const close = page.getByRole("button", {
+      name: "Close Channel settings tab",
+      exact: true,
+    });
+    await expect(close).toBeVisible();
+    await page.setViewportSize({ width: 600, height: 900 });
     await settlePanelMotion(page);
-    await expect(
-      page.locator('article[aria-label="Conversation"]'),
-    ).toHaveAttribute("inert", "");
+    await expect(conversation).toHaveAttribute("inert", "");
     await close.click();
     await expect(close).toHaveCount(0);
-    // Its opener stays covered, so a live dock control takes focus.
-    await expect(companion.locator(":focus")).toHaveCount(1);
+    // Its opener stays covered, so the companion takes focus.
+    await expect(companion).toBeFocused();
+    await expect(closeCompanion).not.toBeFocused();
   },
 );

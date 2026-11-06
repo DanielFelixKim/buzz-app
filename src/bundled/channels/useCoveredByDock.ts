@@ -3,17 +3,21 @@ import { useLayoutEffect, useState, type RefObject } from "react";
 const live = (element: HTMLElement) =>
   !element.closest("[hidden], [inert]") && element.getClientRects().length > 0;
 
-/** Focus the board's dock: its selected tab, else its first live control. */
+/**
+ * Focus the board's dock where a typed key does nothing: a visible panel's own
+ * landing, as PanelCard's when it opened, else the selected tab. Never a
+ * button, which Space or Enter would press.
+ */
 export function focusDock(board: Element | null | undefined) {
   const find = (selector: string) =>
     Array.from(
       board?.querySelectorAll<HTMLElement>(
-        `:scope > [data-panel-dock] :is(${selector})`,
+        `:scope > [data-panel-dock] ${selector}`,
       ) ?? [],
     ).find(live);
   (
-    find('[role="tab"][aria-selected="true"]') ??
-    find('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')
+    find('> * > [tabindex="-1"][aria-label]') ??
+    find('[role="tab"][aria-selected="true"]')
   )?.focus({ preventScroll: true });
 }
 

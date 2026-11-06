@@ -193,7 +193,9 @@ export function useChannelPanels(
       </div>
     ),
     side: selected?.panel.channelPlacement === "side" && (
+      // Its own landing, like PanelCard's, for focus handed to a floating dock.
       <Panel
+        tabIndex={-1}
         aria-label={`${selected.panel.title} panel`}
         onKeyDown={(event) => {
           // Shift+Escape is Mark all as read, not a dismissal.
