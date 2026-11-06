@@ -15,22 +15,12 @@ export class EvidenceTransfer implements TextSource {
   private bytes = 0;
   private sequence = 0;
   private decoder = new TextDecoder("utf-8", { fatal: true });
-  readonly completed: Promise<void>;
-  private resolve!: () => void;
-  private reject!: (error: unknown) => void;
-  constructor(readonly chunkBytes = 64 * 1024) {
-    this.completed = new Promise((resolve, reject) => {
-      this.resolve = resolve;
-      this.reject = reject;
-    });
-    void this.completed.catch(() => {});
-  }
+  constructor(readonly chunkBytes = 64 * 1024) {}
   fail(error: unknown) {
     if (this.failure) return;
     this.failure = error instanceof Error ? error : new Error(String(error));
     this.pending?.reject(this.failure);
     this.pending = undefined;
-    this.reject(this.failure);
     this.wake?.();
   }
   async push(sequence: number, data: Uint8Array) {
@@ -88,7 +78,6 @@ export class EvidenceTransfer implements TextSource {
           item.resolve();
         } else if (this.ended) {
           this.consumed = true;
-          this.resolve();
           return;
         } else
           await new Promise<void>((resolve) => {

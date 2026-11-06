@@ -47,7 +47,7 @@ it("acknowledges only consumed chunks and validates complete byte counts", async
   await push;
   source.finish(1, 6);
   expect(await end).toEqual({ value: undefined, done: true });
-  await source.completed;
+  expect(source.consumed).toBe(true);
 });
 
 it("preserves UTF-8 split across chunks and denies a truncated scalar", async () => {
@@ -76,5 +76,6 @@ it("cancellation releases blocked producers; duplicate and missing pieces cannot
   expect(() => source.finish(0, 0)).toThrow("Incomplete evidence");
   source.fail(new Error("cancelled"));
   await expect(held).rejects.toThrow("cancelled");
-  await expect(source.completed).rejects.toThrow("cancelled");
+  await expect(source.read().next()).rejects.toThrow("cancelled");
+  expect(source.consumed).toBe(false);
 });

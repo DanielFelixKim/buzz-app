@@ -1368,7 +1368,7 @@ export class ClaudeRuntime {
           appClient(handle, {
             // Its PreToolUse hook reviews every tool, Buzz's included.
             nativeToolGate: true,
-            captureProtectionContext: async () => {
+            protectionContext: async () => {
               if (!conversation)
                 throw new Error(
                   "The native Claude conversation is unavailable",

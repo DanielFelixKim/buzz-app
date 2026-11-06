@@ -813,11 +813,12 @@ export class PiRuntime {
     const client =
       entry?.handle &&
       appClient(entry.handle, {
-        protectionContext: () =>
-          this.pi.request("protectionContext", {
+        protectionContext: async () => ({
+          value: await this.pi.request("protectionContext", {
             agent: call.agent,
             conversation: call.conversation,
           }),
+        }),
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
         signingAuthority: this.reads(call.agent)?.workflowAuthority(),
         read: (path) =>

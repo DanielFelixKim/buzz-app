@@ -133,7 +133,7 @@ it("binds shared-tool review to native conversation context and refuses missing 
   const conversation = [{ role: "user", text: "Only read" }];
   await appClient(agent, {
     ...options,
-    protectionContext: async () => conversation,
+    protectionContext: async () => ({ value: conversation }),
   }).protect?.(action);
   expect(check.mock.calls[0]?.[0]).toEqual({
     ...action,
@@ -448,7 +448,7 @@ it("retains native context through the check and releases it on denial", async (
   const client = appClient(agent, {
     read: vi.fn(),
     memories: async () => ({ entries: [], partial: false }),
-    captureProtectionContext: async () => ({ value: "snapshot", release }),
+    protectionContext: async () => ({ value: "snapshot", release }),
   });
   const result = client.protect?.({
     kind: "tool",

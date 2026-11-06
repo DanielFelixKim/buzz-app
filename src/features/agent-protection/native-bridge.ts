@@ -16,9 +16,8 @@ export function protectionEnvironment(protection: AgentProtection) {
   };
 }
 
-/** A native worker has one immutable agent/policy binding. Its requests can
- * describe evidence, but cannot choose policy, reviewer or requesting identity. */
-/** Shared ordered evidence protocol, bound to one authenticated worker. */
+/** Ordered evidence from one authenticated worker. Uploaded content cannot
+ * choose policy, reviewer or requesting identity. */
 export function protectionChannel(protection: AgentProtection) {
   protection.assertAvailable();
   const lifetime = new AbortController();
@@ -122,13 +121,12 @@ export function protectionChannel(protection: AgentProtection) {
         const result = protection
           .checkEvidence(action, stream, signal)
           .then(
-            async () => {
+            () => {
               // The complete transfer must be acknowledged before an allow is usable.
               if (!stream.consumed) {
                 stream.fail(new Error("Evidence was not consumed completely"));
                 return false;
               }
-              await stream.completed;
               signal.throwIfAborted();
               return true;
             },

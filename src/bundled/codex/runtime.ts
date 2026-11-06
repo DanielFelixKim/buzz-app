@@ -2194,10 +2194,12 @@ export class CodexRuntime {
           this.protectedServers.get(agent.key)?.rpc ??
           this.server?.rpc;
         if (!rpc) throw new Error("The protected Codex session is unavailable");
-        return rpc.request("thread/read", {
-          threadId: call.threadId,
-          includeTurns: true,
-        });
+        return {
+          value: await rpc.request("thread/read", {
+            threadId: call.threadId,
+            includeTurns: true,
+          }),
+        };
       },
       relayAuthor: this.reads(agent.key)?.relayAuthor?.(),
       signingAuthority: this.reads(agent.key)?.workflowAuthority(),
