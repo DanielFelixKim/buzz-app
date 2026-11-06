@@ -1340,9 +1340,6 @@ export function createUnread({
   }
   const stopRead = reads.subscribe(publish);
   const stopProfiles = profiles?.subscribe(() => {
-    // Owners resolve one at a time, so a fold since the last notification can
-    // already hold a newer answer than another channel's cached fold.
-    foldedRows.clear();
     const owner = profiles.owner;
     if (
       !owner ||
@@ -1352,6 +1349,10 @@ export function createUnread({
       return;
     ownersMixed = false;
     ownersRead.clear();
+    // Owners resolve one at a time, so a fold since the last notification can
+    // already hold a newer answer than another channel's cached fold. Folds
+    // read profiles only through owners, so unchanged answers keep their rows.
+    foldedRows.clear();
     publish();
   });
   /** A choice changes relevance in every projection and held live alert. */
@@ -2343,9 +2344,8 @@ export function createUnread({
             : `activity:${channelId}`;
           // A historical window is not the live bottom. Check retained evidence
           // at invocation, not after a later arrival queues behind this intent.
+          // Copy it: a live arrival extends the index in place during the save.
           indexEvidence();
-          // Storage below can await while new arrivals extend the live index.
-          // Only evidence retained when this dwell was earned may be read.
           const rows = [...(byChannel.get(channelId) ?? [])];
           const newer = rows.some(
             (entry) =>
