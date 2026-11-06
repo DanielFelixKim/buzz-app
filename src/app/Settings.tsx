@@ -1301,6 +1301,7 @@ export function Settings({
     ],
   );
   const refreshOnFocus = useEffectEvent(() => refreshPluginSources(true));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each navigation visit must refresh even when the Plugins section stays mounted.
   useEffect(() => {
     if (selected !== "plugins") return;
     let active = true;
