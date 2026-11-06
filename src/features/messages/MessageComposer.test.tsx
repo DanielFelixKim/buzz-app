@@ -15912,6 +15912,20 @@ it("does not expose accepted text from a stale sibling composer", async () => {
   );
 });
 
+it("does not read unchanged live or parked automatic recipient prefills", () => {
+  const h = mount({ defaultMention: second }, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  expect(
+    readOwnerDraft("scope", "channel", undefined, h.session),
+  ).toBeUndefined();
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(
+    readOwnerDraft("scope", "channel", undefined, h.session),
+  ).toBeUndefined();
+});
+
 it("keeps a submitted parked sibling retired after successful cleanup and sender unmount", async () => {
   const h = mount({}, undefined, first.pubkey);
   h.fill("Submitted parked caption");
