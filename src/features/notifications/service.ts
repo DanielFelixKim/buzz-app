@@ -220,6 +220,11 @@ export class NotificationsService extends Service implements Notifications {
       (sound !== "default" && sound !== "silent")
     )
       throw new Error("Cannot change sound for this conversation");
+    // Preserve active off intent after a failed save; a reload would restore older on settings.
+    if (this.state.preferencesError)
+      throw new Error(
+        "Save your notification choices in Settings → Notifications, then retry background triage.",
+      );
     // Another window may have written a different policy before its storage event arrives.
     this.preferences.reload();
     if (this.state.preferencesError)

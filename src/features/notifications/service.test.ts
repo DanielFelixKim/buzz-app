@@ -671,3 +671,28 @@ it("rechecks durable quiet policy before skipping a repeated setting from anothe
     "Could not load",
   );
 });
+
+it("does not reload older saved on settings over unsaved off intent", () => {
+  const t = setup(() => true);
+  t.service.updatePreferences({ enabled: true, sound: true });
+  vi.spyOn(t.host.localStorage, "setItem").mockImplementationOnce(() => {
+    throw new Error("Disk full");
+  });
+  expect(t.service.updatePreferences({ enabled: false, sound: false })).toBe(
+    false,
+  );
+  const target = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "quiet-chat",
+  } as const;
+  expect(() => t.service.setConversationSound(target, "silent")).toThrow(
+    "Save your notification choices",
+  );
+  expect(t.service.snapshot().preferences).toMatchObject({
+    enabled: false,
+    sound: false,
+  });
+  expect(t.service.snapshot().preferencesError).toBeTruthy();
+});
