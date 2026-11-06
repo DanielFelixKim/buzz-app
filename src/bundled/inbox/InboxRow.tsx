@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { InboxReaction } from "../../features/relay/inbox-reactions";
 import { groupReactions } from "../../features/relay/fold";
-import { reactionName } from "../../features/messages/reaction-name";
+import { useReactionName } from "../../features/messages/use-reaction-name";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { ComponentProps, ReactNode } from "react";
 import { channelText } from "../../features/channels/channel-icon";
@@ -27,6 +27,8 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
 import styles from "./Inbox.module.css";
+import rowStyles from "../../features/messages/MessageListRow.module.css";
+import { MessageListRow } from "../../features/messages/MessageListRow";
 
 type ResolveName = (
   key: string,
@@ -119,82 +121,53 @@ export function InboxRowButton({
         : undefined,
     [previewId, status, item.preview, row],
   );
+  const preview = (
+    <MessagePreview row={row} session={session} extensions={extensions} />
+  );
   return (
-    <NavigationItem
+    <MessageListRow
       {...props}
       aria-label={`Open ${sender} in ${context}`}
       aria-describedby={previewId}
-      icon={
-        <span className={styles.rowAvatar}>
-          <Avatar
-            size="fill"
-            alt=""
-            fallback={sender}
-            fallbackContent={
-              item.workflowOwnerId ? <LightningIcon size={20} /> : undefined
-            }
-            src={
-              item.workflowOwnerId
-                ? undefined
-                : avatarMedia(profile?.picture, session.media)
-            }
-            shape={
-              item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
-            }
-          />
-        </span>
+      avatar={
+        <Avatar
+          size="fill"
+          alt=""
+          fallback={sender}
+          fallbackContent={
+            item.workflowOwnerId ? <LightningIcon size={20} /> : undefined
+          }
+          src={
+            item.workflowOwnerId
+              ? undefined
+              : avatarMedia(profile?.picture, session.media)
+          }
+          shape={
+            item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
+          }
+        />
       }
-      label={
-        <span className={styles.content}>
-          <span className={styles.heading}>
-            <span className={styles.identity}>
-              <strong
-                className={`text-label-sm text-standard ${styles.sender}`}
-              >
-                {sender}
-              </strong>
-              <span
-                className={`text-caption ${styles.source}`}
-                data-inbox-source=""
-              >
-                {context}
-              </span>
-            </span>
-            <time
-              className={`text-caption text-subtle ${styles.rowDate}`}
-              dateTime={new Date(item.createdAt * 1000).toISOString()}
-            >
-              {time}
-            </time>
-          </span>
-          <span
-            id={bounded ? undefined : previewId}
-            className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
-            aria-hidden={bounded ? "true" : undefined}
-          >
-            {status ?? (
-              <MessagePreview
-                row={row}
-                session={session}
-                extensions={extensions}
-              />
-            )}
-          </span>
-          {bounded && (
+      sender={sender}
+      source={context}
+      time={
+        <time dateTime={new Date(item.createdAt * 1000).toISOString()}>
+          {time}
+        </time>
+      }
+      unread={unread}
+      previewId={bounded ? undefined : previewId}
+      preview={
+        status ??
+        (bounded ? (
+          <>
+            <span aria-hidden="true">{preview}</span>
             <span id={previewId} className="sr-only">
               {bounded}
             </span>
-          )}
-        </span>
-      }
-      trailing={
-        unread ? (
-          <span className={styles.unreadSlot} role="img" aria-label="Unread">
-            <span className={styles.unreadDot} />
-          </span>
+          </>
         ) : (
-          <span className={styles.unreadSlot} aria-hidden="true" />
-        )
+          preview
+        ))
       }
     />
   );
@@ -219,6 +192,7 @@ export function ReactionRowButton({
   name: ResolveName;
   channel: ChannelSummary | undefined;
 } & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
+  const reactionName = useReactionName();
   const authors = [...new Set(item.events.map((event) => event.pubkey))];
   const names = authors
     .slice(0, authors.length === 3 ? 3 : 2)
@@ -248,7 +222,7 @@ export function ReactionRowButton({
     .map((reaction) =>
       reaction.emoji
         ? `:${reaction.emoji.shortcode}:`
-        : reactionName(reaction.content)
+        : (reactionName?.(reaction.content) ?? reaction.content)
             .replaceAll(":", "")
             .replaceAll("_", " "),
     )
@@ -266,14 +240,14 @@ export function ReactionRowButton({
           shape={profile?.isAgent ? "squircle" : "circle"}
         />
       }
-      trailing={<span className={styles.unreadSlot} aria-hidden="true" />}
+      trailing={<span className={rowStyles.unreadSlot} aria-hidden="true" />}
       label={
-        <span className={styles.content}>
-          <span className={styles.heading}>
-            <span className={styles.identity}>
+        <span className={rowStyles.content}>
+          <span className={rowStyles.heading}>
+            <span className={rowStyles.identity}>
               <span className={styles.reactionHeading}>
                 <strong
-                  className={`text-label-sm text-standard ${styles.sender}`}
+                  className={`text-label-sm text-standard ${rowStyles.sender}`}
                 >
                   {sender}
                 </strong>
@@ -295,7 +269,8 @@ export function ReactionRowButton({
               </span>
             </span>
             <time
-              className={`text-caption text-subtle ${styles.rowDate}`}
+              data-inbox-date=""
+              className={`text-caption text-subtle ${rowStyles.rowDate}`}
               dateTime={new Date(item.createdAt * 1000).toISOString()}
             >
               {time}
@@ -308,7 +283,9 @@ export function ReactionRowButton({
               extensions={extensions}
             />
           </span>
-          <span className={`text-caption ${styles.source}`}>in {context}</span>
+          <span className={`text-caption ${rowStyles.source}`}>
+            in {context}
+          </span>
         </span>
       }
     />

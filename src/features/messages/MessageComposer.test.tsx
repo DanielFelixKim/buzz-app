@@ -83,7 +83,7 @@ import type {
   Profile,
 } from "../relay/contracts";
 import { readView, viewRevision, writeView } from "../../shared/view-state";
-import { clearDraft } from "../../bundled/drafts-sent/drafts";
+import { clearDraft } from "../drafts-sent/drafts";
 import { followupDraft } from "./mention-draft";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
@@ -4987,7 +4987,8 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     screen.getByRole("button", { name: "Model for Honey's next run" });
   // Writes the message and mentions an agent before any pick is made.
   const write = async (name: string, text: string) => {
-    await h.user.type(h.input(), text);
+    await h.user.click(h.input());
+    await h.user.paste(text);
     await h.user.click(screen.getByRole("button", { name }));
   };
   const send = async () => {
@@ -6803,6 +6804,45 @@ it("retains rejected intent and clears the draft only after the outbox accepts i
   expect(h.messages.reply).toHaveBeenCalledTimes(2);
   expect(h.input()).toHaveValue("");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("leads the placeholder's channel name with its sidebar icon", () => {
+  const h = mount();
+  const lead = () =>
+    h.input().parentElement?.querySelector(':scope > [aria-hidden="true"]');
+  expect(screen.getByRole("textbox", { name: "Message #General" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toHaveTextContent(/^$/);
+  expect(lead()).toHaveAttribute("data-lead", "Message");
+  expect(lead()).toHaveAttribute("data-name", "General");
+  expect(lead()?.querySelector("svg.tabler-icon-hash")).not.toBeNull();
+  const channel: ChannelSummary = {
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+    private: true,
+  };
+  const session = {
+    ...h.session,
+    channels: {
+      ...h.session.channels,
+      get: () => channel,
+      list: () => ({ status: "ready" as const, channels: [channel] }),
+    },
+  };
+  h.retarget({ session });
+  expect(screen.getByRole("textbox", { name: "Message General" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toHaveAttribute("data-name", "General");
+  expect(lead()?.querySelector("svg.tabler-icon-lock")).not.toBeNull();
+  expect(lead()?.querySelector("svg.tabler-icon-hash")).toBeNull();
+  h.retarget({ session, threadRootId: "root" });
+  expect(screen.getByRole("textbox", { name: "Reply to thread" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toBeNull();
 });
 
 it("labels simultaneous composers independently and prevents disabled or unsupported writes", async () => {
@@ -11095,7 +11135,6 @@ describe("repository resource picker", () => {
             p.homes.mock.calls.filter(([id]) => id === "channel").length,
           ).toBeGreaterThan(1),
         );
-        expect(trigger()).toBeDisabled();
         // Closing formatting fades the toolbar back in; wait for that entrance.
         await waitFor(() => expect(trigger()).toBeVisible());
         expect(trigger()).toBeDisabled();
