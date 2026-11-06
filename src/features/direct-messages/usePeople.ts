@@ -4,6 +4,7 @@ import type { Profile } from "../relay/contracts";
 import { peopleOrder } from "../profiles/people-order";
 import { matchPerson } from "../search/person-match";
 import { verifiedName } from "../profiles/useVerifiedNames";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import {
   searchDebounce,
   SEARCH_DEBOUNCE_MS,
@@ -46,7 +47,7 @@ function matching(
   query: string,
   found = false,
 ) {
-  const key = query.trim().toLowerCase();
+  const key = typedPublicKey(query);
   return people.filter((person) => {
     if (found && person.nameIsFallback) return true;
     const verified = verifiedName(session.profiles, person.pubkey);
@@ -57,7 +58,7 @@ function matching(
         verified?.username,
         verified?.fullName,
       ].some((name) => !!name && matchPerson(name, query) !== undefined) ||
-      (/^[0-9a-f]{64}$/.test(key) && person.pubkey === key)
+      person.pubkey === key
     );
   });
 }

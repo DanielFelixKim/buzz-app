@@ -223,6 +223,7 @@ async function page(
         },
         resolve: () => true,
         complete: () => true,
+        passThrough: () => () => {},
       }
     : undefined;
   render(
@@ -384,6 +385,7 @@ function workspace(
           signal: new AbortController().signal,
           position: () => undefined,
           savePosition() {},
+          passThrough: () => () => {},
           forSession() {
             return this;
           },
@@ -566,6 +568,7 @@ it("moving the last side app adopts its guest before the dock exit finishes", as
     available: true,
     attach: attached,
     detach: detached,
+    openExternal: vi.fn(async () => {}),
     setBounds: async () => {},
     navigate: async (id, url) => {
       pages.set(id, url);
@@ -1181,6 +1184,7 @@ it("opens another conversation's tab in its channel, but not the current channel
       channelId: "beta",
       messageId: other,
       threadRootId: other,
+      context: "channel",
     }),
   );
 });

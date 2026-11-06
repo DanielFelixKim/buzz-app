@@ -9,6 +9,7 @@ import {
   searchable,
   verifiedNamesSearchable,
 } from "../../shared/search-debounce";
+import { typedPublicKey } from "../../shared/identity/public-key";
 
 type Person = Awaited<
   ReturnType<ComposerSession["directMessages"]["people"]>
@@ -18,7 +19,7 @@ type Page = MentionDirectoryPage;
 const empty: readonly Person[] = [];
 const CACHE_LIMIT = 100;
 // An exact key is an author lookup, which name-prefix evidence cannot refute.
-const exactKey = (query: string) => /^[0-9a-f]{64}$/.test(query.trim());
+const exactKey = (query: string) => typedPublicKey(query) !== undefined;
 
 // Successful non-empty first pages, per session (community/viewer) and query.
 // Session lifetime bounds staleness; errors are not cached, so Retry reads
