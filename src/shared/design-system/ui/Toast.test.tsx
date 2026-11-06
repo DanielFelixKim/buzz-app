@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   act,
   cleanup,
@@ -359,4 +360,61 @@ it("cancels a dismissed toast's pending removal when its host unmounts", async (
   expect(vi.getTimerCount()).toBeGreaterThan(0);
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("lets completed actions outlive a row but suppresses feedback after their host closes", async () => {
+  let notify!: ReturnType<typeof useToastNotification>;
+  function Action() {
+    notify = useToastNotification();
+    return null;
+  }
+  const custom = vi.spyOn(toast, "custom");
+  const view = render(
+    <StrictMode>
+      <ToastProvider>
+        <Action />
+      </ToastProvider>
+    </StrictMode>,
+  );
+  view.rerender(
+    <StrictMode>
+      <ToastProvider>{null}</ToastProvider>
+    </StrictMode>,
+  );
+  act(() => {
+    notify("Row removed", "success");
+  });
+  expect(
+    await screen.findByRole("dialog", { name: "Row removed" }),
+  ).toBeVisible();
+  view.unmount();
+  custom.mockClear();
+  act(() => {
+    notify("Late clipboard failure", "error");
+  });
+  expect(custom).not.toHaveBeenCalled();
+});
+
+it("keeps effect-driven feedback through StrictMode host replay", async () => {
+  vi.useFakeTimers();
+  let mounts = 0;
+  function Action() {
+    const notify = useToastNotification();
+    useEffect(() => {
+      notify(
+        ++mounts === 1 ? "Initial feedback" : "Replay feedback",
+        "success",
+      );
+    }, [notify]);
+    return null;
+  }
+  render(
+    <StrictMode>
+      <ToastProvider>
+        <Action />
+      </ToastProvider>
+    </StrictMode>,
+  );
+  await act(() => vi.advanceTimersByTimeAsync(300));
+  expect(screen.getByRole("dialog", { name: "Replay feedback" })).toBeVisible();
 });

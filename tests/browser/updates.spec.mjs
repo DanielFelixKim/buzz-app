@@ -56,6 +56,11 @@ async function nativeUpdater(
       transformCallback: () => ++nextCallback,
       unregisterCallback() {},
       invoke: async (command, args) => {
+        if (command === "clipboard_write_text") {
+          window.clipboardWrites++;
+          if (window.clipboardFails) throw new Error("Clipboard denied");
+          return;
+        }
         if (command === "deep_link_take") return [];
         if (command === "deep_link_watch") return;
         if (command === "plugin_catalog")
@@ -145,14 +150,24 @@ test("image review hides the ready update notice until the viewer closes", async
       contentType: "image/png",
     }),
   );
+  const imageMessage = app.sign({
+    kind: 9,
+    content: "Update notice image",
+    created_at: 1700000900,
+    tags: [
+      ["h", "alpha"],
+      ["imeta", "url https://primary.example/media/photo.png", "m image/png"],
+    ],
+  });
   app.histories.get("primary/alpha").push(
+    imageMessage,
     app.sign({
       kind: 9,
-      content: "Update notice image",
-      created_at: 1700000900,
+      content: "```js\nconsole.log('viewer feedback');\n```",
+      created_at: 1700000901,
       tags: [
         ["h", "alpha"],
-        ["imeta", "url https://primary.example/media/photo.png", "m image/png"],
+        ["e", imageMessage.id, "", "reply"],
       ],
     }),
   );
@@ -169,6 +184,21 @@ test("image review hides the ready update notice until the viewer closes", async
     name: "Open image attachment",
     exact: true,
   });
+  await page.evaluate(() => {
+    window.reviewEntranceObserved = false;
+    window.reviewEntranceObserver = new MutationObserver((records) => {
+      if (
+        records.some((record) => record.attributeName === "data-review-opening")
+      ) {
+        window.reviewEntranceObserved = true;
+      }
+    });
+    window.reviewEntranceObserver.observe(document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-review-opening"],
+    });
+  });
   await opener.click();
   const viewer = page.getByRole("dialog", {
     name: "Image viewer",
@@ -180,7 +210,51 @@ test("image review hides the ready update notice until the viewer closes", async
   await expect(notice).toBeHidden();
   await expect(host).toHaveAttribute("inert", "");
   await expect(viewer).not.toHaveAttribute("data-review-opening");
+  await expect
+    .poll(() => page.evaluate(() => window.reviewEntranceObserved))
+    .toBe(true);
+  await page.evaluate(() => window.reviewEntranceObserver.disconnect());
   await checkViewerDownloadFeedback(page, viewer, notice);
+  const showComments = viewer.getByRole("button", {
+    name: "Show comments",
+    exact: true,
+  });
+  if (await showComments.count()) await showComments.click();
+  await page.evaluate(() => {
+    window.clipboardWrites = 0;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          window.clipboardWrites++;
+          if (window.clipboardFails) throw new Error("Clipboard denied");
+        },
+      },
+    });
+  });
+  for (const [fails, title] of [
+    [true, "Failed to copy code"],
+    [false, "Copied code to clipboard"],
+  ]) {
+    await page.evaluate((value) => {
+      window.clipboardFails = value;
+    }, fails);
+    await viewer
+      .getByRole("button", { name: "Copy code block", exact: true })
+      .click();
+    const feedback = viewer.getByRole("dialog", { name: title, exact: true });
+    await expect(feedback).toBeVisible();
+    if (fails)
+      await page.screenshot({ path: info.outputPath("viewer-copy-error.png") });
+    await expect(notice).toBeHidden();
+    await expect(host.getByText(title, { exact: true })).toHaveCount(0);
+    await feedback
+      .getByRole("button", { name: "Dismiss notification" })
+      .click();
+    await expect(feedback).toBeHidden();
+  }
+  expect(await page.evaluate(() => window.clipboardWrites)).toBe(2);
+
   await page.screenshot({ path: info.outputPath("viewer-notice-hidden.png") });
   for (const key of ["Tab", "Shift+Tab", "F6"]) {
     await page.keyboard.press(key);

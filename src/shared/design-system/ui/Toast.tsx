@@ -4,6 +4,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -14,7 +15,7 @@ import { XIcon } from "../icons";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 
-const ToastHost = createContext("");
+const ToastHost = createContext({ id: "", active: true });
 type Tone = "error" | "warning" | "info" | "success";
 
 /** Mount once in the host. Sonner owns announcements, expiry and swiping. */
@@ -26,6 +27,7 @@ export function ToastProvider({
   portalContainer?: HTMLElement | undefined;
 }) {
   const id = useId();
+  const [host] = useState(() => ({ id, active: true }));
   useEffect(() => {
     // Sonner's global hotkey must not bypass the host's modal focus boundary.
     const guardModal = (event: KeyboardEvent) => {
@@ -39,17 +41,18 @@ export function ToastProvider({
     window.addEventListener("keydown", guardModal, true);
     return () => window.removeEventListener("keydown", guardModal, true);
   }, []);
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    host.active = true;
+    return () => {
+      host.active = false;
       for (const notice of toast.getToasts()) {
         if ("toasterId" in notice && notice.toasterId === id)
           toast.dismiss(notice.id);
       }
-    },
-    [id],
-  );
+    };
+  }, [id, host]);
   return (
-    <ToastHost value={id}>
+    <ToastHost value={host}>
       {createPortal(
         <Toaster
           id={id}
@@ -188,7 +191,7 @@ export function ToastNotice({
   navigation?: ToastCardProps["navigation"];
 }) {
   const id = useId();
-  const toasterId = useContext(ToastHost);
+  const { id: toasterId } = useContext(ToastHost);
   const [source] = useState(() =>
     noticeContent({ title, description, tone, children }),
   );
@@ -257,15 +260,16 @@ export function useToastDismiss() {
   return toast.dismiss;
 }
 
-/** Completed actions outlive their originating row. */
+/** Completed actions outlive their originating row, but not their host. */
 export function useToastNotification() {
-  const toasterId = useContext(ToastHost);
+  const host = useContext(ToastHost);
   return (
     title: string,
     tone: "success" | "error" | "info",
     action?: { label: string; onClick(): void; timeout?: number },
-  ) =>
-    String(
+  ) => {
+    if (!host.active) return "";
+    return String(
       toast.custom(
         (id) => (
           <ToastCard
@@ -290,9 +294,10 @@ export function useToastNotification() {
         ),
         {
           id: crypto.randomUUID(),
-          toasterId,
+          toasterId: host.id,
           duration: action ? (action.timeout ?? 8000) : 4000,
         },
       ),
     );
+  };
 }

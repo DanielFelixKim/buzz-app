@@ -59,6 +59,16 @@ export async function checkViewerDownloadFeedback(
   await page.clock.install();
   // Hold the viewer open past the old host-toast lifetime before each result.
   await page.clock.fastForward(5000);
+  const geometry = () =>
+    viewer.evaluate((root) => {
+      const stage =
+        root.querySelector("[data-review-stage]") ?? root.querySelector("img");
+      if (!stage) throw new Error("Missing media stage");
+      const rect = stage.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+  const resting = await geometry();
+  const stableStage = () => expect.poll(geometry).toEqual(resting);
   expect(
     await page.evaluate(() => window.emitMediaMenuDownload("image.png")),
   ).toBe(1);
@@ -66,10 +76,12 @@ export async function checkViewerDownloadFeedback(
     viewer.getByRole("status").filter({ hasText: "Saved to Downloads" }),
   ).toBeVisible();
   await expect(backgroundNotice).toBeHidden();
+  await stableStage();
   await page.clock.fastForward(4001);
   await expect(
     viewer.getByText("Saved to Downloads", { exact: true }),
   ).toHaveCount(0);
+  await stableStage();
   expect(await page.evaluate(() => window.emitMediaMenuDownload(null))).toBe(1);
   const failure = viewer
     .getByRole("alert")
@@ -78,9 +90,11 @@ export async function checkViewerDownloadFeedback(
   await page.clock.fastForward(4001);
   await expect(failure).toBeVisible();
   await expect(backgroundNotice).toBeHidden();
+  await stableStage();
   await expect(viewer).toBeVisible();
   await page.clock.fastForward(2000);
   await expect(failure).toHaveCount(0);
+  await stableStage();
   // A later native video result must work after both timers have expired.
   expect(
     await page.evaluate(() => window.emitMediaMenuDownload("video.mp4")),

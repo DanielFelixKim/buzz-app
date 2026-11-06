@@ -22,6 +22,9 @@ test("plain media viewer hides inert notices and restores their controls", async
   // Arrival after opening must be hidden too, without dismissing the notice.
   await opener.click();
   await expect(viewer).toBeVisible();
+  await expect(
+    viewer.getByRole("button", { name: "Close fullscreen viewer" }),
+  ).toBeFocused();
   await page.evaluate(() => window.finishDownload());
   await expect(notice).toBeAttached();
   await expect(notice).toBeHidden();
