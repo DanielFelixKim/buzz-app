@@ -6,26 +6,16 @@
   background: var(--surface-panel);
 }
 .preview[data-embedded] {
-  position: relative;
   margin: 0 calc(-1 * var(--settings-group-inset));
   border: 0;
+  border-block-start: 1px solid var(--border-standard);
   border-radius: 0;
-}
-.preview[data-embedded]::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto;
-  height: 1px;
-  background: var(--border-standard);
 }
 .scene {
   display: grid;
   grid-template-columns: 25% minmax(0, 1fr);
   padding: var(--space-4);
   gap: var(--space-4);
-}
-.preview[data-embedded] .scene {
-  padding-block-start: calc(var(--space-4) + 1px);
 }
 .scene span {
   display: block;
