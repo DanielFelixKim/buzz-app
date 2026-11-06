@@ -20,9 +20,10 @@ so an edit applies to the running app within a second.
 
 | File | Effect |
 | --- | --- |
-| Missing | Any valid signature runs (the default). |
+| Missing at the default location | Any valid signature runs (the default). |
+| Missing at the `BUZZ_PLUGIN_TRUST` path | No external plugin runs until the file exists or the variable is unset. A mistyped path or an undeployed policy never lifts the restriction. `buzzodz plugin trust add` creates it. |
 | Valid | Only listed publishers run, plus your own identity when `allowSelfDeveloped` is true. Unsigned plugins never run, even with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=0`. |
-| Unusable | No external plugin runs until the file is fixed or removed. A mistake never loosens the restriction. |
+| Unusable, including a symbolic link to a missing file | No external plugin runs until the file is fixed or removed. A mistake never loosens the restriction. |
 
 Plugins that a policy blocks stay installed and listed with the reason, the same as
 an unsigned installation under the signature requirement. They run again as soon as

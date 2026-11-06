@@ -274,6 +274,11 @@ fn print_trust(trust: &Trust) {
         trust::Status::Absent => println!(
             "Trust file: {path} (not present)\nAny publisher with a valid signature can run external plugins."
         ),
+        trust::Status::Missing => println!(
+            "Trust file: {path} (named by {}, but not present)\nStatus: no external plugin can run until the file exists or {} is unset",
+            trust::PATH_ENV,
+            trust::PATH_ENV
+        ),
         trust::Status::Invalid { reason } => println!(
             "Trust file: {path}\nStatus: unusable, so no external plugin can run\nProblem: {reason}"
         ),
