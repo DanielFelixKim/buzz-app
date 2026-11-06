@@ -42,6 +42,8 @@ export type ChannelLanding = Readonly<{
   welcome?: string;
   welcomeTitle?: string;
   name?: string;
+  /** A starter channel: the relay adds people who join to it. */
+  autoJoin?: true;
 }>;
 
 export type DmVisibility = Readonly<{
@@ -92,6 +94,7 @@ export function createChannelLifecycle({
   relayAuthor,
   canAccess,
   acceptDiscovery,
+  acceptDirectory,
   removed,
 }: {
   reader?: RelayReader | undefined;
@@ -100,6 +103,8 @@ export function createChannelLifecycle({
   relayAuthor: string;
   canAccess(id: string): boolean;
   acceptDiscovery(events: readonly RelayEvent[]): void;
+  /** Display-only directory metadata, for any open channel. */
+  acceptDirectory?: ((events: readonly RelayEvent[]) => void) | undefined;
   removed(id: string): void;
 }) {
   let closed = false;
@@ -207,7 +212,11 @@ export function createChannelLifecycle({
     issued.set(id, template.created_at);
     return template;
   }
-  async function sign(signer: RelayWriter, template: EventTemplate, signal: AbortSignal) {
+  async function sign(
+    signer: RelayWriter,
+    template: EventTemplate,
+    signal: AbortSignal,
+  ) {
     const signed = await signer.sign(structuredClone(template), signal);
     signal.throwIfAborted();
     if (
@@ -573,8 +582,10 @@ export function createChannelLifecycle({
                   record.tags.some(([key]) => key === "auto_join") ===
                     (action === "auto-join-on")
                 ) {
-                  // Only a channel this viewer reads joins the discovery state.
+                  // Only a channel this viewer reads joins the discovery state;
+                  // the browsing directory lists every open channel.
                   if (canAccess(id)) acceptDiscovery([record]);
+                  acceptDirectory?.([record]);
                   return;
                 }
               } else if (action === "archive" || action === "unarchive") {
@@ -616,10 +627,17 @@ export function createChannelLifecycle({
         retryRead(async () => {
           const record = await readMetadata(id, signal, true);
           if (!record) return undefined;
+          // A strong read is current: the channel's projections take it too,
+          // so a check also refreshes its starter flag.
+          if (canAccess(id)) acceptDiscovery([record]);
+          acceptDirectory?.([record]);
           const name = metadataName(record);
           return Object.freeze({
             ...landingTags(record.tags),
             ...(name ? { name } : {}),
+            ...(record.tags.some(([key]) => key === "auto_join")
+              ? { autoJoin: true as const }
+              : {}),
           });
         }, signal),
       );
