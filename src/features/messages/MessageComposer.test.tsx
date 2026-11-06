@@ -2678,6 +2678,9 @@ it("retains a remounted later edit conflict until clearing it and explicitly ret
     name: "Retry failed send recovery",
   });
   expect(replacement).toHaveValue("later edit");
+  expect(
+    readOwnerDraft(h.scope, "channel", undefined, h.owner.session)?.text,
+  ).toBe("later edit");
   await userEvent.click(retry);
   expect(replacement).toHaveValue("later edit");
   expect(within(again.container).queryByText("original.txt")).toBeNull();
@@ -2725,6 +2728,15 @@ it("does not replace an active message edit when a remounted upload recovers", a
   expect(readView(h.scope, "draft:channel", null)).toMatchObject({
     text: "original caption",
   });
+  expect(
+    readOwnerDraft(h.scope, "channel", undefined, h.owner.session),
+  ).toMatchObject({ text: "original caption", source: "composer" });
+  const recoveredDraft = readView(h.scope, "draft:channel", null);
+  act(() => writeView(h.scope, "draft:channel", "Newer draft saved elsewhere"));
+  expect(() =>
+    readOwnerDraft(h.scope, "channel", undefined, h.owner.session),
+  ).toThrow("changed during message editing");
+  act(() => writeView(h.scope, "draft:channel", recoveredDraft));
   fireEvent.click(
     within(again.container).getByRole("button", { name: "Cancel edit" }),
   );
@@ -15533,6 +15545,8 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
     const { tmpdir, homedir } = await import("node:os");
     const { join } = await import("node:path");
     const { CodexRuntime } = await import("../../bundled/codex/runtime");
+    const linked = !!process.env.BUZZ_DRAFT_LIVE_LINK;
+    const link = `https://example.com/draft/${crypto.randomUUID()}`;
     const edit = !!process.env.BUZZ_DRAFT_LIVE_EDIT;
     const submitted = !!process.env.BUZZ_DRAFT_LIVE_ACCEPTED;
     if (edit && submitted) throw new Error("Choose one acceptance mode");
@@ -15549,6 +15563,19 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
       onTestFinished(() => writes.mockRestore());
     }
     h.fill(prose);
+    if (linked) {
+      act(() => h.input().setSelectionRange(0, prose.length));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Toggle formatting" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+      fireEvent.change(screen.getByRole("textbox", { name: "URL" }), {
+        target: { value: link },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(h.input()).toHaveValue(prose);
+      expect(readOwnerDraft(draftScope, "channel")?.markdown).toContain(link);
+    }
     if (submitted) {
       if (!("user" in h))
         throw new Error("Accepted mode needs the normal composer");
@@ -15696,7 +15723,9 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
             created_at: Math.floor(Date.now() / 1000),
             content: submitted
               ? "Call buzz.draft_get with channel channel. Reply NO_DRAFT if draft is null; otherwise reply with its exact text. Send your answer using buzz.send with final true. Use no shell, file, or delegation tools."
-              : "Call buzz.draft_get with channel channel. Then send the exact draft text back using buzz.send with final true. Use no shell, file, or delegation tools.",
+              : linked
+                ? "Call buzz.draft_get with channel channel. Send the draft's exact Markdown back using buzz.send with final true. Use no shell, file, or delegation tools."
+                : "Call buzz.draft_get with channel channel. Then send the exact draft text back using buzz.send with final true. Use no shell, file, or delegation tools.",
             tags: [["h", "channel"]],
             sig: "",
           } as RelayEvent,
@@ -15745,6 +15774,7 @@ it.skipIf(!process.env.BUZZ_DRAFT_LIVE_CODEX)(
       });
       expect(reads).toBeGreaterThan(0);
       expect(published[0]?.content).toContain(submitted ? "NO_DRAFT" : prose);
+      if (linked) expect(published[0]?.content).toContain(link);
       if (!submitted)
         expect(screen.getByRole("textbox")).toHaveValue(
           edit ? "Private sent-message edit" : prose,

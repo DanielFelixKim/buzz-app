@@ -1110,9 +1110,19 @@ function Composer({
   useEffect(() => {
     setPasteTooLong(false);
   }, [draft, editing.target]);
+  const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
   const liveDraft = useRef<() => MentionDraft | undefined>(() => undefined);
-  liveDraft.current = () =>
-    editing.target ? beforeEdit.current?.value : valueRef.current;
+  liveDraft.current = () => {
+    if (!editing.target) return valueRef.current;
+    const parked = beforeEdit.current?.value;
+    const recovered = deferredRecovery.current?.draft;
+    if (!parked || !recovered || !untouchedDraft(parked)) return parked;
+    if (viewRevision(scope, draftKey) !== JSON.stringify(recovered))
+      throw new Error(
+        "The recovered draft changed during message editing. Finish or cancel the edit before reading it.",
+      );
+    return recovered;
+  };
   useEffect(() => {
     if (submission) return;
     return registerComposerDraft(scope, draftKey, () => liveDraft.current?.());
@@ -1448,7 +1458,6 @@ function Composer({
     },
   );
   const editingDraft = !!editing.target;
-  const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
   useEffect(() => {
     if (submission) return;
     const stop = subscribeView(scope, () => reconcileDraft());
