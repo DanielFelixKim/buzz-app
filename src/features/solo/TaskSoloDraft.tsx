@@ -16,7 +16,9 @@ import {
   taskFirstEventRecovery,
   readTaskFirstEventRecovery,
   validateTaskPublication,
+  validateTaskMembers,
   recordTaskFirstEvent,
+  acknowledgeTaskFirstEvent,
 } from "./task-mode";
 import { SoloDraftView } from "./SoloPresentation";
 import { MessageComposer } from "../messages/MessageComposer";
@@ -158,270 +160,340 @@ export function TaskSoloDraft({
       : undefined;
   async function start(draft: MentionDraft, files: AttachmentDraft) {
     if (attempt.current || !context) return;
+    const currentContext = context;
+    const outbox = session.outbox;
     const controller = new AbortController();
     attempt.current = controller;
     setBusy(true);
     setError(undefined);
-    const signal = AbortSignal.any([controller.signal, context.signal]);
+    const signal = AbortSignal.any([controller.signal, currentContext.signal]);
     try {
-      if (!session.outbox) throw new Error("Task messaging is unavailable.");
-      await session.outbox.ready();
+      if (!outbox) throw new Error("Task messaging is unavailable.");
+      await outbox.ready();
       signal.throwIfAborted();
-      const operations = session.outbox.snapshot();
-      const pending = operations.filter(
-        (item) => item.recovery?.key === `solo-task:${route.draftId}`,
-      );
-      if (pending.length > 1)
-        throw new Error(
-          "More than one saved first message needs review in Outbox.",
-        );
-      const saved = pending[0];
-      if (saved?.recovery) {
-        const recovery = readTaskFirstEventRecovery(
-          saved.event,
-          saved.recovery,
-        );
-        if (
-          saved.event.pubkey !== session.viewer ||
-          recovery.draftId !== route.draftId ||
-          recovery.regionLabel !== context.label
-        )
-          throw new Error("The saved task message does not match this draft.");
-        const creates = operations.filter(
-          (item) =>
-            item.event.kind === 9007 &&
-            item.event.tags.some(
-              ([key, value]) => key === "h" && value === recovery.channelId,
-            ),
-        );
-        if (creates.length > 1)
-          throw new Error(
-            "More than one saved task creation needs review in Outbox.",
+      const journal = outbox;
+      await journal.withChat(`solo-task:${route.draftId}`, async (owned) => {
+        async function resumeSaved() {
+          const operations = journal.snapshot();
+          const pending = operations.filter(
+            (item) => item.recovery?.key === `solo-task:${route.draftId}`,
           );
-        const create = creates[0];
-        const members =
-          create?.event.tags
-            .filter(([key]) => key === "p")
-            .map((tag) => tag[1] ?? "") ?? [];
-        const recipients = saved.event.tags
-          .filter(([key]) => key === "p")
-          .map((tag) => tag[1] ?? "");
-        const active = () => {
-          try {
-            return (
-              !context.signal.aborted &&
-              taskDraftContext(session, context.label)?.binding.incarnation ===
-                context.binding.incarnation &&
-              recipients.length > 0 &&
-              recipients.length <=
-                (context.mode.participants.maxRecipients ?? 1) &&
-              [...members, ...recipients].every(
-                (key) =>
-                  key === session.viewer ||
-                  context.mode.participants.eligible(key),
+          if (pending.length > 1)
+            throw new Error(
+              "More than one saved first message needs review in Outbox.",
+            );
+          const saved = pending[0];
+          if (saved?.recovery) {
+            const recovery = readTaskFirstEventRecovery(
+              saved.event,
+              saved.recovery,
+            );
+            if (
+              saved.event.pubkey !== session.viewer ||
+              recovery.draftId !== route.draftId ||
+              recovery.regionLabel !== currentContext.label
+            )
+              throw new Error(
+                "The saved task message does not match this draft.",
+              );
+            const creates = operations.filter(
+              (item) =>
+                item.event.kind === 9007 &&
+                item.event.tags.some(
+                  ([key, value]) => key === "h" && value === recovery.channelId,
+                ),
+            );
+            if (creates.length > 1)
+              throw new Error(
+                "More than one saved task creation needs review in Outbox.",
+              );
+            const create = creates[0];
+            const members =
+              create?.event.tags
+                .filter(([key]) => key === "p")
+                .map((tag) => tag[1] ?? "") ?? [];
+            const recipients = saved.event.tags
+              .filter(([key]) => key === "p")
+              .map((tag) => tag[1] ?? "");
+            const active = () => {
+              try {
+                return (
+                  owned() &&
+                  !signal.aborted &&
+                  !currentContext.signal.aborted &&
+                  taskDraftContext(session, currentContext.label)?.binding
+                    .incarnation === currentContext.binding.incarnation &&
+                  recipients.length > 0 &&
+                  recipients.length <=
+                    (currentContext.mode.participants.maxRecipients ?? 1) &&
+                  [...members, ...recipients].every(
+                    (key) =>
+                      key === session.viewer ||
+                      currentContext.mode.participants.eligible(key),
+                  )
+                );
+              } catch {
+                return false;
+              }
+            };
+            if (!active())
+              throw new Error(
+                "A saved task participant is no longer eligible.",
+              );
+            const targetKey = `draft:${recovery.channelId}`;
+            const targetRevision = viewRevision(scope, targetKey);
+            const target = mentionDraft(readView(scope, targetKey, ""));
+            const content = composerMarkdown(draft);
+            const retained = files.snapshot();
+            const uploaded = retained.flatMap((item) =>
+              item.uploaded ? [item.uploaded] : [],
+            );
+            let outgoing: ReturnType<typeof attachmentMessage> | undefined;
+            if (uploaded.length === retained.length) {
+              try {
+                outgoing = attachmentMessage(
+                  content,
+                  uploaded,
+                  uploaded[0]?.url,
+                );
+              } catch {
+                /* Changed/invalid files remain editable; never re-upload recovery. */
+              }
+            }
+            const edited =
+              !outgoing ||
+              outgoing.content !== saved.event.content ||
+              JSON.stringify(outgoing.tags) !==
+                JSON.stringify(
+                  saved.event.tags.filter(([name]) => name === "imeta"),
+                ) ||
+              JSON.stringify(
+                [
+                  ...new Set(draft.recipients.map((item) => item.pubkey)),
+                ].sort(),
+              ) !== JSON.stringify([...new Set(recipients)].sort());
+            const targetFiles = attachmentDraft(
+              session,
+              `${scope}:${targetKey}`,
+              recovery.channelId,
+            );
+            if (
+              edited &&
+              hasDraftContent(target, targetFiles.snapshot().length)
+            )
+              throw new Error(
+                "This task already has a draft. Your changes remain here; open the task to review its existing draft first.",
+              );
+            if (create) {
+              const labels = create.event.tags
+                .filter(([key]) => key === "t")
+                .map((tag) => tag[1] ?? "");
+              if (
+                !labels.includes(TASK_MODE_LABEL) ||
+                JSON.stringify(regionLabels(labels)) !==
+                  JSON.stringify([currentContext.label]) ||
+                recipients.some((key) => !members.includes(key))
               )
-            );
-          } catch {
-            return false;
+                throw new Error(
+                  "The saved task creation does not match this message.",
+                );
+              if (create?.recovery?.key === `create:${saved.recovery.key}`) {
+                if (create.recovery.value !== saved.recovery.value)
+                  throw new Error("The saved task pair does not match.");
+                const claim = await currentContext.mode.markChannelStarted(
+                  {
+                    draftId: recovery.draftId,
+                    revision: recovery.revision,
+                    preparationId: recovery.preparationId,
+                    channelId: recovery.channelId,
+                    binding: currentContext.binding,
+                  },
+                  signal,
+                );
+                signal.throwIfAborted();
+                if (claim !== "start" && claim !== "resume")
+                  throw new Error("The saved task claim is invalid.");
+              }
+              const resumed = session.channelWrites.resumeStart(
+                create.event.id,
+                recovery.channelId,
+                session.viewer,
+                active,
+              );
+              void resumed.ready.catch((reason: unknown) => {
+                if (reason instanceof ChatNotStarted)
+                  onFailed?.(recovery.channelId, reason.message);
+              });
+            }
+            validateTaskPublication(session, saved.event);
+            if (saved.delivery === "accepted" || saved.delivery === "seen") {
+              if (!saved.signed)
+                throw new Error(
+                  "Reload to inspect the saved task receipt before finishing.",
+                );
+              await recordTaskFirstEvent(
+                session,
+                saved.signed,
+                saved.recovery,
+                signal,
+              );
+            } else {
+              await journal.resume(saved.event.id, active);
+            }
+            await acknowledgeTaskFirstEvent(journal, saved.event.id);
+            signal.throwIfAborted();
+            if (edited) {
+              if (
+                replaceView(scope, targetKey, targetRevision, draft) !== "saved"
+              )
+                throw new Error(
+                  "The task draft changed. Your changes remain here; retry after reviewing the task.",
+                );
+              if (files.snapshot().length)
+                transferAttachmentDraft(files, targetFiles);
+              writeView(scope, `${key}:new-draft`, "");
+            }
+            if (!edited) {
+              files.clear();
+              writeView(scope, `${key}:new-draft`, "");
+            }
+            onStarted(recovery.channelId);
+            return true;
           }
-        };
-        if (!active())
-          throw new Error("A saved task participant is no longer eligible.");
-        const targetKey = `draft:${recovery.channelId}`;
-        const targetRevision = viewRevision(scope, targetKey);
-        const target = mentionDraft(readView(scope, targetKey, ""));
-        const content = composerMarkdown(draft);
-        const retained = files.snapshot();
-        const uploaded = retained.flatMap((item) =>
-          item.uploaded ? [item.uploaded] : [],
-        );
-        let outgoing: ReturnType<typeof attachmentMessage> | undefined;
-        if (uploaded.length === retained.length) {
-          try {
-            outgoing = attachmentMessage(content, uploaded, uploaded[0]?.url);
-          } catch {
-            /* Changed/invalid files remain editable; never re-upload recovery. */
-          }
+          return false;
         }
-        const edited =
-          !outgoing ||
-          outgoing.content !== saved.event.content ||
-          JSON.stringify(outgoing.tags) !==
-            JSON.stringify(
-              saved.event.tags.filter(([name]) => name === "imeta"),
-            ) ||
-          JSON.stringify(
-            [...new Set(draft.recipients.map((item) => item.pubkey))].sort(),
-          ) !== JSON.stringify([...new Set(recipients)].sort());
-        const targetFiles = attachmentDraft(
-          session,
-          `${scope}:${targetKey}`,
-          recovery.channelId,
-        );
-        if (edited && hasDraftContent(target, targetFiles.snapshot().length))
-          throw new Error(
-            "This task already has a draft. Your changes remain here; open the task to review its existing draft first.",
-          );
-        if (create) {
-          const labels = create.event.tags
-            .filter(([key]) => key === "t")
-            .map((tag) => tag[1] ?? "");
-          if (
-            !labels.includes(TASK_MODE_LABEL) ||
-            JSON.stringify(regionLabels(labels)) !==
-              JSON.stringify([context.label]) ||
-            recipients.some((key) => !members.includes(key))
-          )
-            throw new Error(
-              "The saved task creation does not match this message.",
-            );
-          const resumed = session.channelWrites.resumeStart(
-            create.event.id,
-            recovery.channelId,
-            session.viewer,
-            active,
-          );
-          void resumed.ready.catch((reason: unknown) => {
-            if (reason instanceof ChatNotStarted)
-              onFailed?.(recovery.channelId, reason.message);
-          });
-        }
-        validateTaskPublication(session, saved.event);
-        if (saved.delivery === "accepted" || saved.delivery === "seen") {
-          if (!saved.signed)
-            throw new Error(
-              "Reload to inspect the saved task receipt before finishing.",
-            );
-          await recordTaskFirstEvent(
-            session,
-            saved.signed,
-            saved.recovery,
-            signal,
-          );
-        } else {
-          session.outbox.retry(saved.event.id, active);
-          await session.outbox.whenPrepared(saved.event.id);
-        }
-        signal.throwIfAborted();
-        if (edited) {
-          if (replaceView(scope, targetKey, targetRevision, draft) !== "saved")
-            throw new Error(
-              "The task draft changed. Your changes remain here; retry after reviewing the task.",
-            );
-          if (files.snapshot().length)
-            transferAttachmentDraft(files, targetFiles);
-          writeView(scope, `${key}:new-draft`, "");
-        }
-        if (!edited) {
-          files.clear();
-          writeView(scope, `${key}:new-draft`, "");
-        }
-        onStarted(recovery.channelId);
-        return;
-      }
-      const recipients = [
-        ...new Set(draft.recipients.map((item) => item.pubkey)),
-      ];
-      if (recipients.length > (context.mode.participants.maxRecipients ?? 1))
-        throw new Error("Tag one agent per message");
-      changed(draft);
-      const uploaded = await files.prepareForSend(signal);
-      signal.throwIfAborted();
-      const input = snapshot(draft, uploaded);
-      if (
-        !input?.primary ||
-        !input.recipients.includes(input.primary) ||
-        input.recipients.some((key) => !context.mode.participants.eligible(key))
-      )
-        throw new Error("Choose an eligible primary agent before sending.");
-      const result = await context.mode.prepare(input, signal);
-      signal.throwIfAborted();
-      if (!result.ok)
-        throw new Error(
-          result.reason === "already_sent"
-            ? "Finish creating this task after reloading. Your draft and files are kept here."
-            : result.reason,
-        );
-      if (!Array.isArray(result.members))
-        throw new Error("The prepared task has invalid participants.");
-      const prepared = Object.freeze({
-        ...result,
-        members: Object.freeze([...result.members]),
-      });
-      if (
-        !prepared.channelId ||
-        !prepared.preparationId ||
-        prepared.revision !== input.revision ||
-        !prepared.members.includes(input.primary) ||
-        input.recipients.some((key) => !prepared.members.includes(key)) ||
-        prepared.members.some(
-          (key) =>
-            key !== session.viewer &&
-            (!input.recipients.includes(key) ||
-              !context.mode.participants.eligible(key)),
+        if (await resumeSaved()) return;
+        const recipients = [
+          ...new Set(draft.recipients.map((item) => item.pubkey)),
+        ];
+        if (
+          recipients.length >
+          (currentContext.mode.participants.maxRecipients ?? 1)
         )
-      )
-        throw new Error(
-          "The prepared task has changed. Review its agents and retry.",
+          throw new Error("Tag one agent per message");
+        changed(draft);
+        const uploaded = await files.prepareForSend(signal);
+        signal.throwIfAborted();
+        const input = snapshot(draft, uploaded);
+        if (
+          !input?.primary ||
+          !input.recipients.includes(input.primary) ||
+          input.recipients.some(
+            (key) => !currentContext.mode.participants.eligible(key),
+          )
+        )
+          throw new Error("Choose an eligible primary agent before sending.");
+        const message = session.messages.prepareNewChat(
+          input.text,
+          [input.primary],
+          uploaded,
         );
-      const claim = await context.mode.markChannelStarted(
-        {
-          draftId: input.draftId,
-          revision: input.revision,
-          preparationId: prepared.preparationId,
-          channelId: prepared.channelId,
-          binding: input.binding,
-        },
-        signal,
-      );
-      signal.throwIfAborted();
-      if (claim !== "start")
-        throw new Error(
-          "Finish creating this task after reloading. Your draft and files are kept here.",
+        if (message.content.length > 32_000)
+          throw new Error("The task message exceeds 32,000 characters.");
+        const result = await currentContext.mode.prepare(input, signal);
+        signal.throwIfAborted();
+        if (!result.ok) {
+          if (result.reason === "already_sent" && result.channelId) {
+            const channelId = result.channelId;
+            const targetKey = `draft:${channelId}`;
+            const targetRevision = viewRevision(scope, targetKey);
+            const targetFiles = attachmentDraft(
+              session,
+              `${scope}:${targetKey}`,
+              channelId,
+            );
+            await session.channelWrites.refresh(channelId);
+            signal.throwIfAborted();
+            const current = taskDraftContext(session, currentContext.label);
+            const target = validateTaskMembers(session, channelId);
+            signal.throwIfAborted();
+            if (
+              !current ||
+              !target ||
+              target.label !== currentContext.label ||
+              current.binding.scope !== currentContext.binding.scope ||
+              current.binding.viewer !== session.viewer ||
+              current.binding.viewer !== currentContext.binding.viewer ||
+              current.binding.incarnation !==
+                currentContext.binding.incarnation ||
+              target.binding.scope !== current.binding.scope ||
+              target.binding.viewer !== current.binding.viewer ||
+              target.binding.incarnation !== current.binding.incarnation
+            )
+              throw new Error(
+                "The completed task no longer belongs to this draft.",
+              );
+            if (
+              hasDraftContent(
+                mentionDraft(readView(scope, targetKey, "")),
+                targetFiles.snapshot().length,
+              )
+            )
+              throw new Error(
+                "This task already has a draft. Your changes remain here; open the task to review its existing draft first.",
+              );
+            if (
+              replaceView(scope, targetKey, targetRevision, draft) !== "saved"
+            )
+              throw new Error(
+                "The task draft changed. Your changes remain here; retry after reviewing the task.",
+              );
+            if (files.snapshot().length)
+              transferAttachmentDraft(files, targetFiles);
+            writeView(scope, `${key}:new-draft`, "");
+            onStarted(channelId);
+            return;
+          }
+          throw new Error(
+            result.reason === "already_sent"
+              ? "Finish creating this task after reloading. Your draft and files are kept here."
+              : result.reason,
+          );
+        }
+        if (!Array.isArray(result.members))
+          throw new Error("The prepared task has invalid participants.");
+        const prepared = Object.freeze({
+          ...result,
+          members: Object.freeze([...result.members]),
+        });
+        if (
+          !prepared.channelId ||
+          !prepared.preparationId ||
+          prepared.revision !== input.revision ||
+          !prepared.members.includes(input.primary) ||
+          input.recipients.some((key) => !prepared.members.includes(key)) ||
+          prepared.members.some(
+            (key) =>
+              key !== session.viewer &&
+              (!input.recipients.includes(key) ||
+                !currentContext.mode.participants.eligible(key)),
+          )
+        )
+          throw new Error(
+            "The prepared task has changed. Review its agents and retry.",
+          );
+        const create = session.channelWrites.prepareStart(
+          prepared.channelId,
+          prepared.title || startingChatTitle(draft),
+          undefined,
+          false,
+          prepared.members,
+          [currentContext.label, TASK_MODE_LABEL],
         );
-      const title = prepared.title || startingChatTitle(draft);
-      const start = session.channelWrites.start(
-        prepared.channelId,
-        title,
-        prepared.members,
-        undefined,
-        false,
-        undefined,
-        {
-          labels: [context.label, TASK_MODE_LABEL],
-          active: () =>
-            !context.signal.aborted &&
-            taskDraftContext(session, context.label)?.binding.incarnation ===
-              context.binding.incarnation &&
-            prepared.members.every(
-              (key) =>
-                key === session.viewer ||
-                context.mode.participants.eligible(key),
-            ),
-        },
-      );
-      void start.ready.catch((reason: unknown) => {
-        if (reason instanceof ChatNotStarted)
-          onFailed?.(prepared.channelId, reason.message);
+        await message.stage(
+          create,
+          taskFirstEventRecovery({
+            draftId: input.draftId,
+            revision: input.revision,
+            preparationId: prepared.preparationId,
+            channelId: prepared.channelId,
+            regionLabel: currentContext.label,
+          }),
+        );
+        signal.throwIfAborted();
+        if (!(await resumeSaved()))
+          throw new Error("The saved task submission is unavailable.");
       });
-      const firstEvent = session.messages.send(
-        prepared.channelId,
-        input.text,
-        [input.primary],
-        uploaded,
-        taskFirstEventRecovery({
-          draftId: input.draftId,
-          revision: input.revision,
-          preparationId: prepared.preparationId,
-          channelId: prepared.channelId,
-          regionLabel: context.label,
-        }),
-      );
-      await session.outbox.whenPrepared(firstEvent);
-      signal.throwIfAborted();
-      files.clear();
-      writeView(scope, `${key}:new-draft`, "");
-      onStarted(prepared.channelId);
     } catch (reason) {
       if (!controller.signal.aborted)
         setError(reason instanceof Error ? reason.message : String(reason));

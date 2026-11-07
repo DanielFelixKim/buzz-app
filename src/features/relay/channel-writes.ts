@@ -701,13 +701,12 @@ export function createChannelWrites(
         active,
       );
     },
-    create(
+    prepareStart(
       id: string,
       title: string,
       ttlSeconds?: number,
       named = false,
       members: readonly string[] = [],
-      active?: () => boolean,
       labels: readonly string[] = [],
     ) {
       writer();
@@ -723,24 +722,35 @@ export function createChannelWrites(
           ttlSeconds > 2_147_483_647)
       )
         throw new Error("Choose a valid chat duration.");
+      return {
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", id],
+          ["name", title],
+          ["visibility", "private"],
+          ["channel_type", "stream"],
+          ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+          ...channelLabelTags([
+            SOLO_LABEL,
+            ...(named ? [SOLO_NAMED_LABEL] : []),
+            ...labels,
+          ]),
+          ...[...new Set(members)].map((key) => ["p", key]),
+        ],
+      };
+    },
+    create(
+      id: string,
+      title: string,
+      ttlSeconds?: number,
+      named = false,
+      members: readonly string[] = [],
+      active?: () => boolean,
+      labels: readonly string[] = [],
+    ) {
       return writer().send(
-        {
-          kind: 9007,
-          content: "",
-          tags: [
-            ["h", id],
-            ["name", title],
-            ["visibility", "private"],
-            ["channel_type", "stream"],
-            ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
-            ...channelLabelTags([
-              SOLO_LABEL,
-              ...(named ? [SOLO_NAMED_LABEL] : []),
-              ...labels,
-            ]),
-            ...[...new Set(members)].map((key) => ["p", key]),
-          ],
-        },
+        api.prepareStart(id, title, ttlSeconds, named, members, labels),
         undefined,
         active,
       );

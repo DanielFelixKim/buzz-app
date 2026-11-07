@@ -53,6 +53,15 @@ function fixture() {
     observeSend: () => () => {},
     ready: async () => {},
     recovery: async () => undefined,
+    withChat: async () => {
+      throw new Error("No chat submission in this fixture");
+    },
+    stageChat: async () => {
+      throw new Error("No chat submission in this fixture");
+    },
+    resume: async () => {
+      throw new Error("No chat submission in this fixture");
+    },
     whenPrepared: async () => {
       throw new Error("No active preparation in this fixture");
     },

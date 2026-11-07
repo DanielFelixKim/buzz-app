@@ -11,7 +11,7 @@ import {
   type EventData,
   type RelayEvent,
 } from "../relay/events";
-import type { OutboxRecovery } from "../relay/outbox";
+import type { Outbox, OutboxRecovery } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 
 /** Task references another build signed. This build cannot honor them. */
@@ -280,4 +280,34 @@ export async function recordTaskFirstEvent(
   bound.throwIfAborted();
   validateTaskPublication(session, event, allowInformational);
   return revalidate;
+}
+
+/** Keep the first-message key until the linked creation receipt is retired. */
+export async function acknowledgeTaskFirstEvent(outbox: Outbox, id: string) {
+  const first = outbox.snapshot().find((item) => item.event.id === id);
+  if (!first?.recovery?.key.startsWith("solo-task:")) return;
+  if (first.delivery !== "accepted" && first.delivery !== "seen")
+    throw new Error("Confirm delivery before completing this task.");
+  const recovery = readTaskFirstEventRecovery(first.event, first.recovery);
+  const creates = outbox
+    .snapshot()
+    .filter((item) => item.recovery?.key === `create:${first.recovery?.key}`);
+  if (creates.length > 1)
+    throw new Error(
+      "More than one saved task creation needs review in Outbox.",
+    );
+  const create = creates[0];
+  if (create) {
+    if (
+      create.event.kind !== 9007 ||
+      create.event.pubkey !== first.event.pubkey ||
+      create.recovery?.value !== first.recovery.value ||
+      !create.event.tags.some(
+        ([name, value]) => name === "h" && value === recovery.channelId,
+      )
+    )
+      throw new Error("The saved task pair does not match.");
+    await outbox.acknowledge(create.event.id);
+  }
+  await outbox.acknowledge(id);
 }

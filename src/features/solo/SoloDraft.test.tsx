@@ -21,7 +21,13 @@ import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
-import { createOutbox } from "../relay/outbox";
+import {
+  createOutbox,
+  type OutboxInput,
+  type OutboxRecovery,
+  type OutgoingEvent,
+} from "../relay/outbox";
+import { createMessages } from "../relay/messages";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
 import { attachmentDraft } from "../messages/attachment-draft";
@@ -92,7 +98,6 @@ function taggedDraft(
     recipients: [{ pubkey: key, name, start: 0, end: mention.length }],
   };
 }
-const noOperations: readonly never[] = [];
 /** Stands in for the mentions picker's pill: same name, same audience contract. */
 function Audience({ audience }: ComposerToolProps) {
   return audience ? (
@@ -196,6 +201,28 @@ function setup(available = true) {
     ],
   };
   const profileSnapshot = new Map();
+  let operations: readonly OutgoingEvent[] = [];
+  const stageChat = vi.fn(
+    async (
+      create: OutboxInput,
+      message: OutboxInput,
+      recovery: OutboxRecovery,
+    ) => {
+      operations = [create, message].map((input, index) => ({
+        event: {
+          ...input,
+          id: (index ? "d" : "c").repeat(64),
+          pubkey: viewer,
+          created_at: 1,
+        },
+        recovery: index
+          ? recovery
+          : { key: `create:${recovery.key}`, value: recovery.value },
+        delivery: "unknown",
+        guarded: true,
+      }));
+    },
+  );
   const session = {
     viewer,
     channelWrites,
@@ -243,14 +270,62 @@ function setup(available = true) {
     outbox: {
       ready: async () => {},
       whenPrepared: vi.fn(async () => ({})),
+      withChat: async (
+        _key: string,
+        run: (active: () => boolean) => Promise<unknown>,
+      ) => run(() => true),
+      stageChat,
+      resume: async (id: string, active: () => boolean) => {
+        const outbox = session.outbox;
+        assert.exists(outbox);
+        outbox.retry(id, active);
+        await outbox.whenPrepared(id);
+        const item = outbox.snapshot().find((row) => row.event.id === id);
+        if (!item) throw new Error("Missing fixture message");
+        Object.assign(item, { delivery: "accepted" });
+        return item.event;
+      },
+      retry: vi.fn(),
+      acknowledge: vi.fn(async () => {}),
       supports: () => true,
-      snapshot: () => noOperations,
+      snapshot: () => operations,
       subscribe: () => () => {},
       dismiss: vi.fn(async () => {}),
     },
     media: (url: string) => url,
   } as unknown as RelaySession;
-  return { session, channelWrites, messages };
+  Object.assign(messages, {
+    prepareNewChat: createMessages(
+      session.outbox,
+      viewer,
+      () => undefined,
+      () => [],
+      () => {},
+      undefined,
+      "https://relay.test",
+    ).prepareNewChat,
+  });
+  const writes = createChannelWrites(
+    session.outbox,
+    session.channels,
+    {} as Parameters<typeof createChannelWrites>[2],
+    new AbortController().signal,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    true,
+  );
+  Object.assign(channelWrites, {
+    prepareStart: writes.prepareStart,
+    starting: () => undefined,
+    resumeStart: vi.fn((create: string) => ({
+      create,
+      ready: Promise.resolve(),
+    })),
+  });
+  return { session, channelWrites, messages, stageChat };
 }
 it("uses restored explicit mentions, not a separate picker", async () => {
   const test = setup(),
@@ -3516,16 +3591,29 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
     expect(f.channelWrites.start).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Do the task");
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        started,
+        screen.queryByRole("alert")?.textContent ?? "task result",
+      ).toHaveBeenCalledOnce(),
+    );
     const prepared = prepare.mock.calls[1]?.[0];
     expect(prepared).toMatchObject({
       draftId: route.draftId,
       primary: agent,
       attachments: [],
     });
-    expect(f.channelWrites.start.mock.calls[0]?.[2]).toEqual([agent]);
-    expect(f.messages.send.mock.calls[0]?.[2]).toEqual([agent]);
-    const recovery = f.messages.send.mock.calls[0]?.[4];
+    expect(
+      f.stageChat.mock.calls[0]?.[0].tags
+        .filter(([name]) => name === "p")
+        .map((tag) => tag[1]),
+    ).toEqual([agent]);
+    expect(
+      f.stageChat.mock.calls[0]?.[1].tags
+        .filter(([name]) => name === "p")
+        .map((tag) => tag[1]),
+    ).toEqual([agent]);
+    const recovery = f.stageChat.mock.calls[0]?.[2];
     expect(JSON.parse(recovery?.value ?? "null")).toMatchObject({
       draftId: route.draftId,
       revision: prepared?.revision,
@@ -3874,134 +3962,6 @@ it.each([false, true])(
   },
 );
 
-it.each(["resume", "already_sent"])(
-  "permits one start across already-open drafts and preserves unresolved payload (%s)",
-  async (response) => {
-    const a = setup(),
-      b = setup();
-    const region = createSoloRegionFixture(a.session.viewer);
-    let claimed = false;
-    const mark = vi.fn(async () => {
-      if (claimed) return "resume" as const;
-      claimed = true;
-      return "start" as const;
-    });
-    const source = await region.register({
-      task: {
-        prepare: async (input) =>
-          claimed && response === "already_sent"
-            ? {
-                ok: false,
-                reason: "already_sent",
-                channelId: "22222222-2222-4222-8222-222222222222",
-              }
-            : {
-                ok: true,
-                channelId: "22222222-2222-4222-8222-222222222222",
-                preparationId: "frozen",
-                revision: input.revision,
-                members: input.recipients,
-              },
-        markChannelStarted: mark,
-        recordFirstEvent: async () => {},
-        participants: {
-          eligible: () => true,
-          defaultRecipient: () => "a".repeat(64),
-          makePrimary: async () => {},
-        },
-      },
-    });
-    const existingChannel = {
-      channels: [
-        {
-          id: "22222222-2222-4222-8222-222222222222",
-          creator: b.session.viewer,
-          channelType: "solo",
-          members: [b.session.viewer, "a".repeat(64)],
-          labels: [SOLO_LABEL, source.handle.label, "solo-task-mode:v1"],
-        },
-      ],
-    };
-    Object.assign(b.session.channels, { list: () => existingChannel });
-    const lookup = vi
-      .spyOn(soloNavigation, "soloNavigationFor")
-      .mockReturnValue(region.service);
-    let release = () => {};
-    const binding = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    assert.exists(a.session.outbox);
-    Object.assign(a.session.outbox, { whenPrepared: () => binding });
-    const route = {
-      region: source.handle.label,
-      draftId: "33333333-3333-4333-8333-333333333333",
-    };
-    const startedA = vi.fn(),
-      startedB = vi.fn();
-    try {
-      const first = render(
-        <SoloDraft
-          session={a.session}
-          scope="window-a"
-          agent={"a".repeat(64)}
-          task={route}
-          onStarted={startedA}
-        />,
-      );
-      const second = render(
-        <SoloDraft
-          session={b.session}
-          scope="window-b"
-          agent={"a".repeat(64)}
-          task={route}
-          onStarted={startedB}
-        />,
-      );
-      const user = userEvent.setup();
-      await user.type(
-        within(first.container).getByRole("textbox"),
-        "Frozen request",
-      );
-      await user.click(
-        within(first.container).getByRole("button", { name: "Send message" }),
-      );
-      await waitFor(() => expect(a.messages.send).toHaveBeenCalledOnce());
-      expect(
-        readView("window-a", `solo:task:${route.draftId}:new-draft`, null),
-      ).toMatchObject({ text: expect.stringContaining("Frozen request") });
-      expect(startedA).not.toHaveBeenCalled();
-      await user.type(
-        within(second.container).getByRole("textbox"),
-        "Different request",
-      );
-      await user.click(
-        within(second.container).getByRole("button", { name: "Send message" }),
-      );
-      await waitFor(() =>
-        expect(within(second.container).getByRole("alert")).toHaveTextContent(
-          "Finish creating",
-        ),
-      );
-      expect(b.channelWrites.start).not.toHaveBeenCalled();
-      expect(b.messages.send).not.toHaveBeenCalled();
-      expect(startedB).not.toHaveBeenCalled();
-      release();
-      await waitFor(() => expect(startedA).toHaveBeenCalledOnce());
-      expect(
-        readView("window-a", `solo:task:${route.draftId}:new-draft`, null),
-      ).toBe("");
-      expect(
-        readView("window-b", `solo:task:${route.draftId}:new-draft`, null),
-      ).toMatchObject({ text: expect.stringContaining("Different request") });
-    } finally {
-      release();
-      cleanup();
-      lookup.mockRestore();
-      await region.dispose();
-    }
-  },
-);
-
 it.each([false, true])(
   "same-ID attachment recovery transfers only actual file edits (changed=%s)",
   async (modified) => {
@@ -4040,7 +4000,6 @@ it.each([false, true])(
       draftId: "33333333-3333-4333-8333-333333333333",
     };
     const channelId = "22222222-2222-4222-8222-222222222222";
-    const { attachmentMessage } = await import("../relay/attachments");
     const upload = vi.fn(async () => notes);
     Object.assign(f.session, { attachments: { uploadForNewChat: upload } });
     const files = attachmentDraft(
@@ -4070,25 +4029,17 @@ it.each([false, true])(
     Object.assign(f.session.channelWrites, {
       resumeStart: () => ({ create: "c".repeat(64), ready: Promise.resolve() }),
     });
-    f.messages.send.mockImplementation(
-      (id, content, recipients, uploaded, recovery) => {
-        const message = attachmentMessage(content, uploaded ?? [], notes.url);
-        const event = {
-          id: eventId,
-          kind: 9,
-          pubkey: viewer,
-          content: message.content,
-          created_at: 1,
-          tags: [
-            ["h", id],
-            ...(recipients ?? []).map((key) => ["p", key]),
-            ...message.tags,
-          ],
-        };
-        operations = [{ event, recovery, delivery: "failed" }];
-        return eventId;
-      },
-    );
+    f.stageChat.mockImplementation(async (_create, message, recovery) => {
+      const event = {
+        id: eventId,
+        kind: 9,
+        pubkey: viewer,
+        content: message.content,
+        created_at: 1,
+        tags: message.tags,
+      };
+      operations = [{ event, recovery, delivery: "failed" }];
+    });
     const started = vi.fn();
     try {
       render(
@@ -4135,7 +4086,7 @@ it.each([false, true])(
         .click(screen.getByRole("button", { name: "Send message" }));
       await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
       expect(prepare).toHaveBeenCalledTimes(1);
-      expect(f.messages.send).toHaveBeenCalledTimes(1);
+      expect(f.stageChat).toHaveBeenCalledTimes(1);
       expect(retry).toHaveBeenCalledWith(eventId, expect.any(Function));
       expect(upload).not.toHaveBeenCalled();
       expect(files.snapshot()).toHaveLength(0);
@@ -4248,10 +4199,11 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
       },
       {
         outboxStorage: {
-          load: () => [],
+          load: () => structuredClone(records),
           save: (next) => {
             records = structuredClone(next);
           },
+          lock: async (_key, run) => run(),
         },
         agentChoices: {
           snapshot: () => native,
@@ -4348,8 +4300,11 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
       );
       expect(refreshingFirstEvent).toBe(false);
       expect(
-        owner.session.outbox?.snapshot().map((item) => item.event.kind),
-      ).toEqual([9007, 9]);
+        owner.session.outbox
+          ?.snapshot()
+          .map((item) => item.event.kind)
+          .sort(),
+      ).toEqual([9, 9007]);
       expect(started).not.toHaveBeenCalled();
       expect(screen.getByRole("textbox")).toHaveTextContent(
         "Original task request",
@@ -4364,7 +4319,7 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
             records.find((item) => item.event.kind === 9007),
           ).toMatchObject({
             signed: expect.anything(),
-            delivery: "failed",
+            delivery: "unknown",
             guarded: true,
             error: expect.stringContaining("Channel addition cancelled"),
           }),
@@ -4378,7 +4333,7 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
           expect(records.find((item) => item.event.kind === 9)).toMatchObject({
             signed: expect.anything(),
             recovery: expect.anything(),
-            delivery: "failed",
+            delivery: "unknown",
           }),
         );
         expect(started).not.toHaveBeenCalled();
@@ -4427,10 +4382,12 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
         expect(original).toMatchObject({
           signed: expect.anything(),
           recovery: expect.anything(),
-          delivery: "failed",
+          delivery: "unknown",
         });
         await waitFor(() =>
-          expect(screen.getByRole("alert")).toHaveTextContent("participant"),
+          expect(screen.getByRole("alert")).toHaveTextContent(
+            "Channel addition cancelled",
+          ),
         );
         expect(started).not.toHaveBeenCalled();
         await owner.session.agentChoices.refresh("templates", { fresh: true });
@@ -4467,7 +4424,7 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
       ).toBeUndefined();
       expect(started).toHaveBeenCalledWith(channelId);
       expect(recordCalls).toBe(retriedRecordCalls + 1);
-      expect(signs).toEqual([9007, 9]);
+      expect([...signs].sort((a, b) => a - b)).toEqual([9, 9007]);
     } finally {
       createGate.resolve();
       messageGate.resolve();

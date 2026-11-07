@@ -31,6 +31,7 @@ import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation, workflowReference } from "../workflows/protocol";
 import {
   recordTaskFirstEvent,
+  acknowledgeTaskFirstEvent,
   validateTaskPublication,
   validateTaskMembers,
   isTaskChannel,
@@ -342,15 +343,18 @@ export function createRelaySession(
               const recovery = writes?.outbox
                 .snapshot()
                 .find((item) => item.event.id === event.id)?.recovery;
-              if (recovery?.key.startsWith("solo-task:"))
-                void writes?.outbox
-                  .acknowledge(event.id)
-                  .catch((error) =>
+              if (
+                acknowledged &&
+                recovery?.key.startsWith("solo-task:") &&
+                writes
+              )
+                void acknowledgeTaskFirstEvent(writes.outbox, event.id).catch(
+                  (error) =>
                     console.warn(
                       "Task message recovery could not be released",
                       error,
                     ),
-                  );
+                );
               // An `unknown` attempt waits for confirm() to read it back.
               if (acknowledged) acceptOwnActivity(event);
             },
