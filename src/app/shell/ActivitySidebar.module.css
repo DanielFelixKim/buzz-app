@@ -1,11 +1,9 @@
 /* PROTOTYPE: Activity-style conversation list in the primary sidebar.
- * Every view is one flat list of Activity rows (MessageListRow). */
+ * Every view is one flat list of ConversationRows. */
 .activity {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  /* MessageListRow's narrow-width rules read the list width. */
-  container-type: inline-size;
 }
 /* Below the scope: Team's outlined radio, then Unread on the right. */
 .filters {
@@ -39,15 +37,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-}
-/* Undo the compact, fixed-height sidebar row so these read as Activity rows. */
-.rows [data-buzz-ui][data-variant="row"] {
-  --space-row-gap: var(--space-2);
-  height: auto;
-  min-height: var(--size-row);
-  padding: var(--space-1) var(--space-control-inset);
-  font-size: inherit;
-  line-height: inherit;
 }
 .empty {
   padding: var(--space-6) var(--space-2);

@@ -102,6 +102,7 @@ function setup(
     freshness: "observed" as const,
   };
   const profiles = new Map([[alice, { name: "Alice" }]]);
+  const markChannelRead = vi.fn(async () => ({}) as never);
   const session: RelaySession = {
     ...base,
     viewer,
@@ -126,6 +127,7 @@ function setup(
     inboxFeed: { ...base.inboxFeed, ensure: async () => {} },
     unread: {
       ...base.unread,
+      markChannelRead,
       ensure: async () => {},
       inbox: () => inbox as never,
       subscribeInbox: () => () => {},
@@ -168,7 +170,7 @@ function setup(
     );
   }
   render(<Harness />);
-  return { open };
+  return { open, markChannelRead };
 }
 
 const rowNames = () =>
@@ -182,9 +184,7 @@ test("Team lists channels by their newest activity, threads included", () => {
   // old-news has an older top-level message but a newer thread reply, which
   // becomes its preview.
   expect(rowNames()).toEqual(["old", "new"]);
-  expect(
-    screen.getByText("Alice in a thread: a reply in the old channel"),
-  ).toBeInTheDocument();
+  expect(screen.getByText("a reply in the old channel")).toBeInTheDocument();
 });
 
 test("a thread row opens the thread beside its channel", async () => {
@@ -250,16 +250,37 @@ test("Team's Threads view is a flat list of threads, not channels", async () => 
   setup();
   await userEvent.click(screen.getByRole("tab", { name: "Threads" }));
   expect(rowNames()).toEqual([]);
-  expect(screen.getByText("Alice")).toBeInTheDocument();
-  expect(screen.getByText("#old-news")).toBeInTheDocument();
+  expect(screen.getByText("in #old-news")).toBeInTheDocument();
+  expect(screen.getByLabelText("Thread")).toBeInTheDocument();
   expect(screen.queryByText("ancient")).not.toBeInTheDocument();
 });
 
-test("a Team row previews its latest top-level message and its author", () => {
+test("a Team row previews its latest top-level message, without its author", () => {
   setup([], {
     old: { createdAt: 600, content: "a new post" },
     new: { createdAt: 150, content: "older post" },
   });
   expect(rowNames()).toEqual(["old", "new"]);
-  expect(screen.getByText("Alice: a new post")).toBeInTheDocument();
+  expect(screen.getByText("a new post")).toBeInTheDocument();
+  expect(screen.queryByText(/Alice/)).not.toBeInTheDocument();
+});
+
+test("an unread row's checkmark marks its channel read without opening it", async () => {
+  const { open, markChannelRead } = setup();
+  const row = screen
+    .getAllByRole("listitem")
+    .find((li) => li.getAttribute("data-activity-row") === "old");
+  if (!row) throw new Error("missing row");
+  await userEvent.click(
+    within(row).getByRole("button", { name: "Mark as read" }),
+  );
+  expect(markChannelRead).toHaveBeenCalledWith("old");
+  expect(open).not.toHaveBeenCalled();
+  // A read row offers no checkmark.
+  const read = screen
+    .getAllByRole("listitem")
+    .find((li) => li.getAttribute("data-activity-row") === "new");
+  expect(
+    within(read as HTMLElement).queryByRole("button", { name: "Mark as read" }),
+  ).not.toBeInTheDocument();
 });

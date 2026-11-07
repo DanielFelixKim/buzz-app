@@ -27,7 +27,11 @@ import { messagePreview } from "../../features/notifications/content";
 import { avatarMedia } from "../../shared/avatar-source";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { MessageListRow } from "../../features/messages/MessageListRow";
+import { ConversationRow } from "../../features/messages/ConversationRow";
+import {
+  LockIcon,
+  MessageReplyIcon,
+} from "../../shared/design-system/icons/index";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { readView, writeView } from "../../shared/view-state";
@@ -308,7 +312,7 @@ export function ActivitySidebar({
               const name = nameOf(event.authorId);
               return (
                 <li key={event.key}>
-                  <MessageListRow
+                  <ConversationRow
                     selected={
                       selectedChannel === event.channelId &&
                       !!event.rootId &&
@@ -327,11 +331,25 @@ export function ActivitySidebar({
                         name={name}
                       />
                     }
-                    sender={name}
-                    source={channel ? channelText(channel) : ""}
+                    placeIcon={
+                      event.rootId ? (
+                        <MessageReplyIcon size={14} aria-label="Thread" />
+                      ) : (
+                        privateIcon(channel)
+                      )
+                    }
+                    place={
+                      channel
+                        ? `${event.rootId ? "in " : ""}${channelText(channel)}`
+                        : ""
+                    }
+                    sender={
+                      event.authorId === session.viewer ? "You" : undefined
+                    }
                     time={shortTime(event.createdAt)}
                     preview={messagePreview(event.preview)}
-                    unread={event.unread}
+                    state={event.unread ? "unread" : "read"}
+                    onMarkRead={() => void markEventRead(session, event)}
                   />
                 </li>
               );
@@ -340,7 +358,7 @@ export function ActivitySidebar({
               const entry = byId.get(id);
               if (!entry) return null;
               return (
-                <ConversationRow
+                <ChannelRow
                   key={id}
                   session={session}
                   channel={entry.channel}
@@ -348,7 +366,6 @@ export function ActivitySidebar({
                   latest={latestOf(entry.channel)}
                   team={view.scope === "team"}
                   profiles={profiles}
-                  nameOf={nameOf}
                   unreadOnly={unreadOnly}
                   selected={selectedChannel === id && !selectedThread}
                   onOpen={() => open(id)}
@@ -510,14 +527,13 @@ function useFrozenOrder(key: string) {
   }, [frozen, key]);
 }
 
-function ConversationRow({
+function ChannelRow({
   session,
   channel,
   at,
   latest,
   team,
   profiles,
-  nameOf,
   unreadOnly,
   selected,
   onOpen,
@@ -528,7 +544,6 @@ function ConversationRow({
   latest: LatestMessage | undefined;
   team: boolean;
   profiles: ReadonlyMap<string, Profile>;
-  nameOf(id: string): string;
   unreadOnly: boolean;
   selected: boolean;
   onOpen(): void;
@@ -546,37 +561,38 @@ function ConversationRow({
     (key) => key !== session.viewer,
   );
   const solo = channel.channelType === "solo";
-  // The latest event: an unread thread reply you're in, when it is newer.
+  // The latest event: a thread reply you're in, when it is newer.
   const thread = team
     ? [...(state.activity.items ?? [])].sort(
         (a, b) => b.createdAt - a.createdAt,
       )[0]
     : undefined;
-  const author = (id: string) => (dm || !team ? "" : `${nameOf(id)}: `);
-  const preview =
-    thread && thread.createdAt > (latest?.createdAt ?? 0)
-      ? `${nameOf(thread.authorId)} in a thread: ${messagePreview(thread.preview)}`
-      : latest
-        ? `${author(latest.authorId)}${messagePreview(latest.content)}`
-        : channel.preview
-          ? messagePreview(channel.preview)
-          : "";
+  const replyIsNewest = !!thread && thread.createdAt > (latest?.createdAt ?? 0);
+  const latestAuthor = replyIsNewest ? thread.authorId : latest?.authorId;
+  // No sender: the avatar says who, except for your own message.
+  const preview = replyIsNewest
+    ? messagePreview(thread.preview)
+    : latest
+      ? messagePreview(latest.content)
+      : channel.preview
+        ? messagePreview(channel.preview)
+        : "";
   // Who the row shows: a DM's person, a Solo chat's agent, and in Team
-  // whoever posted the latest message (the preview's author).
-  const latestAuthor =
-    thread && thread.createdAt > (latest?.createdAt ?? 0)
-      ? thread.authorId
-      : latest?.authorId;
+  // the latest poster who isn't you.
   const face = peer
     ? peer
     : solo
       ? (others.find((key) => profiles.get(key)?.isAgent) ??
         others[0] ??
         (latestAuthor !== session.viewer ? latestAuthor : undefined))
-      : latestAuthor;
+      : latestAuthor !== session.viewer
+        ? latestAuthor
+        : undefined;
+  const name = (id: string) =>
+    profiles.get(id)?.name ?? formatPublicKey(id) ?? "Someone";
   return (
     <li data-activity-row={channel.id}>
-      <MessageListRow
+      <ConversationRow
         aria-current={selected ? "page" : undefined}
         selected={selected}
         onClick={onOpen}
@@ -585,7 +601,7 @@ function ConversationRow({
             <PersonAvatar
               session={session}
               profile={profiles.get(face)}
-              name={nameOf(face)}
+              name={name(face)}
             />
           ) : (
             <Avatar
@@ -597,14 +613,52 @@ function ConversationRow({
             />
           )
         }
-        sender={dm ? channel.name || (peer ? nameOf(peer) : "") : channel.name}
-        source=""
+        placeIcon={privateIcon(channel)}
+        place={
+          dm
+            ? channel.name || (peer ? name(peer) : "")
+            : solo
+              ? channel.name
+              : channelText(channel)
+        }
+        sender={latestAuthor === session.viewer ? "You" : undefined}
         time={at ? shortTime(at) : ""}
         preview={preview}
-        unread={unread}
+        state={unread ? "unread" : "read"}
+        onMarkRead={() =>
+          void session.unread.markChannelRead(channel.id).catch(() => {})
+        }
       />
     </li>
   );
+}
+
+/** Only a private channel needs a glyph; its name carries no "#". */
+function privateIcon(channel: ChannelSummary | undefined) {
+  return channel &&
+    channel.channelType !== "dm" &&
+    channel.channelType !== "solo" &&
+    channelIcon(channel) === LockIcon ? (
+    <LockIcon size={14} aria-label="Private channel" />
+  ) : undefined;
+}
+
+/** A thread row reads through its latest reply; a top-level mention reads
+ * just that message. */
+async function markEventRead(session: RelaySession, event: ActivityEvent) {
+  try {
+    await (event.rootId
+      ? session.unread.markThrough(
+          { kind: "thread", channelId: event.channelId, rootId: event.rootId },
+          event.messageId,
+        )
+      : session.unread.markMessageRead(event.channelId, event.messageId));
+  } catch {
+    // The reply isn't in retained evidence yet: read the message itself.
+    await session.unread
+      .markMessageRead(event.channelId, event.messageId)
+      .catch(() => {});
+  }
 }
 
 function PersonAvatar({

@@ -1,26 +1,33 @@
 /* PROTOTYPE: ConversationRow. Every list shares one two-line anatomy:
  *
- *   avatar | parent › place ……… time
- *   avatar | Sender: preview ……… state
+ *   avatar | (icon) place ……… time / ✓
+ *   avatar | preview …………… state
  *
  * The --conversation-row-* properties are the knobs the row specimen sheet
  * (tests/fixtures/row-gallery) exposes; the fallbacks are the proposal. */
+/* Defaults are the "comfortable" density: minimums for the narrowest
+ * sidebar. A wider sidebar gives the extra width to the preview. */
+.frame {
+  --row-avatar-size: var(--conversation-row-avatar, 2.25rem);
+  --row-pad-block: var(
+    --conversation-row-pad-block,
+    calc(var(--space-2) + var(--space-half) / 2)
+  );
+  --row-pad-inline: var(--conversation-row-pad-inline, var(--space-2));
+  position: relative;
+  min-width: 0;
+}
 [data-conversation-row] {
-  --row-avatar-size: var(--conversation-row-avatar, var(--space-8));
   height: auto;
   min-height: 0;
-  padding: var(--conversation-row-pad-block, var(--space-1h))
-    var(--conversation-row-pad-inline, var(--space-2));
+  padding: var(--row-pad-block) var(--row-pad-inline);
   align-items: stretch;
 }
 
 .row {
   display: flex;
   align-items: center;
-  gap: var(
-    --conversation-row-column-gap,
-    calc(var(--space-2) + var(--space-half))
-  );
+  gap: var(--conversation-row-column-gap, var(--space-3));
   min-width: 0;
 }
 [data-avatar-align="top"] .row {
@@ -35,11 +42,10 @@
 }
 
 .lines {
-  container-type: inline-size;
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--conversation-row-line-gap, var(--space-half));
+  gap: var(--conversation-row-line-gap, var(--space-1));
   min-width: 0;
 }
 /* Each line ends in its own right-hand slot, so the preview runs on under
@@ -75,40 +81,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* A thread reads as a breadcrumb: its channel, quieter, keeps up to 60% of
- * the line, and the thread's first message truncates after it. */
-.parent {
-  flex: none;
-  min-width: 0;
-  max-width: 60%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-metadata);
-}
-
-.separator {
-  flex: none;
-  color: var(--text-metadata);
-}
-.parentIcon {
-  display: none;
-  flex: none;
-  align-self: center;
-  color: var(--text-metadata);
-}
-/* Too narrow for both names (a sidebar): the thread keeps its own name and
- * a thread glyph stands in for the channel. */
-@container (max-width: 20rem) {
-  .parent,
-  .separator {
-    display: none;
-  }
-  .parentIcon {
-    display: inline-flex;
-  }
-}
-
 .time {
   flex: none;
   font-size: var(--text-caption);
@@ -168,9 +140,36 @@
 
 /* A selected row takes the sidebar's accent; every part follows its ink. */
 [data-conversation-row][data-selected]
-:is(.parent, .parentIcon, .separator, .time, .placeIcon, .preview, .sender) {
+:is(.time, .placeIcon, .preview, .sender) {
   color: inherit;
 }
 [data-conversation-row][data-selected] .unreadDot {
   background: currentColor;
+}
+
+/* Mark as read: over the time, on hover or keyboard focus, on unread rows;
+ * always shown without a hover pointer. */
+.action {
+  position: absolute;
+  /* An xs button (24px) centred on the 20px title line. */
+  inset-block-start: calc(var(--row-pad-block) - var(--space-half));
+  inset-inline-end: calc(var(--row-pad-inline) - var(--space-1));
+  display: flex;
+  opacity: 0;
+}
+.frame:hover .action,
+.frame:focus-within .action {
+  opacity: 1;
+}
+.frame[data-action]:hover .time,
+.frame[data-action]:focus-within .time {
+  visibility: hidden;
+}
+@media (hover: none), (pointer: coarse) {
+  .action {
+    opacity: 1;
+  }
+  .frame[data-action] .time {
+    visibility: hidden;
+  }
 }

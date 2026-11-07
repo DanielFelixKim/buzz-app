@@ -14,7 +14,10 @@ import { ConversationRow } from "../../../src/features/messages/ConversationRow"
 import { Avatar } from "../../../src/shared/design-system/ui/Avatar";
 import { ShimmerText } from "../../../src/shared/design-system/ui/ShimmerText";
 import { SidebarNavigation } from "../../../src/shared/design-system/ui/SidebarNavigation";
-import { LockIcon } from "../../../src/shared/design-system/icons/index";
+import {
+  LockIcon,
+  MessageReplyIcon,
+} from "../../../src/shared/design-system/icons/index";
 import {
   channels,
   dms,
@@ -53,6 +56,8 @@ function preview(row: Row): ReactNode {
 }
 
 function placeIcon(row: Row) {
+  if (row.kind === "thread")
+    return <MessageReplyIcon size={14} aria-label="Thread" />;
   if (row.kind === "private")
     return <LockIcon size={14} aria-label="Private channel" />;
   return undefined;
@@ -62,7 +67,9 @@ function SpecimenRow({
   row,
   selected,
   highlighted,
+  onMarkRead,
 }: {
+  onMarkRead?: (() => void) | undefined;
   row: Row;
   selected?: boolean | undefined;
   highlighted?: boolean | undefined;
@@ -83,11 +90,11 @@ function SpecimenRow({
       }
       placeIcon={placeIcon(row)}
       place={row.place}
-      parent={row.parent}
       time={row.time}
       sender={row.sender}
       preview={preview(row)}
       state={row.state}
+      onMarkRead={onMarkRead ?? (() => {})}
     />
   );
 }
@@ -101,6 +108,8 @@ function Stack({
   rows: Row[];
   selected?: string;
 }) {
+  // Mark as read works here: hover an unread row and press the checkmark.
+  const [read, setRead] = useState<ReadonlySet<string>>(new Set());
   return (
     <figure className="gallery-column">
       <figcaption>{title}</figcaption>
@@ -109,7 +118,13 @@ function Stack({
           <ul className="gallery-rows">
             {rows.map((row) => (
               <li key={row.id}>
-                <SpecimenRow row={row} selected={row.id === selected} />
+                <SpecimenRow
+                  row={
+                    read.has(row.id) ? { ...row, state: "read" as const } : row
+                  }
+                  selected={row.id === selected}
+                  onMarkRead={() => setRead(new Set(read).add(row.id))}
+                />
               </li>
             ))}
           </ul>
@@ -120,7 +135,7 @@ function Stack({
 }
 
 const knobs = [
-  { key: "avatar", label: "Avatar", min: 20, max: 40, step: 2, initial: 32 },
+  { key: "avatar", label: "Avatar", min: 20, max: 40, step: 2, initial: 36 },
   {
     key: "pad-block",
     label: "Row padding",
@@ -137,7 +152,7 @@ const knobs = [
     step: 1,
     initial: 10,
   },
-  { key: "line-gap", label: "Line gap", min: 0, max: 8, step: 1, initial: 2 },
+  { key: "line-gap", label: "Line gap", min: 0, max: 8, step: 1, initial: 4 },
   { key: "stack-gap", label: "Row gap", min: 0, max: 8, step: 1, initial: 2 },
 ] as const;
 type Knob = (typeof knobs)[number]["key"];
@@ -175,12 +190,12 @@ const states: {
 }[] = [
   { label: "Read", row: channels[2] as Row },
   { label: "Unread", row: channels[0] as Row },
-  { label: "Hover", row: channels[2] as Row, highlighted: true },
+  { label: "Hover", row: channels[0] as Row, highlighted: true },
   { label: "Selected", row: channels[2] as Row, selected: true },
   { label: "Selected + unread", row: channels[0] as Row, selected: true },
   { label: "Agent working", row: solo[1] as Row },
   { label: "Thread", row: threads[0] as Row },
-  { label: "Long place", row: threads[3] as Row },
+  { label: "Long place", row: solo[5] as Row },
   { label: "Emoji only", row: channels[5] as Row },
   { label: "No picture", row: dms[5] as Row },
 ];
@@ -280,7 +295,7 @@ function Gallery() {
           (name) => setValues({ ...(presets[name] as Record<Knob, number>) }),
           [
             ["comfortable", "Comfortable"],
-            ["proposed", "Proposed"],
+            ["proposed", "Medium"],
             ["compact", "Compact"],
           ],
         )}
@@ -361,17 +376,17 @@ function Gallery() {
             </li>
             <li>
               <b>Place</b> the title, always: #channel, chat title, person. A
-              thread is a breadcrumb, #channel › its first message. Too narrow
-              for both (the sidebar), it keeps its own name behind a thread
-              glyph.
+              thread is a thread icon and “in #channel”.
             </li>
             <li>
-              <b>Preview</b> “Sender: message”, so who said it is readable even
-              when the avatar is someone else.
+              <b>Preview</b> the latest message. The avatar says who, so there
+              is no sender, except “You:” for your own message.
             </li>
             <li>
-              <b>Time</b> sits on the title’s baseline. <b>State</b> sits under
-              it: the unread dot, nothing when read.
+              <b>Time</b> sits on the title’s baseline; on an unread row, hover
+              turns it into a checkmark that marks the row read. <b>State</b>{" "}
+              sits under it: the unread dot, typing dots while an agent works,
+              nothing when read.
             </li>
           </ol>
         </div>
