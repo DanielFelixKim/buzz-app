@@ -3998,9 +3998,20 @@ export function createChannelStore(
             0,
             Math.max(1, Math.floor(maxHistoryRows / 2)),
           );
+          const overlap = (page?.events ?? []).filter(
+            (event) =>
+              channelRowKind(event.kind) &&
+              belowCeiling(state, event) &&
+              (!state.cursor ||
+                event.created_at > state.cursor.createdAt ||
+                (event.created_at === state.cursor.createdAt &&
+                  event.id <= state.cursor.eventId)),
+          );
           const retain = () => {
             const ids = new Set(
-              [...state.events, ...advancing].map((event) => event.id),
+              [...state.events, ...overlap, ...advancing].map(
+                (event) => event.id,
+              ),
             );
             return relatedEvents(page?.events ?? [], ids);
           };

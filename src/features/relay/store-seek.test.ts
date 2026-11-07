@@ -2320,3 +2320,46 @@ it("preserves the committed older cursor through a head-only catch-up at the byt
   expect(h.reads.length).toBeGreaterThan(reads);
   expect(h.reads.at(-1)?.before_id).toBe(before);
 });
+
+it("admits a missed interior root from a forward response without importing older context", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 60 });
+  await h.open();
+  for (let i = 0; !h.window().hasNewer && i < 8; i++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+  expect(h.window().hasNewer).toBe(true);
+  const rows = h.window().rows;
+  const middle = rows[Math.floor(rows.length / 2)];
+  assert.exists(middle);
+  const first = rows[0];
+  assert.exists(first);
+  const missed = message(h.alice, "c", "missed interior", middle.createdAt + 1);
+  const outside = message(
+    h.alice,
+    "c",
+    "outside older cursor",
+    first.createdAt - 1,
+  );
+  h.history.push(missed, outside);
+  expect(h.window().rows.some((row) => row.id === missed.id)).toBe(false);
+  h.channels.loadNewer?.("c");
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  expect(h.window().rows.some((row) => row.id === missed.id)).toBe(true);
+  expect(h.window().rows.some((row) => row.id === outside.id)).toBe(false);
+});
+
+it("R20 forward seek admits a newly returned interior root", async () => {
+  const h = setup({ count: 600, maxHistoryRows: 2400 });
+  await h.open();
+  await h.seek(T0 + 350 * HOUR);
+  expect(h.window().hasNewer).toBe(true);
+  const rows = h.window().rows;
+  const middle = rows[Math.floor(rows.length / 2)];
+  assert.exists(middle);
+  const missed = message(h.alice, "c", "missed interior", middle.createdAt + 1);
+  h.history.push(missed);
+  h.channels.loadNewer?.("c");
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  expect(h.window().rows.some((row) => row.id === missed.id)).toBe(true);
+});
