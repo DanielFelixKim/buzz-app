@@ -517,6 +517,34 @@ it("a live row that lands while the last newer page loads is kept", async () => 
   expect(h.window().rows.map((row) => row.id)).toContain(fresh.id);
 });
 
+it("attach cancels an older page before it can detach the head window", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().rows).toHaveLength(40));
+  expect(h.window().hasNewer).toBeFalsy();
+  let release!: () => void;
+  h.gate.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const before = h.reads.length;
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+    expect(h.window().loadingOlder).toBe(true);
+    h.channels.attach?.("c");
+  } finally {
+    h.gate.hold = undefined;
+    release();
+  }
+  await vi.waitFor(() => {
+    expect(h.window().loadingOlder).toBe(false);
+    expect(h.window().refreshing).toBeFalsy();
+  });
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(h.window().rows.at(-1)?.id).toBe(h.history.at(-1)?.id);
+});
+
 it("attach replaces the segment with the head", async () => {
   const h = setup();
   await h.open();

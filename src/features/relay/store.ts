@@ -4074,7 +4074,13 @@ export function createChannelStore(
     },
     attach(channelId: string) {
       const state = windows.get(channelId);
-      if (disposed || !transport || state?.ceiling === undefined) return;
+      if (
+        disposed ||
+        !transport ||
+        !state ||
+        (state.ceiling === undefined && !state.snapshot.loadingOlder)
+      )
+        return;
       void reattach(state);
     },
   });
