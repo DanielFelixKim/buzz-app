@@ -1,3 +1,4 @@
+import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { cloneElement } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -1480,6 +1481,60 @@ it.each(["wheel", "touch"])(
       if (input === "wheel") fireEvent.wheel(inner, { deltaY: 100 });
       else fireEvent.touchMove(inner, { touches: [{ clientY: 100 }] });
       expect(loadNewer).toHaveBeenCalledOnce();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+function TailComposer() {
+  const scope = useMessageEditScope();
+  return (
+    <textarea
+      aria-label="Tail composer"
+      ref={(node) => {
+        if (scope) scope.input.current = node;
+      }}
+    />
+  );
+}
+
+it.each([false, true])(
+  "pages forward at a detached selected tail (detached=%s)",
+  (detached) => {
+    const { owner, updates, content } = activityFixture();
+    const loadNewer = vi.fn();
+    const queries = {
+      ...owner.session,
+      channels: { ...owner.session.channels, loadNewer },
+    };
+    try {
+      const base = content(
+        updates(2).map(({ audience: _audience, ...row }) => row),
+        undefined,
+        false,
+        queries,
+      );
+      render(
+        <MessageEditScope>
+          {cloneElement(base, {
+            window: { ...base.props.window, hasNewer: detached },
+          })}
+          <TailComposer />
+        </MessageEditScope>,
+      );
+      const scroller = screen.getByRole("region", {
+        name: "Channel message history",
+      });
+      const row = scroller.querySelector<HTMLElement>(
+        '[data-message-id="activity-1"]',
+      );
+      assert.exists(row);
+      row.tabIndex = -1;
+      row.focus();
+      expect(row).toHaveFocus();
+      fireEvent.keyDown(row, { key: "ArrowDown" });
+      expect(loadNewer).toHaveBeenCalledTimes(detached ? 1 : 0);
     } finally {
       owner.dispose();
     }

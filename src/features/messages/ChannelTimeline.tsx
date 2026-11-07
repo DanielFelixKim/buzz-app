@@ -1820,7 +1820,7 @@ function Timeline({
         touchY.current = next;
       }}
       onKeyDown={(event) => {
-        const selected = moveMessageSelection(event);
+        const selected = moveMessageSelection(event, !window.hasNewer);
         const upward = scrollsHistory(event);
         const downward = scrollsHistory(event, false);
         if (upward || downward || selected)
