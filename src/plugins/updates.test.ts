@@ -754,3 +754,55 @@ it("drops a Git discovery result when the installation switches to a pinned URL"
   expect(f.authorize).toHaveBeenCalledOnce();
   updates.dispose();
 });
+
+it.each(["authorization", "acquisition"] as const)(
+  "starts folder discovery while an earlier Git %s is held",
+  async (phase) => {
+    const f = fixture();
+    const configuration = f.get();
+    if (configuration.status !== "ready") throw new Error("Expected catalog");
+    const folder = {
+      ...f.plugin,
+      manifest: { ...f.plugin.manifest, id: "example.folder" },
+      updateSource: { root: "/plugins/folder", path: "." },
+    };
+    const checkFolder = vi.fn(async () => "folder-new");
+    Object.assign(f.imports, { checkFolder });
+    f.set({
+      ...configuration,
+      catalog: { ...configuration.catalog, plugins: [f.plugin, folder] },
+    });
+    let release!: () => void;
+    const held = new Promise<null>((resolve) => {
+      release = () => resolve(null);
+    });
+    if (phase === "authorization") f.authorize.mockReturnValueOnce(held);
+    else
+      f.checkGit.mockImplementationOnce(async () => {
+        await held;
+        return f.preview;
+      });
+    const updates = createPluginUpdates(f.manager, f.authorize);
+    const pending = updates.check();
+    try {
+      await vi.waitFor(() =>
+        expect(
+          phase === "authorization" ? f.authorize : f.checkGit,
+        ).toHaveBeenCalledOnce(),
+      );
+      await vi.waitFor(() =>
+        expect(
+          pluginUpdateAvailable(
+            sharedPluginUpdateChecks(f.manager.imports).snapshot(),
+            folder,
+          ),
+        ).toBe(true),
+      );
+      expect(checkFolder).toHaveBeenCalledExactlyOnceWith(folder.manifest.id);
+    } finally {
+      release();
+      await pending;
+      updates.dispose();
+    }
+  },
+);

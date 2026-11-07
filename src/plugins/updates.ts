@@ -180,6 +180,8 @@ export function createPluginUpdates(
       source: pluginUpdateSource(plugins, plugin.manifest.id),
       observe: checks.observe(plugin),
     }));
+    // Start folder probes before an awaited Git authorization or acquisition.
+    batch.sort((a, b) => Number(!!a.source) - Number(!!b.source));
     for (const id of checked.keys())
       if (
         !configuration.catalog.plugins.some(
