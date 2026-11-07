@@ -18,9 +18,9 @@ test.use({
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 const notice = (page) =>
-  page.getByRole("status", { name: "Reconnecting to relay…", exact: true });
+  page.getByRole("dialog", { name: "Buzz is having issues", exact: true });
 const retry = (page) =>
-  notice(page).getByRole("button", { name: "Retry now", exact: true });
+  notice(page).getByRole("button", { name: "Retry", exact: true });
 /** Retry now if the notice still shows; automatic recovery may close it first. */
 const retryIfShown = (page) =>
   retry(page)
@@ -305,109 +305,130 @@ test("a reconnect near startup repairs an under-limit replay and keeps paged his
   ).toBeInViewport();
 });
 
-test("automatic recovery restores an empty paused roster without restarting healthy global subscriptions", async ({
-  page,
-  app,
-}) => {
-  // Empty is a valid authoritative result: recovery must not depend on a
-  // selected channel or on an interest change replacing the global stream.
-  app.relay.emptyRoster();
-  app.relay.quotaNextRoster(6);
-  // The app arms its cooldown when it consumes the refusal, and the ignored
-  // clicks below must land before that deadline. Navigation needs a running
-  // page clock, so hold the first roster read until it is done, then pause the
-  // clock before the refusal arms the deadline: only crossCooldown passes it.
-  const roster = Promise.withResolvers();
-  let rosterHeld = false;
-  await page.route("**/api/relay/primary/query", async (route) => {
-    if (
-      !rosterHeld &&
-      [route.request().postDataJSON()]
-        .flat()
-        .some((filter) => filter.kinds?.includes(39002))
-    ) {
-      rosterHeld = true;
-      await roster.promise;
+const observedRoster = test.extend({ pluginFixtures: true });
+observedRoster(
+  "automatic recovery restores an empty paused roster without restarting healthy global subscriptions",
+  async ({ page, app }) => {
+    // Empty is a valid authoritative result: recovery must not depend on a
+    // selected channel or on an interest change replacing the global stream.
+    app.relay.emptyRoster();
+    app.relay.quotaNextRoster(6);
+    // The app arms its cooldown when it consumes the refusal, and the ignored
+    // clicks below must land before that deadline. Navigation needs a running
+    // page clock, so hold the first roster read until it is done, then pause the
+    // clock before the refusal arms the deadline: only crossCooldown passes it.
+    const roster = Promise.withResolvers();
+    let rosterHeld = false;
+    await page.route("**/api/relay/primary/query", async (route) => {
+      if (
+        !rosterHeld &&
+        [route.request().postDataJSON()]
+          .flat()
+          .some((filter) => filter.kinds?.includes(39002))
+      ) {
+        rosterHeld = true;
+        await roster.promise;
+      }
+      await route.fallback();
+    });
+    await page.clock.install();
+    await page.goto(app.origin);
+    try {
+      await openPage(page, "Messages");
+      await expect.poll(() => rosterHeld).toBe(true);
+      await pauseClock(page, 1000);
+    } finally {
+      roster.resolve();
     }
-    await route.fallback();
-  });
-  await page.clock.install();
-  await page.goto(app.origin);
-  try {
-    await openPage(page, "Messages");
-    await expect.poll(() => rosterHeld).toBe(true);
-    await pauseClock(page, 1000);
-  } finally {
-    roster.resolve();
-  }
-  await expect.poll(() => app.relay.rejected.length).toBe(1);
-  // The notice appears once recovery lasts 3 s (RECOVERY_NOTICE_DELAY_MS).
-  // Run the paused clock only that far: the 6 s cooldown still holds, so the
-  // ignored clicks below land before it ends.
-  await page.clock.runFor(3_000);
-  await expect(notice(page)).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Alpha", exact: true }),
-  ).toHaveCount(0);
-  const globals = () =>
-    app.relay.requests.filter(({ filters }) =>
-      filters.some(
-        (filter) => filter.kinds.includes(0) || filter.kinds.includes(44100),
+    await expect.poll(() => app.relay.rejected.length).toBe(1);
+    // A server rejection precedes consumption and the batched source notification.
+    // Drive frames only until the actual recovery owner observes that failure.
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(16);
+        return page.evaluate(
+          () =>
+            window.fixtureRelay.snapshot().session.recovery.snapshot()
+              .recovering,
+        );
+      })
+      .toBe(true);
+    await expect(notice(page)).toHaveCount(0);
+    // The notice appears once recovery lasts 3 s (RECOVERY_NOTICE_DELAY_MS).
+    // Run the paused clock only that far: the 6 s cooldown still holds, so the
+    // ignored clicks below land before it ends.
+    await page.clock.runFor(3_000);
+    expect(
+      await page.evaluate(
+        () => window.fixtureRelay.snapshot().session.recovery.snapshot().shown,
       ),
-    );
-  const observer = () =>
-    app.relay.requests.filter(({ filters }) =>
-      filters.some((filter) => filter.kinds.includes(24200)),
-    );
-  const presence = () =>
-    app.relay.requests.filter(({ filters }) =>
-      filters.some((filter) => filter.kinds.includes(20001)),
-    );
-  await expect.poll(() => globals().length).toBe(2);
-  await expect.poll(() => observer().length).toBe(1);
-  await expect.poll(() => presence().length).toBe(1);
-  // Presence owns a separate access/demand-scoped route. Establish startup EOSE
-  // before recording healthy chat wires; a roster error is not a stream barrier.
-  const healthy = globals();
-  await expect
-    .poll(() =>
-      [...healthy, ...presence(), ...observer()].every(({ id }) =>
-        app.report.wireFrames.some(
-          (frame) => frame[0] === "EOSE" && frame[1] === id,
+    ).toBe(true);
+    // Toast publication follows the source transition through its portal owner.
+    await page.clock.runFor(16);
+    await expect(notice(page)).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Alpha", exact: true }),
+    ).toHaveCount(0);
+    const globals = () =>
+      app.relay.requests.filter(({ filters }) =>
+        filters.some(
+          (filter) => filter.kinds.includes(0) || filter.kinds.includes(44100),
         ),
-      ),
-    )
-    .toBe(true);
-  const sockets = app.relay.sockets.length;
-  const rosters = () =>
-    app.report.queries.filter(({ filter }) => filter.kinds?.includes(39002));
-  const calls = rosters().length;
-  await retry(page).click();
-  await retry(page).click();
-  expect(rosters()).toHaveLength(calls);
-  await crossCooldown(page, app);
-  await retryIfShown(page);
-  await expect(
-    page.getByText("No channels yet.", { exact: true }),
-  ).toBeVisible();
-  await expect(notice(page)).toHaveCount(0);
-  expect(rosters()).toHaveLength(calls + 1);
-  expect(app.relay.sockets).toHaveLength(sockets);
-  // The first authoritative (empty) roster resets the access generation:
-  // activity renews its live-only route. That lifecycle may not restart the
-  // healthy profile/membership chat globals.
-  await expect.poll(() => observer().length).toBe(2);
-  await expect
-    .poll(() =>
-      app.report.wireFrames.some(
-        (frame) => frame[0] === "EOSE" && frame[1] === observer()[1].id,
-      ),
-    )
-    .toBe(true);
-  expect(globals()).toHaveLength(2);
-  for (const { socket, id } of healthy)
-    expect(app.relay.sockets[socket].routes.has(id)).toBe(true);
-  expect(observer()[1].filters[0].since).toBeGreaterThanOrEqual(
-    observer()[0].filters[0].since,
-  );
-});
+      );
+    const observer = () =>
+      app.relay.requests.filter(({ filters }) =>
+        filters.some((filter) => filter.kinds.includes(24200)),
+      );
+    const presence = () =>
+      app.relay.requests.filter(({ filters }) =>
+        filters.some((filter) => filter.kinds.includes(20001)),
+      );
+    await expect.poll(() => globals().length).toBe(2);
+    await expect.poll(() => observer().length).toBe(1);
+    await expect.poll(() => presence().length).toBe(1);
+    // Presence owns a separate access/demand-scoped route. Establish startup EOSE
+    // before recording healthy chat wires; a roster error is not a stream barrier.
+    const healthy = globals();
+    await expect
+      .poll(() =>
+        [...healthy, ...presence(), ...observer()].every(({ id }) =>
+          app.report.wireFrames.some(
+            (frame) => frame[0] === "EOSE" && frame[1] === id,
+          ),
+        ),
+      )
+      .toBe(true);
+    const sockets = app.relay.sockets.length;
+    const rosters = () =>
+      app.report.queries.filter(({ filter }) => filter.kinds?.includes(39002));
+    const calls = rosters().length;
+    await retry(page).click();
+    await retry(page).click();
+    expect(rosters()).toHaveLength(calls);
+    await crossCooldown(page, app);
+    await retryIfShown(page);
+    await expect(
+      page.getByText("No channels yet.", { exact: true }),
+    ).toBeVisible();
+    await expect(notice(page)).toHaveCount(0);
+    expect(rosters()).toHaveLength(calls + 1);
+    expect(app.relay.sockets).toHaveLength(sockets);
+    // The first authoritative (empty) roster resets the access generation:
+    // activity renews its live-only route. That lifecycle may not restart the
+    // healthy profile/membership chat globals.
+    await expect.poll(() => observer().length).toBe(2);
+    await expect
+      .poll(() =>
+        app.report.wireFrames.some(
+          (frame) => frame[0] === "EOSE" && frame[1] === observer()[1].id,
+        ),
+      )
+      .toBe(true);
+    expect(globals()).toHaveLength(2);
+    for (const { socket, id } of healthy)
+      expect(app.relay.sockets[socket].routes.has(id)).toBe(true);
+    expect(observer()[1].filters[0].since).toBeGreaterThanOrEqual(
+      observer()[0].filters[0].since,
+    );
+  },
+);

@@ -488,6 +488,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "shape: capsule (default) | control (12px) | icon (square, 10px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",
       "loading",
+      "loading with explicit disabled appearance",
     ],
     status: "proposed",
     collection: "components",

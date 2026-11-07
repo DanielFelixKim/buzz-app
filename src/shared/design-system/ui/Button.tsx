@@ -97,6 +97,7 @@ export function Button({
       data-size={size === "compact" ? "sm" : size === "default" ? "md" : size}
       data-button-shape={shape}
       data-loading={loading || undefined}
+      data-disabled-appearance={disabled || undefined}
     >
       {variant === "attention" && (
         <svg

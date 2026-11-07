@@ -21,7 +21,7 @@ test.describe("held setup", () => {
       window.__bannerSeen = [];
       window.__bannerObserver = new MutationObserver(() => {
         for (const status of document.querySelectorAll(
-          '[role="status"][aria-label="Reconnecting to relay…"], [role="status"][aria-label="Live updates limited"]',
+          '[role="dialog"].buzz-toast, [role="status"][aria-label="Live updates limited"]',
         )) {
           window.__bannerSeen.push(status.textContent);
         }
@@ -37,8 +37,9 @@ test.describe("held setup", () => {
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
-    const warning = page.getByRole("status", {
-      name: /^(Reconnecting to relay…|Live updates limited)$/,
+    const warning = page.getByRole("dialog", {
+      name: "Buzz is having issues",
+      exact: true,
     });
     await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
     await expect(warning).toHaveCount(0);
@@ -87,9 +88,9 @@ test.describe("held setup", () => {
 });
 
 const notice = (page) =>
-  page.getByRole("status", { name: "Reconnecting to relay…", exact: true });
+  page.getByRole("dialog", { name: "Buzz is having issues", exact: true });
 const retryNow = (page) =>
-  notice(page).getByRole("button", { name: "Retry now", exact: true });
+  notice(page).getByRole("button", { name: "Retry", exact: true });
 
 for (const target of ["alpha", "profiles"]) {
   test(`quota recovery for ${target} stays quiet until attempts exhaust, then keeps retrying automatically until EOSE`, async ({
@@ -164,7 +165,7 @@ for (const target of ["alpha", "profiles"]) {
       }
     }
     // The notice keeps showing while the retried REQ waits for EOSE, and it
-    // must not block the header, composer, or narrow navigation.
+    // remains bounded in the shared notification stack at every width.
     for (const width of [390, 800, 1440]) {
       await page.setViewportSize({ width, height: 950 });
       await page
@@ -179,8 +180,8 @@ for (const target of ["alpha", "profiles"]) {
       await expect(notice(page)).toHaveCount(1); // Diagnostics must not duplicate it.
       await expect(warning).toHaveCount(0);
       await expect(
-        page.getByRole("dialog", { name: "Reconnecting to relay…" }),
-      ).toHaveCount(0); // Nor a floating copy.
+        page.getByRole("status", { name: "Reconnecting to relay…" }),
+      ).toHaveCount(0); // No inline copy.
       await expect(notice(page)).toHaveCSS("opacity", "1");
       const composer = page
         .getByRole("textbox", {
@@ -191,16 +192,21 @@ for (const target of ["alpha", "profiles"]) {
       await expect
         .poll(async () => {
           const box = await notice(page).boundingBox();
-          const form = await composer.boundingBox();
-          return box && form ? box.y + box.height <= form.y : false;
+          return (
+            !!box &&
+            box.x >= 0 &&
+            box.x + box.width <= width &&
+            box.y >= 0 &&
+            box.y + box.height <= 950
+          );
         })
         .toBe(true);
-      await composer
-        .getByRole("button", {
-          name: "Send message",
-          exact: true,
-        })
-        .click({ trial: true });
+      const send = composer.getByRole("button", {
+        name: "Send message",
+        exact: true,
+      });
+      await send.focus();
+      await expect(send).toBeFocused();
       await page.screenshot({
         path: testInfo.outputPath(`recovery-app-${target}-${width}.png`),
       });
@@ -250,10 +256,9 @@ for (const target of ["alpha", "profiles"]) {
   });
 }
 
-// Browser layout: a long, unbroken relay reason stays out of the inline
-// recovery notice, which sits above the composer with keyboard Retry now
-// reachable at enlarged text size.
-test("long recovery stays bounded above the composer at enlarged text size", async ({
+// Long relay reasons stay in Doctor details; the concise toast remains bounded
+// and keyboard-accessible through the shared F6 notification navigation.
+test("Buzz Doctor stays bounded and keyboard-accessible at enlarged text size", async ({
   page,
   app,
 }, testInfo) => {
@@ -286,17 +291,33 @@ test("long recovery stays bounded above the composer at enlarged text size", asy
       return (
         !!box &&
         !!composer &&
-        box.y + box.height <= composer.y &&
+        box.x >= 0 &&
+        box.x + box.width <= 390 &&
+        box.y >= 0 &&
+        box.y + box.height <= 600 &&
         composer.y + composer.height <= 600
       );
     })
     .toBe(true);
-  await expect(warning).toHaveText(/^Reconnecting to relay…Retry now$/);
-  await form
-    .getByRole("button", { name: "Send message", exact: true })
-    .click({ trial: true });
+  await expect(warning).toContainText("Buzz is having issues");
+  await expect(warning).not.toContainText("UnavailableUnavailable");
+  const send = form.getByRole("button", { name: "Send message", exact: true });
+  await send.focus();
+  await expect(send).toBeFocused();
   await input.focus();
-  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("F6");
+  await expect(
+    page.getByRole("region", { name: "App notifications" }).getByRole("list"),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    warning.locator("xpath=ancestor::li[@data-sonner-toast]"),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    warning.getByRole("button", { name: "Open Buzz Doctor", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(retryNow(page)).toBeFocused();
   await expect(retryNow(page)).toBeInViewport();
   await page.screenshot({
@@ -461,10 +482,13 @@ test.describe("public preview recovery", () => {
       await expect(warning).toBeVisible();
       await expect
         .poll(async () => {
-          const capsule = await invitation.boundingBox();
           const recovery = await warning.boundingBox();
           return (
-            !!capsule && !!recovery && capsule.y + capsule.height <= recovery.y
+            !!recovery &&
+            recovery.x >= 0 &&
+            recovery.x + recovery.width <= 390 &&
+            recovery.y >= 0 &&
+            recovery.y + recovery.height <= 700
           );
         })
         .toBe(true);

@@ -33,6 +33,7 @@ import {
   type RefObject,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import { useDoctorIssue } from "../../features/relay/BuzzDoctor";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationSectionHeading } from "../../shared/design-system/ui/NavigationSection";
@@ -100,6 +101,7 @@ export function SoloWorkspaces({
   useChatConversions(session);
   const handoff = useChannelNavigation();
   const preferences = session.soloPreferences;
+  const doctor = useDoctorIssue(preferences);
   const collapsedKey = "solo:collapsed-projects";
   const expandedKey = "solo:expanded-projects";
   const snapshot = useSyncExternalStore(
@@ -424,7 +426,7 @@ export function SoloWorkspaces({
           Loading workspaces…
         </p>
       )}
-      {snapshot.status === "error" && (
+      {snapshot.status === "error" && !doctor && (
         <div role="alert" className={styles.listMessage}>
           <p>{snapshot.error ?? "Workspaces couldn’t load."}</p>
           <Button onClick={() => void preferences.refresh()}>

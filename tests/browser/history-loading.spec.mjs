@@ -24,10 +24,7 @@ tall(
   async ({ page, app }) => {
     await open(page, app);
     await expect(
-      page.getByRole("status", {
-        name: "Reconnecting to relay…",
-        exact: true,
-      }),
+      page.getByRole("dialog", { name: "Buzz is having issues", exact: true }),
     ).toHaveCount(0);
     await history(page).hover();
     for (let i = 0; i < 100 && !app.pending.length; i++) {
@@ -64,10 +61,7 @@ test("returning to the top continues history loading on wheel without a button",
 }) => {
   await open(page, app);
   await expect(
-    page.getByRole("status", {
-      name: "Reconnecting to relay…",
-      exact: true,
-    }),
+    page.getByRole("dialog", { name: "Buzz is having issues", exact: true }),
   ).toHaveCount(0);
   await history(page).hover();
   await page.mouse.wheel(0, -100000);
@@ -97,10 +91,7 @@ test("saved top resumes automatic history on an upward gesture after remount", a
 }) => {
   await open(page, app);
   await expect(
-    page.getByRole("status", {
-      name: "Reconnecting to relay…",
-      exact: true,
-    }),
+    page.getByRole("dialog", { name: "Buzz is having issues", exact: true }),
   ).toHaveCount(0);
   await history(page).hover();
   // Establish the saved top with real input; remeasurement can consume part
@@ -125,10 +116,7 @@ test("saved top resumes automatic history on an upward gesture after remount", a
   await openPage(page, "Messages");
   await expect(history(page)).toBeVisible();
   await expect(
-    page.getByRole("status", {
-      name: "Reconnecting to relay…",
-      exact: true,
-    }),
+    page.getByRole("dialog", { name: "Buzz is having issues", exact: true }),
   ).toHaveCount(0);
   await settle(page);
   await expect.poll(() => history(page).evaluate((e) => e.scrollTop)).toBe(0);
@@ -147,10 +135,7 @@ test.describe("quota retry without threshold-driven continuation", () => {
   }) => {
     await open(page, app);
     await expect(
-      page.getByRole("status", {
-        name: "Reconnecting to relay…",
-        exact: true,
-      }),
+      page.getByRole("dialog", { name: "Buzz is having issues", exact: true }),
     ).toHaveCount(0);
     const olderAlpha = (filter) =>
       filter.until !== undefined &&

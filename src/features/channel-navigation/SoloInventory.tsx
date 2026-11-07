@@ -1,4 +1,5 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
+import { useDoctorIssue } from "../relay/BuzzDoctor";
 import { useSoloNavigation } from "./solo-navigation-react";
 import {
   useCallback,
@@ -100,6 +101,7 @@ export function SoloInventory({
   const rosterRecovers = useRecoveryOwns(session, (live) =>
     rosterRecovering(live.roster),
   );
+  const doctor = useDoctorIssue(session.live);
   const selected =
     target.kind === "conversation" ? target.channelId : undefined;
   const draft =
@@ -358,7 +360,7 @@ export function SoloInventory({
         renderChat={renderChat}
       />
       {list.status === "loading" && <p role="status">Loading conversations…</p>}
-      {list.status === "error" && !rosterRecovers && (
+      {list.status === "error" && !rosterRecovers && !doctor && (
         <p role="alert">{list.error}</p>
       )}
     </>

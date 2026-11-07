@@ -3,6 +3,8 @@ import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtwor
 import { Welcome } from "../features/identity/Welcome";
 import { NewMenu } from "./shell/NewMenu";
 import { PrimarySidebar } from "./shell/PrimarySidebar";
+import { BuzzDoctor } from "../features/relay/BuzzDoctor";
+import { conversationFocusTarget, paneFocusTarget } from "./focus-navigation";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -593,7 +595,32 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     </div>
   );
   return (
-    <>
+    <BuzzDoctor
+      relay={services.relay}
+      navigation={services.navigation}
+      scope={
+        client.viewer && client.selected
+          ? {
+              viewer: client.viewer,
+              communityOrigin: communityDestination(client.selected).url,
+            }
+          : null
+      }
+      open={
+        route.target.kind === "doctor" &&
+        !route.failure &&
+        !route.waiting &&
+        !launching
+      }
+      onClose={route.leaveDoctor}
+      focusTarget={() =>
+        (workspace.target.kind === "conversation"
+          ? conversationFocusTarget(workspace.target.channelId)
+          : paneFocusTarget("main")) ??
+        document.getElementById("main-content") ??
+        undefined
+      }
+    >
       <SignInEnding identity={services.federatedIdentity} />
       {isTauri() && (
         <PairingPrompt
@@ -869,6 +896,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           )}
         </Dialog>
       </ChannelNavigationProvider>
-    </>
+    </BuzzDoctor>
   );
 }

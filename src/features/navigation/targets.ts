@@ -26,6 +26,7 @@ export type UrlPluginSource = Readonly<{
 export type PluginLinkSource = GitPluginSource | UrlPluginSource;
 export type OpenTarget =
   | Readonly<{ version: 1; kind: "home" }>
+  | Readonly<{ version: 1; kind: "doctor"; scope?: NavigationScope | null }>
   | Readonly<{
       version: 1;
       kind: "settings";
@@ -279,6 +280,16 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         fields(value, ["version", "kind"]);
         target = { version: 1, kind: "home" };
         break;
+      case "doctor":
+        fields(value, ["version", "kind", "scope"]);
+        target = {
+          version: 1,
+          kind: "doctor",
+          ...(value.scope !== undefined
+            ? { scope: value.scope === null ? null : boundScope(value.scope) }
+            : {}),
+        };
+        break;
       case "settings":
         fields(value, [
           "version",
@@ -447,3 +458,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
 export function targetKey(target: OpenTarget): string {
   return JSON.stringify(parseOpenTarget(target));
 }
+
+/** Global dialogs retain the workspace beneath their navigation visit. */
+export const isDialogTarget = (target: OpenTarget) =>
+  target.kind === "settings" || target.kind === "doctor";

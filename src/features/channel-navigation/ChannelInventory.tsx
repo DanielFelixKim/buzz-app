@@ -1,4 +1,5 @@
 import { revealCreatedChannel } from "./created-channel";
+import { useDoctorIssue } from "../relay/BuzzDoctor";
 import {
   useCallback,
   useEffect,
@@ -197,6 +198,10 @@ export function ChannelInventory({
     rosterRecovering(live.roster),
   );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const doctorCatalog = useDoctorIssue(queries.channelKit);
+  const doctorVisibility = useDoctorIssue(queries.channelLifecycle);
+  const doctorSidebar = useDoctorIssue(queries.sidebarPreferences);
+  const doctorLive = useDoctorIssue(queries.live);
   const sortModesReady =
     pluginsSettled ||
     Object.values(preferences.data?.sort ?? {}).every(
@@ -1247,16 +1252,16 @@ export function ChannelInventory({
     },
     before: (
       <>
-        {/* The sidebar mounts the one automatic relay-recovery notice.
-              Other failures need the user and keep their own message and Retry. */}
-        {kitState.status === "error" && !kitState.transient && (
-          <p role="alert">
-            {kitState.error}{" "}
-            <Button onClick={() => void queries.channelKit.refresh()}>
-              Retry templates
-            </Button>
-          </p>
-        )}
+        {kitState.status === "error" &&
+          !kitState.transient &&
+          !doctorCatalog && (
+            <p role="alert">
+              {kitState.error}{" "}
+              <Button onClick={() => void queries.channelKit.refresh()}>
+                Retry templates
+              </Button>
+            </p>
+          )}
         {setupNotices.map((notice) => (
           <ToastNotice
             key={notice.id}
@@ -1272,7 +1277,7 @@ export function ChannelInventory({
             </Button>
           </ToastNotice>
         ))}
-        {!cached && dmVisibility.status === "error" && (
+        {!cached && dmVisibility.status === "error" && !doctorVisibility && (
           <div role="alert">
             Hidden conversations could not be refreshed.{" "}
             <Button
@@ -1627,7 +1632,7 @@ export function ChannelInventory({
             Loading your sidebar…
           </p>
         )}
-        {list.status === "error" && !rosterRecovers && (
+        {list.status === "error" && !rosterRecovers && !doctorLive && (
           <p role="alert" className={styles.empty}>
             {list.error}
           </p>
@@ -1791,7 +1796,8 @@ export function ChannelInventory({
         {!cached &&
         startup.ready &&
         preferences.status === "error" &&
-        !preferences.transient ? (
+        !preferences.transient &&
+        !doctorSidebar ? (
           <ToastNotice
             title="Saved sidebar preferences couldn’t refresh"
             description="Your conversations are still available."

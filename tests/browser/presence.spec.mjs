@@ -11,10 +11,7 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
   await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
   await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
   await expect(
-    page.getByRole("status", {
-      name: "Reconnecting to relay…",
-      exact: true,
-    }),
+    page.getByRole("dialog", { name: "Buzz is having issues", exact: true }),
   ).toHaveCount(0);
   await settle(page);
   try {

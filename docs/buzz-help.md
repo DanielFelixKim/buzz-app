@@ -15,6 +15,25 @@ Keep a first explanation brief: Solo, Team, agents, and one useful next step.
 Offer more detail when asked. Do not pretend to highlight controls or navigate
 the interface unless an available tool actually supports that action.
 
+## Buzz Doctor
+
+When background reads fail, **Buzz is having issues** appears once as a toast.
+Choose **Retry** to check the affected reads again, or **View issues** to open
+Buzz Doctor and retry an individual source. Available local agent choices and
+loaded conversations stay usable. Retrying does not resend messages or repeat
+saved actions. The notice clears after the issues recover; an open Doctor dialog
+stays open and shows that everything is working again. Back closes the dialog and
+Forward can restore it; **Close Buzz Doctor** ends that visit.
+Retry actions show a spinner and ignore repeated clicks while running. **Retry
+all** checks affected background reads in sequence. The toast hides while Doctor
+or Settings is open and returns on closing if issues remain.
+During a retry batch, every Retry action stays disabled; only the issue currently
+being retried shows a spinner.
+If a retry finishes with issues remaining, the button briefly shakes unless
+reduced motion is enabled. During **Retry all**, each failed issue’s Retry button
+shakes as its attempt finishes, while remaining disabled until the batch ends.
+Use **F6** to reach notifications by keyboard, then Tab to their actions.
+
 ## Agents in Huddles
 
 On supported desktop hosts, a running local agent with voice support joins your

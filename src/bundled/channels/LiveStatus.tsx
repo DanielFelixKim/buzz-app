@@ -12,6 +12,10 @@ import {
   useInlineRecovery,
 } from "../../features/relay/RecoveryNotice";
 import { liveRecoveryStatus } from "../../features/relay/live-recovery";
+import {
+  useDoctorHosted,
+  useDoctorIssue,
+} from "../../features/relay/BuzzDoctor";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./LiveStatus.module.css";
 
@@ -33,8 +37,10 @@ export function LiveStatus({
   /** A recovery or retry control that had focus went away; move focus on. */
   onRecovered?: (() => void) | undefined;
 }) {
+  const doctor = useDoctorIssue(live);
+  const hosted = useDoctorHosted();
   const { recovering: retrying, shown } = useInlineRecovery(
-    diagnostics ? undefined : recovery,
+    diagnostics || hosted ? undefined : recovery,
   );
   const focused = useRef(false);
   const snapshot = useSyncExternalStore(
@@ -180,6 +186,7 @@ export function LiveStatus({
       </>
     );
   }
+  if (doctor) return null;
   if (recovery && shown)
     return (
       <section

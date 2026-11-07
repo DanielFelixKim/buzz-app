@@ -104,6 +104,7 @@ function ToastCard({
         <button
           type="button"
           className="buzz-toast-open"
+          tabIndex={0}
           aria-label={navigation.label}
           title={navigation.label}
           onClick={navigation.open}

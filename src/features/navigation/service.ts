@@ -9,7 +9,12 @@ import {
 } from "./controller";
 import { createBrowserHistory } from "./browser-history";
 import { createMemoryHistory } from "./history";
-import { targetKey, type JsonValue, type OpenTarget } from "./targets";
+import {
+  isDialogTarget,
+  targetKey,
+  type JsonValue,
+  type OpenTarget,
+} from "./targets";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 
 export type PageNavigation = Readonly<{
@@ -114,7 +119,7 @@ export function provideNavigation(
           resolve: (target) => {
             if (
               retainUnderSettings &&
-              controller.navigation.snapshot().entry.target.kind === "settings"
+              isDialogTarget(controller.navigation.snapshot().entry.target)
             ) {
               resolution = target;
               return false;
@@ -123,7 +128,7 @@ export function provideNavigation(
           },
           complete: (result) => {
             const state = controller.navigation.snapshot();
-            if (retainUnderSettings && state.entry.target.kind === "settings") {
+            if (retainUnderSettings && isDialogTarget(state.entry.target)) {
               completion = result;
               return false;
             }
@@ -140,7 +145,7 @@ export function provideNavigation(
             if (
               retainUnderSettings &&
               !state.ingress &&
-              state.entry.target.kind === "settings"
+              isDialogTarget(state.entry.target)
             ) {
               suspended = true;
               return true;

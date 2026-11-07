@@ -923,9 +923,11 @@ test("Create new retains its draft when preferences fail before submission and r
     held.resolve();
     await failed;
     // The one recovery notice reports it; there is no separate preferences toast.
-    // The modal makes the page inert, so match the inline notice by attribute.
+    // The modal makes notifications inert, so match the toast by its DOM class.
     await expect(
-      page.locator('[role="status"][aria-label="Reconnecting to relay…"]'),
+      page
+        .locator('[role="dialog"].buzz-toast')
+        .filter({ hasText: "Buzz is having issues" }),
     ).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: "Create and move" }),

@@ -5,8 +5,9 @@ test.use({ productionBroker: true, historyCounts: { alpha: 1, beta: 1 } });
 
 // Models a laptop that wakes before its VPN is back: the relay connection
 // drops and every relay request gets a non-relay 403 page. When the network
-// returns, the app must recover by itself, with no restart and no Retry click.
-test("relay reads recover automatically after the network returns", async ({
+// returns, live reads must recover without a click. Doctor also represents
+// finite/dependent reads that the older live-only notice did not cover.
+test("live reads recover automatically and Doctor can retry remaining read failures", async ({
   page,
   app,
 }, testInfo) => {
@@ -41,20 +42,20 @@ test("relay reads recover automatically after the network returns", async ({
     "alpha",
     Array.from({ length: 500 }, () => missed),
   );
-  // With a conversation open, the notice sits inline above the composer.
-  const notice = page.getByRole("status", {
-    name: "Reconnecting to relay…",
+  // Background failures share the Doctor toast, including with a conversation open.
+  const notice = page.getByRole("dialog", {
+    name: "Buzz is having issues",
     exact: true,
   });
   await expect(notice).toBeVisible({ timeout: 30_000 });
-  // One notice and one Retry now; no per-panel Retry buttons.
+  // One notice and one Retry; no per-panel Retry buttons.
   await expect(page.getByRole("button", { name: /Retry/ })).toHaveCount(1);
   await expect(
-    page.getByRole("button", { name: "Retry now", exact: true }),
+    page.getByRole("button", { name: "Retry", exact: true }),
   ).toBeVisible();
-  // The notice is the one place that reports it: no floating duplicate.
+  // The notice is the one place that reports it: no inline duplicate.
   await expect(
-    page.getByRole("dialog", { name: "Reconnecting to relay…", exact: true }),
+    page.getByRole("status", { name: "Reconnecting to relay…", exact: true }),
   ).toHaveCount(0);
   // Loaded messages and channels stay on screen.
   await expect(page.getByText("primary alpha message 0")).toBeVisible();
@@ -64,13 +65,42 @@ test("relay reads recover automatically after the network returns", async ({
   await page.screenshot({ path: testInfo.outputPath("offline.png") });
   // It leaves the composer and Send usable.
   await composer.fill("Draft while offline");
-  await page
-    .getByRole("button", { name: "Send message", exact: true })
-    .click({ trial: true });
+  const send = page.getByRole("button", { name: "Send message", exact: true });
+  await send.focus();
+  await expect(send).toBeFocused();
   await composer.fill("");
 
   offline = false;
-  // No click: the scheduled retry finds the network back.
+  // This newly appended message proves automatic live/head recovery before
+  // any Doctor action; hiding a notice alone would not establish recovery.
+  await expect(
+    page.getByText("Missed while asleep", { exact: true }),
+  ).toBeVisible({ timeout: 45_000 });
+  if (await notice.isVisible()) {
+    await notice
+      .getByRole("button", { name: "View issues", exact: true })
+      .click();
+    const doctor = page.getByRole("dialog", {
+      name: "Buzz Doctor",
+      exact: true,
+    });
+    await expect(doctor).toBeVisible();
+    app.report.measurements.push({
+      remainingDoctorIssues: await doctor.innerText(),
+    });
+    await doctor
+      .getByRole("button", { name: "Retry all", exact: true })
+      .click();
+    await expect(
+      doctor.getByText(
+        "Everything is working again. No issues need attention.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await doctor
+      .getByRole("button", { name: "Close Buzz Doctor", exact: true })
+      .click();
+  }
   await expect(notice).toHaveCount(0, { timeout: 45_000 });
   await expect(page.getByRole("button", { name: /Retry/ })).toHaveCount(0);
   // Every failed panel clears, including the open timeline.

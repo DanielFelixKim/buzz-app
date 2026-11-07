@@ -21,6 +21,11 @@ unchanged-looking stop. Opening the content explicitly again creates a fresh vis
 
 ### Dialogs
 
+Buzz Doctor is a read-only, community-scoped global dialog using this contract.
+Its visit retains the underlying workspace. Restoring it reads the current
+session's issues; it never replays Retry. Recovery can show a healthy state in
+the open dialog without closing it or discarding its return path.
+
 Back closes the dialog before leaving its underlying view. Forward can reopen it.
 
 For `channel A → channel B → Members`:

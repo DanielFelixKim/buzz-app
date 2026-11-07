@@ -94,6 +94,48 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
+it("keeps the underlying destination beneath Buzz Doctor and retires its visit on explicit Close", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  // This fixture has no Messages plugin; its default destination settles as unavailable.
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("failed"),
+  );
+  const beneath = current.navigation.snapshot().entry.target;
+  void current.navigation.open({ version: 1, kind: "doctor", scope: null });
+  expect(
+    await screen.findByRole("dialog", { name: "Buzz Doctor" }),
+  ).toBeVisible();
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  await act(async () => current.navigation.back());
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Buzz Doctor" })).toBeNull(),
+  );
+  expect(current.navigation.snapshot().entry.target).toEqual(beneath);
+  await act(async () => current.navigation.forward());
+  expect(
+    await screen.findByRole("dialog", { name: "Buzz Doctor" }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Close Buzz Doctor" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Buzz Doctor" })).toBeNull(),
+  );
+  await act(async () => current.navigation.forward());
+  expect(screen.queryByRole("dialog", { name: "Buzz Doctor" })).toBeNull();
+});
+
 it("waits for a starting plugin before opening its addressed Settings card", async () => {
   vi.stubGlobal(
     "ResizeObserver",

@@ -15,6 +15,32 @@ const conversation = {
 } as const;
 
 describe("open target boundary", () => {
+  it("bounds Buzz Doctor to presentation and optional community scope", () => {
+    expect(
+      parseOpenTarget({
+        version: 1,
+        kind: "doctor",
+        scope: conversation.scope,
+      }),
+    ).toEqual({
+      version: 1,
+      kind: "doctor",
+      scope: { viewer, communityOrigin: "https://relay.example" },
+    });
+    expect(
+      parseOpenTarget({ version: 1, kind: "doctor", scope: null }),
+    ).toEqual({ version: 1, kind: "doctor", scope: null });
+    for (const extra of [
+      { retry: true },
+      { issue: "secret" },
+      {
+        scope: { viewer: "invalid", communityOrigin: "https://relay.example" },
+      },
+    ])
+      expect(() =>
+        parseOpenTarget({ version: 1, kind: "doctor", ...extra }),
+      ).toThrow();
+  });
   it("bounds a scoped forwarding presentation independently of its underlying message", () => {
     const target = parseOpenTarget({
       ...conversation,

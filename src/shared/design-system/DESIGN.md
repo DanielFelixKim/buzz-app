@@ -411,7 +411,10 @@ success messages around a routine task. Keep important scope, privacy, destructi
 consequences, and recovery copy; move it next to the relevant decision rather than
 deleting it to make a layout quieter.
 
-Use inline feedback for lasting problems and shared Toast for transient results.
+Use inline feedback for field validation, failed actions and object-specific
+correction. Buzz Doctor consolidates background-read problems in one persistent
+shared Toast, with Retry and a dialog of individual issues and actions. Use finite
+shared Toast feedback for transient results.
 Do not build another notification stack. Preserve labels, focus, and control size
 while pending, and prevent repeated activation in behavior. Shared surfaces own
 their motion: keyboard/high-frequency interactions stay immediate, exits do not
@@ -1015,7 +1018,8 @@ selection changes. Standalone icon actions continue to use `IconButton`.
 
 Disabled controls retain their filled, outline, or unfilled treatment and cannot
 activate. Loading retains the label's geometry, accessible name, focus and variant
-colors while blocking activation; never swap in a differently sized loading label.
+colors while blocking activation. Explicit `disabled` also applies disabled colors
+while retaining the spinner. Never swap in a differently sized loading label.
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
@@ -1482,10 +1486,15 @@ Sonner is the toast behavior owner; other matching controls use Base UI. ToastNo
 owns its state and recovery: unmounting the source removes its notification,
 without reporting user dismissal. Gate notices from hidden Settings sections
 explicitly; portals do not inherit a hidden ancestor. Keep form errors and
-blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recovery:
-keep it in the conversation flow immediately above the composer, with bounded
-overflow, so Send and companion-panel controls remain usable. Its retry policy
-and diagnostics belong to Channels; it does not enter the floating toast stack.
+blocked-page recovery inline. Buzz Doctor owns the single notice for community,
+live-update, template, workspace, sidebar, hidden-conversation and agent-inventory
+read failures. Its toast opens a shared Dialog listing each issue and its action;
+the toast also offers a combined Retry. The existing source services retain
+automatic recovery and cancellation. Suppress a duplicate source notice only
+while Doctor represents that source; preserve unrelated refusals and partial data
+in the details. Retain an issue during its pending retry. Keep field validation,
+failed sends and object-specific operation recovery inline. Channel LiveStatus
+retains diagnostics and passive coverage context, not a duplicate shared outage.
 
 A notice can make its body open a related destination with `navigation`. The
 body has a hover state and a keyboard action. Its explicit buttons and Dismiss

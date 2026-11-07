@@ -9,7 +9,6 @@ import {
 import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { soloDraft } from "../../features/channel-navigation/routes";
-import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import {
   ChannelInventory,
   sidebarEntryLocation,
@@ -276,11 +275,6 @@ function ScopedSidebar({
                 panelId={panelId}
                 {...frame}
               >
-                {/* Relay outages for every inventory recover through one
-                    automatic owner; its notice is the single Retry. */}
-                {!connection.cached && (
-                  <RecoveryNotice recovery={connection.session.recovery} />
-                )}
                 <LiveSignIn
                   session={connection.session}
                   identity={communityIdentity(

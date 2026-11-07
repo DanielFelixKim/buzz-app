@@ -8,7 +8,11 @@ import {
 } from "react";
 import type { AppServices } from "./services";
 import { communityDestination } from "../features/communities/destination";
-import { targetKey, type OpenTarget } from "../features/navigation/targets";
+import {
+  isDialogTarget,
+  targetKey,
+  type OpenTarget,
+} from "../features/navigation/targets";
 import type { PageNavigation } from "../features/navigation/service";
 import type {
   OpenAttempt,
@@ -58,6 +62,7 @@ export function useAppNavigation(
   const startup = plugins.configuration.status;
   const target = state.entry.target;
   const settings = target.kind === "settings";
+  const dialog = isDialogTarget(target);
   const provider = settings ? target.provider : undefined;
   const providerAvailable = useSyncExternalStore(
     (listener) =>
@@ -89,8 +94,7 @@ export function useAppNavigation(
   const lastNonSettings = useRef<
     { target: OpenTarget; entryId: string } | undefined
   >(undefined);
-  if (target.kind !== "settings")
-    lastNonSettings.current = { target, entryId: state.entry.id };
+  if (!dialog) lastNonSettings.current = { target, entryId: state.entry.id };
   const scope = "scope" in target ? target.scope : undefined;
   const pageKey =
     target.kind === "page"
@@ -261,12 +265,12 @@ export function useAppNavigation(
   useLayoutEffect(() => {
     if (owner.waiting || owner.failure) return;
     const previous = workspace.current;
-    if (!settings && previous?.presentation.resume(owner.attempt)) {
+    if (!dialog && previous?.presentation.resume(owner.attempt)) {
       setPresentation({ owner, request: previous.presentation.request });
       previous.owner = owner;
       return;
     }
-    if (!settings) {
+    if (!dialog) {
       previous?.presentation.dispose();
       workspace.current = undefined;
     }
@@ -303,12 +307,12 @@ export function useAppNavigation(
           };
         },
       },
-      !settings && !!owner.page,
+      !dialog && !!owner.page,
     );
     setPresentation({ owner, request: next.request });
-    if (settings) return next.dispose;
+    if (dialog) return next.dispose;
     workspace.current = { owner, presentation: next };
-  }, [services, owner, settings]);
+  }, [services, owner, dialog]);
   const retained = workspace.current;
   const sameWorkspaceVisit =
     retained &&
@@ -321,17 +325,19 @@ export function useAppNavigation(
   const request =
     presentation?.owner === owner
       ? presentation.request
-      : !settings && sameWorkspaceVisit
+      : !dialog && sameWorkspaceVisit
         ? retainedRequest
         : undefined;
-  const workspacePage = settings
-    ? retainedRequest && retained?.owner.page
-    : page;
+  const workspacePage = dialog ? retainedRequest && retained?.owner.page : page;
   const workspaceTarget =
-    settings && retainedRequest && retained
+    dialog && retainedRequest && retained
       ? retained.owner.attempt.entry.target
       : target;
-  const workspaceRequest = settings ? retainedRequest : request;
+  const workspaceRequest = dialog ? retainedRequest : request;
+  useEffect(() => {
+    if (target.kind === "doctor" && !waiting && !failure)
+      request?.complete({ status: "opened" });
+  }, [target, waiting, failure, request]);
   useEffect(() => {
     if (state.attempt.signal.aborted) return;
     if (failure) {
@@ -453,9 +459,9 @@ export function useAppNavigation(
       target: workspaceTarget,
       request: workspaceRequest,
       selected:
-        workspacePage?.key ?? (settings ? "home" : (pageKey ?? target.kind)),
+        workspacePage?.key ?? (dialog ? "home" : (pageKey ?? target.kind)),
       attempt:
-        settings && retainedRequest && retained
+        dialog && retainedRequest && retained
           ? retained.owner.attempt.id
           : state.attempt.id,
     },
@@ -474,6 +480,15 @@ export function useAppNavigation(
           return targetKey(settings) === parent;
         }, settings);
       }
+    },
+    leaveDoctor() {
+      const current = navigation.snapshot().entry.target;
+      if (current.kind !== "doctor") return;
+      const key = targetKey(current);
+      navigation.dismiss(
+        (target) => targetKey(target) === key,
+        lastNonSettings.current?.target ?? { version: 1, kind: "home" },
+      );
     },
     dismissPluginImport(request: PageNavigation | undefined) {
       const current = request?.target;

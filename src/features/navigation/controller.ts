@@ -1,4 +1,9 @@
-import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
+import {
+  isDialogTarget,
+  parseOpenTarget,
+  targetKey,
+  type OpenTarget,
+} from "./targets";
 import type {
   DismissedVisits,
   NavigationEntry,
@@ -459,8 +464,7 @@ export function createNavigationController(
           // that visit, so it never replaces it. Any forward entries stay.
           const dismiss =
             options?.dismiss ||
-            (target.kind !== "settings" &&
-              passes(history.snapshot().current.id));
+            (!isDialogTarget(target) && passes(history.snapshot().current.id));
           const previous = history.snapshot().previous;
           if (
             dismiss &&
