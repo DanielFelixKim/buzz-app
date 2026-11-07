@@ -728,6 +728,15 @@ it("fold preserves historical message/edit mappings and per-reaction URLs withou
   expect(fold(tagged, edit(viewer, 3, []))?.emoji).toEqual([
     { shortcode: "party", url: "https://edited.test/p" },
   ]);
+  // A tagless edit keeps each shortcode's latest mapping, even one only the
+  // original carried after an older edit mapped a different code.
+  const wave = { shortcode: "wave", url: "https://w.test/w" };
+  expect(
+    fold(
+      edit(viewer, 2, [["emoji", wave.shortcode, wave.url]]),
+      edit(viewer, 3, []),
+    )?.emoji,
+  ).toEqual([wave, { shortcode: "party", url }]);
   expect(
     fold(edit(member, 4, [["emoji", "party", "https://spoof.test/p"]]))?.emoji,
   ).toEqual([{ shortcode: "party", url }]);
