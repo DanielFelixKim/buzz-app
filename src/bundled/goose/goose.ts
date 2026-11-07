@@ -11,6 +11,8 @@ import type {
   ConfigOptions,
 } from "../../features/agent-harness/acp/session";
 import { errorMessage } from "../../features/agent-harness/acp/steps";
+import type { Listing } from "../../buzz-mcp/rpc";
+import { type AddedTool, sessionHint } from "../../buzz-mcp/session-tools";
 import type {
   AcpHooks,
   ServeMcp,
@@ -48,6 +50,18 @@ export type PlatformExtension = Readonly<{
 }>;
 
 const DEVELOPER: PlatformExtension = { type: "platform", name: "developer" };
+
+/** How goose lists the Buzz tools. A session that defers tools (`deferTools`
+ * in `session/new`) sends those marked `goose/alwaysLoad` up front and lists
+ * the rest by name until the model loads them. */
+export const listing = (
+  added: readonly AddedTool[],
+  owner = false,
+): Listing => ({
+  instructions: sessionHint(added, owner),
+  tool: ({ load, ...tool }) =>
+    load === "always" ? { ...tool, _meta: { "goose/alwaysLoad": true } } : tool,
+});
 /** goose's provider id for the provider and model its config picks. */
 const CONFIGURED = "goose";
 
@@ -103,6 +117,9 @@ export const GOOSE: AcpHooks = {
     enabledExtensions: buzz
       ? [...(platform ?? [DEVELOPER]), { type: "mcp", server: buzz }]
       : [],
+    // Tools that load on search stay out of each request until the model
+    // loads them.
+    ...(buzz ? { deferTools: true } : {}),
     ...(title ? { sessionTitle: title } : {}),
     // On the provider's default model, whatever goose's config holds.
     ...(provider ? { provider } : {}),

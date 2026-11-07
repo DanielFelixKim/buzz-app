@@ -236,6 +236,7 @@ describe("GooseProcess", () => {
             { type: "platform", name: "developer" },
             { type: "mcp", server: buzz },
           ],
+          deferTools: true,
         },
       },
     ]);

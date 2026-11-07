@@ -59,6 +59,7 @@ import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { ownerCanvas, readProject } from "../../features/agent-harness/project";
 import {
   type GooseProcess,
+  listing,
   REQUEST_TIMEOUT_MS,
   type ServeMcp,
   type ToolServer,
@@ -865,7 +866,13 @@ export class GooseRuntime {
           remembered: () => this.forget(agent),
         });
       const context = (conversation && entry.contexts.get(conversation)) || {};
-      return respond(client, context, message, this.added());
+      return respond(
+        client,
+        context,
+        message,
+        this.added(),
+        listing(this.added(), !!client?.ownerAccess),
+      );
     };
     const get = (): Promise<GooseProcess> => {
       const protection = entry.handle?.protection;
