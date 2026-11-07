@@ -61,8 +61,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
   async function check(
     plugin: PluginInfo,
     authorize?: Authorize,
-    force = true,
-    eligible: () => boolean = () => true,
+    folderEligible: () => boolean = () => true,
   ): Promise<void> {
     const source = plugin.updateSource;
     if (
@@ -70,19 +69,19 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
       plugin.source !== "external" ||
       !source ||
       "url" in source ||
-      !eligible()
+      ("root" in source && !folderEligible())
     )
       return;
     const id = plugin.manifest.id;
     const installed = installation(plugin);
     installations.set(id, installed);
     const current = () => installations.get(id) === installed;
-    if (!force && pluginUpdateCheck(snapshot, plugin)) return;
     const key = JSON.stringify(
       "root" in source
         ? ["folder", id, source.root, source.path]
         : ["git", source.repository, source.reference],
     );
+    const active = () => current() && (!("root" in source) || folderEligible());
     let request = pending.get(key);
     if (
       request &&
@@ -91,11 +90,9 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
         (snapshot[id]?.sequence ?? 0) > request.sequence)
     ) {
       await request.promise.catch(() => {});
-      if (current() && eligible())
-        return check(plugin, authorize, true, eligible);
+      if (active()) return check(plugin, authorize, folderEligible);
       return;
     }
-    const active = () => current() && eligible();
     if (!request) {
       const consumers = new Set([active]);
       const promise = (async () => {
@@ -160,7 +157,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
       publish(id, {
         ...snapshot[id],
         checking: false,
-        ...(eligible() && { revision, error, candidate }),
+        ...(active() && { revision, error, candidate }),
       });
   }
   return {

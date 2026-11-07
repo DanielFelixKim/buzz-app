@@ -259,7 +259,7 @@ export function createPluginUpdates(
                 JSON.stringify(plugin.updateSource)
             );
           };
-          void checks.check(plugin, authorizeGit, true, eligible);
+          void checks.check(plugin, authorizeGit, eligible);
         }
         continue;
       }

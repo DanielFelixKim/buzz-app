@@ -94,47 +94,6 @@ it.each([false, true])(
   },
 );
 
-it("skips authorization for a distinct queued source after opting out", async () => {
-  const finishes: Array<(value: ReturnType<typeof preview>) => void> = [];
-  const checkGit = vi.fn(
-    () => new Promise((resolve) => finishes.push(resolve)),
-  );
-  const authorize = vi.fn(async () => null);
-  const checks = createPluginUpdateChecks({
-    checkGit,
-  } as unknown as PluginImports);
-  let eligible = true;
-  const reads = [0, 1, 2].map((index) =>
-    checks.check(
-      {
-        ...plugin(`example.${index}`),
-        updateSource: {
-          ...plugin().updateSource,
-          repository: `https://example.com/${index}`,
-        },
-      },
-      authorize,
-      true,
-      () => eligible,
-    ),
-  );
-  await vi.waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
-  eligible = false;
-  for (const finish of finishes) finish(preview("new"));
-  await Promise.all(reads);
-  expect(authorize).toHaveBeenCalledTimes(2);
-  expect(checkGit).toHaveBeenCalledTimes(2);
-  expect(
-    pluginUpdateCheck(checks.snapshot(), {
-      ...plugin("example.2"),
-      updateSource: {
-        ...plugin().updateSource,
-        repository: "https://example.com/2",
-      },
-    })?.checking,
-  ).toBe(false);
-});
-
 it("shares one acquisition and generation across repeated checks and sibling paths", async () => {
   let finish!: (value: ReturnType<typeof preview>) => void;
   const checkGit = vi.fn(
@@ -265,7 +224,7 @@ it("drops an obsolete installation retry after rollback rejoins the original rea
   const first = checks.check(original);
   await Promise.resolve();
   const obsolete = checks.check({ ...original, revision: "temporary" });
-  const latest = checks.check(original, undefined, false);
+  const latest = checks.check(original);
   await Promise.resolve();
   finish(preview("new"));
   await Promise.all([first, obsolete, latest]);
@@ -307,149 +266,57 @@ it("does not retry a replaced source after its old read settles", async () => {
   );
 });
 
-it("retires queued automatic reads when eligibility is revoked", async () => {
-  let finish!: (value: ReturnType<typeof preview>) => void;
+it("retires queued folder reads when eligibility is revoked", async () => {
+  let finish!: (value: string) => void;
   let eligible = true;
-  const checkGit = vi
-    .fn()
-    .mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    )
-    .mockResolvedValue(preview("new"));
+  const folder = {
+    ...plugin(),
+    updateSource: { root: "/plugins", path: "." },
+  };
+  const checkFolder = vi.fn(
+    () =>
+      new Promise<string>((resolve) => {
+        finish = resolve;
+      }),
+  );
   const checks = createPluginUpdateChecks({
-    checkGit,
+    checkFolder,
   } as unknown as PluginImports);
-  const first = checks.check(plugin(), undefined, true, () => eligible);
-  await Promise.resolve();
-  checks.observe(plugin())("newer");
-  const queued = checks.check(plugin(), undefined, true, () => eligible);
+  const first = checks.check(folder, undefined, () => eligible);
+  checks.observe(folder)("newer");
+  const queued = checks.check(folder, undefined, () => eligible);
   eligible = false;
-  finish(preview("old"));
+  finish("old");
   await Promise.all([first, queued]);
-  expect(checkGit).toHaveBeenCalledOnce();
+  expect(checkFolder).toHaveBeenCalledOnce();
+  expect(pluginUpdateCheck(checks.snapshot(), folder)?.revision).toBe("newer");
 });
 
-it("rechecks automatic eligibility after authorization resolves", async () => {
-  let finish!: (value: null) => void;
+it("settles the pending indicator without publishing an ineligible folder result", async () => {
+  let finish!: (value: string) => void;
   let eligible = true;
-  const authorize = vi.fn(
+  const folder = {
+    ...plugin(),
+    updateSource: { root: "/plugins", path: "." },
+  };
+  const checkFolder = vi.fn(
     () =>
-      new Promise<null>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  const checkGit = vi.fn(async () => preview("new"));
-  const checks = createPluginUpdateChecks({
-    checkGit,
-  } as unknown as PluginImports);
-  const checking = checks.check(plugin(), authorize, true, () => eligible);
-  expect(authorize).toHaveBeenCalledOnce();
-  eligible = false;
-  finish(null);
-  await checking;
-  expect(checkGit).not.toHaveBeenCalled();
-});
-
-it("settles the matching pending indicator after automatic eligibility is revoked", async () => {
-  let finish!: (value: ReturnType<typeof preview>) => void;
-  let eligible = true;
-  const checkGit = vi.fn(
-    () =>
-      new Promise<ReturnType<typeof preview>>((resolve) => {
+      new Promise<string>((resolve) => {
         finish = resolve;
       }),
   );
   const checks = createPluginUpdateChecks({
-    checkGit,
+    checkFolder,
   } as unknown as PluginImports);
-  const checking = checks.check(plugin(), undefined, true, () => eligible);
-  await Promise.resolve();
+  const checking = checks.check(folder, undefined, () => eligible);
   eligible = false;
-  finish(preview("new"));
+  finish("new");
   await checking;
-  expect(pluginUpdateCheck(checks.snapshot(), plugin())?.checking).toBe(false);
+  expect(pluginUpdateCheck(checks.snapshot(), folder)?.checking).toBe(false);
   expect(
-    pluginUpdateCheck(checks.snapshot(), plugin())?.revision,
+    pluginUpdateCheck(checks.snapshot(), folder)?.revision,
   ).toBeUndefined();
-  expect(pluginUpdateCheck(checks.snapshot(), plugin())?.error).toBeNull();
-});
-
-it("keeps an authorized shared read alive for an eligible sibling", async () => {
-  let authorize!: (value: null) => void;
-  let eligible = true;
-  const sign = vi.fn(
-    () =>
-      new Promise<null>((resolve) => {
-        authorize = resolve;
-      }),
-  );
-  const checkGit = vi.fn(async () => preview("new"));
-  const checks = createPluginUpdateChecks({
-    checkGit,
-  } as unknown as PluginImports);
-  const first = checks.check(plugin(), sign, true, () => eligible);
-  const sibling = checks.check(
-    plugin("example.two", "two"),
-    sign,
-    true,
-    () => true,
-  );
-  eligible = false;
-  authorize(null);
-  await Promise.all([first, sibling]);
-  expect(checkGit).toHaveBeenCalledOnce();
-  expect(
-    pluginUpdateAvailable(checks.snapshot(), plugin("example.two", "two")),
-  ).toBe(true);
-  expect(pluginUpdateCheck(checks.snapshot(), plugin())?.checking).toBe(false);
-});
-
-it("retains explicit results when an automatic waiter for the same plugin opts out", async () => {
-  let finish!: (value: ReturnType<typeof preview>) => void;
-  let eligible = true;
-  const checkGit = vi.fn(
-    () =>
-      new Promise<ReturnType<typeof preview>>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  const checks = createPluginUpdateChecks({
-    checkGit,
-  } as unknown as PluginImports);
-  checks.observe(plugin())("installed");
-  const explicit = checks.check(plugin());
-  await Promise.resolve();
-  const automatic = checks.check(plugin(), undefined, true, () => eligible);
-  eligible = false;
-  finish(preview("new"));
-  await Promise.all([explicit, automatic]);
-  expect(pluginUpdateAvailable(checks.snapshot(), plugin())).toBe(true);
-  expect(pluginUpdateCheck(checks.snapshot(), plugin())?.checking).toBe(false);
-});
-
-it("an automatic joiner cannot revoke an explicit check awaiting authorization", async () => {
-  let finish!: (value: null) => void;
-  let eligible = true;
-  const authorize = vi.fn(
-    () =>
-      new Promise<null>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  const checkGit = vi.fn(async () => preview("new"));
-  const checks = createPluginUpdateChecks({
-    checkGit,
-  } as unknown as PluginImports);
-  const explicit = checks.check(plugin(), authorize);
-  const automatic = checks.check(plugin(), authorize, true, () => eligible);
-  eligible = false;
-  finish(null);
-  await Promise.all([explicit, automatic]);
-  expect(checkGit).toHaveBeenCalledOnce();
-  expect(pluginUpdateAvailable(checks.snapshot(), plugin())).toBe(true);
+  expect(pluginUpdateCheck(checks.snapshot(), folder)?.error).toBeNull();
 });
 
 it("ignores pinned URL sources without authorizing or acquiring a repository", async () => {

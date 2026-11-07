@@ -3489,7 +3489,7 @@ it("keeps folder and Git discovery under the background owner", async () => {
   ).toBeVisible();
 });
 
-it("shares pending Git reads and their limit across Settings remounts", async () => {
+it("retains the serial background Git loop across Settings remounts", async () => {
   const fixture = reviewPluginFixture();
   const plugins = [0, 1, 2].map((index) => ({
     ...fixture.external,
