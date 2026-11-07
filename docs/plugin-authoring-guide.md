@@ -56,7 +56,7 @@ export function apply(ctx) {
 
 | Inject | Registers | Call and required fields |
 | --- | --- | --- |
-| `pages` | A page | `ctx.pages.register({ id, title, component, primary?, placement?, icon?, badge?, sidebar?, companion?, layout? })`. `id` must match the id pattern, `title` non-empty, `component` a function. `placement`: `"sidebar"` (default), `"topbar"`, `"toolbar"` (only for `primary` pages). `icon`: `data:image/...` URL. `badge`: component shown beside the nav entry. `sidebar`: component receiving `{ target, children }` that replaces the conversation sidebar (wrap content in `className="shell-sidebar-default"`). `layout`: `"document"` or `"workspace"`. |
+| `pages` | A page | `ctx.pages.register({ id, title, component, primary?, placement?, icon?, badge?, sidebar?, companion?, layout? })`. `id` must match the id pattern, `title` non-empty, `component` a function. `placement`: `"sidebar"` (default) or `"dock"` (only for `primary` pages; `"topbar"` and `"toolbar"` are accepted aliases for `"dock"`). `icon`: `data:image/...` URL. `badge`: component shown beside the nav entry. `sidebar`: component receiving `{ target, children }` that replaces the conversation sidebar (wrap content in `className="shell-sidebar-default"`). `layout`: `"document"` or `"workspace"`. |
 | `panels` | A panel for a link/target string | `ctx.panels.register({ id, title, matches(target) => boolean, component, order?, launcher?, channelLauncher?, channelPlacement?, keepOpen? })`. `component` receives `{ target, close, context?, channelContext? }`. `launcher: { icon: string, target: string }` adds a top-bar button (use `matches: () => false` for launcher-only). `channelLauncher` is a component for the channel header (`channelPlacement`: `"bottom"` default, `"side"`, `"tab"`). |
 | `settingsCards` | A Settings destination | `ctx.settingsCards.register({ id, title, component, group?, personal? })`. `component` receives `{ active(), community? }`. Omit `icon` (it is a host icon component). The host supplies navigation and the content column, not a heading. |
 | `sidebarSections` (optional) | A section in the Team sidebar | `ctx.reflect.get("sidebarSections")?.register({ version: 1, id, title, icon, rows: { snapshot, subscribe }, select, actions? })`. `snapshot()` returns a stable array of `{ id, label, icon?, badge?, count?, status? }` until data changes, then notify subscribers. `select(row)` returns an open target such as `{ version: 1, kind: "home" }`. Actions: `{ id, label, icon: ReactElement, onSelect }`. |
@@ -67,7 +67,33 @@ export function apply(ctx) {
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
-| `pluginInstaller` (optional) | Ask the owner to install another plugin | `await ctx.reflect.get("pluginInstaller")?.requestInstall({ repository, reference, path?, commit? })` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"`. It never installs silently. |
+| `pluginInstaller` (optional) | Ask the owner to install another plugin or check installation status | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. |
+
+The installation-status methods may be missing on older hosts even when `pluginInstaller` is available, so feature-check each method before calling it. `getInstallationStatus` returns `"installed"` when the manifest ID is in the ready catalog, `"absent"` when it is not, and `"unavailable"` while the catalog is not ready. Installed status is independent of whether the plugin is enabled, contributes UI, or came from a particular install source. A subscription reports later status changes; subscribe first, then read the current status to avoid missing a change between the read and subscription. Own the subscription with `ctx.effect`:
+
+```js
+const installer = ctx.reflect.get("pluginInstaller");
+if (typeof installer?.getInstallationStatus === "function") {
+  const status = installer.getInstallationStatus("example.hello");
+  // Use "installed", "absent" or "unavailable"; a missing method is not "absent".
+}
+
+ctx.effect(() => {
+  const installer = ctx.reflect.get("pluginInstaller");
+  if (typeof installer?.subscribeInstallationStatus !== "function") return;
+  const unsubscribe = installer.subscribeInstallationStatus(
+    "example.hello",
+    (status) => {
+      // Respond to a status change.
+    },
+  );
+  if (typeof installer.getInstallationStatus === "function") {
+    const current = installer.getInstallationStatus("example.hello");
+    // Read the current status after subscribing.
+  }
+  return unsubscribe;
+});
+```
 
 ## Host access (`manifest.host`)
 

@@ -3,13 +3,13 @@ import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   answerPairing,
-  isSavedCommunity,
   onPairingEvents,
+  setPairingCommunities,
   type PairRequest,
 } from "./service";
 
-/** Asks the person to approve a command-line tool acting as them. A request
- * for a community they haven't saved here is declined without asking. */
+/** Asks the person to approve a command-line tool acting as them. Native
+ * code declines a community not saved here without asking. */
 export function PairingPrompt({
   communities,
 }: {
@@ -18,16 +18,14 @@ export function PairingPrompt({
   const [request, setRequest] = useState<PairRequest | null>(null);
   const [left, setLeft] = useState(0);
   const deny = useRef<HTMLButtonElement>(null);
-  const saved = useRef(communities);
-  saved.current = communities;
+  const saved = communities.join("\n");
+  useEffect(() => {
+    void setPairingCommunities(saved ? saved.split("\n") : []);
+  }, [saved]);
   useEffect(
     () =>
       onPairingEvents({
         request(next) {
-          if (!isSavedCommunity(next.relay, saved.current)) {
-            void answerPairing(next.id, false);
-            return;
-          }
           setRequest(next);
           setLeft(next.expiresIn);
         },
@@ -79,7 +77,7 @@ export function PairingPrompt({
           <Button ref={deny} onClick={() => answer(false)}>
             Deny
           </Button>
-          <Button variant="primary" onClick={() => answer(true)}>
+          <Button variant="prominent" onClick={() => answer(true)}>
             Allow
           </Button>
         </>

@@ -593,6 +593,7 @@ export function ChannelMembersDialog({
   const [messageError, setMessageError] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
+  const apply = useRef<HTMLButtonElement>(null);
   const [changeError, setChangeError] = useState<{
     session: RelaySession;
     channelId: string;
@@ -617,7 +618,13 @@ export function ChannelMembersDialog({
   const previousSelection = useRef(selection);
   useLayoutEffect(() => {
     if (selection !== previousSelection.current)
-      (selection ? cancel.current : input.current)?.focus();
+      // Enter confirms reversible changes; removal starts on Cancel.
+      (selection
+        ? selection.role !== "remove" && !apply.current?.disabled
+          ? apply.current
+          : cancel.current
+        : input.current
+      )?.focus();
     previousSelection.current = selection;
   }, [selection]);
   const scrollport = useRef<HTMLElement>(null);
@@ -1884,6 +1891,7 @@ export function ChannelMembersDialog({
               Cancel
             </Button>
             <Button
+              ref={apply}
               variant={
                 selection.role === "remove" ? "destructive" : "prominent"
               }

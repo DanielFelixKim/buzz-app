@@ -371,7 +371,9 @@ export function CommunityPicker({
                 Cancel
               </Button>
               <Button
-                variant={leaving.intent === "leave" ? "destructive" : "primary"}
+                variant={
+                  leaving.intent === "leave" ? "destructive" : "prominent"
+                }
                 loading={leaving.pending}
                 onClick={() => void depart()}
               >

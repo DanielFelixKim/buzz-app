@@ -171,11 +171,9 @@ function ScopedSidebar({
     ? target.kind === "conversation"
       ? listedDestination
       : target.kind === "page" && target.pluginId === "buzz.channels"
-        ? target.route?.params === "drafts-sent"
-          ? undefined
-          : soloDraft(target.route?.params)
-            ? "solo"
-            : "team"
+        ? soloDraft(target.route?.params)
+          ? "solo"
+          : "team"
         : undefined
     : undefined;
   const location = destination ? targetKey(target) : undefined;
@@ -307,14 +305,7 @@ function ScopedSidebar({
                       target={props.target}
                       chatIcons={props.chatIcons}
                       chatMenus={props.chatMenus}
-                      renderContents={(
-                        ordinary,
-                        ordinaryActions,
-                        header,
-                        creationTrigger,
-                        pendingClick,
-                        headerActions,
-                      ) => (
+                      renderContents={(ordinary, header, pendingClick) => (
                         <SoloRegions
                           key={`regions:${scope}:${connection.generation}`}
                           session={connection.session}
@@ -323,8 +314,6 @@ function ScopedSidebar({
                           target={props.target}
                           sidebar={sidebar}
                           ordinary={ordinary}
-                          ordinaryActions={ordinaryActions}
-                          creationTrigger={creationTrigger}
                           pendingClick={pendingClick}
                           groupDisclosure={
                             filter === "all"
@@ -339,7 +328,6 @@ function ScopedSidebar({
                               : undefined
                           }
                           hidePrimaryHeading={filter === "solo"}
-                          fallbackHeaderActions={headerActions}
                           fallback={
                             <>
                               {header}
