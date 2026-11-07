@@ -29,6 +29,8 @@ function harness({
   spacing = HOUR,
   prepared,
   now,
+  publicPreview = false,
+  seed,
 }: {
   count?: number;
   maxHistoryRows?: number;
@@ -36,10 +38,18 @@ function harness({
   spacing?: number;
   prepared?: boolean;
   now?: number;
+  publicPreview?: boolean;
+  seed?: number;
 } = {}) {
-  const relay = keypair(),
-    viewer = keypair(),
-    alice = keypair();
+  const makeKey = () => {
+    if (seed === undefined) return keypair();
+    const secret = new Uint8Array(32);
+    secret[31] = ++seed;
+    return { secret, pubkey: getPublicKey(secret) };
+  };
+  const relay = makeKey(),
+    viewer = makeKey(),
+    alice = makeKey();
   const history = Array.from({ length: count }, (_, i) =>
     message(alice, "c", `m${i}`, T0 + i * spacing),
   );
@@ -47,6 +57,7 @@ function harness({
   const gate: {
     hold?: Promise<void> | undefined;
     failHead?: boolean;
+    probeFailure?: boolean;
     denied?: boolean;
     aux?: RelayEvent[];
     notices?: RelayEvent[];
@@ -60,6 +71,10 @@ function harness({
       ...base.transport,
       async query(filters, signal) {
         const filter = filters[0];
+        if (publicPreview && filter?.kinds?.includes(39002))
+          return new Promise<RelayEvent[]>(() => {});
+        if (publicPreview && filter?.kinds?.includes(39000))
+          return [metadata(relay, "c", "Public", T0, [["public"]])];
         if (filter?.kinds?.includes(40099))
           return (gate.notices ?? [])
             .filter(
@@ -74,6 +89,8 @@ function harness({
           return history.filter((event) => filter.ids?.includes(event.id));
         if (!filter?.top_level) return [];
         reads.push(filter);
+        if (gate.probeFailure)
+          throw new Error("deliberately failed cursor probe");
         if (gate.retryEveryOther) {
           gate.retryTurn = !gate.retryTurn;
           if (gate.retryTurn)
@@ -136,10 +153,12 @@ function harness({
   const window = () => channels.window("c");
   const times = () => window().rows.map((row) => row.createdAt);
   const open = async () => {
-    live.receive([
-      roster(relay, "c", [viewer.pubkey]),
-      metadata(relay, "c", "C"),
-    ]);
+    if (publicPreview) await channels.resolve?.(["c"]);
+    else
+      live.receive([
+        roster(relay, "c", [viewer.pubkey]),
+        metadata(relay, "c", "C"),
+      ]);
     channels.ensure("c");
     await vi.waitFor(() => expect(window().status).toBe("ready"));
   };
@@ -1772,4 +1791,89 @@ it("keeps a cursor-second live root through eviction during an older read", asyn
     h.history.push(root);
   }
   expect(h.window().rows.some((row) => row.id === root.id)).toBe(true);
+});
+
+it("restores a suspended sliding public preview to the current head", async () => {
+  const h = setup({
+    count: 100,
+    maxHistoryRows: 40,
+    publicPreview: true,
+    seed: 0,
+  });
+  await h.open();
+  await h.seek(T0 + 40 * HOUR);
+  expect(h.window().hasNewer).toBe(true);
+  for (let i = 0; i < 3; i++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  }
+
+  h.live.state({
+    status: "connected",
+    routes: [
+      {
+        id: "preview",
+        channelId: "c",
+        status: "error",
+        replay: "unknown",
+        error: "restricted: channel access revoked",
+      },
+    ],
+  });
+  expect(h.window().rows).toHaveLength(0);
+  await vi.waitFor(() => expect(h.channels.get?.("c")?.readOnly).toBe(true));
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(
+      h.owner.session.live.snapshot().heads.find((job) => job.channelId === "c")
+        ?.state,
+    ).toBe("verified"),
+  );
+  await vi.waitFor(() => expect(h.window().status).toBe("ready"));
+
+  expect(h.window().rows.length).toBeGreaterThan(0);
+  expect(h.window().rows.at(-1)?.content).toBe("m99");
+});
+
+it("preserves unread same-second history across an anchored forward trim", async () => {
+  const h = setup({ count: 160, spacing: 0, maxHistoryBytes: 12000, seed: 3 });
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const before = h.reads.at(-1);
+  const ordered = [...h.history].sort(newestFirst);
+  // The settled page covers 20 roots after the previous cursor.
+  const pageStart = ordered.findIndex((e) => e.id === before?.before_id);
+  const committed = h.window().historyLimited
+    ? before?.before_id
+    : ordered[pageStart + 20]?.id;
+  assert.exists(committed);
+  const candidates = Array.from({ length: 64 }, (_, i) =>
+    message(h.alice, "c", `isolated ${i} ${"x".repeat(7000)}`, T0),
+  );
+  const root = candidates.find(
+    (e) =>
+      e.id > committed &&
+      ordered.some((row) => row.id > committed && row.id < e.id),
+  );
+  assert.exists(root);
+  h.live.receive([root], { channelId: "c", phase: "live" });
+  expect(h.window().rows.some((r) => r.id === root.id)).toBe(true);
+
+  if (!h.window().historyLimited) {
+    h.gate.probeFailure = true;
+    const count = h.reads.length;
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(count));
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+
+    expect(h.reads.at(-1)?.before_id).toBe(committed);
+    h.gate.probeFailure = false;
+  }
+  h.channels.loadNewer?.("c", root.id);
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+
+  expect(h.reads.at(-1)?.before_id).toBe(committed);
 });

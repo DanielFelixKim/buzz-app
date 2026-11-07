@@ -90,17 +90,33 @@ function scrollsHistory(event: KeyboardEvent<HTMLElement>, up = true): boolean {
       (event.key === " " && target.matches("button, [role='button']"))
     )
       return false;
-    const style = getComputedStyle(target);
-    if (
-      ["auto", "scroll", "overlay"].includes(style.overflowY) &&
-      (up
-        ? target.scrollTop > 0
-        : target.scrollTop + target.clientHeight < target.scrollHeight)
-    )
-      return false;
+    if (consumesScroll(target, up)) return false;
     target = target.parentElement;
   }
   return target === event.currentTarget;
+}
+
+function consumesScroll(target: HTMLElement, up: boolean) {
+  return (
+    ["auto", "scroll", "overlay"].includes(
+      getComputedStyle(target).overflowY,
+    ) &&
+    (up
+      ? target.scrollTop > 0
+      : target.scrollTop + target.clientHeight < target.scrollHeight)
+  );
+}
+function scrollsTimeline(
+  target: EventTarget,
+  scroller: HTMLElement,
+  up: boolean,
+) {
+  let element = target instanceof HTMLElement ? target : null;
+  while (element && element !== scroller) {
+    if (consumesScroll(element, up)) return false;
+    element = element.parentElement;
+  }
+  return element === scroller;
 }
 
 type ReadingPosition = {
@@ -1777,7 +1793,11 @@ function Timeline({
       data-jump-visible={showJumpToLatest || undefined}
       onWheel={(event) => {
         gesture(event.deltaY < 0 && !event.ctrlKey);
-        if (event.deltaY > 0 && !event.ctrlKey)
+        if (
+          event.deltaY > 0 &&
+          !event.ctrlKey &&
+          scrollsTimeline(event.target, event.currentTarget, false)
+        )
           loadNearBottom(event.currentTarget);
       }}
       onTouchStart={(event) => {
@@ -1793,7 +1813,8 @@ function Timeline({
         if (
           next !== undefined &&
           touchY.current !== undefined &&
-          next < touchY.current
+          next < touchY.current &&
+          scrollsTimeline(event.target, event.currentTarget, false)
         )
           loadNearBottom(event.currentTarget);
         touchY.current = next;
@@ -1895,6 +1916,8 @@ function Timeline({
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
+        ) : window.hasMore && queries.channels.cachedOnly ? (
+          <span>You can load older messages once Buzz reconnects.</span>
         ) : window.hasMore && (historyControl === "button" || window.error) ? (
           <Button
             type="button"

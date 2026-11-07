@@ -8,12 +8,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  MagnifyingGlassIcon,
-  SendIcon,
-} from "../../shared/design-system/icons/index";
-import { draftsSentTarget } from "../../features/drafts-sent/DraftsSentNavigation";
-import { scopeOf } from "../../features/drafts-sent/scope";
+import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RegisteredPage } from "../../features/pages/service";
@@ -222,23 +217,6 @@ export function PageSearch({
         ...pagePresentation(page),
         open: () => onSelect(page.key),
       })),
-      ...(services &&
-      pages.some((page) => page.key === "buzz.channels/channels")
-        ? [
-            {
-              key: "drafts-sent",
-              label: "Drafts & sent",
-              icon: SendIcon,
-              open: () => {
-                void services.navigation.open(
-                  draftsSentTarget(
-                    scopeOf(services.communities.relay.snapshot()),
-                  ),
-                );
-              },
-            },
-          ]
-        : []),
       {
         key: "settings",
         ...shellPresentation.settings,
@@ -577,7 +555,11 @@ function CommunitySearch({
       services.communities.relay.snapshot().session === connection.session
     );
   };
-  const openConversation = (channelId: string, messageId?: string) => {
+  const openConversation = (
+    channelId: string,
+    messageId?: string,
+    threadRootId?: string,
+  ) => {
     if (!current() || !connection.session.channels.get?.(channelId)) return;
     close(messageId ? undefined : channelId);
     void services.navigation.open({
@@ -586,6 +568,7 @@ function CommunitySearch({
       scope,
       channelId,
       ...(messageId ? { messageId } : {}),
+      ...(threadRootId ? { threadRootId } : {}),
     });
   };
   const views =
