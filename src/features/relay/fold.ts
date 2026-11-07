@@ -28,6 +28,7 @@ import {
   channelRowKind,
   membershipChange,
 } from "./membership";
+import { reactionTarget } from "./reaction-target";
 import { compareMessages, eventMs } from "./message-order";
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -301,7 +302,9 @@ export function foldMessages(
         summaries.set(target, newer(summaries.get(target), event));
       continue;
     }
-    for (const entry of event.tags) {
+    const references =
+      event.kind === 7 ? [["e", reactionTarget(event)]] : event.tags;
+    for (const entry of references) {
       if (entry[0] !== "e" || !entry[1]) continue;
       const list = overlays.get(entry[1]) ?? [];
       list.push(event);

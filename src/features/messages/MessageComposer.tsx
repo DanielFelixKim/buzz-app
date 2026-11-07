@@ -452,14 +452,6 @@ function PersonalComposer(props: MessageComposerProps) {
   return (
     <DraftMentionRoster.Provider value={value}>
       <Composer {...props} />
-      {choices.error && (
-        <p role="alert">
-          {choices.error}{" "}
-          <Button onClick={() => void props.session.agentChoices.refresh()}>
-            Retry agents
-          </Button>
-        </p>
-      )}
     </DraftMentionRoster.Provider>
   );
 }

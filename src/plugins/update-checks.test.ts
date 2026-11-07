@@ -451,3 +451,25 @@ it("an automatic joiner cannot revoke an explicit check awaiting authorization",
   expect(checkGit).toHaveBeenCalledOnce();
   expect(pluginUpdateAvailable(checks.snapshot(), plugin())).toBe(true);
 });
+
+it("ignores pinned URL sources without authorizing or acquiring a repository", async () => {
+  const checkGit = vi.fn(async () => preview("new"));
+  const checkFolder = vi.fn();
+  const authorize = vi.fn(async () => null);
+  const checks = createPluginUpdateChecks({
+    checkGit,
+    checkFolder,
+  } as unknown as PluginImports);
+  const pinned: PluginInfo = {
+    ...plugin(),
+    updateSource: {
+      url: "https://plugins.example.org/plugin.json",
+      sha256: "a".repeat(64),
+    },
+  };
+  await checks.check(pinned, authorize);
+  expect(authorize).not.toHaveBeenCalled();
+  expect(checkGit).not.toHaveBeenCalled();
+  expect(checkFolder).not.toHaveBeenCalled();
+  expect(checks.snapshot()).toEqual({});
+});

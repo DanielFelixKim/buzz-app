@@ -78,17 +78,32 @@ servers do not support these operations.
 ## Owner tools
 
 In communities the build flag `BUZZ_OWNER_MCP_COMMUNITIES` enables, an agent's
-runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get` and
-`owner_member_list`. They read the owner's channels, one channel's details and
-the owner's rights in it, and its roster, through the owner's own signed-in
-session, including private and archived channels, DMs and Solo chats the agent
-is not in. They write nothing. The app decides the agent, owner and community;
+runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get`,
+`owner_member_list`, `owner_read`, `owner_canvas_get` and `owner_canvas_history`.
+They read the owner's channels, one channel's details and
+the owner's rights in it, its roster, its messages, whole threads and searches,
+and its Canvas and earlier revisions, through the
+owner's own signed-in session, including private and archived channels, DMs and
+Solo chats the agent is not in. Message reads and Canvas history page with a
+`next` cursor, as `read` and the app's history do. A search covers only the
+owner's channels and says `partial` while their list is incomplete. Other
+channels' matches still fill its page, so `limited` with few results means
+narrowing it by channel or time. A message shows its newest edit by its author
+or, as in the app, by the author's verified owner. One read fetches a page's edits;
+when they fill it, the answer says `edits_limited` and some messages may show earlier text. They write
+nothing: no membership, subscription, read state, post, agent start or Canvas
+change. Content comes from the relay's own answer, not the owner's open views,
+so it changes no unread counts. They do not save the owner's attachments: a
+saved file would be readable before the call's final checks. The app
+decides the agent, owner and community;
 answers name them in `executedAs`. Each call needs the agent's owner signed in
 to that community now and fails, returning nothing, when the account, community
 or connection changes during it or the turn ends or is stopped, including while
 protection reviews its result. Installed harness plugins, plugins' tools, plugin
 MCP connections and external apps never get this access, and a plugin cannot add
-a tool whose name starts with `owner_`. Protection reviews these calls and their
+a tool whose name starts with `owner_`. A [Mesh agent](../src/bundled/mesh-compute/MESH_AGENT.md)
+has these tools too; as its setup warns of all tool output, members serving its
+model can read what they return. Protection reviews these calls and their
 results as it does other Buzz tools. See
 [configuration](configuration.md#owner-mcp-community-flag).
 
@@ -277,7 +292,7 @@ older app or remote host.
 
 ## Agent Attention
 
-Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Each Interest can be paused without changing its watches’ enabled settings. Deleting an Interest with watches asks for confirmation, then removes them together. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Each Interest can be paused without changing its watches’ enabled settings. Deleting an Interest with watches asks for confirmation, then removes them together. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents. There is no per-agent switch: while the plugin is on, Attention runs for every agent. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
@@ -331,8 +346,8 @@ Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. Plugins can add a tab to every local agent with
 `ctx.agents.registerTab`, or to some of them with its optional `when(agent)`;
-the Attention plugin's Attention tab holds the device Attention switch, and the
-Bestie plugin's Bestie tab shows only on your Bestie.
+the Attention plugin's Attention tab lists an agent's Interests and watches, and
+the Bestie plugin's Bestie tab shows only on your Bestie.
 
 Attention command processes on macOS and Linux stop when their app process exits, including an abrupt exit. A shared lease allows one running command per agent, provider, watch and declared process across Buzz builds on the same computer. A new owner waits for the previous command to stop before starting its copy. Removing a watch or turning Attention off stops its command through the existing process host.
 
@@ -1511,8 +1526,12 @@ URLs, never file URLs or SVG data.
 The inventory joins exact public keys, not equal names; explicit profile references
 use the publisher's slug mapping only when local definitions do not collide. Local
 names and artwork win for matching keys. A failed source leaves the other source
-visible with a warning. Reads are lazy (once per demand or Refresh), with no polling
-or relay-directory startup scan.
+visible; the mention menu and agent picker report the failure with Retry, and the
+composer shows no standing notice. Reads are lazy (once per demand or Refresh), with
+no polling or relay-directory startup scan. A connection's first establishment
+rereads retained inventory that failed, wholly or partly; a read already in flight
+is reused and reread once if it fails. Each failed source's reason is logged as a
+console warning.
 Relay inventory uses foreground read capacity because Solo needs complete
 inventory to restore its recipients; it keeps the normal ten-second deadline.
 

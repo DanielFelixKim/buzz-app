@@ -714,3 +714,43 @@ it.each(["review", "details"])(
     updates.dispose();
   },
 );
+
+it("drops a Git discovery result when the installation switches to a pinned URL", async () => {
+  const f = fixture();
+  let finish!: (preview: ImportPreview) => void;
+  f.checkGit.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  const pending = updates.check();
+  await vi.waitFor(() => expect(f.checkGit).toHaveBeenCalledOnce());
+  const configuration = f.get();
+  if (configuration.status !== "ready") throw new Error("Expected catalog");
+  const pinned: PluginInfo = {
+    ...f.plugin,
+    updateSource: {
+      url: "https://plugins.example.org/plugin.json",
+      sha256: "a".repeat(64),
+    },
+  };
+  f.set({
+    ...configuration,
+    catalog: { ...configuration.catalog, plugins: [pinned] },
+  });
+  finish(f.preview);
+  await pending;
+  await updates.check(true);
+  expect(updates.snapshot()).toEqual([]);
+  expect(
+    pluginUpdateAvailable(
+      sharedPluginUpdateChecks(f.manager.imports).snapshot(),
+      pinned,
+    ),
+  ).toBe(false);
+  expect(f.checkGit).toHaveBeenCalledOnce();
+  expect(f.authorize).toHaveBeenCalledOnce();
+  updates.dispose();
+});

@@ -65,7 +65,13 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     eligible: () => boolean = () => true,
   ): Promise<void> {
     const source = plugin.updateSource;
-    if (!imports || plugin.source !== "external" || !source || !eligible())
+    if (
+      !imports ||
+      plugin.source !== "external" ||
+      !source ||
+      "url" in source ||
+      !eligible()
+    )
       return;
     const id = plugin.manifest.id;
     const installed = installation(plugin);
