@@ -105,7 +105,11 @@ export function useMessageOpening(
     decided?.key !== key &&
     !pages.current.attached &&
     !!channels.attach &&
-    !!window.hasNewer &&
+    (window.hasNewer ||
+      (window.status === "ready" &&
+        window.freshness === "cached" &&
+        !!channels.seek &&
+        (!!read || window.rows.some((row) => row.id === messageId)))) &&
     !window.error &&
     (!verified || !row);
   // A page or head read in flight can still change the answer: a refreshed

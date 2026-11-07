@@ -26,7 +26,7 @@ import {
   channelLabelTags,
   compareChannelAge,
 } from "./channel-labels";
-import { deletionApplies, foldMessages } from "./fold";
+import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import {
   LARGE_READ_DEADLINE_MS,
@@ -4074,13 +4074,16 @@ export function createChannelStore(
     },
     attach(channelId: string) {
       const state = windows.get(channelId);
-      if (
-        disposed ||
-        !transport ||
-        !state ||
-        (state.ceiling === undefined && !state.snapshot.loadingOlder)
-      )
+      if (disposed || !transport || !state) return;
+      if (state.ceiling === undefined) {
+        if (state.snapshot.loadingOlder) {
+          state.controller?.abort();
+          state.controller = undefined;
+          state.joining = undefined;
+          setWindow(state, { loadingOlder: false });
+        }
         return;
+      }
       void reattach(state);
     },
   });
@@ -4228,19 +4231,9 @@ export function createChannelStore(
     for (const state of windows.values()) {
       if (disposed || generation !== epoch) return;
       if (!authorized(state.channelId)) continue;
-      for (const event of events) {
-        if (event.kind !== 5 && event.kind !== 9005) continue;
-        for (const [name, id] of event.tags) {
-          const target = id && state.joining?.get(id);
-          if (
-            name === "e" &&
-            target &&
-            deletionApplies(event, target, transport.archiveAuthority)
-          )
-            state.joining?.delete(id);
-        }
-      }
       if (state.joining) {
+        // Keep deleted roots with their tombstones until commit: they still
+        // define the pending read's overlap interval.
         const joiningRoots = [...state.joining.values()]
           .filter((event) => channelRowKind(event.kind))
           .sort(newestFirst);
@@ -4253,19 +4246,24 @@ export function createChannelStore(
         // in its boundary second, until the pending page commits its bounds.
         for (const event of events)
           if (
-            ([40003, 5, 9005, 7, 39005].includes(event.kind) ||
+            (([40003, 5, 9005, 7, 39005].includes(event.kind) ||
               (channelRowKind(event.kind) &&
                 newest &&
                 oldest &&
                 newestFirst(newest, event) <= 0 &&
                 (newestFirst(event, oldest) <= 0 ||
                   (live && event.created_at === state.cursor?.createdAt)))) &&
-            event.tags.some(
-              ([name, id]) =>
-                (name === "h" && id === state.channelId) ||
-                (name === "e" && known.has(id ?? "")),
-            )
+              event.tags.some(
+                ([name, id]) =>
+                  (name === "h" && id === state.channelId) ||
+                  (name === "e" && known.has(id ?? "")),
+              )) ||
+            ([40003, 5, 9005, 7, 39005].includes(event.kind) &&
+              !event.tags.some(([name]) => name === "h") &&
+              event.tags.some(([name]) => name === "e"))
           )
+            // Reference-only overlays may precede their incoming page's roots.
+            // The scoped fold associates them only after the page arrives.
             state.joining.set(event.id, event);
         const roots = new Set(
           [...state.joining.values()]

@@ -523,6 +523,7 @@ it("attach cancels an older page before it can detach the head window", async ()
   h.channels.loadOlder("c");
   await vi.waitFor(() => expect(h.window().rows).toHaveLength(40));
   expect(h.window().hasNewer).toBeFalsy();
+  const retained = h.window().rows.map((row) => row.id);
   let release!: () => void;
   h.gate.hold = new Promise<void>((resolve) => {
     release = resolve;
@@ -543,6 +544,7 @@ it("attach cancels an older page before it can detach the head window", async ()
   });
   expect(h.window().hasNewer).toBeFalsy();
   expect(h.window().rows.at(-1)?.id).toBe(h.history.at(-1)?.id);
+  expect(h.window().rows.map((row) => row.id)).toEqual(retained);
 });
 
 it("attach replaces the segment with the head", async () => {
@@ -1904,4 +1906,91 @@ it("preserves unread same-second history across an anchored forward trim", async
   await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
 
   expect(h.reads.at(-1)?.before_id).toBe(committed);
+});
+
+it.each([40003, 5])(
+  "preserves reference-only overlay %s after preview-tail eviction",
+  async (kind) => {
+    const h = setup({ count: 100, maxHistoryRows: 40 });
+    await h.open();
+    const target = h.history[75];
+    assert.exists(target);
+    await h.owner.session.read([{ ids: [target.id], limit: 1 }]);
+    let release!: () => void;
+    h.gate.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const before = h.reads.length;
+    h.channels.loadOlder("c");
+    try {
+      await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+      h.live.receive(
+        Array.from({ length: 256 }, (_, i) =>
+          message(h.alice, "c", `tail eviction ${i}`, T0 + (102 + i) * HOUR),
+        ),
+      );
+      h.live.receive([
+        signed(h.alice, {
+          kind,
+          created_at: T0 + 400 * HOUR,
+          tags: [["e", target.id]],
+          content: kind === 40003 ? "edited past tail" : "",
+        }),
+      ]);
+    } finally {
+      h.gate.hold = undefined;
+      release();
+    }
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    const row = h.window().rows.find((row) => row.id === target.id);
+    if (kind === 40003) expect(row?.content).toBe("edited past tail");
+    else expect(row?.content).not.toBe(target.content);
+  },
+);
+
+it("preserves the pending overlap interval after its boundary root is deleted", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40 });
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const boundary = h.history[60];
+  assert.exists(boundary);
+  let release!: () => void;
+  h.gate.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const before = h.reads.length;
+  h.channels.loadOlder("c");
+  const root = message(
+    h.alice,
+    "c",
+    "delayed boundary root",
+    T0 + 60 * HOUR + 1,
+  );
+  try {
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+    h.live.receive([
+      signed(h.alice, {
+        kind: 5,
+        created_at: T0 + 101 * HOUR,
+        tags: [
+          ["h", "c"],
+          ["e", boundary.id],
+        ],
+        content: "",
+      }),
+    ]);
+    h.live.receive([root], { channelId: "c", phase: "live" });
+    expect(h.window().rows.some((row) => row.id === root.id)).toBe(true);
+    h.live.receive(
+      Array.from({ length: 41 }, (_, i) =>
+        message(h.alice, "c", `evict overlap ${i}`, T0 + (102 + i) * HOUR),
+      ),
+    );
+  } finally {
+    h.gate.hold = undefined;
+    release();
+  }
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.some((row) => row.id === root.id)).toBe(true);
 });

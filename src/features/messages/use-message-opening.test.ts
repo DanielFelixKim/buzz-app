@@ -205,6 +205,16 @@ async function relayChannel() {
         }),
       ];
     },
+    older: (
+      before: ReturnType<typeof message>,
+      row: ReturnType<typeof message>,
+    ) => [
+      row,
+      bounds(relay, "a", `${before.created_at}:${before.id}`, {
+        has_more: true,
+        next_cursor: { created_at: row.created_at, id: row.id },
+      }),
+    ],
     end: (
       before: ReturnType<typeof message>,
       ...rows: ReturnType<typeof message>[]
@@ -577,32 +587,35 @@ it("does not reattach an already decided request when its row is later evicted",
   expect(attach).not.toHaveBeenCalled();
 });
 
-it("revalidates a retained cached target at its timestamp without discarding the distant segment", () => {
-  const c = channel([["target"]]);
-  const attach = vi.fn();
-  const target = { id: "target", createdAt: 123 } as ChannelMessage;
-  const seek = vi.fn(async () => {
-    c.set({ freshness: "verified", rows: [target] });
-    return target.id;
-  });
-  const queries = { ...c.queries, attach, seek };
-  const view = renderHook(() => useMessageOpening(queries, "c", "target"));
-  c.set({
-    status: "ready",
-    rows: [target],
-    freshness: "cached",
-    hasMore: true,
-    hasNewer: true,
-  });
-  expect(seek).toHaveBeenCalledWith(
-    "c",
-    123,
-    expect.any(AbortSignal),
-    "target",
-  );
-  expect(attach).not.toHaveBeenCalled();
-  expect(view.result.current).toBe(true);
-});
+it.each([true, false])(
+  "revalidates a retained cached target with hasNewer=%s",
+  (hasNewer) => {
+    const c = channel([["target"]]);
+    const attach = vi.fn();
+    const target = { id: "target", createdAt: 123 } as ChannelMessage;
+    const seek = vi.fn(async () => {
+      c.set({ freshness: "verified", rows: [target] });
+      return target.id;
+    });
+    const queries = { ...c.queries, attach, seek };
+    const view = renderHook(() => useMessageOpening(queries, "c", "target"));
+    c.set({
+      status: "ready",
+      rows: [target],
+      freshness: "cached",
+      hasMore: true,
+      hasNewer,
+    });
+    expect(seek).toHaveBeenCalledWith(
+      "c",
+      123,
+      expect.any(AbortSignal),
+      "target",
+    );
+    expect(attach).not.toHaveBeenCalled();
+    expect(view.result.current).toBe(true);
+  },
+);
 
 it.each(["unmount", "target"])(
   "cancels cached-target revalidation on %s retirement",
@@ -717,3 +730,45 @@ it.each(["missing", "failed"])(
     expect(queries.window("c").rows.map((row) => row.id)).toEqual(["retained"]);
   },
 );
+
+it("opens a retained target after an attached older-page retry", async () => {
+  const c = await relayChannel();
+  try {
+    const newest = c.post("newest", 30);
+    const target = c.post("target", 20);
+    const oldest = c.post("oldest", 10);
+    c.channels.ensure("a");
+    c.read().respond(c.head(newest));
+    await flush();
+    c.channels.loadOlder("a");
+    c.read().respond(c.older(newest, target));
+    await flush();
+    c.channels.loadOlder("a");
+    c.read().fail(new Error("older page failed"));
+    await flush();
+    expect(c.channels.window("a").freshness).toBe("cached");
+    c.channels.loadOlder("a");
+    c.read().respond(c.end(target, oldest));
+    await flush();
+    expect(c.channels.window("a")).toMatchObject({
+      freshness: "cached",
+      error: undefined,
+    });
+    expect(c.channels.window("a").hasNewer).toBeFalsy();
+    const view = renderHook(() =>
+      useMessageOpening(c.channels, "a", target.id),
+    );
+    expect(view.result.current).toBeUndefined();
+    for (let page = 0; page < 2; page++) {
+      const read = c.read();
+      await act(async () => {
+        read.respond(c.head(newest, target, oldest));
+        await flush();
+      });
+    }
+    expect(view.result.current).toBe(true);
+    view.unmount();
+  } finally {
+    c.store.dispose();
+  }
+});
