@@ -59,7 +59,7 @@ pub(super) struct Customers {
     /// remain: its saved session stays in Settings, and deleting an agent
     /// still retires its grant there (`AgentTokens::forget`). Hosts only,
     /// nothing secret; a full Buzz sign-out deletes it (`store::remove_all`).
-    /// `None` keeps the list in memory, for tests.
+    /// `None` keeps no list, for tests: no launch adds a server again.
     pub(super) record: Option<std::path::PathBuf>,
 }
 impl Customers {

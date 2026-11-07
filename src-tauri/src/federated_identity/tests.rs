@@ -158,7 +158,7 @@ fn each_community_routes_by_host_to_its_own_server() {
 }
 
 /// The build's first server, with `peers`, adding Builderlab customers'
-/// servers when `customers`, listed in memory only.
+/// servers when `customers`, without listing them.
 pub(super) fn with_customers(
     first: Config,
     peers: Vec<FederatedIdentity>,
