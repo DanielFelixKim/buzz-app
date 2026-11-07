@@ -1485,7 +1485,7 @@ it("offline top-edge input reads nothing, and the connected session pages once i
   });
   h.element.scrollTop = 0;
   try {
-    h.gesture();
+    h.gesture(true);
     h.render();
     expect(h.caption()).toBe(
       "You can load older messages once Buzz reconnects.",
