@@ -35,7 +35,6 @@ import {
   LockIcon,
   MessageReplyIcon,
 } from "../../shared/design-system/icons/index";
-import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./ActivitySidebar.module.css";
@@ -150,7 +149,7 @@ export function ActivityScopeTabs({
 }
 
 /** Under the scope, one row in every scope: its views as an outlined radio,
- * then the Unread switch at the right end. */
+ * then the Unread filter at the right end. */
 export function ActivityFilters({
   view,
   onChange,
@@ -181,13 +180,18 @@ export function ActivityFilters({
           />
         )}
       </div>
-      <div className={styles.unread}>
-        <Switch
-          label="Unread"
-          checked={view.unread}
-          onCheckedChange={(unread) => onChange({ ...view, unread })}
-        />
-      </div>
+      {/* A chip, not a labelled switch: at the minimum sidebar width the
+       * views and a switch with its label do not fit on one row. */}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={view.unread}
+        className={`text-caption ${styles.unread}`}
+        onClick={() => onChange({ ...view, unread: !view.unread })}
+      >
+        <span className={styles.unreadDot} aria-hidden="true" />
+        Unread
+      </button>
     </div>
   );
 }

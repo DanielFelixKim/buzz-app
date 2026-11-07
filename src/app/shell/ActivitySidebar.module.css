@@ -31,11 +31,56 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+/* Tabs sized to their labels, so three fit beside Unread at the minimum
+ * sidebar width rather than each taking a third and clipping. */
+.views [class~="buzz-tabs-list"][class~="buzz-tabs-list"] {
+  gap: 0;
+}
+.views
+  [data-variant="segmented"]
+  [class~="buzz-tabs-tab"][class~="buzz-tabs-tab"] {
+  flex: 1 1 auto;
+  padding-inline: var(--space-2);
+  white-space: nowrap;
+}
+/* Unread: an outlined chip the same height as the views, filled when on. */
 .unread {
-  display: flex;
+  display: inline-flex;
   flex: none;
-  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  height: calc(var(--space-6) + 2 * var(--space-half) + 2px);
   margin-inline-start: auto;
+  padding-block: 0;
+  padding-inline: var(--space-2);
+  line-height: 1;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+.unread:hover {
+  background: var(--affordance-subtle-hover);
+  color: var(--text-standard);
+}
+.unread[aria-checked="true"] {
+  background: var(--surface-inset);
+  color: var(--text-standard);
+}
+.unread:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.unreadDot {
+  width: 6px;
+  height: 6px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+.unread[aria-checked="true"] .unreadDot {
+  background: currentColor;
 }
 .rows {
   display: flex;
