@@ -175,10 +175,11 @@ export type SourceToken = { start: number; end: number; editAsText?: boolean };
 export type SourceRange = { start: number; end: number };
 
 /** Source ranges the editor must not format: existing Markdown code, images,
- * definitions and HTML stay literal text. */
+ * definitions and HTML stay literal text. Code blocks are flagged: a caret at
+ * a block's end may still be inside it. */
 export function markdownRanges(text: string) {
   const { tree, tooDeep } = scanMarkdown(text);
-  const literal: SourceRange[] = [];
+  const literal: (SourceRange & { block?: true })[] = [];
   if (tooDeep) return { literal: [{ start: 0, end: text.length }] };
   const pending = [tree];
   while (pending.length) {
@@ -197,7 +198,9 @@ export function markdownRanges(text: string) {
         "html",
       ].includes(node.type)
     ) {
-      literal.push({ start, end });
+      literal.push(
+        node.type === "code" ? { start, end, block: true } : { start, end },
+      );
       continue;
     }
     pending.push(...(node.children ?? []));

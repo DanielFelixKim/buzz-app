@@ -800,7 +800,9 @@ export function EditableInput({
         !composerSchema.marks.code.isInSet(marks) &&
         !markdownRanges(
           composerMarkdownContext(editor.state.doc, source).text,
-        ).literal.some((r) => r.start < at && at < r.end)
+        ).literal.some(
+          (r) => r.start < at && (at < r.end || (r.block && at === r.end)),
+        )
       )
         text = separateShortcode(
           $from.parent.textBetween(

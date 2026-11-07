@@ -248,6 +248,8 @@ it("keeps an inserted shortcode literal inside restored Markdown code", () => {
   for (const [initial, caret, value] of [
     ["`foo` bar", 4, "`foo:party:` bar"],
     ["```\nfoo\n```", 7, "```\nfoo:party:\n```"],
+    ["~~~\nfoo", 7, "~~~\nfoo:party:"],
+    ["    foo", 7, "    foo:party:"],
     ["`foo` bar", 9, "`foo` bar :party:"],
   ] as const) {
     // Editing a sent message restores its Markdown source as plain text.
