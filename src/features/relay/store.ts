@@ -3928,7 +3928,8 @@ export function createChannelStore(
             fromId,
           );
         return fromId
-          ? located.kind === "segment"
+          ? located.kind === "segment" &&
+            located.page.events.some((event) => event.id === fromId)
             ? state.snapshot.rows.find((row) => row.id === fromId)?.id
             : undefined
           : landing(state, from);

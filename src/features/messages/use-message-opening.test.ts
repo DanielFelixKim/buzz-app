@@ -955,3 +955,67 @@ it("rejects a lookup target when unrelated reconnect verification precedes a no-
     c.store.dispose();
   }
 });
+
+it.each([true, false])(
+  "validates a lookup target against the installed seek response (present=%s)",
+  async (present) => {
+    const c = await relayChannel();
+    try {
+      const newest = c.post("newest", 40);
+      const oldest = c.post("oldest", 10);
+      const target = c.post("deleted before seek", 30);
+      c.channels.ensure("a");
+      c.read().respond(c.head(newest));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().fail(new Error("older page failed"));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().respond(c.end(newest, oldest));
+      await flush();
+      expect(c.channels.window("a")).toMatchObject({
+        freshness: "cached",
+        error: undefined,
+      });
+      expect(c.channels.window("a").hasNewer).toBeFalsy();
+      const view = renderHook(() =>
+        useMessageOpening(
+          c.channels,
+          "a",
+          target.id,
+          undefined,
+          c.store.session.read,
+        ),
+      );
+      try {
+        const lookup = c.read();
+        expect(lookup.filters[0]?.ids).toEqual([target.id]);
+        await act(async () => {
+          lookup.respond([target]);
+          await flush();
+        });
+        expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
+          target.id,
+        );
+        expect(view.result.current).toBeUndefined();
+        await act(async () => {
+          c.read().respond(c.head(newest, oldest));
+          await flush();
+          c.read().respond(
+            c.head(newest, ...(present ? [target] : []), oldest),
+          );
+          await flush();
+        });
+        expect(c.channels.window("a").freshness).toBe("verified");
+        expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
+          target.id,
+        );
+        expect(view.result.current).toBe(present);
+      } finally {
+        view.unmount();
+      }
+    } finally {
+      c.store.dispose();
+    }
+  },
+);
