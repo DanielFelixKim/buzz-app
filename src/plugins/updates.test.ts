@@ -541,3 +541,61 @@ it("keeps Git discovery and later rounds independent of a stalled folder probe",
     updates.dispose();
   }
 });
+
+it("checks a newly attached Git source after an older batch reserved a source-less observation", async () => {
+  const f = fixture();
+  const state = f.get();
+  if (state.status !== "ready") throw new Error("fixture catalog missing");
+  const source = f.plugin.updateSource;
+  if (!source) throw new Error("fixture source missing");
+  const unsourced = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "unsourced" },
+    updateSource: null,
+  };
+  f.set({
+    ...state,
+    catalog: { ...state.catalog, plugins: [f.plugin, unsourced] },
+  });
+  let release!: (preview: ImportPreview) => void;
+  f.checkGit.mockImplementationOnce(
+    () =>
+      new Promise<ImportPreview>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  const pending = updates.check();
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const registered = { ...unsourced, updateSource: source };
+    f.preview.candidates.push({
+      ...f.candidate,
+      manifest: registered.manifest,
+    });
+    sharedPluginUpdateChecks(f.manager.imports).observe(registered)(
+      registered.revision,
+    );
+    f.set({
+      ...state,
+      catalog: { ...state.catalog, plugins: [f.plugin, registered] },
+    });
+    const retry = updates.check();
+    release(f.preview);
+    await Promise.all([pending, retry]);
+    expect(
+      pluginUpdateAvailable(
+        sharedPluginUpdateChecks(f.manager.imports).snapshot(),
+        registered,
+      ),
+    ).toBe(true);
+    expect(
+      updates.snapshot().find((update) => update.id === registered.manifest.id)
+        ?.candidate?.revision,
+    ).toBe("new");
+  } finally {
+    release?.(f.preview);
+    await pending;
+    updates.dispose();
+  }
+});

@@ -155,12 +155,11 @@ export function createPluginUpdates(
     }
     // Reserve generations before acquiring a batch: siblings may reuse the
     // same repository snapshot after a newer explicit check has completed.
-    const observations = new Map(
-      configuration.catalog.plugins.map((plugin) => [
-        plugin.manifest.id,
-        checks.observe(plugin),
-      ]),
-    );
+    const batch = configuration.catalog.plugins.map((plugin) => ({
+      plugin,
+      source: pluginUpdateSource(plugins, plugin.manifest.id),
+      observe: checks.observe(plugin),
+    }));
     for (const id of checked.keys())
       if (
         !configuration.catalog.plugins.some(
@@ -200,10 +199,9 @@ export function createPluginUpdates(
       }
       return result;
     };
-    for (const plugin of configuration.catalog.plugins) {
+    for (const { plugin, source, observe } of batch) {
       if (closed) return;
       const id = plugin.manifest.id;
-      const source = pluginUpdateSource(plugins, id);
       const folder =
         plugin.source === "external" &&
         plugin.updateSource &&
@@ -240,7 +238,6 @@ export function createPluginUpdates(
         }
         continue;
       }
-      const observe = observations.get(id);
       const update: PluginUpdate = {
         id,
         source,
