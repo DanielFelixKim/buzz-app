@@ -6635,6 +6635,36 @@ it("discovers newly granted Decisions access before Attention skips an unconfigu
   }
 });
 
+it("classifies Attention events with an explicit provider while unrelated discovery is held", async () => {
+  const jev = fakeJev();
+  const h = await classifiedAgent(jev);
+  const decisions = h.ctx.decisions as DecisionsService;
+  decisions.setBackend("buzz.typesafe/typesafe");
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const refresh = vi.fn(() => held);
+  const discovery = h.ctx
+    .extend({ pluginOwner: { id: "example.discovery", revision: "one" } })
+    .plugin((ctx) =>
+      ctx.decisions.registerProviderDiscovery({ id: "account", refresh }),
+    );
+  try {
+    await discovery.await();
+    h.emit({ events: [event("w")] });
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledOnce());
+    expect(h.run.mock.calls[0]?.[0].trigger).toMatchObject({
+      classifier: { outcome: "passed" },
+    });
+    expect(jev.decide).toHaveBeenCalledOnce();
+    expect(refresh).not.toHaveBeenCalled();
+  } finally {
+    release();
+    await h.ctx.fiber.dispose();
+  }
+});
+
 it("a key set or cleared takes effect at once, and one removed elsewhere is noticed", async () => {
   const jev = fakeJev(false);
   const { service, typesafe, run, emit } = await classifiedAgent(jev);

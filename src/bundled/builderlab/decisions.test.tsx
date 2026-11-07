@@ -217,7 +217,7 @@ it("offers Builderlab only while the signed-in account may use decisions", async
   expect(decide).not.toHaveBeenCalled();
 });
 
-it.each(["settings", "request", "chosen-provider"] as const)(
+it.each(["settings", "request", "settings-with-choice"] as const)(
   "discovers newly granted Decisions access through %s while Builderlab is absent",
   async (entry) => {
     let now = Date.now();
@@ -268,7 +268,7 @@ it.each(["settings", "request", "chosen-provider"] as const)(
       .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, native));
     try {
       await Promise.all([fallbackPlugin.await(), builderlab.await()]);
-      if (entry === "chosen-provider") {
+      if (entry === "settings-with-choice") {
         const custom = root
           .extend({ pluginOwner: { id: "example.provider", revision: "one" } })
           .plugin((ctx) =>
@@ -294,7 +294,7 @@ it.each(["settings", "request", "chosen-provider"] as const)(
           .some((p) => p.key === "block.builderlab/builderlab"),
       ).toBe(false);
       const beforeBackend =
-        entry === "chosen-provider"
+        entry === "settings-with-choice"
           ? "example.provider/custom"
           : "buzz.typesafe/typesafe";
       await expect(decisions.decide(request)).resolves.toMatchObject({
@@ -302,16 +302,15 @@ it.each(["settings", "request", "chosen-provider"] as const)(
       });
       const owner = session.credential();
       expect(identity.request).toHaveBeenCalledOnce();
-      const settings =
-        entry === "settings"
-          ? render(
-              <DecisionsSettings decisions={decisions} active={() => false} />,
-            )
-          : undefined;
+      const settings = entry.startsWith("settings")
+        ? render(
+            <DecisionsSettings decisions={decisions} active={() => false} />,
+          )
+        : undefined;
       expect(identity.request).toHaveBeenCalledOnce();
       allowed = true;
       now += 60_000;
-      if (entry === "settings") {
+      if (entry.startsWith("settings")) {
         settings?.rerender(
           <DecisionsSettings decisions={decisions} active={() => true} />,
         );
@@ -320,10 +319,7 @@ it.each(["settings", "request", "chosen-provider"] as const)(
         ).toBeVisible();
       } else {
         await expect(decisions.decide(request)).resolves.toMatchObject({
-          backend:
-            entry === "chosen-provider"
-              ? beforeBackend
-              : "block.builderlab/builderlab",
+          backend: "block.builderlab/builderlab",
         });
       }
       expect(
@@ -332,14 +328,15 @@ it.each(["settings", "request", "chosen-provider"] as const)(
           .some((p) => p.key === "block.builderlab/builderlab"),
       ).toBe(true);
       expect(decisions.backend()).toBe(
-        entry === "chosen-provider"
+        entry === "settings-with-choice"
           ? beforeBackend
           : "block.builderlab/builderlab",
       );
       expect(fallback).toHaveBeenCalledTimes(
-        entry === "chosen-provider" ? 0 : 1,
+        entry === "settings-with-choice" ? 0 : 1,
       );
-      if (entry === "chosen-provider") expect(native).not.toHaveBeenCalled();
+      if (entry === "settings-with-choice")
+        expect(native).not.toHaveBeenCalled();
       expect(identity.request).toHaveBeenCalledTimes(2);
       await act(async () => {
         await decisions.decide(request);

@@ -162,8 +162,9 @@ export interface Decisions {
   backend(): string | undefined;
   /** That provider's status, or `unavailable` when there is none. */
   status(): DecisionProviderStatus | "unavailable";
-  /** Refresh provider availability before a readiness check; does not send decision text. */
-  refreshProviders(): Promise<void>;
+  /** Refresh availability without decision text. Routing skips discovery while
+   * the explicit choice is registered; Settings always discovers providers. */
+  refreshProviders(options?: { forRouting?: boolean }): Promise<void>;
   subscribe(listener: () => void): () => void;
   /** Offers a provider while the calling plugin runs, or until the returned
    * function removes it. `Decisions` exposes no way to choose the provider;
@@ -280,7 +281,14 @@ export class DecisionsService extends Service implements Decisions {
     return this.discoveries.register(this.ctx, discovery);
   }
   /** Refresh availability without changing the saved provider choice. */
-  refreshProviders = async (): Promise<void> => {
+  refreshProviders = async (options?: {
+    forRouting?: boolean;
+  }): Promise<void> => {
+    if (
+      options?.forRouting &&
+      this.sorted.some((provider) => provider.key === this.chosen)
+    )
+      return;
     await Promise.allSettled(
       this.discoveries
         .snapshot()
@@ -357,7 +365,7 @@ export class DecisionsService extends Service implements Decisions {
     try {
       reply = await Promise.race([
         Promise.resolve().then(async () => {
-          await this.refreshProviders();
+          await this.refreshProviders({ forRouting: true });
           if (abort.signal.aborted) return "timeout";
           provider = this.current();
           backend = provider?.key;

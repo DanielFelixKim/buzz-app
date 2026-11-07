@@ -488,3 +488,46 @@ it("includes discovery in the existing deadline and never dispatches a decision 
   expect(h.timers).toEqual([]);
   await h.root.fiber.dispose();
 });
+
+it.each(["buzz.typesafe/typesafe", "example.provider/custom"])(
+  "does not wait for discovery when %s is explicitly chosen and registered",
+  async (key) => {
+    const h = setup(memory({ [DECISION_BACKEND_KEY]: key }));
+    const [plugin = "", id] = key.split("/");
+    const decide = vi.fn(async () => reply);
+    await h.plugin(plugin, { id, decide });
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const refresh = vi.fn(() => held);
+    const discovery = h.root
+      .extend({ pluginOwner: { id: "example.discovery", revision: "one" } })
+      .plugin((ctx) =>
+        ctx.decisions.registerProviderDiscovery({ id: "account", refresh }),
+      );
+    await discovery.await();
+    await flush();
+    const result = h.service.decide({ ...request, timeoutMs: 1_000 });
+    try {
+      await flush();
+      h.timers[0]?.run();
+      await expect(result).resolves.toMatchObject({
+        outcome: "answered",
+        backend: key,
+      });
+      expect(decide).toHaveBeenCalledOnce();
+      expect(refresh).not.toHaveBeenCalled();
+      // Settings still discovers providers even with an explicit choice.
+      const settings = h.service.refreshProviders();
+      await flush();
+      expect(refresh).toHaveBeenCalledOnce();
+      release();
+      await settings;
+    } finally {
+      release();
+      await result;
+      await h.root.fiber.dispose();
+    }
+  },
+);
