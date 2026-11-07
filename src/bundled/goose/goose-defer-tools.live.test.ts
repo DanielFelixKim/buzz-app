@@ -4,20 +4,20 @@
 // PROOF_DIR=/some/dir. The Buzz tools are listed as the goose runtime lists
 // them, from a loopback HTTP MCP server like the app's; their calls are
 // answered here, not sent to a relay. Every provider request goose makes is
-// read back from its request log (`~/.local/state/goose/logs`).
+// read back from its request log, in a state directory of the run's own.
 import { spawn as spawnChild } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { respond } from "../../buzz-mcp/rpc";
 import { sessionTools } from "../../buzz-mcp/session-tools";
 import {
@@ -26,9 +26,8 @@ import {
 } from "../../features/host/service";
 import { systemPrompt } from "../claude-code/prompt";
 import {
-  GOOSE,
   GooseProcess,
-  listing,
+  LISTING,
   type ServeMcp,
   type Spawn,
   type ToolServer,
@@ -54,8 +53,15 @@ const acpOut = (data: string) => {
     } catch {}
 };
 
+/** goose's state directory for this run, made as the suite starts, so its
+ * request log holds only this run's requests. */
+let state = "";
+
 const spawn: Spawn = async (_id, options: HostProcessOptions = {}) => {
-  const env: Record<string, string | undefined> = { ...process.env };
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    XDG_STATE_HOME: state,
+  };
   for (const [key, value] of Object.entries(options.env ?? {}))
     if (value === null) delete env[key];
     else env[key] = value;
@@ -191,21 +197,19 @@ type Wire = {
 };
 type Captured = { raw: string; wire: Wire; usage?: unknown };
 
-const LOGS = join(
-  process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
-  "goose",
-  "logs",
-);
-
 /** Copies each finished provider request out of goose's rotating log. */
-function recordRequests() {
+function recordRequests(logs: string) {
   const seen = new Set<string>();
   const captured: Captured[] = [];
   const poll = () => {
     for (let i = 9; i >= 0; i--) {
-      const file = join(LOGS, `llm_request.${i}.jsonl`);
-      if (!existsSync(file)) continue;
-      const raw = readFileSync(file, "utf8");
+      let raw: string;
+      try {
+        // goose renames each log along as it rotates them.
+        raw = readFileSync(join(logs, `llm_request.${i}.jsonl`), "utf8");
+      } catch {
+        continue;
+      }
       const hash = createHash("sha256").update(raw).digest("hex");
       if (seen.has(hash)) continue;
       seen.add(hash);
@@ -222,16 +226,13 @@ function recordRequests() {
       }
     }
   };
-  poll();
-  const baseline = captured.length;
   const timer = setInterval(poll, 25);
   return {
     stop: () => {
       clearInterval(timer);
       poll();
     },
-    of: (marker: string) =>
-      captured.slice(baseline).filter((c) => c.raw.includes(marker)),
+    of: (marker: string) => captured.filter((c) => c.raw.includes(marker)),
   };
 }
 
@@ -251,7 +252,8 @@ const marker = `run-${randomBytes(4).toString("hex")}`;
 const codeword = `kiwi-${randomBytes(3).toString("hex")}`;
 const changed = `mango-${randomBytes(3).toString("hex")}`;
 const timerId = `w_${randomBytes(3).toString("hex")}`;
-let settingsReads = 0;
+/** Set as the compaction test starts, so every read before it agrees. */
+let settingChanged = false;
 
 type Call = { method: string; name?: string; arguments?: unknown; at: number };
 const calls: Call[] = [];
@@ -269,12 +271,11 @@ const tools: ToolServer = async (_conversation, message) => {
       switch (params.name) {
         case "settings_list":
         case "settings_get":
-          settingsReads++;
           return JSON.stringify([
             { key: "appearance.theme", value: "dark" },
             {
               key: "display.codeword",
-              value: settingsReads > 1 ? changed : codeword,
+              value: settingChanged ? changed : codeword,
             },
           ]);
         case "watch_add":
@@ -293,7 +294,7 @@ const tools: ToolServer = async (_conversation, message) => {
       result: { content: [{ type: "text", text }] },
     };
   }
-  const reply = (await respond(undefined, {}, message, [], listing([]))) as {
+  const reply = (await respond(undefined, {}, message, [], LISTING)) as {
     result?: { tools?: typeof listed };
   };
   if (message.method === "tools/list") listed = reply.result?.tools ?? [];
@@ -348,7 +349,8 @@ const WIRE = !!process.env.EXPECT_WIRE;
 const proof: Record<string, unknown> = { marker, binary: BIN, wire: WIRE };
 
 describe.skipIf(!BIN)("goose-acp progressive tool discovery", () => {
-  const requests = recordRequests();
+  let requests: ReturnType<typeof recordRequests> | undefined;
+  const recorded = (marker: string) => requests?.of(marker) ?? [];
   let goose: Awaited<ReturnType<typeof GooseProcess.start>>;
   let session: Awaited<ReturnType<typeof goose.open>>;
   let cwd = "";
@@ -364,11 +366,9 @@ describe.skipIf(!BIN)("goose-acp progressive tool discovery", () => {
   const turnOf = async (tag: string) => {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     const later = tags.slice(tags.indexOf(tag) + 1);
-    return requests
-      .of(marker)
-      .filter(
-        (c) => c.raw.includes(tag) && later.every((t) => !c.raw.includes(t)),
-      );
+    return recorded(marker).filter(
+      (c) => c.raw.includes(tag) && later.every((t) => !c.raw.includes(t)),
+    );
   };
   const oldToolResult = (c?: Captured) =>
     (c?.wire.input.messages ?? [])
@@ -378,11 +378,12 @@ describe.skipIf(!BIN)("goose-acp progressive tool discovery", () => {
     (await goose.request("_goose/unstable/context/report", {
       sessionId: id,
     })) as Report;
-  const open = () =>
+  const open = (deferTools = true) =>
     goose.open({
       cwd,
       title: "Ada · #general · defer-tools",
       tools,
+      deferTools,
       systemPrompt: systemPrompt({
         scope: "thread",
         cwd,
@@ -390,12 +391,18 @@ describe.skipIf(!BIN)("goose-acp progressive tool discovery", () => {
       }),
     });
 
+  beforeAll(() => {
+    state = mkdtempSync(join(tmpdir(), "buzz-goose-state-"));
+    requests = recordRequests(join(state, "goose", "logs"));
+  });
+
   afterAll(async () => {
-    requests.stop();
+    requests?.stop();
     await goose?.kill();
+    if (state) rmSync(state, { recursive: true, force: true });
     if (!PROOF_DIR) return;
     mkdirSync(join(PROOF_DIR, "requests"), { recursive: true });
-    requests.of(marker).forEach((c, i) => {
+    recorded(marker).forEach((c, i) => {
       writeFileSync(
         join(PROOF_DIR, "requests", `${String(i).padStart(2, "0")}.jsonl`),
         c.raw,
@@ -550,6 +557,7 @@ describe.skipIf(!BIN)("goose-acp progressive tool discovery", () => {
       compacted.segments.some((s) => s.category === "compaction_summary"),
     ).toBe(true);
 
+    settingChanged = true;
     const acpFrom = acp.length;
     const callsFrom = calls.length;
     expect(
@@ -682,59 +690,46 @@ describe.skipIf(!BIN)("goose-acp progressive tool discovery", () => {
   it("sends every Buzz tool to a session that doesn't defer", {
     timeout: 300_000,
   }, async () => {
-    type Meta = NonNullable<typeof GOOSE.newSessionMeta>;
-    const hooks = GOOSE as { newSessionMeta: Meta | undefined };
-    const meta = hooks.newSessionMeta;
-    const withoutDefer: Meta = (buzz, options) => {
-      const { deferTools: _, ...rest } = (meta?.(buzz, options) ??
-        {}) as Record<string, unknown>;
-      return rest;
-    };
-    hooks.newSessionMeta = withoutDefer;
-    try {
-      const control = await open();
-      control.conversation = "channel/control";
-      const start = await report(control.id);
-      const tools = reportedTools(start);
-      expect(tools).not.toContain("load_tools");
-      expect(tools.filter((n) => n.startsWith("buzz__")).length).toBe(
-        listed.length,
-      );
-      const deferring = (
-        proof.load as {
-          reportBefore: {
-            totalTokens: number;
-            toolTokens: number;
-            tools: number;
-          };
-        }
-      ).reportBefore;
-      expect(start.totalTokens).toBeGreaterThan(deferring.totalTokens);
-      expect(
-        await control.send(prompt("Say hello to me in Buzz.")),
-      ).toMatchObject({ ok: true });
-      const turn = await turnOf(lastTag);
-      if (WIRE) {
-        expect(toolNames(turn[0])).not.toContain("load_tools");
-        expect(
-          toolNames(turn[0]).filter((n) => n.startsWith("buzz__")).length,
-        ).toBe(listed.length);
+    const control = await open(false);
+    control.conversation = "channel/control";
+    const start = await report(control.id);
+    const tools = reportedTools(start);
+    expect(tools).not.toContain("load_tools");
+    expect(tools.filter((n) => n.startsWith("buzz__")).length).toBe(
+      listed.length,
+    );
+    const deferring = (
+      proof.load as {
+        reportBefore: {
+          totalTokens: number;
+          toolTokens: number;
+          tools: number;
+        };
       }
-      proof.control = {
-        report: {
-          totalTokens: start.totalTokens,
-          toolTokens: toolSegment(start).reduce((n, s) => n + s.tokenCount, 0),
-          tools: tools.length,
-        },
-        wireFirstRequest: turn[0] && {
-          toolCount: toolNames(turn[0]).length,
-          buzzTools: toolNames(turn[0]).filter((n) => n.startsWith("buzz__"))
-            .length,
-          usage: turn[0].usage,
-        },
-      };
-    } finally {
-      hooks.newSessionMeta = meta;
+    ).reportBefore;
+    expect(start.totalTokens).toBeGreaterThan(deferring.totalTokens);
+    expect(
+      await control.send(prompt("Say hello to me in Buzz.")),
+    ).toMatchObject({ ok: true });
+    const turn = await turnOf(lastTag);
+    if (WIRE) {
+      expect(toolNames(turn[0])).not.toContain("load_tools");
+      expect(
+        toolNames(turn[0]).filter((n) => n.startsWith("buzz__")).length,
+      ).toBe(listed.length);
     }
+    proof.control = {
+      report: {
+        totalTokens: start.totalTokens,
+        toolTokens: toolSegment(start).reduce((n, s) => n + s.tokenCount, 0),
+        tools: tools.length,
+      },
+      wireFirstRequest: turn[0] && {
+        toolCount: toolNames(turn[0]).length,
+        buzzTools: toolNames(turn[0]).filter((n) => n.startsWith("buzz__"))
+          .length,
+        usage: turn[0].usage,
+      },
+    };
   });
 });
