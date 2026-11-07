@@ -244,6 +244,23 @@ it("keeps an inserted shortcode literal inside inline code", async () => {
   expect(h.markdown()).toBe("`nice:party:`");
 });
 
+it("keeps an inserted shortcode literal inside restored Markdown code", () => {
+  for (const [initial, caret, value] of [
+    ["`foo` bar", 4, "`foo:party:` bar"],
+    ["```\nfoo\n```", 7, "```\nfoo:party:\n```"],
+    ["`foo` bar", 9, "`foo` bar :party:"],
+  ] as const) {
+    // Editing a sent message restores its Markdown source as plain text.
+    const h = mount(initial);
+    act(() => {
+      h.input.setSelectionRange(caret, caret);
+      expect(h.input.insertText(":party:")).toBe(true);
+    });
+    expect(h.input).toHaveValue(value);
+    cleanup();
+  }
+});
+
 it("keeps native autocorrection off until this device opts in, then follows the choice live", async () => {
   try {
     const h = mount("teh");

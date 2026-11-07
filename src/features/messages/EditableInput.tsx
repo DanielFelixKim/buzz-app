@@ -791,11 +791,16 @@ export function EditableInput({
         .filter((mark) => mark.type !== composerSchema.marks.recipient);
       text = text.replace(/\r\n?/g, "\n");
       // A picked shortcode joined to the word before it would read as text.
+      // Code stays literal, including Markdown code restored for editing.
+      const at = source.source(from);
       if (
         !range &&
         !verbatim &&
         !$from.parent.type.spec.code &&
-        !composerSchema.marks.code.isInSet(marks)
+        !composerSchema.marks.code.isInSet(marks) &&
+        !markdownRanges(
+          composerMarkdownContext(editor.state.doc, source).text,
+        ).literal.some((r) => r.start < at && at < r.end)
       )
         text = separateShortcode(
           $from.parent.textBetween(
