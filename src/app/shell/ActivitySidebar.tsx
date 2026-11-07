@@ -10,6 +10,7 @@
  */
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -32,10 +33,20 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { ConversationRow } from "../../features/messages/ConversationRow";
 import {
+  Filter2Icon,
   LockIcon,
   MessageReplyIcon,
 } from "../../shared/design-system/icons/index";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
+import { Switch } from "../../shared/design-system/ui/Switch";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRoot,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./ActivitySidebar.module.css";
 import { useLatestMessages, type LatestMessage } from "./activity-previews";
@@ -148,8 +159,30 @@ export function ActivityScopeTabs({
   );
 }
 
-/** Under the scope, one row in every scope: its views as an outlined radio,
- * then the Unread filter at the right end. */
+/** Below this width the views and a labelled Unread switch no longer fit on
+ * one row, so Unread folds into a filter menu. */
+const unreadSwitchMinWidth = 300;
+
+/** True while the element is at least `min` pixels wide. Without a
+ * ResizeObserver (tests) it stays wide. */
+function useWiderThan(min: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(true);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const measure = () => setWide(element.clientWidth >= min);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [min]);
+  return [ref, wide] as const;
+}
+
+/** Under the scope, one row in every scope, as Inbox's filter bar: the views
+ * as underline tabs, then Unread at the right end. The scope above is the one
+ * filled control, so the two levels never read as two equal trays. */
 export function ActivityFilters({
   view,
   onChange,
@@ -157,14 +190,16 @@ export function ActivityFilters({
   view: View;
   onChange(view: View): void;
 }) {
+  const [ref, wide] = useWiderThan(unreadSwitchMinWidth);
+  const setUnread = (unread: boolean) => onChange({ ...view, unread });
+  const showLabel = view.unread ? "Showing unread" : "Showing all";
   return (
-    <div className={styles.filters}>
-      <div className={styles.views}>
+    <div className={styles.filters} ref={ref}>
+      <div className={`text-body-sm ${styles.views}`}>
         {view.scope === "team" ? (
           <Tabs
             label="Team view"
-            variant="segmented"
-            size="sm"
+            variant="panel"
             value={view.team}
             items={teamViews}
             onValueChange={(team) => onChange({ ...view, team })}
@@ -172,26 +207,47 @@ export function ActivityFilters({
         ) : (
           <Tabs
             label="Solo view"
-            variant="segmented"
-            size="sm"
+            variant="panel"
             value={view.solo}
             items={soloViews}
             onValueChange={(solo) => onChange({ ...view, solo })}
           />
         )}
       </div>
-      {/* A chip, not a labelled switch: at the minimum sidebar width the
-       * views and a switch with its label do not fit on one row. */}
-      <button
-        type="button"
-        role="switch"
-        aria-checked={view.unread}
-        className={`text-caption ${styles.unread}`}
-        onClick={() => onChange({ ...view, unread: !view.unread })}
-      >
-        <span className={styles.unreadDot} aria-hidden="true" />
-        Unread
-      </button>
+      {wide ? (
+        <Switch
+          label="Unread"
+          checked={view.unread}
+          onCheckedChange={setUnread}
+        />
+      ) : (
+        <MenuRoot>
+          <MenuTrigger
+            render={
+              <IconButton
+                size="sm"
+                variant={view.unread ? "subtle" : "ghost"}
+                aria-label={showLabel}
+                title={showLabel}
+                icon={<Filter2Icon aria-hidden="true" size={16} />}
+              />
+            }
+          />
+          <MenuPopup aria-label="Show">
+            <MenuRadioGroup
+              value={view.unread ? "unread" : "all"}
+              onValueChange={(value) => setUnread(value === "unread")}
+            >
+              <MenuRadioItem value="all" closeOnClick>
+                All conversations
+              </MenuRadioItem>
+              <MenuRadioItem value="unread" closeOnClick>
+                Unread only
+              </MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuPopup>
+        </MenuRoot>
+      )}
     </div>
   );
 }

@@ -5,8 +5,9 @@
   flex-direction: column;
   min-width: 0;
 }
-/* Below the scope, one row in every scope: its views, then Unread at the
- * right end. The same shape everywhere, so switching scope moves nothing. */
+/* Below the scope, one row in every scope: its views as underline tabs, then
+ * Unread at the right end. The same shape everywhere, so switching scope
+ * moves nothing. The tabs keep their labels' width and scroll if they must. */
 .filters {
   display: flex;
   align-items: center;
@@ -14,73 +15,21 @@
   margin-block-end: var(--space-2);
   margin-inline: var(--space-1);
 }
-/* The same segmented radio as the scope, one size down: an outline in place
- * of the inset tray, caption type, shorter tabs. */
-.views [data-variant="segmented"][data-variant="segmented"] {
-  padding: var(--space-half);
-  border: 1px solid var(--border-standard);
-  background: transparent;
-}
-.views
-  [data-variant="segmented"]
-  [class~="buzz-tabs-tab"][class~="buzz-tabs-tab"] {
-  min-height: var(--space-6);
-  font-size: var(--text-caption);
-}
 .views {
   flex: 1 1 auto;
   min-width: 0;
 }
-/* Tabs sized to their labels, so three fit beside Unread at the minimum
- * sidebar width rather than each taking a third and clipping. */
+/* One step closer than panel tabs' default, so three views and the filter
+ * menu fit at the minimum sidebar width. */
 .views [class~="buzz-tabs-list"][class~="buzz-tabs-list"] {
-  gap: 0;
+  gap: var(--space-4);
 }
-.views
-  [data-variant="segmented"]
-  [class~="buzz-tabs-tab"][class~="buzz-tabs-tab"] {
-  flex: 1 1 auto;
-  padding-inline: var(--space-2);
-  white-space: nowrap;
-}
-/* Unread: an outlined chip the same height as the views, filled when on. */
-.unread {
-  display: inline-flex;
+.filters > :last-child {
   flex: none;
-  align-items: center;
-  gap: var(--space-1);
-  box-sizing: border-box;
-  height: calc(var(--space-6) + 2 * var(--space-half) + 2px);
-  margin-inline-start: auto;
-  padding-block: 0;
-  padding-inline: var(--space-2);
-  line-height: 1;
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-subtle);
-  cursor: pointer;
 }
-.unread:hover {
-  background: var(--affordance-subtle-hover);
-  color: var(--text-standard);
-}
-.unread[aria-checked="true"] {
-  background: var(--surface-inset);
-  color: var(--text-standard);
-}
-.unread:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-.unreadDot {
-  width: 6px;
-  height: 6px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-}
-.unread[aria-checked="true"] .unreadDot {
-  background: currentColor;
+/* Unread is a filter, not a heading: it reads at the unselected views' level. */
+.filters > :last-child label {
+  color: var(--text-metadata);
 }
 .rows {
   display: flex;
@@ -92,12 +41,4 @@
 }
 .empty {
   padding: var(--space-6) var(--space-2);
-}
-/* On the plain panel the scope's selected surface barely shows; the outlined
- * radio marks its choice with the scope tray's inset fill instead. */
-.views
-  [data-variant="segmented"]
-  [class~="buzz-tabs-indicator"][class~="buzz-tabs-indicator"] {
-  background: var(--surface-inset);
-  box-shadow: none;
 }
