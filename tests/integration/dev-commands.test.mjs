@@ -391,45 +391,37 @@ test("desktop-bundle builds a debug app bundle with only the development identif
   assert.doesNotMatch(stdout, /Bundling with deep links/);
 });
 
-test(
-  "desktop-bundle --launch builds and opens the macOS app bundle",
-  {
-    skip: process.platform !== "darwin",
-  },
-  () => {
-    const result = launched("desktop-bundle", "--launch");
-    assert.deepEqual(result.call, [
-      "tauri",
-      "build",
-      "--debug",
-      "--bundles",
-      "app",
-      ...bundled,
-    ]);
-    const app = path.join(result.root, "target/debug/bundle/macos/Buzz.app");
-    assert.deepEqual(result.opened, [[app]]);
-    assert.match(result.stderr, /bundle is ad-hoc signed/);
-  },
-);
+test("desktop-bundle --launch builds and opens the macOS app bundle", {
+  skip: process.platform !== "darwin",
+}, () => {
+  const result = launched("desktop-bundle", "--launch");
+  assert.deepEqual(result.call, [
+    "tauri",
+    "build",
+    "--debug",
+    "--bundles",
+    "app",
+    ...bundled,
+  ]);
+  const app = path.join(result.root, "target/debug/bundle/macos/Buzz.app");
+  assert.deepEqual(result.opened, [[app]]);
+  assert.match(result.stderr, /bundle is ad-hoc signed/);
+});
 
-test(
-  "desktop-bundle --launch does not warn for configured certificate signing",
-  {
-    skip: process.platform !== "darwin",
-  },
-  () => {
-    const result = launched(
-      "desktop-bundle",
-      { env: { BUZZ_DEV_SIGNING_IDENTITY: "development-cert" } },
-      "--launch",
-    );
-    assert.equal(
-      JSON.parse(result.call[6]).bundle.macOS.signingIdentity,
-      "development-cert",
-    );
-    assert.doesNotMatch(result.stderr, /ad-hoc signed/);
-  },
-);
+test("desktop-bundle --launch does not warn for configured certificate signing", {
+  skip: process.platform !== "darwin",
+}, () => {
+  const result = launched(
+    "desktop-bundle",
+    { env: { BUZZ_DEV_SIGNING_IDENTITY: "development-cert" } },
+    "--launch",
+  );
+  assert.equal(
+    JSON.parse(result.call[6]).bundle.macOS.signingIdentity,
+    "development-cert",
+  );
+  assert.doesNotMatch(result.stderr, /ad-hoc signed/);
+});
 
 test("desktop-bundle --launch rejects bundle and artifact overrides", () => {
   for (const [settings, args, message] of [
