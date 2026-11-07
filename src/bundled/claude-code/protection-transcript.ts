@@ -35,6 +35,7 @@ export async function protectionTranscript(
   const stop = (reason = new Error("Transcript reader stopped")) => {
     if (stopped) return;
     stopped = true;
+    signal.removeEventListener("abort", abort);
     failed(reason);
     for (const call of pending.values()) call.reject(reason);
     pending.clear();
@@ -82,10 +83,9 @@ export async function protectionTranscript(
         error = (error + data).slice(-2000);
       },
     });
-    void process.exited.then(() => {
-      signal.removeEventListener("abort", abort);
-      stop(new Error(error.trim() || "Transcript reader stopped"));
-    });
+    void process.exited.then(() =>
+      stop(new Error(error.trim() || "Transcript reader stopped")),
+    );
     if (stopped || signal.aborted) {
       await process.kill();
       signal.throwIfAborted();
@@ -93,52 +93,46 @@ export async function protectionTranscript(
     }
     const child = process;
     const size = await initialized;
-    const raw: TextSource & { dispose(): void } = {
-      dispose: () => {
-        signal.removeEventListener("abort", abort);
-        stop();
-      },
-      read: async function* () {
-        let offset = 0;
-        const decoder = new TextDecoder("utf-8", { fatal: true });
-        for (;;) {
-          signal.throwIfAborted();
-          if (stopped) throw new Error("Transcript reader stopped");
-          const id = next++;
-          const answer = new Promise<Reply>((resolve, reject) =>
-            pending.set(id, { resolve, reject }),
-          );
-          void answer.catch(() => {});
-          await child.write(JSON.stringify({ id, offset }) + "\n");
-          const value = await answer;
-          const bytes = Uint8Array.from(atob(value.data), (char) =>
-            char.charCodeAt(0),
-          );
-          if (
-            bytes.length > 65536 ||
-            value.offset !== offset + bytes.length ||
-            value.offset > size ||
-            value.done !== (value.offset === size) ||
-            (!bytes.length && !value.done)
-          )
-            throw new Error("Invalid transcript section");
-          offset = value.offset;
-          const text = decoder.decode(bytes, { stream: true });
-          if (text) yield text;
-          if (value.done) {
-            // The snapshot can end halfway through a scalar in Claude's last
-            // unfinished record; complete records still require valid UTF-8.
-            try {
-              const tail = decoder.decode();
-              if (tail) yield tail;
-            } catch {
-              /* Incomplete append. */
-            }
-            return;
+    async function* readSnapshot() {
+      let offset = 0;
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      for (;;) {
+        signal.throwIfAborted();
+        if (stopped) throw new Error("Transcript reader stopped");
+        const id = next++;
+        const answer = new Promise<Reply>((resolve, reject) =>
+          pending.set(id, { resolve, reject }),
+        );
+        void answer.catch(() => {});
+        await child.write(JSON.stringify({ id, offset }) + "\n");
+        const value = await answer;
+        const bytes = Uint8Array.from(atob(value.data), (char) =>
+          char.charCodeAt(0),
+        );
+        if (
+          bytes.length > 65536 ||
+          value.offset !== offset + bytes.length ||
+          value.offset > size ||
+          value.done !== (value.offset === size) ||
+          (!bytes.length && !value.done)
+        )
+          throw new Error("Invalid transcript section");
+        offset = value.offset;
+        const text = decoder.decode(bytes, { stream: true });
+        if (text) yield text;
+        if (value.done) {
+          // The snapshot can end halfway through a scalar in Claude's last
+          // unfinished record; complete records still require valid UTF-8.
+          try {
+            const tail = decoder.decode();
+            if (tail) yield tail;
+          } catch {
+            /* Incomplete append. */
           }
+          return;
         }
-      },
-    };
+      }
+    }
     // Project one native record at a time using the same source rules as small
     // histories. The runtime owns record parsing; transport never holds the
     // complete transcript and repeated tool catalogues do not reach reviewers.
@@ -152,20 +146,20 @@ export async function protectionTranscript(
         if (released) return;
         released = true;
         readers--;
-        if (retired && !readers) raw.dispose();
+        if (retired && !readers) stop();
       };
     };
     const source: TextSource & { dispose(): void; retain(): () => void } = {
       retain,
       dispose: () => {
         retired = true;
-        if (!readers) raw.dispose();
+        if (!readers) stop();
       },
       read: async function* () {
         const release = retain();
         try {
           let line = "";
-          for await (const part of raw.read()) {
+          for await (const part of readSnapshot()) {
             line += part;
             for (
               let end = line.indexOf("\n");
@@ -212,7 +206,6 @@ export async function protectionTranscript(
     }
   } catch (error) {
     stop();
-    signal.removeEventListener("abort", abort);
     throw error;
   }
 }

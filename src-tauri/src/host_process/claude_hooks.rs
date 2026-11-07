@@ -1,6 +1,5 @@
 //! Claude's callback timeout otherwise keeps the original result. A native
 //! deadline kills the entire worker even when its frontend stops responding.
-use serde_json::Value;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -29,43 +28,16 @@ struct ControlRequest {
 struct ControlResponse {
     request_id: Option<String>,
     subtype: Option<String>,
-    #[serde(default)]
-    response: ObjectOnly,
+    response: Option<ResponseObject>,
 }
-#[derive(Default)]
-struct ObjectOnly(bool);
-impl<'de> serde::Deserialize<'de> for ObjectOnly {
+struct ResponseObject;
+impl<'de> serde::Deserialize<'de> for ResponseObject {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct Visitor;
         impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = ObjectOnly;
+            type Value = ResponseObject;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a JSON value")
-            }
-            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self::Value, E> {
-                Ok(ObjectOnly(false))
-            }
-            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self::Value, E> {
-                Ok(ObjectOnly(false))
-            }
-            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self::Value, E> {
-                Ok(ObjectOnly(false))
-            }
-            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Self::Value, E> {
-                Ok(ObjectOnly(false))
-            }
-            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Self::Value, E> {
-                Ok(ObjectOnly(false))
-            }
-            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
-                Ok(ObjectOnly(false))
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> Result<Self::Value, A::Error> {
-                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
-                Ok(ObjectOnly(false))
+                f.write_str("a JSON object")
             }
             fn visit_map<A: serde::de::MapAccess<'de>>(
                 self,
@@ -75,38 +47,10 @@ impl<'de> serde::Deserialize<'de> for ObjectOnly {
                     .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
                     .is_some()
                 {}
-                Ok(ObjectOnly(true))
+                Ok(ResponseObject)
             }
         }
-        deserializer.deserialize_any(Visitor)
-    }
-}
-impl ControlFrame {
-    fn projection(self) -> Result<Value, String> {
-        let request = self.request;
-        let response = self.response;
-        let strings = [
-            Some(self.kind.as_str()),
-            self.request_id.as_deref(),
-            request.as_ref().and_then(|r| r.subtype.as_deref()),
-            request.as_ref().and_then(|r| r.callback_id.as_deref()),
-            response.as_ref().and_then(|r| r.request_id.as_deref()),
-            response.as_ref().and_then(|r| r.subtype.as_deref()),
-        ];
-        if strings
-            .into_iter()
-            .flatten()
-            .any(|value| value.len() > 4096)
-        {
-            return Err("Invalid Claude control metadata".into());
-        }
-        Ok(
-            serde_json::json!({"type":self.kind,"request_id":self.request_id,
-                "request":{"subtype":request.as_ref().and_then(|r|r.subtype.as_ref()),"callback_id":request.as_ref().and_then(|r|r.callback_id.as_ref())},
-                "response":{"request_id":response.as_ref().and_then(|r|r.request_id.as_ref()),"subtype":response.as_ref().and_then(|r|r.subtype.as_ref()),
-                    "response":if response.as_ref().is_some_and(|r|r.response.0){Some(serde_json::json!({}))}else{None}}
-            }),
-        )
+        deserializer.deserialize_map(Visitor)
     }
 }
 #[derive(Default)]
@@ -118,7 +62,7 @@ struct Frames {
     cancel: Option<oneshot::Sender<()>>,
 }
 impl Frames {
-    fn push(&mut self, data: &[u8], now: Instant) -> Result<Vec<Value>, String> {
+    fn push(&mut self, data: &[u8], now: Instant) -> Result<Vec<ControlFrame>, String> {
         use std::io::{Seek, SeekFrom, Write};
         let mut frames = Vec::new();
         for part in data.split_inclusive(|byte| *byte == b'\n') {
@@ -147,7 +91,7 @@ impl Frames {
                     let frame: ControlFrame =
                         serde_json::from_reader(std::io::BufReader::new(file))
                             .map_err(|_| "Invalid protected Claude frame")?;
-                    frames.push(frame.projection()?);
+                    frames.push(frame);
                 }
                 self.nonempty = false;
             }
@@ -249,11 +193,14 @@ impl ClaudeHooks {
                 }
             }
             for frame in frames {
-                if output
-                    && frame["type"] == "control_request"
-                    && frame["request"]["subtype"] == "hook_callback"
-                {
-                    let callback = frame["request"]["callback_id"].as_str().unwrap_or_default();
+                if output && frame.kind == "control_request" {
+                    let Some(request) = frame
+                        .request
+                        .filter(|request| request.subtype.as_deref() == Some("hook_callback"))
+                    else {
+                        continue;
+                    };
+                    let callback = request.callback_id.as_deref().unwrap_or_default();
                     if !matches!(
                         callback,
                         "security-tool"
@@ -263,9 +210,10 @@ impl ClaudeHooks {
                     ) {
                         continue;
                     }
-                    let id = frame["request_id"]
-                        .as_str()
-                        .filter(|id| !id.is_empty())
+                    let id = frame
+                        .request_id
+                        .as_deref()
+                        .filter(|id| !id.is_empty() && id.len() <= 4096)
                         .ok_or("Invalid security callback")?
                         .to_string();
                     if state.pending.len() >= 16 || state.pending.contains_key(&id) {
@@ -281,13 +229,15 @@ impl ClaudeHooks {
                         },
                     );
                     timers.push((id, deadline, cancelled));
-                } else if !output && frame["type"] == "control_response" {
-                    let response = &frame["response"];
-                    if let Some(id) = response["request_id"].as_str() {
+                } else if !output && frame.kind == "control_response" {
+                    let Some(response) = frame.response else {
+                        continue;
+                    };
+                    if let Some(id) = response.request_id.as_deref() {
                         if let Some(pending) = state.pending.get(id) {
                             if pending.deadline <= now
-                                || response["subtype"] != "success"
-                                || !response["response"].is_object()
+                                || response.subtype.as_deref() != Some("success")
+                                || response.response.is_none()
                             {
                                 return Err(
                                     "A failed or late security callback cannot resume Claude"
