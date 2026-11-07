@@ -130,6 +130,13 @@ export function useMessageOpening(
       if (!verified && retained && channels.seek && controller) {
         void channels
           .seek(channelId, retained.createdAt, controller.signal, retained.id)
+          .then(() => {
+            if (
+              !controller.signal.aborted &&
+              channels.window(channelId).freshness === "cached"
+            )
+              setDecided({ key, inTimeline: false });
+          })
           .catch(() => {
             if (!controller.signal.aborted)
               setDecided({ key, inTimeline: false });
