@@ -211,6 +211,7 @@ export function useConversationAgents(
     .sort();
   return {
     activity: (session.agentActivity?.snapshot ?? noActivity)(),
+    channelThreadRoots: watchChannel ? channelThreadRoots : undefined,
     details,
     entries,
     replaced,
@@ -250,6 +251,7 @@ export function TypingIndicator({
 }) {
   const {
     activity,
+    channelThreadRoots,
     details,
     entries,
     replaced,
@@ -290,6 +292,7 @@ export function TypingIndicator({
         threadRootId,
         session.agentActivity,
         hostedAgents,
+        channelThreadRoots,
       ),
     ]),
   );

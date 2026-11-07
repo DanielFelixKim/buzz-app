@@ -62,6 +62,7 @@ export function conversationWorkStops(
   threadRootId: string | undefined,
   activity: Activity | undefined,
   agents: WorkStopAgents | undefined,
+  channelThreadRoots?: ReadonlySet<string>,
 ): {
   control: WorkStop;
   work?: LocalWork;
@@ -72,7 +73,10 @@ export function conversationWorkStops(
     (work) =>
       work.agent === agent &&
       work.channelId === channelId &&
-      (!threadRootId || work.threadRootId === threadRootId),
+      (!threadRootId || work.threadRootId === threadRootId) &&
+      (threadRootId ||
+        !channelThreadRoots ||
+        (!work.thread && !channelThreadRoots.has(work.threadRootId))),
   );
   // Top-level Solo messages steer one conversation, so they share one control.
   const solo = localActivity(

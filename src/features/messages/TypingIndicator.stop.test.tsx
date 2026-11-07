@@ -457,3 +457,66 @@ it.each([false, true])(
     );
   },
 );
+
+it("keeps in-flow Solo status and controls in the same observed-thread scope", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  const interrupt = vi.fn(async () => undefined);
+  const window = f.session.channels.window("channel");
+  const rows = window.rows.map((row) => ({
+    ...row,
+    replyCount: row.id === root ? 1 : 0,
+  }));
+  const session = {
+    ...f.session,
+    channels: { ...f.session.channels, window: () => ({ ...window, rows }) },
+    agentActivity: { ...f.session.agentActivity, interrupt },
+  } as typeof f.session;
+  const running = {
+    scope: "test",
+    agent,
+    channelId: "channel",
+    threadRootId: root,
+    messageId: root,
+    startedAt: 1,
+    state: "working" as const,
+    soloChat: true as const,
+    stoppable: true as const,
+  };
+  f.update([], {
+    local: [
+      { ...running, step: { tool: "Read", target: "first.txt" } },
+      {
+        ...running,
+        threadRootId: secondRoot,
+        messageId: secondRoot,
+        startedAt: 2,
+        state: "waiting",
+      },
+    ],
+  });
+  const view = render(
+    <TypingIndicator inFlow session={session} channelId="channel" />,
+  );
+  const trigger = screen.getByRole("button", {
+    name: "Activity: Agent working",
+  });
+  expect(trigger.querySelector('[data-state="waiting"]')).not.toBeNull();
+  await user.click(trigger);
+  expect(screen.getByText("Received · waiting to start")).toBeVisible();
+  expect(screen.queryByText("Reading first.txt")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Stop Agent" }));
+  expect(interrupt).toHaveBeenLastCalledWith(agent, "channel", secondRoot);
+  view.unmount();
+  render(
+    <TypingIndicator
+      inFlow
+      session={session}
+      channelId="channel"
+      threadRootId={root}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Reading first.txt" }));
+  await user.click(screen.getByRole("button", { name: "Stop Agent" }));
+  expect(interrupt).toHaveBeenLastCalledWith(agent, "channel", root);
+});
