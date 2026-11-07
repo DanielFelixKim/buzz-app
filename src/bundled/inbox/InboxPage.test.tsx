@@ -2224,7 +2224,7 @@ it("describes a long row by its bounded preview and never shows an oversized bod
   expect(hugeRow).not.toHaveTextContent("secret");
 });
 
-it("names an attachment-only row by what it attaches", async () => {
+it("names an attachment-only row by what it attaches, bracketed as a description", async () => {
   const h = fixture();
   const gif = message(
     h.alice,
@@ -2236,9 +2236,10 @@ it("names an attachment-only row by what it attaches", async () => {
   h.events.push(gif);
   h.emit([gif]);
   render(h.view);
+  // Shown as "[GIF]" so it never reads as typed text; read out as "GIF".
   expect(
     await screen.findByRole("button", { description: "GIF" }),
-  ).toHaveTextContent("GIF");
+  ).toHaveTextContent("[GIF]");
 });
 
 it("distinguishes same-sender thread choices by their visible safe preview", async () => {

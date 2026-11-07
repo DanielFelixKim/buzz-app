@@ -264,7 +264,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
   activity clears the loading error.
   Each row previews its message as the conversation shows it, with formatting, mentions and custom emoji,
-  in up to two lines; a message with only attachments names what it attaches, such as “GIF” or “3 images”.
+  in up to two lines; a message with only attachments names what it attaches in italic brackets, such as “[GIF]” or “[3 images]”.
   A DM row whose unread messages are all in one thread opens that thread; later DM messages outside it stay
   unread until you open the whole DM, which its row then does.
   **Reactions** shows recent reactions to your messages, with shared emoji grouped together per message and each person’s remaining emoji in their own row; selecting it turns Unread off.

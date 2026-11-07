@@ -8,6 +8,7 @@ import {
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { MessageMarkdown } from "./MessageMarkdown";
+import styles from "./Messages.module.css";
 import { useReferenceDirectory } from "./ReferenceText";
 
 /** A body's bounded plain text, else what it attaches. */
@@ -61,9 +62,19 @@ export function MessagePreview({
   const directory = useReferenceDirectory(session);
   const text = useMemo(() => plainText(row.content), [row.content]);
   const fallback = plainPreview(row, text);
-  // Attachment-only and fully hidden bodies keep the plain text, as does a
-  // diff, whose content is a raw patch the timeline never renders as Markdown.
-  if (row.diff || !text) return fallback;
+  // A diff keeps its plain text: its content is a raw patch the timeline never
+  // renders as Markdown.
+  if (row.diff) return fallback;
+  // An attachment-only or fully hidden body is described, not quoted: styled as
+  // an image's alt text, and bracketed so it never reads as typed text.
+  if (!text)
+    return (
+      <span className={styles.imageAlt}>
+        <span aria-hidden="true">[</span>
+        {fallback}
+        <span aria-hidden="true">]</span>
+      </span>
+    );
   return (
     <MessageMarkdown
       row={row}
