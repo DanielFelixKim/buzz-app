@@ -3180,6 +3180,39 @@ it.each(["mention", "watch"] as const)(
   },
 );
 
+it("counts a queued mention as work until custody elsewhere drops it", async () => {
+  const f = await setup();
+  const claimStarted = runnerGate();
+  const claim = runnerGate<boolean>();
+  f.native.claim.mockImplementationOnce(async () => {
+    claimStarted.resolve(undefined);
+    return claim.promise;
+  });
+  try {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await claimStarted.promise;
+    f.emit({
+      events: [
+        event("queued-mention", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    // Accepted but not started: a restart now would lose it.
+    expect(f.run).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(f.service.work.workingCount()).toBe(1));
+    claim.resolve(false);
+    await vi.waitFor(() => expect(f.service.work.workingCount()).toBe(0));
+    expect(f.run).not.toHaveBeenCalled();
+  } finally {
+    claim.resolve(false);
+  }
+});
+
 it.each([false, new Error("Custody unavailable")])(
   "rechecks native custody before an immediate session mutation: %s",
   async (denied) => {

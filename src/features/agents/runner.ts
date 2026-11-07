@@ -647,11 +647,11 @@ export class AgentRunners {
     this.turns = this.left = this.stopped = host.interrupted.read();
   }
 
-  /** Whether any agent has a job in a lane or a turn still working. */
+  /** Whether any agent has a job queued or in a lane, or a turn still working. */
   isWorking() {
     return this.workingCountNow > 0;
   }
-  /** How many agents have a job in a lane or a turn still working. */
+  /** How many agents have a job queued or in a lane, or a turn still working. */
   workingCount() {
     return this.workingCountNow;
   }
@@ -663,7 +663,13 @@ export class AgentRunners {
   private noteWorking() {
     let count = 0;
     for (const runner of this.runners.values())
-      if (runner.busy.size > 0 || runner.working > 0) count++;
+      if (
+        runner.busy.size > 0 ||
+        runner.working > 0 ||
+        runner.queues.mention.length > 0 ||
+        runner.queues.watch.length > 0
+      )
+        count++;
     if (count === this.workingCountNow) return;
     this.workingCountNow = count;
     for (const listener of this.workingListeners) listener();
@@ -2036,6 +2042,7 @@ export class AgentRunners {
     runner.queues.watch.length = 0;
     runner.later.length = 0;
     runner.waiting.clear();
+    this.noteWorking();
   }
   /** Runs a matched watch's classifier, then queues the event if it passes.
    * The classifier runs after the watch's selectors and filter, and before the
@@ -2462,6 +2469,7 @@ export class AgentRunners {
     rate.admitted++;
     if (runner.activityClaimed) this.showWork(runner, job);
     queue.push(job);
+    this.noteWorking();
     void this.drain(runner);
     return true;
   }
@@ -2593,6 +2601,8 @@ export class AgentRunners {
       if (next.job) this.start(runner, agent, type, run, next.lane, next.job);
     }
     runner.running = false;
+    // Queued work may have been taken, dropped or discarded above.
+    this.noteWorking();
   }
   /** The job a free lane starts next, taken from its queue; its `job` is
    * undefined when the one taken is no longer current. */
