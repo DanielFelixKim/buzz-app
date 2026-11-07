@@ -683,11 +683,16 @@ it("fold preserves historical message/edit mappings and per-reaction URLs withou
   const original = message(viewer, "c", ":party:", 1, [
     ["emoji", "party", url],
   ]);
-  const edit = (key: Key, time: number, tags: string[][]) =>
+  const edit = (
+    key: Key,
+    time: number,
+    tags: string[][],
+    content = "edited :party:",
+  ) =>
     signed(key, {
       kind: 40003,
       created_at: time,
-      content: "edited :party:",
+      content,
       tags: [["e", original.id], ...tags],
     });
   const reactions = ["https://one.test/p", "https://two.test/p"].map(
@@ -736,9 +741,16 @@ it("fold preserves historical message/edit mappings and per-reaction URLs withou
   expect(
     fold(
       edit(viewer, 2, [["emoji", wave.shortcode, wave.url]]),
-      edit(viewer, 3, []),
+      edit(viewer, 3, [], "edited :party: :wave:"),
     )?.emoji,
   ).toEqual([wave, { shortcode: "party", url }]);
+  // A shortcode the latest content dropped loses its mapping.
+  expect(
+    fold(
+      edit(viewer, 2, [["emoji", wave.shortcode, wave.url]], ":wave:"),
+      edit(viewer, 3, []),
+    )?.emoji,
+  ).toEqual([{ shortcode: "party", url }]);
   expect(
     fold(edit(member, 4, [["emoji", "party", "https://spoof.test/p"]]))?.emoji,
   ).toEqual([{ shortcode: "party", url }]);

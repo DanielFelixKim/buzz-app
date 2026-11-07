@@ -4,7 +4,7 @@ import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { agentAudience } from "./audience";
 import { pluginRequestId } from "./plugin-request";
-import { emojiTags } from "./emoji";
+import { emojiTags, referencedEmoji } from "./emoji";
 import { objectBody } from "./body";
 import { huddleRoom } from "../huddle/lifecycle";
 import { newer } from "./events";
@@ -504,10 +504,13 @@ export function foldMessages(
         attachments: Object.freeze(
           parseAttachments(attachmentEvent, projected.urls, attachmentNames),
         ),
-        // Each shortcode keeps its latest explicit mapping: newest edit first.
+        // Each shortcode the content still uses keeps its latest explicit
+        // mapping: newest edit first.
         emoji: emojiTags({
           tags: [...edits, event].flatMap((item) => item.tags),
-        }),
+        }).filter(({ shortcode }) =>
+          referencedEmoji(content).includes(shortcode),
+        ),
         reactions: groupReactions(
           aux.filter((item) => item.kind === 7),
           deleted,
