@@ -1423,3 +1423,32 @@ it("refuses admission after a failed process refresh until it is retried", async
   expect(fake.geese).toHaveLength(2);
   await process.shutdown();
 });
+
+it.each([false, true])(
+  "passes an explicit disabled voice environment (protected=%s)",
+  async (protectedWorker) => {
+    const fake = fakeSpawn();
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      protectedWorker
+        ? {
+            key: "policy",
+            stateKey: "revision",
+            processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+            spawn: (options) => fake.spawn("goose", options),
+            assertAvailable() {},
+            check: async () => {},
+          }
+        : undefined,
+      () => undefined,
+      () => false,
+    );
+    try {
+      await process.get();
+      expect(fake.geese[0]?.env.GOOSE_LIVE_VOICE_ENABLED).toBe("false");
+    } finally {
+      await process.shutdown();
+    }
+  },
+);

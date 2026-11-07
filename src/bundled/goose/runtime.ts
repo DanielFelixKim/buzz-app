@@ -67,7 +67,12 @@ import {
   type ToolServer,
 } from "./goose";
 import { STOP_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
-import { AgentProcess, AgentSessions, localSessions } from "./sessions";
+import {
+  AgentProcess,
+  AgentSessions,
+  localSessions,
+  abortable,
+} from "./sessions";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -225,6 +230,7 @@ export class GooseRuntime {
     );
     this.voiceSeats.add(abort);
     let media: Awaited<ReturnType<typeof openVoice>> | undefined;
+    let promptChanged = false;
     let openingDone!: () => void;
     const opened = new Promise<void>((resolve) => {
       openingDone = resolve;
@@ -238,8 +244,11 @@ export class GooseRuntime {
         await opened;
         try {
           await media?.close();
+          // Before admission, the busy task belongs to typed work. Canceling
+          // this opening must release its lease without waiting for that task.
+          if (!promptChanged) return;
           held.interrupt();
-          await held.idle();
+          await held.externalIdle();
           await held.process
             .request(
               "_goose/unstable/session/system-prompt/set",
@@ -267,9 +276,11 @@ export class GooseRuntime {
     };
     signal.addEventListener("abort", onAbort, { once: true });
     try {
-      await held.idle();
+      await abortable(held.idle(), signal);
       signal.throwIfAborted();
+      held.reserve();
       entry.contexts.set(channelId, { channel: channelId, topLevel: true });
+      promptChanged = true;
       await held.process.request(
         "_goose/unstable/session/system-prompt/set",
         {

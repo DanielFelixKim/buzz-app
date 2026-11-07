@@ -204,6 +204,7 @@ export function fakeSpawn(
     const reply = (id: number | string | undefined, result: unknown) =>
       send({ jsonrpc: "2.0", ...(id !== undefined && { id }), result });
     const running = new Map<string, FakeTurn>();
+    const liveInteractions = new Set<string>();
     const fake: FakeGoose = {
       id,
       options: process,
@@ -292,7 +293,33 @@ export function fakeSpawn(
         case "_goose/unstable/session/system-prompt/set":
           fake.prompts.set(sessionId, String(params.text));
           return reply(id, {});
+        case "_goose/unstable/session/live-voice/start":
+          if (running.has(sessionId) || liveInteractions.has(sessionId))
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: "Goose is already working" },
+            });
+          liveInteractions.add(sessionId);
+          return reply(id, {
+            interactionId: `voice-${sessionId}`,
+            answerSdp: "answer",
+          });
+        case "_goose/unstable/session/live-voice/stop":
+          liveInteractions.delete(sessionId);
+          return reply(id, {});
         case "session/prompt": {
+          // Mirrors ActiveRunRegistry::start_prompt_run: the reservation
+          // spans the entire interaction, including quiet delegation gaps.
+          if (liveInteractions.has(sessionId))
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: {
+                code: -32603,
+                message: "Live voice interaction is active",
+              },
+            });
           const runId = `run-${fake.turns.length + 1}`;
           const text = (params.prompt as { text: string }[])
             .map((block) => block.text)

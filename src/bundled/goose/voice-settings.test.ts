@@ -205,3 +205,20 @@ it("releases serialized settings after a silent ACP read times out", async () =>
     vi.useRealTimers();
   }
 });
+
+it("refuses to enable voice when the device preference cannot be saved", async () => {
+  const { settings, storage, changed } = setup();
+  vi.spyOn(storage, "setItem").mockImplementation(() => {
+    throw new Error("storage unavailable");
+  });
+  await expect(settings.setEnabled(true)).rejects.toThrow(
+    "storage unavailable",
+  );
+  expect(settings.enabled).toBe(false);
+  expect(changed).not.toHaveBeenCalled();
+  const start = vi.fn();
+  await expect(
+    settings.start(new AbortController().signal, start),
+  ).rejects.toThrow("Turn on");
+  expect(start).not.toHaveBeenCalled();
+});

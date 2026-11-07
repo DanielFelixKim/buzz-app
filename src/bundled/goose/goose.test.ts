@@ -107,26 +107,75 @@ describe("GooseProcess", () => {
     await goose.kill();
   });
 
-  it("queues typed turns behind voice delegation and drains after its end", async () => {
+  it.each([false, true])(
+    "queues typed work for the whole live reservation (delegated=%s)",
+    async (delegated) => {
+      const { open, process, goose } = await start();
+      const session = await open();
+      session.observeExternalRuns(true);
+      session.reserveExternal();
+      await goose.request("_goose/unstable/session/live-voice/start", {
+        sessionId: session.id,
+      });
+      // Positive control: a real prompt in a quiet live gap is refused by
+      // goose's registry, so a fixture that allowed it cannot pass this test.
+      await expect(
+        goose.request("session/prompt", {
+          sessionId: session.id,
+          prompt: [{ type: "text", text: "must be refused" }],
+        }),
+      ).rejects.toThrow("Live voice interaction is active");
+      if (delegated) {
+        process.update(session.id, {
+          sessionUpdate: "session_info_update",
+          _meta: { goose: { activeRunId: "delegated" } },
+        });
+        await flush();
+      }
+      const typed = session.send("typed after speech");
+      await flush();
+      const before = process.received.filter(
+        (message) => message.method === "session/prompt",
+      ).length;
+      expect(before).toBe(1); // Only the deliberate refused positive control.
+      if (delegated) {
+        process.update(session.id, {
+          sessionUpdate: "session_info_update",
+          _meta: { goose: { activeRunId: null } },
+        });
+        await flush();
+      }
+      await session.externalIdle(); // Must not deadlock on queued typed work.
+      expect(session.current()()).toBe(false); // Queued work has no tool authority.
+      expect(process.turns).toHaveLength(0);
+      expect(
+        process.received.filter(
+          (message) => message.method === "session/prompt",
+        ),
+      ).toHaveLength(before);
+      await goose.request("_goose/unstable/session/live-voice/stop", {
+        sessionId: session.id,
+      });
+      session.observeExternalRuns(false);
+      await expect(typed).resolves.toMatchObject({ ok: true });
+      expect(process.turns.map((turn) => turn.text)).toEqual([
+        "typed after speech",
+      ]);
+      await goose.kill();
+    },
+  );
+
+  it("refuses to claim voice after typed work won the idle-to-reserve race", async () => {
     const { open, process, goose } = await start();
+    process.hold = true;
     const session = await open();
     session.observeExternalRuns(true);
-    process.update(session.id, {
-      sessionUpdate: "session_info_update",
-      _meta: { goose: { activeRunId: "delegated" } },
-    });
-    await flush();
-    const typed = session.send("typed after speech");
-    await flush();
-    expect(process.turns).toHaveLength(0);
-    process.update(session.id, {
-      sessionUpdate: "session_info_update",
-      _meta: { goose: { activeRunId: null } },
-    });
-    await expect(typed).resolves.toMatchObject({ ok: true });
-    expect(process.turns.map((turn) => turn.text)).toEqual([
-      "typed after speech",
-    ]);
+    await session.idle();
+    const typed = session.send("typed won");
+    expect(() => session.reserveExternal()).toThrow("not idle");
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    process.turns[0]?.finish();
+    await typed;
     await goose.kill();
   });
 
@@ -189,6 +238,7 @@ describe("GooseProcess", () => {
     await vi.waitFor(() => expect(process.turns).toHaveLength(1));
     const current = session.current();
     session.interruptExternalRun();
+    session.observeExternalRuns(false);
     expect(process.cancelled).toEqual([]);
     expect(current()).toBe(true);
     process.turns[0]?.finish();

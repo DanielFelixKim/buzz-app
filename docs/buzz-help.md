@@ -42,6 +42,7 @@ model, voice and key are shared with the goose CLI and desktop app on this Mac;
 the huddle on/off switch belongs only to Buzz. Failed saves turn that switch off.
 A goose-acp build with live-voice support is required; the card reports availability.
 Existing calls keep their settings until rejoin. Turning voice off ends them.
+Typed messages in the same conversation wait until Goose leaves voice.
 Goose transcript chunks appear when the next transcript message starts, so the
 last utterance may be absent when leaving.
 

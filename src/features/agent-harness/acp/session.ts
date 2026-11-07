@@ -117,7 +117,26 @@ export class AcpSession {
 
   /** A retained voice session can run work initiated by the harness. */
   private externalRuns = false;
+  private externalReserved = false;
+  private externalIdlers: (() => void)[] = [];
+  /** Goose reserves the whole live interaction, including gaps between runs. */
+  reserveExternal() {
+    if (!this.externalRuns || !this.quiet() || this.closed)
+      throw new Error("The session is not idle for voice");
+    this.externalReserved = true;
+  }
+  /** Teardown waits for delegated work, not text waiting behind the reservation. */
+  externalIdle(): Promise<void> {
+    if (this.closed || !this.externalRun) return Promise.resolve();
+    return new Promise((resolve) => this.externalIdlers.push(resolve));
+  }
   observeExternalRuns(enabled: boolean) {
+    if (!enabled) {
+      // A canceled opening can release its lease while pre-existing typed
+      // work still runs. That work keeps its tool authority.
+      if (this.externalReserved || this.externalRun) this.generation++;
+      this.externalReserved = false;
+    }
     this.externalRuns = enabled;
     this.wake();
     void this.pump();
@@ -196,9 +215,12 @@ export class AcpSession {
   /** Whether the work running now, if any, still runs unstopped and
    * unfinished when asked later; work after it is not that work. */
   current(): () => boolean {
-    const generation = this.stopped || this.quiet() ? -1 : this.generation;
-    return () =>
-      this.generation === generation && !this.stopped && !this.quiet();
+    const active = () =>
+      !this.stopped &&
+      !this.quiet() &&
+      (!this.externalReserved || this.externalRun);
+    const generation = active() ? this.generation : -1;
+    return () => this.generation === generation && active();
   }
 
   /** A final message succeeded: the work counts as done at once, unless
@@ -393,7 +415,13 @@ export class AcpSession {
   }
 
   private async pump() {
-    if (this.prompting || this.handingOff || this.externalRun) return;
+    if (
+      this.prompting ||
+      this.handingOff ||
+      this.externalReserved ||
+      this.externalRun
+    )
+      return;
     this.prompting = true;
     try {
       while (this.queue.length && !this.handingOff && !this.closed) {
@@ -615,6 +643,8 @@ export class AcpSession {
     );
   }
   private wake() {
+    if (this.closed || !this.externalRun)
+      for (const resolve of this.externalIdlers.splice(0)) resolve();
     if (!this.quiet()) return;
     this.generation++;
     for (const resolve of this.idlers.splice(0)) resolve();
