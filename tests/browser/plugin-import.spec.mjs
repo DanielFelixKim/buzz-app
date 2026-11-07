@@ -223,6 +223,10 @@ async function nativeImports(
               ...(command === "plugin_import_url" && {
                 source: args.url,
                 commit: null,
+                candidates: preview.candidates.map((candidate) => ({
+                  ...candidate,
+                  revision: args.sha256,
+                })),
               }),
               token: `preview-${++previewSequence}`,
             };
@@ -2092,4 +2096,67 @@ test("an artifact link reviews and installs the pinned URL", async ({
       args: { token: "preview-1", path: "." },
     },
   ]);
+});
+
+test("a new pinned URL link updates a URL installation without Git discovery", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  const link = (sha256) =>
+    `buzz://plugin-install?id=example.artifact&url=${encodeURIComponent(artifactUrl)}&sha256=${sha256}`;
+  await nativeImports(page, artifactPlugin, { warnings: [] }, [
+    link(artifactSha),
+  ]);
+  await servesArtifact(page);
+  await page.goto(app.origin);
+  const review = page.getByRole("dialog", {
+    name: "Review Artifact Plugin access",
+    exact: true,
+  });
+  await review
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  const next = "b".repeat(64);
+  await page.evaluate(
+    ({ next, link }) => {
+      window.artifactSha256 = next;
+      window.deliverPluginLink(link);
+    },
+    { next, link: link(next) },
+  );
+  const updateReview = page.getByRole("dialog", {
+    name: "Update Artifact",
+    exact: true,
+  });
+  await expect(updateReview).toBeVisible();
+  await expect(updateReview).toContainText(`SHA-256: ${next}`);
+  await updateReview
+    .getByRole("button", { name: "Update", exact: true })
+    .click();
+  await expect(updateReview).toBeHidden();
+  await settingsDialog(page)
+    .getByRole("button", { name: "View Artifact details", exact: true })
+    .click();
+  const updates = page.getByRole("region", {
+    name: "Plugin updates",
+    exact: true,
+  });
+  await expect(updates).toContainText(`SHA-256: ${next}`);
+  await expect(updates).toContainText(artifactUrl);
+  await refreshBackground(page);
+  expect(
+    await page.evaluate(() =>
+      window.importCalls.filter(
+        ({ command }) =>
+          command === "plugin_import_git" || command === "plugin_update_check",
+      ),
+    ),
+  ).toEqual([]);
+  expect(
+    (await importCalls(page)).filter(
+      ({ command }) => command === "plugin_import_install",
+    ),
+  ).toHaveLength(2);
 });
