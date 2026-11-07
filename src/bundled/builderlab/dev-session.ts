@@ -110,6 +110,7 @@ export function createDevSession() {
       async () => {
         const response = await fetch(
           `/api/builderlab/capabilities?revision=${encodeURIComponent(current.revision)}`,
+          { signal: lifetime.signal },
         );
         if (!response.ok) throw new Error("Capability check failed");
         const result = await response.json();

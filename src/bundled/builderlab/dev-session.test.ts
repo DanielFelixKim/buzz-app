@@ -474,6 +474,7 @@ it("refreshes only capabilities through the broker while preserving its owner an
     expect(h.session.snapshot()).toBe(previous);
     expect(h.fetch).toHaveBeenLastCalledWith(
       "/api/builderlab/capabilities?revision=one",
+      { signal: viewer.signal },
     );
   } finally {
     h.session.dispose();
@@ -521,3 +522,57 @@ it("restores the broker's capability cache age instead of starting another minut
     clock.mockRestore();
   }
 });
+
+it.each(["sign-out", "replacement", "disposal"] as const)(
+  "cancels a pending capability read on %s without waiting for its response",
+  async (end) => {
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const h = setup();
+    const response = deferred<Response>();
+    let refresh: Promise<void> | undefined;
+    try {
+      h.events.emit("one", "A");
+      await signedIn(h.session);
+      const viewer = h.session.viewerSession();
+      now += 60_000;
+      h.fetch.mockImplementationOnce(
+        (_url, init) =>
+          new Promise((resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            response.promise.then(resolve, reject);
+          }),
+      );
+      refresh = h.session.refreshCapabilities();
+      await vi.waitFor(() => expect(h.fetch).toHaveBeenCalledOnce());
+      const signal = h.fetch.mock.calls[0]?.[1]?.signal;
+      expect(signal?.aborted).toBe(false);
+      if (end === "sign-out") h.session.signOut();
+      else if (end === "replacement") h.events.emit("two", "B");
+      else h.session.dispose();
+      expect(signal?.aborted).toBe(true);
+      expect(viewer.signal.aborted).toBe(true);
+      await refresh;
+      if (end === "replacement") {
+        await signedIn(h.session);
+        expect(h.session.snapshot().account?.subject).toBe("B");
+      } else if (end === "sign-out") {
+        expect(h.fetch).toHaveBeenLastCalledWith(
+          "/api/builderlab/sign-out",
+          expect.anything(),
+        );
+        h.events.emit("two", null);
+        expect(h.session.snapshot().status).toBe("signed-out");
+      } else expect(h.session.snapshot().status).toBe("signed-out");
+    } finally {
+      response.resolve(Response.json({ revision: "one", capabilities: {} }));
+      await refresh;
+      h.session.dispose();
+      clock.mockRestore();
+    }
+  },
+);
