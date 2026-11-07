@@ -154,8 +154,10 @@ communities connects, with its own session saved under its own fingerprint, and
 listed (hosts only) so every later launch adds it again, even once none of its
 communities remain: its session stays in Settings, and deleting an agent still
 retires the agent's grant there. A full Buzz sign-out deletes the list. Its id
-is `builderlab-{name}`, or for names of 53 to 63 bytes, which would exceed the
-64-byte id limit, the name's first 36 bytes and 16 hex digits of its SHA-256. A
+is `bb-{name}`, as Builderlab names its deployments, so its descriptor matches
+one a build lists for the same deployment and a dev build finds the session
+that build saved. For names of 61 to 63 bytes, which would exceed the 64-byte
+id limit, it is the name's first 44 bytes and 16 hex digits of its SHA-256. A
 listed server that covers the host, or has the same id, wins: a distributor's build keeps at-launch sign-in and its organization name
 by listing its server. Builds without the built-in server have none of these.
 

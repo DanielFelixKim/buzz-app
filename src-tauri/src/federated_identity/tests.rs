@@ -189,7 +189,7 @@ pub(super) fn customers_listed_in(
 #[test]
 fn a_builderlab_customer_gets_its_own_server_unless_a_compiled_one_covers_it() {
     let mut servers = config::compiled(
-        Some(r#"[{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"},{"version":1,"id":"builderlab-taken","identityOrigin":"https://identity.example","communityHosts":["taken.example"],"adapterBase":"https://identity.example","apiBasePath":"/api/"}]"#),
+        Some(r#"[{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"},{"version":1,"id":"bb-taken","identityOrigin":"https://identity.example","communityHosts":["taken.example"],"adapterBase":"https://identity.example","apiBasePath":"/api/"}]"#),
         None,
         None,
     )
@@ -228,7 +228,7 @@ fn a_builderlab_customer_gets_its_own_server_unless_a_compiled_one_covers_it() {
     };
     // A compiled server wins for its own host.
     assert_eq!(id("wss://buzz.acme.builderlab.xyz"), "bb-acme");
-    assert_eq!(id("wss://buzz.other.builderlab.xyz"), "builderlab-other");
+    assert_eq!(id("wss://buzz.other.builderlab.xyz"), "bb-other");
     let other = first.server_for("wss://buzz.other.builderlab.xyz").unwrap();
     assert!(first
         .server_for("https://BUZZ.other.builderlab.xyz:443")
@@ -239,7 +239,7 @@ fn a_builderlab_customer_gets_its_own_server_unless_a_compiled_one_covers_it() {
         "https://other.builderlab.xyz/api/goose/v1/session"
     );
     assert!(first
-        .server_for_command(None, Some("builderlab-other"))
+        .server_for_command(None, Some("bb-other"))
         .unwrap()
         .is(&other));
     // A compiled server's id is never taken over, and other hosts stay unrouted.
@@ -257,15 +257,10 @@ fn a_builderlab_customer_gets_its_own_server_unless_a_compiled_one_covers_it() {
             .iter()
             .map(|server| server.config().unwrap().id.as_str())
             .collect::<Vec<_>>(),
-        [
-            "bb-acme",
-            "builderlab-taken",
-            "bb-public",
-            "builderlab-other"
-        ]
+        ["bb-acme", "bb-taken", "bb-public", "bb-other"]
     );
     // Each added server is prepared once, before it is used.
-    assert_eq!(*prepared.lock().unwrap(), ["builderlab-other"]);
+    assert_eq!(*prepared.lock().unwrap(), ["bb-other"]);
     let late = Arc::new(AtomicUsize::new(0));
     first.on_peer(Arc::new({
         let late = late.clone();
@@ -338,7 +333,7 @@ fn a_builderlab_customer_server_is_added_again_at_every_launch() {
     // A later launch adds it before any of its communities is routed, under
     // the same account, without listing it twice.
     let next = launch();
-    assert_eq!(ids(&next), ["bb-public", "builderlab-kept"]);
+    assert_eq!(ids(&next), ["bb-public", "bb-kept"]);
     let again = next.server_for("wss://buzz.kept.builderlab.xyz").unwrap();
     assert_eq!(again.0.account, kept.0.account);
     assert_eq!(
@@ -351,7 +346,7 @@ fn a_builderlab_customer_server_is_added_again_at_every_launch() {
         "buzz.kept.builderlab.xyz\nidentity.example\nbuzz.a.b.builderlab.xyz\n\n",
     )
     .unwrap();
-    assert_eq!(ids(&launch()), ["bb-public", "builderlab-kept"]);
+    assert_eq!(ids(&launch()), ["bb-public", "bb-kept"]);
     // A server that could not be listed is not used.
     let unlisted = customers_listed_in(
         config::Config::parse(config::BUILT_IN).unwrap(),

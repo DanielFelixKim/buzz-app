@@ -35,19 +35,21 @@ pub(super) fn builderlab_customer(relay: &str) -> Option<Config> {
     .ok()
 }
 
-/// A customer server's id: `builderlab-{name}`, unless that exceeds the
-/// 64-byte limit (names of 53 to 63 bytes). Then it keeps the name's first 36
-/// bytes and adds 16 hex digits of its SHA-256, exactly 64 bytes, which no
-/// shorter name's plain id (at most 63) can equal.
+/// A customer server's id: `bb-{name}`, as Builderlab names its deployments
+/// (the built-in one is `bb-public`), so the derived descriptor is identical
+/// to one a build lists for the same deployment and finds the session that
+/// build saved. Past the 64-byte limit (names of 61 to 63 bytes) it keeps the
+/// name's first 44 bytes and adds 16 hex digits of its SHA-256, exactly 64
+/// bytes, which no shorter name's plain id (at most 63) can equal.
 fn builderlab_customer_id(name: &str) -> String {
     use sha2::{Digest, Sha256};
-    let id = format!("builderlab-{name}");
+    let id = format!("bb-{name}");
     if id.len() < 64 {
         return id;
     }
     let digest = Sha256::digest(name.as_bytes());
     let hash: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
-    format!("builderlab-{}-{hash}", &name[..36])
+    format!("bb-{}-{hash}", &name[..44])
 }
 
 /// The profile Builderlab customers' servers are added for, and where they
@@ -108,7 +110,7 @@ mod tests {
     #[test]
     fn a_builderlab_customer_server_is_derived_from_its_host() {
         let config = builderlab_customer("wss://buzz.acme-2.builderlab.xyz").unwrap();
-        assert_eq!(config.id, "builderlab-acme-2");
+        assert_eq!(config.id, "bb-acme-2");
         assert_eq!(config.identity_origin, "https://acme-2.builderlab.xyz");
         assert_eq!(
             config.endpoint("/v1/login/start").as_str(),
@@ -153,19 +155,19 @@ mod tests {
                 .unwrap()
                 .id
         };
-        let plain = "a".repeat(52);
-        assert_eq!(id(&plain), format!("builderlab-{plain}"));
+        let plain = "a".repeat(60);
+        assert_eq!(id(&plain), format!("bb-{plain}"));
         assert_eq!(id(&plain).len(), 63);
         let mut ids = std::collections::BTreeSet::new();
         for name in [
-            "a".repeat(53),
-            "a".repeat(54),
+            "a".repeat(61),
+            "a".repeat(62),
             "a".repeat(63),
             "a".repeat(62) + "b",
         ] {
             let id = id(&name);
             assert_eq!(id.len(), 64, "{name}");
-            assert!(id.starts_with(&format!("builderlab-{}-", &name[..36])));
+            assert!(id.starts_with(&format!("bb-{}-", &name[..44])));
             // Stable across launches, so its saved session is found again.
             assert_eq!(
                 id,
@@ -177,8 +179,23 @@ mod tests {
         }
         // A name spelled like another's hashed id gets an id of its own.
         let hashed = id(&"a".repeat(63));
-        let lookalike = &hashed["builderlab-".len()..];
-        assert_eq!(lookalike.len(), 53);
+        let lookalike = &hashed["bb-".len()..];
+        assert_eq!(lookalike.len(), 61);
         assert_ne!(id(lookalike), hashed);
+    }
+
+    #[test]
+    fn a_derived_server_finds_the_session_a_listed_one_saved() {
+        // A build listing the same deployment (presentation aside) saves its
+        // session under the same fingerprint, so a build deriving it reuses it.
+        let listed = Config::parse(
+            r#"{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/","signIn":"at-launch","organization":"Acme"}"#,
+        )
+        .unwrap();
+        let derived = builderlab_customer("wss://buzz.acme.builderlab.xyz").unwrap();
+        assert_eq!(
+            serde_json::to_value(derived.identity()).unwrap(),
+            serde_json::to_value(listed.identity()).unwrap()
+        );
     }
 }
