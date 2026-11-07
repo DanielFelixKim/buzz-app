@@ -1,4 +1,4 @@
-import { createTestSession } from "../test-helpers";
+import { createTestSession, deferred } from "../test-helpers";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostRequest } from "../../../features/host/service";
 import type { Credential } from "../session";
@@ -22,6 +22,8 @@ const credential = (revision: string): Credential =>
       email: "a@example.com",
       canUseRemoteAgents: false,
       canUseBuilderlabDecisions: false,
+      canDeleteBuzzCommunities: true,
+      expiresAt: "2030",
     }),
   });
 
@@ -182,23 +184,6 @@ it("turns a host transport rejection into an error", async () => {
   await expect(backend.send("list")).rejects.toThrow("Host request failed");
 });
 
-it("reads no account when Builderlab rejects the session, and keeps it", async () => {
-  let me: Reply = signedIn["/v1/auth/me"];
-  const { backend, session, signIn } = setup({
-    ...signedIn,
-    "/v1/auth/me": () => me,
-  });
-  await signIn();
-  me = { status: 500, body: {} };
-  await expect(backend.auth()).rejects.toThrow(
-    "Builderlab session check failed with HTTP 500",
-  );
-  expect(session.snapshot().status).toBe("signed-in");
-  me = { status: 401, body: {} };
-  await expect(backend.auth()).resolves.toBeNull();
-  expect(session.snapshot().status).toBe("signed-in");
-});
-
 it("refuses only the call when a community route returns 401", async () => {
   let answer: (reply: Reply) => void = () => {};
   const { backend, session, signIn, requests } = setup({
@@ -224,7 +209,7 @@ it("refuses only the call when a community route returns 401", async () => {
   expect(session.snapshot().status).toBe("signed-in");
 });
 
-it("reads the account only after sign-in's identity link settles", async () => {
+it("projects the shared account only after sign-in's identity link settles", async () => {
   const { backend, signIn, holdLink, requests } = setup(signedIn);
   let finish: () => void = () => {};
   holdLink(
@@ -238,22 +223,21 @@ it("reads the account only after sign-in's identity link settles", async () => {
   expect(requests).toEqual([]);
   finish();
   await expect(checking).resolves.toMatchObject({ email: "a@example.com" });
-  expect(requests.map(({ url }) => url)).toEqual([`${API}/v1/auth/me`]);
+  expect(requests).toEqual([]);
 });
 
-it("does not describe a session that ended during its check", async () => {
-  let answer: (reply: Reply) => void = () => {};
-  const { backend, session, signIn } = setup({
-    "/v1/auth/me": () =>
-      new Promise<Reply>((resolve) => {
-        answer = resolve;
-      }),
-  });
+it("does not describe a session that ended while linking", async () => {
+  const { backend, session, signIn, holdLink } = setup(signedIn);
+  const { promise, resolve } = deferred<void>();
+  holdLink(promise);
   await signIn();
   const checking = backend.auth();
+  const rejected = expect(checking).rejects.toThrow(
+    "Builderlab session changed",
+  );
   session.signOut();
-  answer(signedIn["/v1/auth/me"]);
-  await expect(checking).rejects.toThrow("Builderlab session changed");
+  resolve();
+  await rejected;
 });
 
 it("returns a challenge error without signing", async () => {

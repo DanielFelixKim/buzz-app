@@ -1,9 +1,5 @@
-import {
-  useEffect,
-  useEffectEvent,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCapabilities } from "../capabilities";
+import { useEffect, useEffectEvent, useState } from "react";
 import {
   ArrowsClockwiseIcon,
   RobotIcon,
@@ -24,7 +20,7 @@ export function RemoteAgents({
   session: BuilderlabSession;
   active(): boolean;
 }) {
-  const login = useSyncExternalStore(session.subscribe, session.snapshot);
+  const login = useCapabilities(session);
   const [revision, setRevision] = useState(0);
   if (login.status === "signed-in" && !login.account?.canUseRemoteAgents)
     return (

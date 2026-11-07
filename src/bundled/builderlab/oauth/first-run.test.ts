@@ -225,6 +225,7 @@ describe("the NIP-FI sign-in", () => {
         email: "a@example.com",
         canUseRemoteAgents: true,
         canUseBuilderlabDecisions: false,
+        canDeleteBuzzCommunities: false,
       },
     });
     expect(fi.service.signIn).toHaveBeenCalledOnce();

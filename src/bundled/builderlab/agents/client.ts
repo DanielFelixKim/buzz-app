@@ -160,7 +160,12 @@ export function createAgentClient(
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
-    const credential = remoteCredential();
+    const credential = session.credential();
+    const refresh = session.refreshCapabilities();
+    // Stop is urgent; refresh its cache without delaying cancellation.
+    if (path !== "cancel-agent-turn") await refresh;
+    check(credential, signal);
+    remoteCredential();
     let response: HostResponse;
     try {
       response = await session.request(credential, {
@@ -202,7 +207,8 @@ export function createAgentClient(
     body: unknown,
     signal: AbortSignal,
   ) {
-    const credential = remoteCredential();
+    signal.throwIfAborted();
+    const credential = session.credential();
     return retryRead(
       (signal) => {
         check(credential, signal);
@@ -583,7 +589,10 @@ export function createAgentClient(
       signal.throwIfAborted();
       const agentName = name.trim();
       if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
-      const credential = remoteCredential();
+      const credential = session.credential();
+      await session.refreshCapabilities();
+      check(credential, signal);
+      remoteCredential();
       const { account } = credential;
       const intent = registrationIntent(
         oauthTarget(),

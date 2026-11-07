@@ -21,6 +21,7 @@ const credential = (revision: string): Credential => ({
     email: "a@example.com",
     canUseRemoteAgents: true,
     canUseBuilderlabDecisions: true,
+    canDeleteBuzzCommunities: false,
   },
 });
 const request = {
@@ -86,6 +87,7 @@ it("never ends an FI session for a decisions 401", async () => {
     subscribe: () => () => {},
     credential: () => fi,
     signOut,
+    refreshCapabilities: async () => {},
   } as unknown as BuilderlabSession;
   const provider = builderlabProvider(session, true, async () => ({
     outcome: "failed",
@@ -148,6 +150,7 @@ it("sends nothing to Builderlab unless the account may use decisions", async () 
       email: "a@example.com",
       canUseRemoteAgents: true,
       canUseBuilderlabDecisions: false,
+      canDeleteBuzzCommunities: false,
     },
   }));
   await session.signIn();
@@ -174,6 +177,7 @@ it("offers Builderlab only while the signed-in account may use decisions", async
     account: {
       ...credential("first").account,
       canUseBuilderlabDecisions: allowed,
+      canDeleteBuzzCommunities: false,
     },
   }));
   const decide = vi.fn<BuilderlabDecide>();

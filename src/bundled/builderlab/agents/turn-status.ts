@@ -30,6 +30,7 @@ export function startTurnStatusRecovery({
   function attach() {
     const connection = relay.snapshot();
     const signedIn = session.snapshot();
+    if (signedIn.status === "signed-in") void session.refreshCapabilities();
     const next =
       connection.status === "ready" &&
       !connection.cached &&

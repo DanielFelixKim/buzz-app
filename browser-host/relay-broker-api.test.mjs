@@ -4165,6 +4165,13 @@ test("Builderlab HTTP accepts full agent instructions and isolates the fixed nat
     const { revision } = JSON.parse(
       event.slice("data: ".length).split("\n\n")[0],
     );
+    const capabilityCheck = await fetch(
+      `${h.base}/api/builderlab/capabilities`,
+    );
+    expect(capabilityCheck.status).toBe(200);
+    expect(await capabilityCheck.json()).toEqual({
+      capabilities: { can_use_remote_agents: true },
+    });
     const body = JSON.stringify({
       agent_pubkey: "a".repeat(64),
       agent_instructions: instructions,

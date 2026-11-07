@@ -1,3 +1,4 @@
+import { useCapabilities } from "./capabilities";
 // Builderlab as a decision provider: the user's Builderlab sign-in, which
 // native code sends with each call. The NIP-FI session is named by its
 // revision; its token never leaves native. It is offered only while that sign-in's account may use
@@ -51,6 +52,7 @@ export function offerBuilderlabDecisions(
   let withdraw: (() => void) | undefined;
   const update = () => {
     const state = session.snapshot();
+    if (state.status === "signed-in") void session.refreshCapabilities();
     const allowed =
       state.status === "signed-in" &&
       state.account?.canUseBuilderlabDecisions === true;
@@ -78,7 +80,7 @@ export function builderlabProvider(
     session.snapshot().status === "signed-in"
       ? session.credential()
       : undefined;
-  // Builderlab reports at sign-in whether this account may use decisions.
+  // Builderlab reports whether this account may use decisions.
   // Only an explicit yes enables them; otherwise no call goes to Builderlab.
   const permitted = (credential: Credential) =>
     credential.account.canUseBuilderlabDecisions;
@@ -88,6 +90,7 @@ export function builderlabProvider(
     description: "Use your Builderlab account.",
     // A sign-in in progress cannot answer yet.
     status: (): DecisionProviderStatus => {
+      void session.refreshCapabilities();
       const credential = signedIn();
       return native && credential && permitted(credential)
         ? "ready"
@@ -98,6 +101,9 @@ export function builderlabProvider(
       if (!native) return { outcome: "failed", reason: "unavailable" };
       const credential = signedIn();
       if (!credential)
+        return { outcome: "failed", reason: "missing_credentials" };
+      await session.refreshCapabilities();
+      if (signedIn() !== credential)
         return { outcome: "failed", reason: "missing_credentials" };
       if (!permitted(credential))
         return { outcome: "failed", reason: "unauthorized" };
@@ -135,14 +141,17 @@ export function builderlabProvider(
           : { outcome, reason }
       ) as DecisionReply;
     },
-    Settings: ({ active }) => (
-      <Login
-        session={session}
-        available={loginAvailable}
-        active={active}
-        showHeading={false}
-        openIdentity={openIdentity}
-      />
-    ),
+    Settings: ({ active }) => {
+      useCapabilities(session);
+      return (
+        <Login
+          session={session}
+          available={loginAvailable}
+          active={active}
+          showHeading={false}
+          openIdentity={openIdentity}
+        />
+      );
+    },
   };
 }

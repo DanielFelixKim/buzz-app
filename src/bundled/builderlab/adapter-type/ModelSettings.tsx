@@ -1,11 +1,5 @@
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { useCapabilities } from "../capabilities";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AgentSaveButton } from "../../../features/agents/AgentSaveButton";
 import { ModelFamilyMenu } from "../../../features/agents/ModelFamilyMenu";
@@ -65,7 +59,7 @@ export function ModelSettings({
     | { agent: RemoteAgent; subject: string; email?: string }
     | { pending: boolean; error: unknown; retry(): void };
 }) {
-  const login = useSyncExternalStore(session.subscribe, session.snapshot);
+  const login = useCapabilities(session);
   const [retrySignIn, setRetrySignIn] = useState<
     "switching" | "waiting" | "ready"
   >();

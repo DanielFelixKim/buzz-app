@@ -175,6 +175,9 @@ agents are not migrated into this type.
   Its sign-out lives in Identity → Organization sign-in, which `login/` links to,
   because community sign-in shares the session. In live development it projects
   the development broker's sign-in instead, through `brokerApi`.
+- `capabilities.ts` shares a demand-driven, one-minute permission refresh across
+  capability gates. Concurrent checks join one request; failed attempts keep
+  cached values and wait a minute before another attempt. No polling is added.
 - `oauth/` names the build's Builderlab API (`oauthTarget`). `oauth/first-run.ts`
   lets the app's first-launch welcome screen run the same native NIP-FI
   sign-in before the plugin's JavaScript starts; the app's later calls go
@@ -237,16 +240,18 @@ The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
 `true` enables remote agents. Otherwise, Harness defaults and Builderlab Settings
 show “Unavailable for this account”; the provider dialog explains the same
 restriction. The Harness defaults row has no action. Account management stays in
-Settings → Builderlab, and no Beekeeper requests are sent. Sign out and back in
-to refresh this capability.
+Settings → Builderlab, and no Beekeeper requests are sent. Permission checks
+refresh capabilities from `/v1/auth/me` with a one-minute cache shared by the
+plugin; failed checks retain the previous values. Only capabilities change;
+account identity and display details remain those read at sign-in.
 
 The plugin also offers Builderlab as a Decisions API provider. It reads
 `capabilities.can_use_builderlab_decisions` the same way, but only explicit
 `true` registers the provider, and only while the user is signed in. Otherwise
 Builderlab is not listed in Settings > Decisions API and no decision request
 goes to it. While it is registered, it answers unless the user chose another
-provider; when it goes away, TypeSafe answers. Sign out and back in to refresh
-this capability. The plugin names the NIP-FI session by its revision, and
+provider; when it goes away, TypeSafe answers. It uses the same capability refresh
+cache. The plugin names the NIP-FI session by its revision, and
 native `decide` posts to the identity origin's API with that
 session as `Authorization: Bearer`, as for the build's other Builderlab calls;
 the token never reaches the webview. A 401 there refuses only that call, and

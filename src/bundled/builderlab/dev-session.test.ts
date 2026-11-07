@@ -420,3 +420,50 @@ it.each(
     expect(Events.all.at(-1)?.close).toHaveBeenCalled();
   },
 );
+
+it("refreshes only capabilities through the broker while preserving its owner and app viewers", async () => {
+  let now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const h = setup();
+  try {
+    h.events.emit("one", "A");
+    await signedIn(h.session);
+    const owner = h.session.credential();
+    const viewer = h.session.viewerSession();
+    await h.session.refreshCapabilities();
+    expect(h.fetch).not.toHaveBeenCalled();
+    now += 60_000;
+    h.fetch.mockResolvedValueOnce(
+      Response.json({
+        capabilities: {
+          can_use_remote_agents: false,
+          can_use_builderlab_decisions: true,
+          can_delete_buzz_communities: true,
+        },
+      }),
+    );
+    await Promise.all([
+      h.session.refreshCapabilities(),
+      h.session.refreshCapabilities(),
+    ]);
+    expect(h.fetch).toHaveBeenCalledOnce();
+    expect(h.session.snapshot().account).toMatchObject({
+      subject: "A",
+      email: "A@example.com",
+      canUseRemoteAgents: false,
+      canUseBuilderlabDecisions: true,
+      canDeleteBuzzCommunities: true,
+    });
+    expect(h.session.credential()).toBe(owner);
+    expect(h.session.viewerSession()).toBe(viewer);
+    expect(viewer.signal.aborted).toBe(false);
+    now += 60_000;
+    h.fetch.mockRejectedValueOnce(new TypeError("Offline"));
+    const previous = h.session.snapshot();
+    await h.session.refreshCapabilities();
+    expect(h.session.snapshot()).toBe(previous);
+  } finally {
+    h.session.dispose();
+    clock.mockRestore();
+  }
+});

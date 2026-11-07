@@ -1,3 +1,5 @@
+import type { BuilderlabSession } from "../session";
+import { useCapabilities } from "../capabilities";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import {
   type ReactNode,
@@ -70,12 +72,15 @@ export function HostedCommunities({
   api,
   active,
   sharedSignIn = false,
+  session,
 }: {
   api: Api;
   active(): boolean;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
+  session?: BuilderlabSession;
 }) {
+  const login = useCapabilities(session);
   const activeRef = useRef(active);
   activeRef.current = active;
   const [auth, setAuth] = useState<Account | null>();
@@ -382,6 +387,7 @@ export function HostedCommunities({
   // Acting requires this device's key to be known and to match the account's.
   const ready = bound !== null && bound === local;
   const deletionEnabled =
+    login.account?.canDeleteBuzzCommunities ??
     auth?.capabilities?.can_delete_buzz_communities === true;
   // A handoff belongs to the bound identity: whenever it changes, by a local
   // action or a refresh, drop the handoff and any clipboard result in flight.
@@ -636,7 +642,12 @@ export function HostedCommunities({
                   variant="ghost"
                   size="sm"
                   disabled={busy}
-                  onClick={() => void run("refresh", () => load(true))}
+                  onClick={() =>
+                    void run("refresh", async () => {
+                      await session?.refreshCapabilities();
+                      return load(true);
+                    })
+                  }
                 >
                   <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
                 </Button>

@@ -1,3 +1,4 @@
+import { createCapabilityRefresh } from "./capabilities";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 // Public projection of the development server's login; the parent credential stays in Node.
 // Trusted local callers can still use its dedicated native viewer/Decisions routes.
@@ -29,10 +30,12 @@ type State = {
   auth: null | {
     subject: string;
     email?: string;
+    name?: string;
     expiresAt: string;
     capabilities?: {
       can_use_remote_agents?: boolean;
       can_use_builderlab_decisions?: boolean;
+      can_delete_buzz_communities?: boolean;
     };
   };
 };
@@ -40,6 +43,7 @@ type State = {
 export function createDevSession() {
   let state: LoginSnapshot = { status: "pending", checking: true };
   let owner: Credential | undefined;
+  let refreshCapabilities = async () => {};
   let viewer: BuilderlabViewerSession | undefined;
   let lifetime = new AbortController();
   let disposed = false;
@@ -54,6 +58,7 @@ export function createDevSession() {
     lifetime.abort();
     lifetime = new AbortController();
     owner = undefined;
+    refreshCapabilities = async () => {};
     viewer = undefined;
   };
   const check = (expected: Credential) => {
@@ -80,15 +85,38 @@ export function createDevSession() {
     publish({ status: "pending", checking: true });
     const storage = await accountStorage(next.auth.subject);
     if (disposed || version !== at) return;
-    const account: Account = Object.freeze({
+    let account: Account = Object.freeze({
       subject: next.auth.subject,
       email: next.auth.email ?? "",
+      ...(next.auth.name ? { name: next.auth.name } : {}),
+      expiresAt: next.auth.expiresAt,
       canUseRemoteAgents:
         next.auth.capabilities?.can_use_remote_agents === true,
       canUseBuilderlabDecisions:
         next.auth.capabilities?.can_use_builderlab_decisions === true,
+      canDeleteBuzzCommunities:
+        next.auth.capabilities?.can_delete_buzz_communities === true,
     });
-    owner = Object.freeze({ account, revision: next.revision });
+    const current = Object.freeze({
+      get account() {
+        return account;
+      },
+      revision: next.revision,
+    });
+    owner = current;
+    refreshCapabilities = createCapabilityRefresh(
+      account,
+      async () => {
+        const response = await fetch("/api/builderlab/capabilities");
+        if (!response.ok) throw new Error("Capability check failed");
+        return response.json();
+      },
+      (capabilities) => {
+        if (disposed || owner !== current) return;
+        account = Object.freeze({ ...account, ...capabilities });
+        publish({ status: "signed-in", account });
+      },
+    );
     viewer = {
       broker: { origin: window.location.origin, revision: next.revision },
       storage,
@@ -159,6 +187,7 @@ export function createDevSession() {
       if (!owner || disposed) throw new Error("Sign in to Builderlab first.");
       return owner;
     },
+    refreshCapabilities: () => refreshCapabilities(),
     async request(expected, input) {
       check(expected);
       const response = await send("request", {
@@ -258,9 +287,19 @@ export function createDevSession() {
     ...broker,
     async auth() {
       const expected = session.credential();
-      const value = await broker.auth();
+      await session.refreshCapabilities();
       check(expected);
-      return value;
+      return {
+        email: expected.account.email,
+        ...(expected.account.name === undefined
+          ? {}
+          : { name: expected.account.name }),
+        expiresAt: expected.account.expiresAt ?? "",
+        capabilities: {
+          can_delete_buzz_communities:
+            expected.account.canDeleteBuzzCommunities === true,
+        },
+      };
     },
     async send(action, body, signal) {
       const expected = session.credential();

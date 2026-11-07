@@ -924,3 +924,39 @@ it("redacts the login credential before publishing a shared failure or returning
     h.builderlab.signOut();
   }
 });
+
+it("keeps the broker sign-in and account projection when a capability-only check is refused", async () => {
+  let status = 200;
+  let invalid = false;
+  const h = account({
+    "/v1/auth/me": () =>
+      Response.json(
+        invalid
+          ? []
+          : {
+              subject: "user",
+              email: "a@example.org",
+              expires_at: "2030",
+              capabilities: { can_use_remote_agents: true },
+            },
+        { status },
+      ),
+  });
+  await signIn(h);
+  const previous = h.builderlab.snapshot();
+  status = 401;
+  await expect(h.builderlab.capabilities()).rejects.toThrow("HTTP 401");
+  expect(h.builderlab.snapshot()).toEqual(previous);
+  status = 200;
+  invalid = true;
+  await expect(h.builderlab.capabilities()).rejects.toThrow(
+    "invalid capabilities",
+  );
+  expect(h.builderlab.snapshot()).toEqual(previous);
+  invalid = false;
+  await expect(h.builderlab.capabilities()).resolves.toEqual({
+    capabilities: { can_use_remote_agents: true },
+  });
+  expect(h.builderlab.snapshot()).toEqual(previous);
+  h.builderlab.signOut();
+});

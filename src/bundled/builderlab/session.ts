@@ -1,16 +1,19 @@
+import { createCapabilityRefresh, type Capabilities } from "./capabilities";
 import type { BuilderlabViewerSession } from "../../features/browser/api";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { HostResponse } from "../../features/host/service";
 
-export type Account = Readonly<{
-  subject: string;
-  email: string;
-  canUseRemoteAgents: boolean;
-  canUseBuilderlabDecisions: boolean;
-}>;
+export type Account = Capabilities &
+  Readonly<{
+    subject: string;
+    email: string;
+    name?: string;
+    expiresAt?: string;
+  }>;
 /**
  * One sign-in: the NIP-FI session's public revision and its account. A new
- * sign-in is a new object, so identity tells a change. Never a token.
+ * sign-in is a new object, so identity tells a change. Its account getter
+ * keeps permissions current without retiring operations or viewers. Never a token.
  */
 export type Credential = Readonly<{ revision: string; account: Account }>;
 export type LoginSnapshot = Readonly<{
@@ -40,6 +43,8 @@ export type BuilderlabSession = Readonly<{
   snapshot(): LoginSnapshot;
   subscribe(listener: () => void): () => void;
   credential(): Credential;
+  /** Refresh permissions at most once per minute; failures retain cached values. */
+  refreshCapabilities(): Promise<void>;
   /** Sends `input` as `credential`'s account. */
   request(
     credential: Credential,
@@ -92,9 +97,12 @@ export async function federatedAccount(
   const value = JSON.parse(response.body) as {
     subject?: unknown;
     email?: unknown;
+    name?: unknown;
+    expires_at?: unknown;
     capabilities?: {
       can_use_remote_agents?: unknown;
       can_use_builderlab_decisions?: unknown;
+      can_delete_buzz_communities?: unknown;
     };
   };
   if (typeof value?.subject !== "string" || !value.subject.trim())
@@ -102,9 +110,15 @@ export async function federatedAccount(
   return Object.freeze({
     subject: value.subject,
     email: typeof value.email === "string" ? value.email.trim() : "",
+    ...(typeof value.name === "string" ? { name: value.name } : {}),
+    ...(typeof value.expires_at === "string"
+      ? { expiresAt: value.expires_at }
+      : {}),
     canUseRemoteAgents: value.capabilities?.can_use_remote_agents === true,
     canUseBuilderlabDecisions:
       value.capabilities?.can_use_builderlab_decisions === true,
+    canDeleteBuzzCommunities:
+      value.capabilities?.can_delete_buzz_communities === true,
   });
 }
 
@@ -112,7 +126,7 @@ const ACCOUNT_FAILED = "Could not load your Builderlab account. Try again.";
 
 /**
  * The FI build's Builderlab session over the shared native NIP-FI session.
- * Each session revision reads its account from `GET v1/auth/me` once; until
+ * Each session revision initially reads its account from `GET v1/auth/me`; until
  * then it is pending, and a failed read signs in again on retry. A 401 from
  * Builderlab refuses only that call: the native session decides when it ends.
  */
@@ -120,6 +134,7 @@ export function createNativeSession(
   identity: FederatedIdentity,
 ): BuilderlabSession {
   type Native = Credential & Readonly<{ storage: string }>;
+  let refreshCapabilities = async () => {};
   let credential: Native | undefined;
   let viewer: BuilderlabViewerSession | undefined;
   let viewerLifetime: AbortController | undefined;
@@ -148,6 +163,7 @@ export function createNativeSession(
     viewerLifetime = undefined;
     viewer = undefined;
     credential = next;
+    refreshCapabilities = async () => {};
     if (!next) return;
     viewerLifetime = new AbortController();
     viewer = {
@@ -171,8 +187,37 @@ export function createNativeSession(
     const current = identity.snapshot();
     if (current.status !== "signed-in" || current.revision !== revision)
       return project();
-    if (account) replace(Object.freeze({ revision, account, storage }));
-    else failed = revision;
+    if (account) {
+      let currentAccount = account;
+      const next: Native = Object.freeze({
+        revision,
+        storage,
+        get account() {
+          return currentAccount;
+        },
+      });
+      replace(next);
+      refreshCapabilities = createCapabilityRefresh(
+        currentAccount,
+        async () => {
+          const response = await session.request(next, {
+            path: "/v1/auth/me",
+            method: "GET",
+          });
+          if (response.status < 200 || response.status >= 300)
+            throw new Error("Account check failed");
+          return JSON.parse(response.body) as unknown;
+        },
+        (capabilities) => {
+          if (disposed || credential !== next) return;
+          currentAccount = Object.freeze({
+            ...currentAccount,
+            ...capabilities,
+          });
+          project();
+        },
+      );
+    } else failed = revision;
     project();
   }
   function project() {
@@ -223,6 +268,7 @@ export function createNativeSession(
         throw new Error("Sign in to Builderlab first.");
       return credential;
     },
+    refreshCapabilities: () => refreshCapabilities(),
     async request(owner, input) {
       const authority = identity.snapshot().authority;
       if (disposed || owner !== credential || !authority)

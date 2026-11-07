@@ -290,7 +290,7 @@ export function createBuilderlab({
     }
     throw new Error(`Builderlab request failed (HTTP ${response.status}).`);
   };
-  const me = async (session, signal) => {
+  const me = async (session, signal, capabilitiesOnly = false) => {
     const started = generation;
     const response = await fetch(`${api}/v1/auth/me`, {
       headers: { "X-BB-Session-Credential": session },
@@ -300,6 +300,7 @@ export function createBuilderlab({
     if (!response.ok) {
       if (
         response.status === 401 &&
+        !capabilitiesOnly &&
         started === generation &&
         credential === session
       )
@@ -307,6 +308,13 @@ export function createBuilderlab({
       throw new Error(
         `Builderlab session check failed with HTTP ${response.status}`,
       );
+    }
+    if (capabilitiesOnly) {
+      const value = await response.json();
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new Error("Builderlab returned invalid capabilities");
+      const { capabilities } = value;
+      return { capabilities };
     }
     const { subject, email, name, expires_at, capabilities } =
       await response.json();
@@ -367,6 +375,13 @@ export function createBuilderlab({
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    async capabilities() {
+      if (!credential) throw new Error("Sign in to Builderlab first");
+      const started = generation;
+      const result = await me(credential, session.signal, true);
+      if (started !== generation) throw new Error("Builderlab session changed");
+      return result;
     },
     async auth() {
       const current = credential;
