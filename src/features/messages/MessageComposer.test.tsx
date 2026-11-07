@@ -5482,6 +5482,59 @@ it("discloses supported fallbacks for unavailable saved Solo choices", async () 
   unsupportedEffort.unmount();
 });
 
+it("does not promise the first listed model when no current model is available", async () => {
+  const models = [{ id: "fast", label: "Fast", efforts: [] }];
+  const readyAgents = sessionAgents("channel", models);
+  const type = readyAgents.types()[0];
+  if (!type) throw new Error("The fixture agent type should exist.");
+  const noCurrentTypes = [{ ...type, models: () => ({ current: "", models }) }];
+  const agents = {
+    ...readyAgents,
+    types: () => noCurrentTypes,
+  } as Agents;
+  const { mountChat, send } = soloModelPreferenceHarness(agents);
+  const savedPick = {
+    model: "removed",
+    effort: "high",
+    type: "test/agent",
+  };
+  writeView("scope", "solo:model-picks:channel", {
+    [first.pubkey]: savedPick,
+  });
+  const composer = mountChat();
+  await composer.user.type(composer.input(), "a");
+  await composer.user.click(
+    screen.getByRole("button", { name: "First Honey" }),
+  );
+
+  const trigger = await screen.findByRole("button", { name: /Model.*effort/ });
+  expect(trigger).toHaveAccessibleDescription(
+    /Saved model is unavailable\. Send omits model and effort overrides; the agent or provider decides which model runs\./,
+  );
+  await composer.user.click(trigger);
+  expect(
+    within(screen.getByRole("dialog")).getByRole("status", {
+      name: "Saved model and effort availability",
+    }),
+  ).toHaveTextContent(
+    /Saved model is unavailable\. Send omits model and effort overrides; the agent or provider decides which model runs\./,
+  );
+  await send(composer);
+
+  await waitFor(() => expect(composer.messages.send).toHaveBeenCalledOnce());
+  expect(composer.messages.send.mock.calls[0]?.slice(0, 4)).toEqual([
+    "channel",
+    expect.stringContaining("a"),
+    [first.pubkey],
+    [],
+  ]);
+  expect(composer.messages.send.mock.calls[0]).toHaveLength(4);
+  expect(readView("scope", "solo:model-picks:channel", null)).toEqual({
+    [first.pubkey]: savedPick,
+  });
+  composer.unmount();
+});
+
 it("waits for a saved Solo pick's catalog before disclosing its fallback", async () => {
   let resolveModels!: (models: Models) => void;
   const pendingModels = new Promise<Models>((resolve) => {

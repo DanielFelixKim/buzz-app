@@ -106,6 +106,7 @@ export function ComposerModels({
           visible,
           value[visible.pubkey] ?? {},
           resettable,
+          explicitOnly,
         );
         return visible.loading ||
           visible.failed ||
@@ -116,7 +117,7 @@ export function ComposerModels({
           ? [visible]
           : [];
       }),
-    [mentioned, startsThread, resettable, value],
+    [mentioned, startsThread, resettable, explicitOnly, value],
   );
   const profileKey = pubkeys.join(":");
   const selection = useMemo(
@@ -263,6 +264,7 @@ export function ComposerModels({
       choice,
       value[choice.pubkey] ?? {},
       resettable,
+      explicitOnly,
     );
     const savedEffortApplies = !resettable || !model || selected;
     const supportedEffort = savedEffortApplies
@@ -280,6 +282,7 @@ export function ComposerModels({
       choice,
       value[choice.pubkey] ?? {},
       resettable,
+      explicitOnly,
     );
     return unavailable
       ? [choices.length > 1 ? `${choice.name}: ${unavailable}` : unavailable]
@@ -436,6 +439,7 @@ function unavailableSavedPick(
   choice: MentionModelChoice,
   value: RunPick,
   resettable: boolean,
+  explicitOnly: boolean,
 ) {
   if (!resettable || choice.loading || choice.failed) return undefined;
   const selectedModel = choice.models.some((item) => item.id === value.model);
@@ -448,14 +452,18 @@ function unavailableSavedPick(
   );
   if (!unavailableModel && !unavailableEffort) return undefined;
   const defaultEffort = runs.efforts.find((item) => item.id === runs.effort);
+  const modelIsKnown =
+    (choice.sendDefaults && !explicitOnly) || choice.current === runs.id;
   const fallback = runs.id
-    ? `Using ${runs.label}${
-        defaultEffort
-          ? ` with its default effort (${defaultEffort.label})`
-          : runs.efforts.length
-            ? " with the provider's default effort"
-            : ""
-      }`
+    ? unavailableModel && !modelIsKnown
+      ? "Send omits model and effort overrides; the agent or provider decides which model runs"
+      : `Using ${runs.label}${
+          defaultEffort
+            ? ` with its default effort (${defaultEffort.label})`
+            : runs.efforts.length
+              ? " with the provider's default effort"
+              : ""
+        }`
     : "No supported model is listed in the loaded catalog. Send omits model and effort overrides and uses the agent's defaults";
   const reason = unavailableModel
     ? "Saved model is unavailable."
