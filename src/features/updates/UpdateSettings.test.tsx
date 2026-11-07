@@ -264,12 +264,16 @@ it("schedules a downloaded update for when agents are idle, and cancels it", asy
       subscribeWorking: () => () => {},
     },
   );
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Update when agents are idle" }),
-  );
+  const idle = await screen.findByRole("button", {
+    name: "Update when agents are idle",
+  });
+  idle.focus();
+  fireEvent.click(idle);
   expect(
     await screen.findByText("Restarting when agents are idle."),
   ).toBeVisible();
+  // Focus stays on the button that now cancels.
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   expect(updates.snapshot().state).toBe("scheduled");
   expect(
     screen.queryByRole("button", { name: "Update when agents are idle" }),

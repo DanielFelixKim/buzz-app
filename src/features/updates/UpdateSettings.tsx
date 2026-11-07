@@ -94,14 +94,20 @@ export function UpdateSettings({
             >
               {label}
             </Button>
-            {status.state === "ready" && updates.idleOptionAvailable() && (
-              <Button type="button" onClick={updates.installWhenIdle}>
-                Update when agents are idle
-              </Button>
-            )}
-            {status.state === "scheduled" && (
-              <Button type="button" onClick={updates.cancelScheduled}>
-                Cancel
+            {/* One button for both, so focus stays on it as the schedule changes. */}
+            {(status.state === "scheduled" ||
+              (status.state === "ready" && updates.idleOptionAvailable())) && (
+              <Button
+                type="button"
+                onClick={
+                  status.state === "scheduled"
+                    ? updates.cancelScheduled
+                    : updates.installWhenIdle
+                }
+              >
+                {status.state === "scheduled"
+                  ? "Cancel"
+                  : "Update when agents are idle"}
               </Button>
             )}
           </>
