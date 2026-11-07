@@ -210,6 +210,28 @@ it("separates an inserted shortcode from the word before the caret", () => {
   }
 });
 
+it("pastes a shortcode after a word verbatim, plain or raw", () => {
+  for (const raw of [false, true]) {
+    const h = mount("14");
+    if (raw)
+      act(() => {
+        h.input.focus();
+        h.input.dispatchEvent(new Event("buzz:paste-plain"));
+      });
+    paste(h.input, ":30:00");
+    expect(h.input).toHaveValue("14:30:00");
+    cleanup();
+  }
+});
+
+it("keeps an inserted shortcode literal inside inline code", async () => {
+  const h = mount();
+  act(() => h.input.toggleFormat("code"));
+  await h.user.keyboard("nice");
+  act(() => expect(h.input.insertText(":party:")).toBe(true));
+  expect(h.markdown()).toBe("`nice:party:`");
+});
+
 it("keeps native autocorrection off until this device opts in, then follows the choice live", async () => {
   try {
     const h = mount("teh");

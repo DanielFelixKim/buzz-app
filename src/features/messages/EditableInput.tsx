@@ -751,6 +751,7 @@ export function EditableInput({
       terminator?: ":",
       focus = true,
       onTooLong?: () => void,
+      verbatim = false,
     ) => {
       if (!editable() || composing.current || editor.composing) return false;
       if (terminator) {
@@ -790,7 +791,12 @@ export function EditableInput({
         .filter((mark) => mark.type !== composerSchema.marks.recipient);
       text = text.replace(/\r\n?/g, "\n");
       // A picked shortcode joined to the word before it would read as text.
-      if (!range && !$from.parent.type.spec.code)
+      if (
+        !range &&
+        !verbatim &&
+        !$from.parent.type.spec.code &&
+        !composerSchema.marks.code.isInSet(marks)
+      )
         text = separateShortcode(
           $from.parent.textBetween(0, $from.parentOffset, null, "\ufffc"),
           text,
@@ -861,6 +867,7 @@ export function EditableInput({
         undefined,
         true,
         current.current.onPasteTooLong,
+        true,
       );
     /** Paste this app's own copied blocks and marks as the nodes they are. One
      * paragraph joins the caret's line; anything else lands as sibling blocks,
