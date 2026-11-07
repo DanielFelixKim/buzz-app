@@ -798,7 +798,12 @@ export function EditableInput({
         !composerSchema.marks.code.isInSet(marks)
       )
         text = separateShortcode(
-          $from.parent.textBetween(0, $from.parentOffset, null, "\ufffc"),
+          $from.parent.textBetween(
+            0,
+            $from.parentOffset,
+            null,
+            (leaf) => leaf.attrs.source ?? "\ufffc",
+          ),
           text,
         );
       const tr = closeHistory(editor.state.tr);

@@ -210,6 +210,18 @@ it("separates an inserted shortcode from the word before the caret", () => {
   }
 });
 
+it("separates an inserted shortcode from a mention right before the caret", () => {
+  const h = mount();
+  act(() => {
+    h.input.insertText("", { pubkey: "a".repeat(64), name: "Kalvin" });
+    h.input.setSelectionRange(7, 8);
+    h.input.insertText("");
+  });
+  expect(h.input).toHaveValue("@Kalvin");
+  act(() => expect(h.input.insertText(":party:")).toBe(true));
+  expect(h.input).toHaveValue("@Kalvin :party:");
+});
+
 it("pastes a shortcode after a word verbatim, plain or raw", () => {
   for (const raw of [false, true]) {
     const h = mount("14");
