@@ -506,7 +506,7 @@ export class AcpSession {
   /** Puts the session on the provider, model and thinking level chosen now,
    * or `model` of that provider and level `effort`. A steer joins the running
    * turn, so a change waits for the next. */
-  private async select(model?: string, effort?: string) {
+  async select(model?: string, effort?: string) {
     const chosen = this.choice?.();
     if (!chosen) return;
     const want = {

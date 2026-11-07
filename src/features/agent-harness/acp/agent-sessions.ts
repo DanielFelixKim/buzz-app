@@ -279,6 +279,7 @@ export class AgentSessions {
         process: live.process,
         idle: () => held.session.idle(),
         reserve: () => held.session.reserveExternal(),
+        select: () => held.session.select(),
         externalIdle: () => held.session.externalIdle(),
         interrupt: () => held.session.interruptExternalRun(),
         release: () => {

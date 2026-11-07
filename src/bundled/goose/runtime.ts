@@ -279,6 +279,8 @@ export class GooseRuntime {
       await abortable(held.idle(), signal);
       signal.throwIfAborted();
       held.reserve();
+      await held.select();
+      signal.throwIfAborted();
       entry.contexts.set(channelId, { channel: channelId, topLevel: true });
       promptChanged = true;
       await held.process.request(

@@ -2465,3 +2465,77 @@ it("switching voice off closes its live seat and releases queued typed work", as
     vi.mocked(openVoice).mockReset();
   }
 });
+
+it("selects the agent's model and thinking level before opening voice", async () => {
+  const f = setup({ scope: "channel" });
+  vi.mocked(openVoice).mockImplementation(async () => {
+    expect(f.fake.geese[0]?.configured).toEqual([
+      "session-1 model=o3",
+      "session-1 thinking_effort=high",
+    ]);
+    return { input: vi.fn(), close: vi.fn(async () => {}) };
+  });
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config: {
+          ...DEFAULT_CONFIG,
+          provider: "openai",
+          model: "o3",
+          effort: "high",
+          scope: "channel",
+        },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    expect(openVoice).toHaveBeenCalledOnce();
+  } finally {
+    await seat?.close();
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
+
+it("releases the voice reservation when model selection fails", async () => {
+  const f = setup({ scope: "channel" });
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    await f.deliver(message("1", "preflight"));
+    await flush(100);
+    const process = f.fake.geese[0];
+    if (!process) throw new Error("No preflight process");
+    const selecting = vi.spyOn(AcpSession.prototype, "select");
+    selecting.mockRejectedValueOnce(new Error("Model unavailable"));
+    await expect(
+      f.runtime.voice(
+        {
+          agent: f.agent,
+          config: { ...DEFAULT_CONFIG, model: "o3", scope: "channel" },
+          conversation: { channelId: channel },
+          signal: new AbortController().signal,
+          ended: vi.fn(),
+          output: vi.fn(),
+          transcript: vi.fn(),
+        } as never,
+        f.agent as never,
+      ),
+    ).rejects.toThrow("Model unavailable");
+    expect(openVoice).not.toHaveBeenCalled();
+    selecting.mockRestore();
+    await f.deliver(message("2", "after failed voice"));
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(2),
+    );
+  } finally {
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
