@@ -3944,6 +3944,7 @@ it("does not reacquire on a new Manage plugins visit while the section stays mou
     entryId: "first",
     target: { version: 1, kind: "settings", section: "plugins" },
     complete: vi.fn(),
+    savePosition: vi.fn(),
   } as unknown as NonNullable<Parameters<typeof Settings>[0]["navigation"]>;
   const fixture = reviewPluginFixture({ navigation });
   Object.assign(fixture.external, { updateSource: savedGitSource });
