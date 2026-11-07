@@ -176,10 +176,10 @@ test("a thread row opens the thread beside its channel", async () => {
 
 test("Unread hides read conversations and scopes switch lists", async () => {
   setup();
-  await userEvent.click(screen.getByRole("switch", { name: "Unread" }));
+  await userEvent.click(screen.getByRole("button", { name: "Unread only" }));
   expect(rowNames()).toEqual(["old"]);
   await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
-  await userEvent.click(screen.getByRole("switch", { name: "Unread" }));
+  await userEvent.click(screen.getByRole("button", { name: "Unread only" }));
   expect(rowNames()).toEqual(["solo"]);
 });
 
@@ -212,4 +212,13 @@ test("Team's Mentions view lists mentions and opens them in their thread", async
       context: "channel",
     }),
   );
+});
+
+test("Team's Threads view lists only channels with threads, as headers", async () => {
+  setup();
+  await userEvent.click(screen.getByRole("tab", { name: "Threads" }));
+  expect(rowNames()).toEqual(["old"]);
+  expect(screen.getByText("a reply in the old channel")).toBeInTheDocument();
+  // The channel row is a header there: its own preview is left out.
+  expect(screen.queryByText("ancient")).not.toBeInTheDocument();
 });

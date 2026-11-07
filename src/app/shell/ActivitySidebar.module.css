@@ -1,4 +1,6 @@
-/* PROTOTYPE: Activity-style conversation list in the primary sidebar. */
+/* PROTOTYPE: Activity-style conversation list in the primary sidebar.
+ * One tree in every view: a channel row, then its threads and mentions
+ * hanging off a thread line, like a thread's replies in the channel. */
 .activity {
   display: flex;
   flex-direction: column;
@@ -20,7 +22,7 @@
   flex: 1;
 }
 .rows,
-.threads {
+.children {
   display: flex;
   flex-direction: column;
   gap: var(--space-half);
@@ -28,29 +30,106 @@
   padding: 0;
   list-style: none;
 }
-.threads {
-  margin-block: var(--space-half) var(--space-1);
-  padding-inline-start: var(--space-6);
+.group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
-.thread {
+
+/* Channel row: icon | name and time over a one-line preview | marker. */
+.icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  color: var(--text-subtle);
+}
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  min-width: 0;
+}
+.heading,
+.child {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-2);
   min-width: 0;
+  line-height: var(--space-5);
 }
-.threadText {
+.name,
+.preview,
+.childText {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.threadTime {
+.time {
   flex: none;
 }
+
+/* Threads and mentions hang off a line under the channel's icon. */
+.children {
+  margin-block: var(--space-half) var(--space-1);
+  margin-inline-start: calc(
+    var(--space-2) +
+    var(--space-2) +
+    var(--space-half)
+  );
+  padding-inline-start: var(--space-1);
+  border-inline-start: 1.5px solid var(--border-message-thread);
+}
+.childAvatar {
+  display: grid;
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  align-self: center;
+}
+.child {
+  align-items: center;
+}
+
+/* Markers: @ for you, a dot for unread. */
+.markerSlot {
+  display: grid;
+  place-items: center;
+  width: var(--space-4);
+  height: var(--space-5);
+}
+.dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--text-navigation-unread);
+}
+.mention {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  min-width: var(--space-4);
+  height: var(--space-4);
+  padding-inline: var(--space-half);
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--affordance-mention-self);
+  color: var(--text-mention-self);
+  font-variant-numeric: tabular-nums;
+}
 .more {
-  padding-inline: var(--space-3);
-  padding-block: var(--space-1);
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: start;
+  padding-inline: var(--space-2);
+  padding-block: var(--space-half);
+}
+.more:hover {
+  color: var(--text-standard);
 }
 .empty {
   padding: var(--space-6) var(--space-2);
