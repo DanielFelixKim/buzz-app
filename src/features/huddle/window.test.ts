@@ -688,6 +688,7 @@ it("routes historical Retry and Jump to latest independently from the current na
   const room = "00000000-0000-4000-8000-000000000002";
   const loadOlder = vi.fn();
   const attach = vi.fn();
+  let errorDirection: "older" | undefined = "older";
   Object.assign(h.connection.session.channels, {
     get: () => ({
       id: room,
@@ -707,6 +708,7 @@ it("routes historical Retry and Jump to latest independently from the current na
       hasNewer: true,
       loadingOlder: false,
       error: "Page unavailable",
+      errorDirection,
     }),
   });
   try {
@@ -728,6 +730,10 @@ it("routes historical Retry and Jump to latest independently from the current na
     expect(attach).not.toHaveBeenCalled();
     h.action(id, "latest");
     expect(attach).toHaveBeenCalledWith(room);
+    expect(loadOlder).toHaveBeenCalledOnce();
+    errorDirection = undefined;
+    h.action(id, "retry");
+    expect(attach).toHaveBeenCalledTimes(2);
     expect(loadOlder).toHaveBeenCalledOnce();
   } finally {
     await h.dispose();
