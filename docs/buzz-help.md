@@ -45,7 +45,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
   steps. Before joining, **Back** returns to the entered link; after admission,
   profile setup continues forward. An invite-code field appears for
   a supplied invite or denied access on a community that enforces membership;
-  community policy links open separately.
+  community policy links open separately. When you are signed in to Builderlab
+  and the community is one it hosts, Buzz skips the age and terms boxes,
+  because your account setup already covered them, and **Continue** joins
+  straight away.
   On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
   skips it, and pressing a key finishes it immediately.
   The key-import field masks your key. Use the eye inside the field to reveal
@@ -76,7 +79,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,
   with no **Join Community** confirmation. Other Builderlab deployments do not
-  offer it during setup.
+  offer it during setup. When the owner of a community with no channels yet
+  opens Messages, Buzz creates one open **#general**, marked as the starter
+  channel for new members, and opens it.
   Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app
   was used on this computer, a **Continue with your Buzz identity?** dialog
@@ -543,11 +548,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   opens the original conversation.
   Search above the list matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
-  attached files without opening the conversation. The same drafts show where
-  you left them: a pencil at the right edge of a channel or DM's sidebar row
-  when it, or one of its threads, holds a draft (hidden while that conversation is
-  open), and **Draft** on a message's reply line, or **Draft reply** when no
-  one has replied yet (hidden while that thread is open).
+  attached files without opening the conversation. A thread draft also shows
+  where you left it: **Draft** on a message's reply line, or **Draft reply** when
+  no one has replied yet (hidden while that thread is open).
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
@@ -728,6 +731,13 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
+- **Settings → Agent details** says where an agent's configuration lives:
+  **Synced in** its community, or **Only on this Mac** with why (the relay
+  doesn't sync agent settings, or the first copy failed and Buzz will try
+  again). Hosted agents show no line. Editing a team shows the same line for
+  the team. Teams made before teams synced move to their agents' community
+  automatically once it syncs teams; a team whose agents are in different
+  communities stays on this Mac.
 - Each Claude agent running on this computer keeps its own `claude` process for
   each active conversation. While an unprotected one runs here, Buzz also keeps
   one shared process ready for the next new conversation. Each of these starts

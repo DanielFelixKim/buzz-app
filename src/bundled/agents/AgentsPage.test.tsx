@@ -44,6 +44,7 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
+import type { SyncState } from "../../features/agents/team-migration";
 import { localStore } from "../../features/agents/state";
 import {
   chooseDefaultAgent,
@@ -306,6 +307,8 @@ function setup(
   } as unknown as RegisteredAgentType;
   const created = agent("Nova", 3);
   const types = [type, ...more];
+  // Local teams kept from moving by their editor.
+  const held = new Set<string>();
   const agents = {
     types: () => types,
     snapshot: () => snapshot,
@@ -394,6 +397,17 @@ function setup(
       ({ id }: Pick<TeamChange, "id" | "draft">, _community?: string) =>
         !id || !!snapshot.teams.find((team) => team.id === id)?.revision,
     ),
+    teamSync: vi.fn(
+      (id: string): SyncState =>
+        snapshot.teams.find((team) => team.id === id)?.revision
+          ? { synced: "wss://relay.example" }
+          : { local: undefined },
+    ),
+    agentSync: vi.fn((): SyncState | undefined => undefined),
+    holdTeam: vi.fn((id: string) => {
+      held.add(id);
+      return () => held.delete(id);
+    }),
     core: vi.fn(async () => undefined),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
@@ -481,7 +495,21 @@ function setup(
     snapshot = { ...snapshot, ...patch };
     for (const listener of listeners) listener();
   };
-  return { agents, echoProvider, types, show, change, relay, ...view };
+  /** Tells subscribers something changed, with the same snapshot. */
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  return {
+    agents,
+    echoProvider,
+    types,
+    show,
+    change,
+    notify,
+    relay,
+    held,
+    ...view,
+  };
 }
 
 it("offers a plugin tab's links only to the agents it can open", async () => {
@@ -2601,7 +2629,7 @@ it("neither counts nor adds a member another account on this device has", async 
 it("makes a team of chosen agents and lists it with its members", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
-  const { agents } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
+  const { agents, notify } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
   expect(screen.queryByRole("grid", { name: "Teams" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "New team" }));
@@ -2630,7 +2658,14 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   expect(card).toHaveTextContent("Ada, Cy");
 
   await user.click(card);
-  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  const form = screen.getByRole("form", { name: "Edit Crew" });
+  expect(form).toHaveTextContent("Only on this Mac");
+  // A move that fails while the editor is open shows at once.
+  agents.teamSync.mockReturnValue({ local: "failed" });
+  act(() => notify());
+  expect(form).toHaveTextContent(
+    "Only on this Mac. Moving it to the community failed; Buzz will try again.",
+  );
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   let dialog = await screen.findByRole("alertdialog", { name: "Delete Crew?" });
   expect(dialog).toHaveAccessibleDescription(
@@ -2670,6 +2705,44 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await waitFor(() =>
     expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
   );
+});
+
+it("keeps a local team with a draft from moving, so its editor stays open, and lets it move once saved", async () => {
+  const ada = agent("Ada", 1);
+  const local = {
+    id: "local-team",
+    name: "Crew",
+    instructions: "Before",
+    members: [ada.pubkey],
+  };
+  const view = setup([ada], { teams: [local] });
+  const user = userEvent.setup();
+  // What a move does unless the team is held: its synced copy replaces it.
+  const move = () =>
+    act(() => {
+      if (!view.held.has(local.id))
+        view.change({
+          teams: [{ ...local, id: "moved-team", revision: "confirmed" }],
+        });
+    });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
+      name: "Crew",
+    }),
+  );
+  const box = screen.getByRole("textbox", { name: "Instructions" });
+  await user.clear(box);
+  await user.type(box, "UNSAVED DRAFT");
+  expect(view.agents.holdTeam).toHaveBeenCalledWith(local.id);
+  move();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "UNSAVED DRAFT",
+  );
+  // Back to what it opened with, nothing is held.
+  await user.clear(box);
+  await user.type(box, "Before");
+  expect(view.held.has(local.id)).toBe(false);
 });
 
 it("offers hosted agents as members, warning that they may not get the instructions", async () => {
@@ -3619,6 +3692,21 @@ it.each(["error", "unavailable"] as const)(
     ).toBeVisible();
   },
 );
+
+it("says in Settings where an agent's config lives, and why it is only here", async () => {
+  const user = userEvent.setup();
+  const { agents, notify } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  // Still checking: no line, until the relay turns out not to sync.
+  expect(screen.queryByText("Only on this Mac")).not.toBeInTheDocument();
+  agents.agentSync.mockReturnValue({ local: "unsupported" });
+  act(() => notify());
+  expect(screen.getByText("Only on this Mac")).toBeVisible();
+  expect(
+    screen.getByText("This community's relay doesn't sync agent settings."),
+  ).toBeVisible();
+});
 
 it("keeps the copy and delete rows in Settings, below the agent identity", async () => {
   const user = userEvent.setup();

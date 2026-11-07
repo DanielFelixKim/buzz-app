@@ -13,7 +13,7 @@ import {
 } from "../../features/agents/history-presentation";
 import { ConfigHistoryRow } from "../../features/agents/AgentConfigHistoryRow";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
-import { AgentDetails } from "./AgentDetails";
+import { AgentDetails, useSyncLine } from "./AgentDetails";
 import { communityDestination } from "../../features/communities/destination";
 import { communityIcon } from "../../features/communities/community-icon";
 import { communityName } from "../../features/communities/names";
@@ -2583,6 +2583,19 @@ function TeamEditor({
   }, [reverted, team, opened, nameEdited, membersEdited]);
   const [draft] = useState(() => crypto.randomUUID());
   const which = opened ? { id: opened.id } : { draft };
+  // While it has unsaved changes or a Save running, a local team isn't moved
+  // to its community, which would close this editor.
+  const held =
+    !!opened &&
+    (pending ||
+      name !== opened.name ||
+      instructions !== opened.instructions ||
+      members.length !== opened.members.length ||
+      members.some((pubkey) => !opened.members.includes(pubkey)));
+  useEffect(
+    () => (held && opened ? agents.holdTeam(opened.id) : undefined),
+    [agents, held, opened],
+  );
   // Each hosted agent picked, as listed then in the only community with it.
   const [picked, setPicked] = useState<ReadonlyMap<string, Agent>>(
     () => new Map(),
@@ -2668,6 +2681,7 @@ function TeamEditor({
         }
         onClose={onDone}
       />
+      {team && <TeamSyncLine agents={agents} id={team.id} />}
       <Field label="Name">
         <Input
           autoFocus
@@ -2801,5 +2815,16 @@ function TeamEditor({
         </AlertDialog>
       )}
     </form>
+  );
+}
+
+/** Where the team lives: synced in its community, or only on this device. */
+function TeamSyncLine({ agents, id }: { agents: Agents; id: string }) {
+  const line = useSyncLine(agents, () => agents.teamSync(id), "team");
+  if (!line) return null;
+  return (
+    <p className="m-0 text-body-sm text-secondary">
+      {line.reason ? `${line.title}. ${line.reason}` : line.title}
+    </p>
   );
 }
