@@ -2029,7 +2029,7 @@ it("keeps the pending composite boundary after newer live eviction", async () =>
   expect(h.window().rows.some((row) => row.id === delayed.id)).toBe(true);
 });
 
-it.each(["tail", "lookup"])(
+it.each(["tail", "lookup", "evicted"])(
   "does not charge a foreign reference-only overlay from %s to pending history",
   async (source) => {
     const h = setup({ count: 100, maxHistoryBytes: 12000 });
@@ -2038,13 +2038,24 @@ it.each(["tail", "lookup"])(
     h.live.receive([
       roster(h.relay, "other", [h.viewer.pubkey]),
       metadata(h.relay, "other", "Other"),
-      ...(source === "tail" ? [foreign] : []),
+      ...(source !== "lookup" ? [foreign] : []),
     ]);
     if (source === "lookup") {
       h.history.push(foreign);
       await h.owner.session.read([{ ids: [foreign.id], limit: 1 }]);
       h.history.pop();
     }
+    if (source === "evicted")
+      h.live.receive(
+        Array.from({ length: 256 }, (_, i) =>
+          message(
+            h.alice,
+            "other",
+            `evict foreign ${i}`,
+            T0 + (102 + i) * HOUR,
+          ),
+        ),
+      );
     let release!: () => void;
     h.gate.hold = new Promise<void>((resolve) => {
       release = resolve;

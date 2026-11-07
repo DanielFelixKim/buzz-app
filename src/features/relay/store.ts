@@ -27,7 +27,6 @@ import {
   compareChannelAge,
 } from "./channel-labels";
 import { foldMessages } from "./fold";
-import { eventVisibility } from "./event-access";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import {
   LARGE_READ_DEADLINE_MS,
@@ -253,6 +252,11 @@ export function createChannelStore(
          * left out may still list the viewer; `unlisted` asks the writer. */
         rosterComplete?(): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
+        /** Proves foreign-only auxiliary scope; unresolved targets return false. */
+        foreign?(
+          channelId: string,
+          events: readonly RelayEvent[],
+        ): (event: RelayEvent) => boolean;
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
         verifyStored?: ReadTransport["verifyStored"];
@@ -4236,28 +4240,11 @@ export function createChannelStore(
       const tail = { events: retained, preview };
       tails.set(channelId, tail, tailBytes(tail));
     }
-    const evidence = new Map(
-      ([...windows.values()].some((state) => state.joining)
-        ? [
-            ...[...heads.entries()].flatMap(([, head]) => head.events),
-            ...[...tails.entries()].flatMap(([, tail]) => tail.events),
-            ...[...windows.values()].flatMap((state) => [
-              ...state.events,
-              ...(state.joining?.values() ?? []),
-            ]),
-            ...events,
-          ]
-        : []
-      ).map((event) => [event.id, event]),
-    );
     for (const state of windows.values()) {
       if (disposed || generation !== epoch) return;
       if (!authorized(state.channelId)) continue;
       if (state.joining) {
-        const foreign = eventVisibility(
-          (channelId) => channelId !== state.channelId,
-          (id) => evidence.get(id),
-        );
+        const foreign = transport.foreign?.(state.channelId, events);
         // Keep deleted roots with their tombstones until commit: they still
         // define the pending read's overlap interval.
         const joiningRoots = [...state.joining.values()]
@@ -4288,7 +4275,7 @@ export function createChannelStore(
             ([40003, 5, 9005, 7, 39005].includes(event.kind) &&
               !event.tags.some(([name]) => name === "h") &&
               event.tags.some(([name]) => name === "e") &&
-              !foreign(event))
+              !foreign?.(event))
           )
             // Reference-only overlays may precede their incoming page's roots.
             // The scoped fold associates them only after the page arrives.
