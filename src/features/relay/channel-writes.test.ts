@@ -77,6 +77,97 @@ it("keeps verified Solo chat roster reads available for sends without member-add
   }
 });
 
+it("resolves missing metadata for an authorized roster-only task before confirming refresh", async () => {
+  const viewer = keypair(),
+    relay = keypair(),
+    agent = keypair();
+  const id = "11111111-1111-4111-8111-111111111111";
+  const members = [viewer.pubkey, agent.pubkey].sort();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    writer: {
+      kinds: [9, 9007],
+      sign: async (template) => signed(viewer, template),
+      publish: async () => {},
+    },
+  });
+  let refreshing: Promise<void> | undefined;
+  try {
+    owner.session.channels.ensureList();
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    wire.next().respond([roster(relay, id, members)]);
+    await vi.waitFor(() =>
+      expect(owner.session.channels.list()).toMatchObject({
+        status: "ready",
+        channels: [{ id, members, metadataPending: true }],
+      }),
+    );
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    const initialMetadata = wire.next();
+    expect(initialMetadata.filters[0]?.kinds).toEqual([39000]);
+    refreshing = owner.session.channelWrites.refresh(id, { members });
+    void refreshing.catch(() => {});
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    const exact = wire.next();
+    expect(exact.filters).toEqual([
+      {
+        kinds: [39000],
+        authors: [relay.pubkey],
+        "#d": [id],
+        limit: 2,
+        consistency: "strong",
+      },
+      {
+        kinds: [39002],
+        authors: [relay.pubkey],
+        "#d": [id],
+        "#p": [viewer.pubkey],
+        limit: 2,
+        consistency: "strong",
+      },
+    ]);
+    const details = metadata(relay, id, "Task", undefined, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+      ["t", "buzz.region:example:work"],
+      ["t", "solo-task-mode:v1"],
+      ["P", viewer.pubkey],
+    ]);
+    exact.respond([details, roster(relay, id, members)]);
+    await refreshing;
+    expect(owner.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: [
+        {
+          id,
+          creator: viewer.pubkey,
+          channelType: "solo",
+          private: true,
+          members,
+          labels: [SOLO_LABEL, "buzz.region:example:work", "solo-task-mode:v1"],
+        },
+      ],
+    });
+    expect(owner.session.channels.list().channels[0]?.metadataPending).not.toBe(
+      true,
+    );
+    initialMetadata.respond([details]);
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    expect(
+      wire.pending
+        .flatMap((request) => request.filters)
+        .filter((filter) => filter.kinds?.includes(39002)),
+    ).toEqual([]);
+  } finally {
+    owner.dispose();
+    await refreshing?.catch(() => {});
+  }
+});
+
 it("retries an identical create with its signed event, replaces a changed one and restores nothing", async () => {
   const viewer = keypair(),
     relay = keypair();

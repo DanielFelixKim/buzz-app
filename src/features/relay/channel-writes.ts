@@ -290,8 +290,11 @@ export function createChannelWrites(
       // member addition re-reads that one roster through `refreshRoster`; a
       // channel the list lacks (just created) is admitted by `resolve`'s exact
       // metadata-and-roster read.
-      // A chat still pending is listed but unconfirmed: `resolve` admits it.
-      const listed = found((channel) => channel.id === id && !channel.pending);
+      // Pending creation or metadata needs the exact read through `resolve`.
+      const listed = found(
+        (channel) =>
+          channel.id === id && !channel.pending && !channel.metadataPending,
+      );
       await Promise.race([
         gate,
         (async () => {
