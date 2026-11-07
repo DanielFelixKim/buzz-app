@@ -5493,7 +5493,7 @@ it.each([
     description: "an unavailable effort-only pick",
     savedPick: { effort: "high", type: "test/agent" },
     expected:
-      /Saved effort is unavailable for Fast\. Send omits model and effort overrides; the agent or provider decides which model runs\./,
+      /Saved effort is unavailable\. Send omits model and effort overrides; the agent or provider decides which model runs\./,
   },
 ])(
   "does not promise the first listed model when no current model is available for $description",

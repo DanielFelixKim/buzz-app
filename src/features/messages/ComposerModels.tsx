@@ -469,7 +469,7 @@ function unavailableSavedPick(
     : "No supported model is listed in the loaded catalog. Send omits model and effort overrides and uses the agent's defaults";
   const reason = unavailableModel
     ? "Saved model is unavailable."
-    : runs.id
+    : modelIsKnown && runs.id
       ? `Saved effort is unavailable for ${runs.label}.`
       : "Saved effort is unavailable.";
   return `${reason} ${fallback}. Your saved choice is retained until you reset it.`;
