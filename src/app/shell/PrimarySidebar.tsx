@@ -33,6 +33,14 @@ import type {
   SidebarScope,
 } from "../../features/channel-navigation/sidebar-scope-service";
 import styles from "./PrimarySidebar.module.css";
+import {
+  ActivityScopeTabs,
+  ActivitySidebar,
+  activityScopeOf,
+  useActivityView,
+} from "./ActivitySidebar";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { SidebarIcon } from "../../shared/design-system/icons";
 
 import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
@@ -207,6 +215,47 @@ function ScopedSidebar({
   useEffect(() => {
     writeView(scope, "navigation-scope", view);
   }, [scope, view]);
+  // PROTOTYPE: the Activity-style sidebar, on by default on this branch
+  // (off under test, so the classic sidebar's coverage still runs).
+  const [activityMode, setActivityMode] = useState(
+    () =>
+      readView<boolean>(
+        scope,
+        "activity-sidebar:enabled",
+        import.meta.env.MODE !== "test",
+      ) !== false,
+  );
+  useEffect(() => {
+    writeView(scope, "activity-sidebar:enabled", activityMode);
+  }, [scope, activityMode]);
+  const [activityView, setActivityView] = useActivityView(scope);
+  // Opening a conversation from elsewhere shows the scope it belongs to.
+  const [activityLocation, setActivityLocation] = useState(location);
+  if (location !== activityLocation) {
+    setActivityLocation(location);
+    const owner =
+      target.kind === "conversation"
+        ? activityScopeOf(channels?.list().channels, target.channelId)
+        : undefined;
+    if (owner && owner !== activityView.scope)
+      setActivityView({ ...activityView, scope: owner });
+  }
+  const activityToggle = (
+    <IconButton
+      variant="ghost"
+      size="sm"
+      aria-label={
+        activityMode ? "Use the classic sidebar" : "Use the Activity sidebar"
+      }
+      title={
+        activityMode ? "Use the classic sidebar" : "Use the Activity sidebar"
+      }
+      aria-pressed={activityMode}
+      onClick={() => setActivityMode((on) => !on)}
+      icon={<SidebarIcon aria-hidden="true" size={16} />}
+    />
+  );
+  const showActivity = activityMode && !restriction;
   const filter = restriction ? "solo" : view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
   // Without the tabs there is no tab to label the panel.
@@ -220,6 +269,8 @@ function ScopedSidebar({
               entry={restriction}
               registry={props.sidebarScope}
             />
+          ) : showActivity ? (
+            <ActivityScopeTabs view={activityView} onChange={setActivityView} />
           ) : (
             <Tabs
               label="Navigation scope"
@@ -239,6 +290,7 @@ function ScopedSidebar({
             />
           )}
         </div>
+        {!restriction && activityToggle}
         {props.creationAction}
       </div>
       {props.children && !restriction && (
@@ -252,8 +304,35 @@ function ScopedSidebar({
       header={header}
       panelId={panelId}
     >
-      {connection.session &&
+      {showActivity &&
+      connection.session &&
+      connection.viewer &&
       (connection.status === "ready" || connection.cached) ? (
+        <ResizableSidebar scope={scope} className="shell-sidebar">
+          <SidebarFrame label="Sidebar" header={header}>
+            {!connection.cached && (
+              <RecoveryNotice recovery={connection.session.recovery} />
+            )}
+            <SidebarList>
+              <ActivitySidebar
+                session={connection.session}
+                navigator={props.navigator}
+                scope={{
+                  viewer: connection.viewer,
+                  communityOrigin: scope.slice(
+                    0,
+                    -(connection.viewer.length + 1),
+                  ),
+                }}
+                target={props.target}
+                view={activityView}
+                onViewChange={setActivityView}
+              />
+            </SidebarList>
+          </SidebarFrame>
+        </ResizableSidebar>
+      ) : connection.session &&
+        (connection.status === "ready" || connection.cached) ? (
         <ChannelInventory
           relay={props.relay}
           navigator={props.navigator}
