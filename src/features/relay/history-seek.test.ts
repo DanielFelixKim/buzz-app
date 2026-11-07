@@ -270,3 +270,45 @@ it("reaches a retained segment in a ten-thousand-row second within the existing 
   );
   expect(calls.length).toBeLessThanOrEqual(SEEK_READS);
 });
+
+it("reaches a deep composite boundary within the seek allowance", async () => {
+  const { rows, read, calls } = relay(Array.from({ length: 12000 }, () => T0));
+  const boundary = rows[9600];
+  assert.exists(boundary);
+  const located = await locate(read, T0, T0 + DAY, true, boundary.id);
+  expect(located.kind).toBe("segment");
+  if (located.kind !== "segment") return;
+  expect(located.page.events.some((event) => event.id === boundary.id)).toBe(
+    true,
+  );
+  expect(located.page.events.some((event) => event.id < boundary.id)).toBe(
+    true,
+  );
+  expect(calls.length).toBeLessThanOrEqual(SEEK_READS);
+});
+
+it.each([1, 5, 200])(
+  "keeps a contiguous composite segment with %i rows per page",
+  async (pageSize) => {
+    const source = relay(Array.from({ length: 1000 }, () => T0));
+    const step = (1n << 256n) / 1001n;
+    for (const [index, row] of source.rows.entries())
+      row.id = (step * BigInt(index + 1)).toString(16).padStart(64, "0");
+    const boundary = source.rows[800];
+    assert.exists(boundary);
+    const read: SeekRead = (cursor, full, limit) =>
+      source.read(cursor, full, Math.min(limit ?? SEEK_PAGE, pageSize));
+    const located = await locate(read, T0, T0 + DAY, true, boundary.id);
+    assert.equal(located.kind, "segment");
+    if (located.kind !== "segment") return;
+    const ids = located.page.events.map((event) => event.id);
+    const start = source.rows.findIndex((row) => row.id === ids[0]);
+    expect(ids).toContain(boundary.id);
+    expect(ids.some((id) => id < boundary.id)).toBe(true);
+    expect(ids).toEqual(
+      source.rows.slice(start, start + ids.length).map((row) => row.id),
+    );
+    expect(located.ceilingId).toBe(ids[0]);
+    expect(source.calls.length).toBeLessThanOrEqual(SEEK_READS);
+  },
+);

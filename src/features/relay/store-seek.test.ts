@@ -56,6 +56,7 @@ function harness({
   const reads: ReadFilter[] = [];
   const gate: {
     hold?: Promise<void> | undefined;
+    pageSize?: number;
     failHead?: boolean;
     probeFailure?: boolean;
     denied?: boolean;
@@ -114,8 +115,9 @@ function harness({
                   row.id > cursor.eventId),
             )
           : ordered;
-        const rows = after.slice(0, filter.limit);
-        const hasMore = after.length > filter.limit;
+        const limit = Math.min(filter.limit ?? 200, gate.pageSize ?? 200);
+        const rows = after.slice(0, limit);
+        const hasMore = after.length > limit;
         const last = rows.at(-1);
         return [
           ...rows,
@@ -2080,3 +2082,25 @@ it.each(["tail", "lookup", "evicted"])(
     expect(h.window().error).toBeUndefined();
   },
 );
+
+it("revalidates a deep dense-second target through signed small pages", async () => {
+  const h = setup({ count: 120, spacing: 0, seed: 120 });
+  await h.open();
+  while (h.window().hasMore) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false), {
+      interval: 1,
+    });
+  }
+  const target = [...h.history].sort(newestFirst)[90];
+  assert.exists(target);
+  expect(h.window().rows.some((row) => row.id === target.id)).toBe(true);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.state({ status: "retrying", routes: [] });
+  h.gate.pageSize = 2;
+  const before = h.reads.length;
+  await h.channels.seek?.("c", T0, new AbortController().signal, target.id);
+  expect(h.reads.length - before).toBeLessThanOrEqual(40);
+  expect(h.window().freshness).toBe("verified");
+  expect(h.window().rows.some((row) => row.id === target.id)).toBe(true);
+});

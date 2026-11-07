@@ -111,20 +111,34 @@ export async function locate(
       // More than a page of rows share one second.
       if (top - lo <= 1) {
         if (!fromId) throw new SeekLimitError();
-        // A composite sliding boundary can be inside a dense second. Walk its
-        // keyset pages, keeping the crossing page and its immediately newer one.
+        // Bisect IDs within the dense second. Only adjacent pages may be
+        // combined: a probe that skips IDs starts a new retained segment.
+        const second = top - 1;
+        const target = second === from ? fromId : "f".repeat(64);
         let cursor = ceilingCursor(top);
         let previous: WindowPage | undefined;
+        let upperId = BigInt(`0x${target}`);
         for (;;) {
           const page = await get(cursor, true);
-          const reached = page.events.some(
-            (event) =>
-              WINDOW_KINDS.includes(event.kind) &&
-              (event.created_at < from ||
-                (event.created_at === from && event.id >= fromId)),
+          const rows = page.events.filter((event) =>
+            WINDOW_KINDS.includes(event.kind),
           );
-          if (reached || !page.cursor) {
-            const events = [...(previous?.events ?? []), ...page.events];
+          const reached = rows.some(
+            (event) =>
+              event.created_at < from ||
+              (event.created_at === from && event.id >= fromId),
+          );
+          const adjacent =
+            previous?.cursor?.createdAt === cursor.createdAt &&
+            previous?.cursor?.eventId === cursor.eventId;
+          const newer = rows.some(
+            (event) => event.created_at === second && event.id < target,
+          );
+          if ((!previous || adjacent || newer) && (reached || !page.cursor)) {
+            const events = [
+              ...(adjacent ? (previous?.events ?? []) : []),
+              ...page.events,
+            ];
             const upper = events.find((event) =>
               WINDOW_KINDS.includes(event.kind),
             );
@@ -135,8 +149,29 @@ export async function locate(
               page: { ...page, events },
             };
           }
+          if (second !== from || target === "f".repeat(64)) {
+            if (!page.cursor) throw new SeekLimitError();
+            previous = page;
+            cursor = page.cursor;
+            continue;
+          }
+          // A probe may land in the ID gap immediately before the target.
+          // Read after the last newer page to recover its adjacent context.
+          if (reached || !page.cursor) {
+            upperId = BigInt(`0x${cursor.eventId}`);
+            if (!previous?.cursor) throw new SeekLimitError();
+            cursor = previous.cursor;
+            continue;
+          }
           previous = page;
-          cursor = page.cursor;
+          const lower = page.cursor;
+          if (!lower) throw new SeekLimitError();
+          const lowerId = BigInt(`0x${lower.eventId}`);
+          const mid = (lowerId + upperId) / 2n;
+          cursor = {
+            createdAt: second,
+            eventId: mid.toString(16).padStart(64, "0"),
+          };
         }
       }
       const mid = Math.floor((lo + top) / 2);
