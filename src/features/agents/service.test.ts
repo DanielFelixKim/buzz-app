@@ -6578,6 +6578,21 @@ it("runs a watch's classifier after its selectors and passes the event with each
   );
 });
 
+it("counts an event being classified as work until it is dropped", async () => {
+  const jev = fakeJev();
+  const decided = runnerGate<ReturnType<typeof answered>>();
+  jev.decide.mockImplementationOnce(() => decided.promise);
+  const { service, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(service.classifier()).toBe("available"));
+  emit({ events: [event("w", { content: "lunch?" })] });
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
+  // Accepted but not queued yet: a restart now would lose it.
+  expect(service.work.workingCount()).toBe(1);
+  decided.resolve(answered(0.2));
+  await vi.waitFor(() => expect(service.work.workingCount()).toBe(0));
+  expect(run).not.toHaveBeenCalled();
+});
+
 it("drops an event every answer rejects, and does not classify an event the selectors reject", async () => {
   const jev = fakeJev();
   jev.decide.mockResolvedValue(answered(0.2));
