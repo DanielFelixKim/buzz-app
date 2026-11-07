@@ -170,9 +170,30 @@ test("Solo shows removed model and effort fallbacks until Reset", async ({
   );
   await trigger.click();
   const popup = page.getByRole("dialog");
-  await expect(popup.getByRole("status")).toContainText(
-    "Saved model is unavailable. Using Fixture model with its default effort (Medium). Your saved choice is retained until you reset it.",
-  );
+  const expectVisibleNoticeInsidePopup = async (notice, container) => {
+    await expect(notice).toBeVisible();
+    const [noticeBounds, popupBounds] = await Promise.all([
+      notice.boundingBox(),
+      container.boundingBox(),
+    ]);
+    expect(noticeBounds).not.toBeNull();
+    expect(popupBounds).not.toBeNull();
+    expect(noticeBounds.x).toBeGreaterThanOrEqual(popupBounds.x);
+    expect(noticeBounds.y).toBeGreaterThanOrEqual(popupBounds.y);
+    expect(noticeBounds.x + noticeBounds.width).toBeLessThanOrEqual(
+      popupBounds.x + popupBounds.width,
+    );
+    expect(noticeBounds.y + noticeBounds.height).toBeLessThanOrEqual(
+      popupBounds.y + popupBounds.height,
+    );
+  };
+  const visibleModelNotice = popup
+    .locator("[data-agent-model-card]")
+    .getByText(
+      "Saved model is unavailable. Using Fixture model with its default effort (Medium). Your saved choice is retained until you reset it.",
+      { exact: true },
+    );
+  await expectVisibleNoticeInsidePopup(visibleModelNotice, popup);
   await expect(
     popup.getByRole("slider", { name: "Effort for Honey in this chat" }),
   ).toHaveAttribute("aria-valuetext", "Medium");
@@ -189,7 +210,7 @@ test("Solo shows removed model and effort fallbacks until Reset", async ({
     root.style.setProperty("--buzz-text-scale", "2");
   });
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
-  await expect(popup.getByRole("status")).toBeVisible();
+  await expectVisibleNoticeInsidePopup(visibleModelNotice, popup);
   const narrowPopup = await popup.boundingBox();
   expect(narrowPopup).not.toBeNull();
   expect(narrowPopup.x).toBeGreaterThanOrEqual(0);
@@ -254,9 +275,13 @@ test("Solo shows removed model and effort fallbacks until Reset", async ({
   await page.setViewportSize({ width: 1280, height: 900 });
   await trigger.click();
   const resetEffort = page.getByRole("dialog");
-  await expect(resetEffort.getByRole("status")).toContainText(
-    "Saved effort is unavailable for Fixture model. Using Fixture model with its default effort (Medium). Your saved choice is retained until you reset it.",
-  );
+  const visibleEffortNotice = resetEffort
+    .locator("[data-agent-model-card]")
+    .getByText(
+      "Saved effort is unavailable for Fixture model. Using Fixture model with its default effort (Medium). Your saved choice is retained until you reset it.",
+      { exact: true },
+    );
+  await expectVisibleNoticeInsidePopup(visibleEffortNotice, resetEffort);
   await expect(
     resetEffort.getByRole("slider", { name: "Effort for Honey in this chat" }),
   ).toHaveAttribute("aria-valuetext", "Medium");
