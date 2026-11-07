@@ -270,7 +270,7 @@ impl FederatedIdentity {
             .is_some_and(|current| Arc::ptr_eq(current, generation))
     }
     pub(crate) fn close_discovery(&self, id: &str) {
-        for peer in &self.0.peers {
+        for peer in self.peers() {
             peer.close_discovery(id);
         }
         for generation in self
@@ -292,7 +292,7 @@ impl FederatedIdentity {
         generation.result.set(Ok(requires)).unwrap();
     }
     pub(crate) fn clear_discoveries(&self) {
-        for peer in &self.0.peers {
+        for peer in self.peers() {
             peer.clear_discoveries();
         }
         for (_, generation) in self
@@ -1179,6 +1179,7 @@ mod tests {
             String::new(),
             Arc::new(Memory::default()),
             vec![peer.clone()],
+            None,
         );
         let identity = IdentityHost::fixture();
         peer.discovered("wss://peer.example", true);
