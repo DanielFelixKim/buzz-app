@@ -9,6 +9,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import type { Navigation } from "../../features/navigation/controller";
 import {
+  ActivityFilters,
   ActivitySidebar,
   ActivityScopeTabs,
   type ActivityView,
@@ -147,11 +148,13 @@ function setup(
   function Harness() {
     const [view, setView] = useState<ActivityView>({
       scope: "team",
-      filters: { solo: "all", team: "all", dms: "all" },
+      team: "channels",
+      unread: false,
     });
     return (
       <>
         <ActivityScopeTabs view={view} onChange={setView} />
+        <ActivityFilters view={view} onChange={setView} />
         <ActivitySidebar
           session={session}
           navigator={navigator}
@@ -199,21 +202,17 @@ test("a thread row opens the thread beside its channel", async () => {
   );
 });
 
-test("Unread is a level of the one selector, remembered per scope", async () => {
+test("Unread hides read conversations and scopes switch lists", async () => {
   setup();
-  await userEvent.click(screen.getByRole("tab", { name: "Unread" }));
+  await userEvent.click(screen.getByRole("switch", { name: "Unread" }));
   expect(rowNames()).toEqual(["old"]);
   await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  await userEvent.click(screen.getByRole("switch", { name: "Unread" }));
   expect(rowNames()).toEqual(["solo"]);
-  // Solo lists only All and Unread.
+  // Only Team has the Channels / Threads / Mentions radio.
   expect(
     screen.queryByRole("tab", { name: "Threads" }),
   ).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole("tab", { name: "Team" }));
-  expect(screen.getByRole("tab", { name: "Unread" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
 });
 
 test("Team's Mentions view lists mentions and opens them in their thread", async () => {

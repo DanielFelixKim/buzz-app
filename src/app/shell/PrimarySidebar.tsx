@@ -34,6 +34,7 @@ import type {
 } from "../../features/channel-navigation/sidebar-scope-service";
 import styles from "./PrimarySidebar.module.css";
 import {
+  ActivityFilters,
   ActivityScopeTabs,
   ActivitySidebar,
   activityScopeOf,
@@ -293,6 +294,9 @@ function ScopedSidebar({
         {!restriction && activityToggle}
         {props.creationAction}
       </div>
+      {showActivity && (
+        <ActivityFilters view={activityView} onChange={setActivityView} />
+      )}
       {/* PROTOTYPE: the Activity sidebar leaves out Drafts & sent. */}
       {props.children && !restriction && !showActivity && (
         <div className={styles.destinations}>{props.children}</div>

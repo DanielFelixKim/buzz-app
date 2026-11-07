@@ -7,43 +7,30 @@
   /* MessageListRow's narrow-width rules read the list width. */
   container-type: inline-size;
 }
-/* One selector, two levels, in one inset tray: the scope on top, then what
- * it lists. The inner segmented controls drop their own tray. */
-.selector {
+/* Below the scope: Team's outlined radio, then Unread on the right. */
+.filters {
   display: flex;
   flex-direction: column;
-  gap: var(--space-half);
-  padding: var(--space-1);
-  border-radius: var(--space-4);
-  background: var(--surface-inset);
+  gap: var(--space-2);
+  margin-block-end: var(--space-2);
+  margin-inline: var(--space-1);
 }
-.selector [data-variant="segmented"] {
-  padding: 0;
+/* The same segmented radio as the scope, one size down: an outline in place
+ * of the inset tray, caption type, shorter tabs. */
+.teamViews [data-variant="segmented"][data-variant="segmented"] {
+  padding: var(--space-half);
+  border: 1px solid var(--border-standard);
   background: transparent;
 }
-/* The second level is quieter: caption type and an underline, so the pill
- * reads as where you are and the underline as what it shows. */
-.subSelector
+.teamViews
   [data-variant="segmented"]
   [class~="buzz-tabs-tab"][class~="buzz-tabs-tab"] {
   min-height: var(--space-6);
   font-size: var(--text-caption);
 }
-.subSelector
-  [data-variant="segmented"]
-  [class~="buzz-tabs-tab"][class~="buzz-tabs-tab"]:hover {
-  background: transparent;
-}
-.subSelector
-  [data-variant="segmented"]
-  [class~="buzz-tabs-indicator"][class~="buzz-tabs-indicator"] {
-  inset-block: auto 0;
-  height: 2px;
-  /* A short centered bar; scaling would also scale the indicator's offset. */
-  background:
-    linear-gradient(var(--text-standard), var(--text-standard)) center / 40%
-    100% no-repeat;
-  box-shadow: none;
+.unread {
+  display: flex;
+  justify-content: flex-end;
 }
 .rows {
   display: flex;
@@ -64,4 +51,12 @@
 }
 .empty {
   padding: var(--space-6) var(--space-2);
+}
+/* On the plain panel the scope's selected surface barely shows; the outlined
+ * radio marks its choice with the scope tray's inset fill instead. */
+.teamViews
+  [data-variant="segmented"]
+  [class~="buzz-tabs-indicator"][class~="buzz-tabs-indicator"] {
+  background: var(--surface-inset);
+  box-shadow: none;
 }

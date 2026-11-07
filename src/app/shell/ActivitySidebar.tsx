@@ -28,17 +28,18 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { MessageListRow } from "../../features/messages/MessageListRow";
+import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./ActivitySidebar.module.css";
 import { useLatestMessages, type LatestMessage } from "./activity-previews";
 
 export type ActivityScope = "solo" | "team" | "dms";
-/** The second level of the one selector: what the chosen scope lists. */
-type Filter = "all" | "unread" | "threads" | "mentions";
+type TeamView = "channels" | "threads" | "mentions";
 export type ActivityView = {
   scope: ActivityScope;
-  filters: Record<ActivityScope, Filter>;
+  team: TeamView;
+  unread: boolean;
 };
 type View = ActivityView;
 
@@ -47,39 +48,23 @@ const scopes = [
   { value: "team", label: "Team" },
   { value: "dms", label: "DMs" },
 ] as const;
-const filtersFor = {
-  solo: [
-    { value: "all", label: "All" },
-    { value: "unread", label: "Unread" },
-  ],
-  dms: [
-    { value: "all", label: "All" },
-    { value: "unread", label: "Unread" },
-  ],
-  team: [
-    { value: "all", label: "All" },
-    { value: "unread", label: "Unread" },
-    { value: "threads", label: "Threads" },
-    { value: "mentions", label: "Mentions" },
-  ],
-} as const satisfies Record<
-  ActivityScope,
-  readonly { value: Filter; label: string }[]
->;
-const viewKey = "activity-sidebar:view:v2";
+const teamViews = [
+  { value: "channels", label: "Channels" },
+  { value: "threads", label: "Threads" },
+  { value: "mentions", label: "Mentions" },
+] as const;
+const viewKey = "activity-sidebar:view:v3";
 
 function readSavedView(scope: string): View {
   const saved = readView<Partial<View> | null>(scope, viewKey, null);
-  const filter = (scope: ActivityScope): Filter => {
-    const value = saved?.filters?.[scope];
-    return filtersFor[scope].some((item) => item.value === value)
-      ? (value as Filter)
-      : "all";
-  };
   return {
     scope:
       saved?.scope === "team" || saved?.scope === "dms" ? saved.scope : "solo",
-    filters: { solo: filter("solo"), team: filter("team"), dms: filter("dms") },
+    team:
+      saved?.team === "threads" || saved?.team === "mentions"
+        ? saved.team
+        : "channels",
+    unread: saved?.unread === true,
   };
 }
 
@@ -114,10 +99,7 @@ export function useActivityView(scope: string) {
   return [view, setView] as const;
 }
 
-/**
- * One selector, two levels: the scope, then what it lists, unread included.
- * Both sit in one tray so the second row reads as part of the first.
- */
+/** The scope, in the sidebar's segmented control. */
 export function ActivityScopeTabs({
   view,
   onChange,
@@ -126,29 +108,45 @@ export function ActivityScopeTabs({
   onChange(view: View): void;
 }) {
   return (
-    <div className={styles.selector}>
-      <Tabs
-        label="Activity scope"
-        variant="segmented"
-        size="sm"
-        value={view.scope}
-        items={scopes}
-        onValueChange={(scope) => onChange({ ...view, scope })}
-      />
-      <div className={styles.subSelector}>
-        <Tabs
-          key={view.scope}
-          label="Show"
-          variant="segmented"
-          size="sm"
-          value={view.filters[view.scope]}
-          items={filtersFor[view.scope]}
-          onValueChange={(filter: Filter) =>
-            onChange({
-              ...view,
-              filters: { ...view.filters, [view.scope]: filter },
-            })
-          }
+    <Tabs
+      label="Activity scope"
+      variant="segmented"
+      size="sm"
+      value={view.scope}
+      items={scopes}
+      onValueChange={(scope) => onChange({ ...view, scope })}
+    />
+  );
+}
+
+/** Under the scope: Team's own outlined radio for what it lists, then the
+ * Unread switch, right-aligned, for every scope. */
+export function ActivityFilters({
+  view,
+  onChange,
+}: {
+  view: View;
+  onChange(view: View): void;
+}) {
+  return (
+    <div className={styles.filters}>
+      {view.scope === "team" && (
+        <div className={styles.teamViews}>
+          <Tabs
+            label="Team view"
+            variant="segmented"
+            size="sm"
+            value={view.team}
+            items={teamViews}
+            onValueChange={(team) => onChange({ ...view, team })}
+          />
+        </div>
+      )}
+      <div className={styles.unread}>
+        <Switch
+          label="Unread"
+          checked={view.unread}
+          onCheckedChange={(unread) => onChange({ ...view, unread })}
         />
       </div>
     </div>
@@ -206,10 +204,9 @@ export function ActivitySidebar({
         : {}),
     });
 
-  const filter = view.filters[view.scope];
-  const unreadOnly = filter === "unread";
-  const flat =
-    view.scope === "team" && (filter === "threads" || filter === "mentions");
+  const unreadOnly = view.unread;
+  const filter = view.scope === "team" ? view.team : "channels";
+  const flat = filter === "threads" || filter === "mentions";
   const channels = list.channels.filter(
     (channel) => listed(channel) && scopeOf(channel) === view.scope,
   );
@@ -272,17 +269,22 @@ export function ActivitySidebar({
       .map((channel) => channel.id),
   );
   const channelsById = new Map(list.channels.map((c) => [c.id, c]));
-  const shownEvents = !flat
-    ? []
-    : filter === "threads"
-      ? threadEvents(inbox.items, [...teamIds], session, teamIds)
-      : mentionEvents(inbox.items, teamIds);
+  const shownEvents = (
+    !flat
+      ? []
+      : filter === "threads"
+        ? threadEvents(inbox.items, [...teamIds], session, teamIds)
+        : mentionEvents(inbox.items, teamIds)
+  ).filter((event) => !unreadOnly || event.unread);
 
   const ids = [
     ...shownEvents.slice(0, 100).map((event) => event.authorId),
     ...channels.flatMap((channel) => [
       ...(channel.channelType === "dm"
         ? (channel.participants?.slice(0, 1) ?? [])
+        : []),
+      ...(channel.channelType === "solo"
+        ? (channel.members ?? []).filter((key) => key !== session.viewer)
         : []),
       latestOf(channel)?.authorId ?? "",
     ]),
@@ -540,6 +542,10 @@ function ConversationRow({
   if (unreadOnly && !unread && !selected) return null;
   const Icon = channelIcon(channel);
   const peer = dm ? channel.participants?.[0] : undefined;
+  const others = (channel.members ?? []).filter(
+    (key) => key !== session.viewer,
+  );
+  const solo = channel.channelType === "solo";
   // The latest event: an unread thread reply you're in, when it is newer.
   const thread = team
     ? [...(state.activity.items ?? [])].sort(
@@ -555,6 +561,19 @@ function ConversationRow({
         : channel.preview
           ? messagePreview(channel.preview)
           : "";
+  // Who the row shows: a DM's person, a Solo chat's agent, and in Team
+  // whoever posted the latest message (the preview's author).
+  const latestAuthor =
+    thread && thread.createdAt > (latest?.createdAt ?? 0)
+      ? thread.authorId
+      : latest?.authorId;
+  const face = peer
+    ? peer
+    : solo
+      ? (others.find((key) => profiles.get(key)?.isAgent) ??
+        others[0] ??
+        (latestAuthor !== session.viewer ? latestAuthor : undefined))
+      : latestAuthor;
   return (
     <li data-activity-row={channel.id}>
       <MessageListRow
@@ -562,11 +581,11 @@ function ConversationRow({
         selected={selected}
         onClick={onOpen}
         avatar={
-          peer ? (
+          face ? (
             <PersonAvatar
               session={session}
-              profile={profiles.get(peer)}
-              name={channel.name || nameOf(peer)}
+              profile={profiles.get(face)}
+              name={nameOf(face)}
             />
           ) : (
             <Avatar
