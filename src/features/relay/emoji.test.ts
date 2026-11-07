@@ -124,8 +124,10 @@ it("keeps embedded prose literal while recognizing standalone, chained and overl
     ]),
   ).toEqual([]);
   expect(
-    referencedEmoji(":party: (:25Z:) :party::wave: :unknown:party:"),
-  ).toEqual(["party", "25z", "wave", "unknown"]);
+    referencedEmoji(
+      ":party: (:25Z:) :party::wave: :unknown:party: 1\ufe0f\u20e3:keycap:",
+    ),
+  ).toEqual(["party", "25z", "wave", "unknown", "keycap"]);
 });
 it("unions latest complete member sets; empty replacements and ties survive stale reads", async () => {
   const h = session();

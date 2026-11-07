@@ -82,8 +82,9 @@ export function emojiTags(event: {
 export const messageParts = (content: string) =>
   content.split(/(https?:\/\/[^\s<>"`]+)/g);
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
-/** Matches empty at an index that ends a word, combining marks included. */
-const wordEnd = /(?<=[\p{L}\p{N}_]\p{M}*)/uy;
+/** Matches empty at an index that ends a word, combining marks included; a
+ * keycap's enclosing mark makes it an emoji instead. */
+const wordEnd = /(?<=[\p{L}\p{N}_][\p{Mn}\p{Mc}]*)/uy;
 /** Colons inside words and timestamps are text; complete codes may share a colon. */
 function* shortcodeMatches(content: string) {
   let end = 0;
