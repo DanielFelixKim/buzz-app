@@ -22,6 +22,8 @@ type Span = { at: number; ms: number };
 type Attributed = Span & {
   kind: "key" | "stall";
   target?: string;
+  /** Keystrokes: wall ms per step, with React and other timed work in it. */
+  phases?: Record<string, { ms: number; react: number; marked: number }>;
   marks: Record<string, { n: number; ms: number; detail?: string }>;
   commits: { n: number; ms: number; top: [string, number, number][] };
 };
@@ -121,7 +123,12 @@ function createLagRecorder(enabled: boolean) {
     }
   }
 
-  function attribute(kind: Attributed["kind"], span: Span, target?: string) {
+  function attribute(
+    kind: Attributed["kind"],
+    span: Span,
+    target?: string,
+    phases?: Attributed["phases"],
+  ) {
     const from = span.at;
     const to = span.at + span.ms;
     const overlapping = <T extends Span>(list: T[]) =>
@@ -150,6 +157,7 @@ function createLagRecorder(enabled: boolean) {
         at: round(span.at),
         ms: round(span.ms),
         ...(target ? { target } : {}),
+        ...(phases ? { phases } : {}),
         marks: byMark,
         commits: {
           n: inSpan.length,
@@ -252,6 +260,7 @@ function createLagRecorder(enabled: boolean) {
 
   function composerTarget(event: Event) {
     const element = event.target as Element | null;
+    if (element?.closest?.("[data-lag-control]")) return "control";
     const box = element?.closest?.('[role="textbox"]');
     if (!box) return "other";
     const label = box.getAttribute("aria-label") ?? "";
@@ -261,23 +270,164 @@ function createLagRecorder(enabled: boolean) {
     return "composer";
   }
 
-  function startMonitors() {
-    // Keystroke to the task after the next frame: a paint opportunity.
+  /** Splits a keystroke's wall time into the steps the main thread ran:
+   *  wait     key event created → first keydown listener (thread was busy)
+   *  handlers keydown/keypress/beforeinput/input dispatch and their
+   *           microtasks: the editor's work, plus React when it flushes there
+   *  between  handlers done → the next frame starts: other tasks, scheduled
+   *           React renders and the wait for the display's next frame
+   *  layout   style and layout, forced at the start of that frame
+   *  paint    the rest of the frame (other frame callbacks, paint) until the
+   *           next task runs
+   * React and timed marks overlapping each step are reported beside it. */
+  type Phase = "wait" | "handlers" | "between" | "layout" | "paint";
+  const PHASES: Phase[] = ["wait", "handlers", "between", "layout", "paint"];
+  type KeyTiming = {
+    start: number;
+    listened: number;
+    handled: number;
+    frame?: number;
+    laidOut?: number;
+    target: string;
+  };
+  let pending: KeyTiming | undefined;
+
+  function overlapMs<T extends Span>(list: T[], from: number, to: number) {
+    let total = 0;
+    for (const item of list) {
+      const start = Math.max(item.at, from);
+      const end = Math.min(item.at + item.ms, to);
+      if (end > start) total += end - start;
+    }
+    return total;
+  }
+
+  function phasesOf(key: KeyTiming, end: number) {
+    const frame = key.frame ?? end;
+    const laidOut = key.laidOut ?? frame;
+    const bounds: Record<Phase, [number, number]> = {
+      wait: [key.start, key.listened],
+      handlers: [key.listened, key.handled],
+      between: [key.handled, frame],
+      layout: [frame, laidOut],
+      paint: [laidOut, end],
+    };
+    const result = {} as Record<
+      Phase,
+      { ms: number; react: number; marked: number }
+    >;
+    for (const phase of PHASES) {
+      const [from, to] = bounds[phase];
+      const ms = Math.max(0, to - from);
+      const commitMarks = commits;
+      const otherMarks = marks.filter((item) => item.source !== "react.commit");
+      result[phase] = {
+        ms: round(ms),
+        react: round(overlapMs(commitMarks, from, to)),
+        marked: round(overlapMs(otherMarks, from, to)),
+      };
+    }
+    return result;
+  }
+
+  const keyPhases: (Record<
+    Phase,
+    { ms: number; react: number; marked: number }
+  > & {
+    target: string;
+    total: number;
+  })[] = [];
+
+  function startKeyTiming() {
+    const handledNow = () => {
+      const key = pending;
+      if (!key || key.frame !== undefined) return;
+      queueMicrotask(() => {
+        if (pending === key && key.frame === undefined)
+          key.handled = performance.now();
+      });
+    };
+    // First listener on the way in: the key has reached the main thread.
     window.addEventListener(
       "keydown",
       (event) => {
-        const start = event.timeStamp;
-        const target = composerTarget(event);
-        requestAnimationFrame(() =>
+        const listened = performance.now();
+        const key: KeyTiming = {
+          start: event.timeStamp,
+          listened,
+          handled: listened,
+          target: composerTarget(event),
+        };
+        pending = key;
+        requestAnimationFrame(() => {
+          key.frame = performance.now();
+          // Forces this frame's style and layout now, so they are timed.
+          void document.documentElement.getBoundingClientRect();
+          key.laidOut = performance.now();
           setTimeout(() => {
-            const span = { at: start, ms: performance.now() - start, target };
+            const end = performance.now();
+            if (pending === key) pending = undefined;
+            const total = end - key.start;
+            const span = { at: key.start, ms: total, target: key.target };
             push(keys, span, 20_000);
-            if (span.ms >= SLOW_KEY_MS) attribute("key", span, target);
-          }, 0),
-        );
+            const phases = phasesOf(key, end);
+            push(
+              keyPhases,
+              { ...phases, target: key.target, total: round(total) },
+              20_000,
+            );
+            if (total >= SLOW_KEY_MS)
+              attribute("key", span, key.target, phases);
+          }, 0);
+        });
       },
       true,
     );
+    // Last listeners on the way out of each input event of this keystroke.
+    for (const type of ["keydown", "keypress", "beforeinput", "input"])
+      window.addEventListener(type, handledNow, false);
+  }
+
+  /** A plain text box outside React, ProseMirror and app state. If it hitches
+   * too, the main thread is busy with something else; if only the composer
+   * does, the composer's own work is slow. Hide with its ×; bring it back
+   * with __buzzLag.control(true). */
+  function control(show: boolean) {
+    const existing = document.querySelector("[data-lag-control]");
+    if (!show) {
+      existing?.remove();
+      return;
+    }
+    if (existing) return;
+    const box = document.createElement("div");
+    box.setAttribute("data-lag-control", "");
+    box.style.cssText =
+      "position:fixed;left:8px;bottom:8px;z-index:2147483647;display:flex;" +
+      "gap:4px;align-items:flex-start;padding:4px;border-radius:6px;" +
+      "background:rgba(255,200,0,.85);font:12px system-ui;color:#000";
+    const input = document.createElement("textarea");
+    input.placeholder = "lag control: type here too";
+    input.rows = 2;
+    input.spellcheck = false;
+    input.style.cssText =
+      "width:200px;resize:none;font:12px system-ui;border:0;border-radius:4px;padding:4px";
+    const close = document.createElement("button");
+    close.textContent = "×";
+    close.title = "Hide (bring back with __buzzLag.control(true))";
+    close.style.cssText =
+      "border:0;background:none;cursor:pointer;font:14px system-ui";
+    close.onclick = () => box.remove();
+    box.append(input, close);
+    document.body.append(box);
+  }
+
+  function startMonitors() {
+    startKeyTiming();
+    if (document.body) control(true);
+    else
+      document.addEventListener("DOMContentLoaded", () => control(true), {
+        once: true,
+      });
     // Event-loop stalls; WebKit has no long-task entries.
     let expected = performance.now() + STALL_MS;
     document.addEventListener("visibilitychange", () => {
@@ -297,6 +447,55 @@ function createLagRecorder(enabled: boolean) {
         flush();
       }
     }, STALL_MS);
+  }
+
+  /** Per input: where keystroke time went, for all keys and for slow ones.
+   * Each phase gives p50/p90 ms and its share of the summed wall time, with
+   * how much of it React commits and timed marks covered. */
+  function phaseSummary() {
+    const groups = new Map<string, typeof keyPhases>();
+    for (const key of keyPhases) {
+      for (const name of [key.target, `${key.target}:slow`]) {
+        if (name.endsWith(":slow") && key.total < SLOW_KEY_MS) continue;
+        const list = groups.get(name) ?? [];
+        list.push(key);
+        groups.set(name, list);
+      }
+    }
+    return Object.fromEntries(
+      [...groups].map(([name, list]) => {
+        const total = list.reduce((sum, key) => sum + key.total, 0) || 1;
+        return [
+          name,
+          {
+            n: list.length,
+            ...Object.fromEntries(
+              PHASES.map((phase) => {
+                const values = list.map((key) => key[phase].ms);
+                const sum = values.reduce((a, b) => a + b, 0);
+                const { p50, p90 } = percentiles(values);
+                return [
+                  phase,
+                  {
+                    p50,
+                    p90,
+                    share: round((sum / total) * 100),
+                    react: round(
+                      list.reduce((a, key) => a + key[phase].react, 0) /
+                        list.length,
+                    ),
+                    marked: round(
+                      list.reduce((a, key) => a + key[phase].marked, 0) /
+                        list.length,
+                    ),
+                  },
+                ];
+              }),
+            ),
+          },
+        ];
+      }),
+    );
   }
 
   function summary() {
@@ -325,6 +524,7 @@ function createLagRecorder(enabled: boolean) {
       }
     return {
       minutes: round(minutes),
+      phases: phaseSummary(),
       keys: Object.fromEntries(
         [...byTarget].map(([target, values]) => [target, percentiles(values)]),
       ),
@@ -387,6 +587,9 @@ function createLagRecorder(enabled: boolean) {
     summary,
     export: exported,
     flush,
+    control: (show = true) => {
+      if (enabled) control(show);
+    },
   });
 }
 
