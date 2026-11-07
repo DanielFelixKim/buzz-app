@@ -1,6 +1,6 @@
 //! Builderlab customers' sign-in servers, derived from their communities'
 //! hosts and listed so every launch adds them again.
-use super::config::{self, canonical_relay, Config};
+use super::config::{canonical_relay, Config};
 use url::Url;
 
 /// The sign-in server of a Builderlab customer's community, derived from its
@@ -45,7 +45,8 @@ fn builderlab_customer_id(name: &str) -> String {
     if id.len() < 64 {
         return id;
     }
-    let hash = hex::encode(&Sha256::digest(name.as_bytes())[..8]);
+    let digest = Sha256::digest(name.as_bytes());
+    let hash: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
     format!("builderlab-{}-{hash}", &name[..36])
 }
 
@@ -102,7 +103,7 @@ impl Customers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::SignIn;
+    use crate::federated_identity::config::{self, SignIn};
 
     #[test]
     fn a_builderlab_customer_server_is_derived_from_its_host() {

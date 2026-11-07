@@ -13,6 +13,17 @@ import { worktreePort } from "./worktree-port.mjs";
 // worktree, agents' included, so it must never turn this on.
 const me = process.argv[2] === "me";
 const args = process.argv.slice(me ? 3 : 2);
+// Anywhere else it would pass to Tauri and quietly use the debug key.
+const end = args.indexOf("--");
+if ((end === -1 ? args : args.slice(0, end)).includes("me")) {
+  const others = args.filter(
+    (arg, index) => arg !== "me" || (end !== -1 && index > end),
+  );
+  console.error(
+    `\`me\` must come first: just desktop me ${others.join(" ")}`.trimEnd(),
+  );
+  process.exit(1);
+}
 const { values, forwarded, rest } = options(args, ["port"]);
 if (
   values.port !== undefined &&

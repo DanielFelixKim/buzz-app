@@ -468,7 +468,8 @@ so Sign out ends the session but the next launch reads the release key again. A
 denied or broken read of the release key is an error, never a fallback; only
 an absent one falls back to the debug item. Only the `me` argument sets
 `BUZZ_DEV_RELEASE_KEY`: the launcher drops it from `.env.local` and the shell,
-since bootstrap copies `.env.local` into agent worktrees. On macOS the release
+since bootstrap copies `.env.local` into agent worktrees, and refuses `me`
+anywhere but first. On macOS the release
 item trusts only the release app, so Keychain asks for your password after each
 rebuild. macOS keeps its existing default
 file Keychain/security-framework implementation. Windows uses Credential Manager;
@@ -977,7 +978,7 @@ Federated identity ([NIP-FI](https://github.com/block/buzz/blob/main/docs/nips/N
 [NIP-FA](https://github.com/block/buzz/blob/main/docs/nips/NIP-FA.md)) adds a native
 owner separate from the human Nostr key, one per sign-in server: each compiled
 one, and each Builderlab customer's server, added when its first community
-connects. The servers are documented in
+connects and again at every later launch. The servers are documented in
 [configuration](configuration.md#federated-identity-build-input). Each relay is
 routed by its host to the server that covers it, never by anything the relay
 publishes; that server issues its assertions and later checks ask it alone. A
