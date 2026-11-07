@@ -110,8 +110,8 @@ export function createUpdates(
     if (!agentWork || agentWork.isWorking()) return;
     quietTimer = setTimeout(() => {
       if (status.state !== "scheduled") return;
-      // A turn may have started without its report reaching here yet; that
-      // report, then the next idle one, starts the quiet period again.
+      // Work reports clear this timer, so this guards only a report that
+      // never arrived; the next idle report starts the quiet period again.
       if (agentWork.isWorking()) {
         console.info("Update deferred: agents are working");
         return;
@@ -255,7 +255,9 @@ export function createUpdates(
     },
     cancelScheduled() {
       if (status.state !== "scheduled") return;
-      console.info("Scheduled update cancelled");
+      console.info(
+        `Scheduled update cancelled; ${agentWork?.workingCount() ?? 0} working`,
+      );
       setStatus({ state: "ready" });
     },
     dispose() {
