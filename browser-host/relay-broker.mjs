@@ -995,7 +995,13 @@ export function relayBrokerPlugin({
                 return;
               }
               if (action === "capabilities" && req.method === "GET")
-                return json(res, 200, await builderlab.capabilities());
+                return json(
+                  res,
+                  200,
+                  await builderlab.capabilities(
+                    url.searchParams.get("revision"),
+                  ),
+                );
               if (action === "auth" && req.method === "GET")
                 return json(res, 200, { auth: await builderlab.auth() });
               if (req.method !== "POST")

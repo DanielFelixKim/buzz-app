@@ -397,8 +397,8 @@ export function createBuilderlab({
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async capabilities() {
-      if (!credential) throw new Error("Sign in to Builderlab first");
+    async capabilities(expected) {
+      current(expected);
       if (capabilityRead) return capabilityRead;
       const started = generation;
       const checkedAt = Date.now();
@@ -409,7 +409,7 @@ export function createBuilderlab({
             throw new Error("Builderlab session changed");
           // Restored pages retain refreshed flags without changing the sign-in profile.
           account = { ...account, capabilities: result.capabilities };
-          return result;
+          return { revision, ...result };
         } finally {
           if (started === generation) {
             capabilitiesCheckedAt = checkedAt;

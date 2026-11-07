@@ -2674,8 +2674,9 @@ isolates discovery failures and preserves the saved provider choice. Discovery
 uses the same active-plugin ownership and removal rules as provider registration;
 the returned function can remove it early. No checks run without a discovery
 registration, and no polling is implied. Consumers that gate work on `status()`
-can first await `ctx.decisions.refreshProviders({ forRouting: true })` to discover newly available
-providers. Attention does this before deciding whether a watch can be classified.
+can first await `ctx.decisions.refreshProviders({ forRouting: true })` to discover
+newly available providers. Attention does this before deciding whether a watch
+can be classified.
 
 The host owns everything around the call, so every provider is held to the same
 rules: it checks the request against the limits before any provider sees it,

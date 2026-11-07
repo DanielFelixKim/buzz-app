@@ -108,9 +108,14 @@ export function createDevSession() {
     refreshCapabilities = createCapabilityRefresh(
       account,
       async () => {
-        const response = await fetch("/api/builderlab/capabilities");
+        const response = await fetch(
+          `/api/builderlab/capabilities?revision=${encodeURIComponent(current.revision)}`,
+        );
         if (!response.ok) throw new Error("Capability check failed");
-        return response.json();
+        const result = await response.json();
+        if (result?.revision !== current.revision)
+          throw new Error("Builderlab session changed");
+        return result;
       },
       (capabilities) => {
         if (disposed || owner !== current) return;

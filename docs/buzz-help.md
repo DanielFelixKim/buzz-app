@@ -749,7 +749,8 @@ available rather than silently discarding it.
   at most once a minute; a failed check keeps the previous permissions.
   Decisions API settings, decision requests, and Attention classifier readiness
   checks also discover newly granted Decisions access, even while Builderlab is
-  absent from the provider list.
+  absent from the provider list. Requests and Attention skip discovery while
+  your explicitly chosen provider is still listed; Settings always checks.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
   there, once for every Claude agent. When creating a Claude agent or editing
   one that runs on this computer, click **Add key** beside **Harness** to open

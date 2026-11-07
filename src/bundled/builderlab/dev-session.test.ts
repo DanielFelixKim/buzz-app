@@ -435,6 +435,7 @@ it("refreshes only capabilities through the broker while preserving its owner an
     now += 60_000;
     h.fetch.mockResolvedValueOnce(
       Response.json({
+        revision: "one",
         capabilities: {
           can_use_remote_agents: false,
           can_use_builderlab_decisions: true,
@@ -462,6 +463,18 @@ it("refreshes only capabilities through the broker while preserving its owner an
     const previous = h.session.snapshot();
     await h.session.refreshCapabilities();
     expect(h.session.snapshot()).toBe(previous);
+    now += 60_000;
+    h.fetch.mockResolvedValueOnce(
+      Response.json({
+        revision: "replacement",
+        capabilities: { can_use_remote_agents: true },
+      }),
+    );
+    await h.session.refreshCapabilities();
+    expect(h.session.snapshot()).toBe(previous);
+    expect(h.fetch).toHaveBeenLastCalledWith(
+      "/api/builderlab/capabilities?revision=one",
+    );
   } finally {
     h.session.dispose();
     clock.mockRestore();
@@ -495,7 +508,10 @@ it("restores the broker's capability cache age instead of starting another minut
     expect(h.fetch).not.toHaveBeenCalled();
     now += 1;
     h.fetch.mockResolvedValueOnce(
-      Response.json({ capabilities: { can_use_remote_agents: false } }),
+      Response.json({
+        revision: "one",
+        capabilities: { can_use_remote_agents: false },
+      }),
     );
     await h.session.refreshCapabilities();
     expect(h.fetch).toHaveBeenCalledOnce();
