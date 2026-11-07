@@ -192,6 +192,7 @@ function setup(available = true) {
   const messages = {
     send: vi.fn<RelaySession["messages"]["send"]>(() => "d".repeat(64)),
   };
+  const enqueue = vi.fn<Outbox["send"]>(() => "d".repeat(64));
   const viewer = "f".repeat(64);
   let channelSnapshot = {
     channels: [
@@ -271,6 +272,7 @@ function setup(available = true) {
       ensure: async () => {},
     },
     outbox: {
+      send: enqueue,
       ready: async () => {},
       whenPrepared: vi.fn(async () => ({})),
       withChat: async (
@@ -3523,7 +3525,7 @@ it.each(["projects", "token"] as const)(
         await user.click(screen.getByRole("button", { name: "Send message" }));
         expect(prepare).not.toHaveBeenCalled();
         expect(f.channelWrites.start).not.toHaveBeenCalled();
-        expect(f.messages.send).not.toHaveBeenCalled();
+        expect(f.enqueue).not.toHaveBeenCalled();
         view.unmount();
         expect(localStorage.getItem(storage)).toBe(saved);
       }
@@ -3707,7 +3709,7 @@ it("rejects multiple task targets before preparation or creation and retains the
     );
     expect(prepare).not.toHaveBeenCalled();
     expect(f.channelWrites.start).not.toHaveBeenCalled();
-    expect(f.messages.send).not.toHaveBeenCalled();
+    expect(f.enqueue).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Help");
     expect(
       readView("task-many", `solo:task:${route.draftId}:new-draft`, null),
@@ -3934,7 +3936,7 @@ it.each(["text", "foreign", "workspace"] as const)(
       await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
       expect(prepare).not.toHaveBeenCalled();
       expect(f.channelWrites.start).not.toHaveBeenCalled();
-      expect(f.messages.send).not.toHaveBeenCalled();
+      expect(f.enqueue).not.toHaveBeenCalled();
       expect(resumeStart).toHaveBeenCalledWith(
         create.id,
         channelId,
@@ -4999,11 +5001,13 @@ it.each([
       expect(prepare.mock.calls[0]?.[0].workspace).toEqual(
         removed ? undefined : project,
       );
-      expect(f.messages.send.mock.calls[0]?.[1]).toBe(prose);
-      expect(f.messages.send.mock.calls[0]?.[2]).toEqual([primary]);
-      expect(f.messages.send.mock.calls[0]?.slice(5)).toEqual([[], {}]);
+      expect(f.enqueue.mock.calls[0]?.[0].content).toBe(prose);
+      expect(f.enqueue.mock.calls[0]?.[0].tags).toEqual([
+        ["h", "22222222-2222-4222-8222-222222222222"],
+        ["p", primary],
+      ]);
       expect(readView(scope, "solo:default-agent", null)).toBe(b);
-      expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(project.label);
+      expect(f.enqueue.mock.calls[0]?.[0].content).not.toContain(project.label);
     } finally {
       adopt?.(b);
       cleanup();
@@ -5108,7 +5112,7 @@ it.each([
         ),
       );
       expect(f.channelWrites.start).not.toHaveBeenCalled();
-      expect(f.messages.send).not.toHaveBeenCalled();
+      expect(f.enqueue).not.toHaveBeenCalled();
       expect(prepare.mock.calls.every(([input]) => input.primary === a)).toBe(
         true,
       );
@@ -5386,11 +5390,12 @@ it.each(["selected", "refused", "typed later"] as const)(
         screen.getByRole("button", { name: "Send message" }),
       );
       await waitFor(() => expect(started).toHaveBeenCalledOnce());
-      expect(f.messages.send.mock.calls[0]?.[1]).toBe(
-        mode === "typed later" ? ` @A ${before}` : before,
+      expect(f.enqueue.mock.calls[0]?.[0].content).toBe(
+        mode === "typed later" ? `@A ${before}` : before,
       );
-      expect(f.messages.send.mock.calls[0]?.[2]).toEqual([
-        refused || mode === "typed later" ? a : b,
+      expect(f.enqueue.mock.calls[0]?.[0].tags).toEqual([
+        ["h", "22222222-2222-4222-8222-222222222222"],
+        ["p", refused || mode === "typed later" ? a : b],
       ]);
       expect(
         mentionDraft(readView(scope, `${key}:new-draft`, "")).recipients,
