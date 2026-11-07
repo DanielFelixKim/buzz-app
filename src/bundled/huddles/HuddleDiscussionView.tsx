@@ -110,6 +110,7 @@ export function HuddleDiscussionView({
             <Button
               size="sm"
               onClick={() => {
+                log.current?.focus({ preventScroll: true });
                 following.current = true;
                 latest();
               }}

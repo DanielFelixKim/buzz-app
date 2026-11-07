@@ -314,15 +314,20 @@ it("resumes bottom following after Jump to latest from scrolled history", () => 
   });
   fireEvent.scroll(log, { target: { scrollTop: 100 } });
   vi.mocked(Element.prototype.scrollIntoView).mockClear();
-  fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+  const jump = screen.getByRole("button", { name: "Jump to latest" });
+  jump.focus();
+  fireEvent.click(jump);
+  expect(document.activeElement).toBe(log);
   value = { ...value, hasNewer: false, rows: [{ ...row, id: "latest" }] };
   mounted.rerender(view());
+  expect(document.activeElement).toBe(log);
   expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
     block: "end",
   });
   vi.mocked(Element.prototype.scrollIntoView).mockClear();
   value = { ...value, rows: [...value.rows, { ...row, id: "live" }] };
   mounted.rerender(view());
+  expect(document.activeElement).toBe(log);
   expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
     block: "end",
   });
