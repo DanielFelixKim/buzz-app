@@ -209,8 +209,27 @@ function createLagRecorder(enabled: boolean) {
   }
 
   function installReactHook() {
-    const global = globalThis as { __REACT_DEVTOOLS_GLOBAL_HOOK__?: unknown };
-    if (global.__REACT_DEVTOOLS_GLOBAL_HOOK__) return;
+    type Hook = {
+      onCommitFiberRoot?: (id: number, root: { current?: Fiber }) => unknown;
+    };
+    const global = globalThis as { __REACT_DEVTOOLS_GLOBAL_HOOK__?: Hook };
+    const observe = (root: { current?: Fiber }) => {
+      try {
+        onCommit(root);
+      } catch {
+        /* Diagnostics never break rendering. */
+      }
+    };
+    const existing = global.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    // React Refresh may have installed the hook already; observe through it.
+    if (existing) {
+      const previous = existing.onCommitFiberRoot;
+      existing.onCommitFiberRoot = function (id, root) {
+        observe(root);
+        return previous?.call(this, id, root);
+      };
+      return;
+    }
     let id = 0;
     global.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
       supportsFiber: true,
@@ -222,16 +241,12 @@ function createLagRecorder(enabled: boolean) {
       },
       onScheduleFiberRoot() {},
       onCommitFiberRoot(_id: number, root: { current?: Fiber }) {
-        try {
-          onCommit(root);
-        } catch {
-          /* Diagnostics never break rendering. */
-        }
+        observe(root);
       },
       onCommitFiberUnmount() {},
       onPostCommitFiberRoot() {},
       setStrictMode() {},
-    };
+    } as Hook;
   }
 
   function composerTarget(event: Event) {
