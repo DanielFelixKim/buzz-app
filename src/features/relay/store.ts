@@ -4382,8 +4382,16 @@ export function createChannelStore(
                 (tag) => tag[0] === "e" && keep.has(tag[1] ?? ""),
               )),
         );
-        while (retained.length && listByteSize(retained) > maxHistoryBytes)
-          retained.splice(0, Math.max(1, Math.ceil(retained.length / 4)));
+        const roots = retained
+          .filter((event) => channelRowKind(event.kind))
+          .sort(newestFirst);
+        while (retained.length && listByteSize(retained) > maxHistoryBytes) {
+          roots.splice(0, Math.max(1, Math.ceil(roots.length / 4)));
+          retained = relatedEvents(
+            retained,
+            new Set(roots.map((event) => event.id)),
+          );
+        }
         const retainedIds = new Set(retained.map((event) => event.id));
         for (const id of state.traffic.keys())
           if (!retainedIds.has(id)) state.traffic.delete(id);

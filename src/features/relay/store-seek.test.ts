@@ -2104,3 +2104,42 @@ it("revalidates a deep dense-second target through signed small pages", async ()
   expect(h.window().freshness).toBe("verified");
   expect(h.window().rows.some((row) => row.id === target.id)).toBe(true);
 });
+
+it("recovers byte-evicted neighbours around a late interior live root", async () => {
+  const h = setup({
+    count: 100,
+    maxHistoryRows: 100,
+    maxHistoryBytes: 8 * 1024 * 1024,
+  });
+  for (let i = 0; i < h.history.length; i++)
+    h.history[i] = message(h.alice, "c", `m${i}`, T0 + i * HOUR, [
+      ["metadata", "x".repeat(128 * 1024)],
+    ]);
+  await h.open();
+  for (let page = 0; !h.window().hasNewer && page < 8; page++) {
+    h.channels.loadOlder("c");
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false), {
+      interval: 1,
+    });
+  }
+  expect(h.window().hasNewer).toBe(true);
+  const expected = h.window().rows.map((row) => row.id);
+  const late = message(h.alice, "c", "late interior", T0 + 75 * HOUR + 1, [
+    ["metadata", "x".repeat(768 * 1024)],
+  ]);
+  h.history.push(late);
+  h.live.receive([late], { channelId: "c", phase: "live" });
+  const seen = new Set(h.window().rows.map((row) => row.id));
+  expect(expected.some((id) => !seen.has(id))).toBe(true);
+  for (let page = 0; h.window().hasNewer && page < 30; page++) {
+    h.channels.loadNewer?.("c");
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy(), {
+      interval: 1,
+    });
+    expect(h.window().error).toBeUndefined();
+    for (const row of h.window().rows) seen.add(row.id);
+  }
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(expected.filter((id) => !seen.has(id))).toEqual([]);
+  expect(seen.has(late.id)).toBe(true);
+});
