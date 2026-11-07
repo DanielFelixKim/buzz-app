@@ -2806,13 +2806,21 @@ export function createUnread({
     },
     enterChannel(channelId, active = true) {
       const visit = visits.get(channelId) ?? 0;
-      // Only an active visit sees arrivals; background entry sees nothing.
+      // Only an active visit sees arrivals. Background entry sees no more
+      // than the row already had: a save still pending, failed or
+      // unsupported leaves that snapshot the only thing keeping it quiet.
+      // Its marks were the last visit's to save, so they are not carried.
       if (!closed && allowed(channelId)) {
         openChannels.add(channelId);
-        seenRows.set(channelId, {
-          through: active ? Number.POSITIVE_INFINITY : -1,
-          ids: new Set(),
-        });
+        const prior = seenRows.get(channelId);
+        seenRows.set(
+          channelId,
+          active
+            ? { through: Number.POSITIVE_INFINITY, ids: new Set() }
+            : prior && prior.through !== Number.POSITIVE_INFINITY
+              ? { through: prior.through, ids: prior.ids }
+              : { through: -1, ids: new Set() },
+        );
         publish(new Set([channelId]), true);
       }
       return serialize(channelId, async () => {
