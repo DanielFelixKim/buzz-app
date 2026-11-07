@@ -325,6 +325,13 @@ it("sends a fresh multi-participant task only to its primary and clears its draf
     expect(f.prepare.mock.calls[0]?.[0].recipients).toEqual(f.participants);
     expect(f.mark).toHaveBeenCalledOnce();
     expect(f.publications).toHaveLength(2);
+    const creates = f.rows().filter((row) => row.event.kind === 9007);
+    expect(creates).toHaveLength(1);
+    expect(creates[0]?.signed?.tags.filter(([key]) => key === "p")).toEqual([
+      ["p", owner.session.viewer],
+      ...f.participants.map((pubkey) => ["p", pubkey]),
+    ]);
+    expect(f.publications).toContain(creates[0]?.signed?.id);
     const first = f.rows().filter((row) => row.event.kind === 9);
     expect(first).toHaveLength(1);
     expect(first[0]?.delivery).toBe("accepted");
