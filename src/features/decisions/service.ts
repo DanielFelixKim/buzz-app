@@ -162,6 +162,8 @@ export interface Decisions {
   backend(): string | undefined;
   /** That provider's status, or `unavailable` when there is none. */
   status(): DecisionProviderStatus | "unavailable";
+  /** Refresh provider availability before a readiness check; does not send decision text. */
+  refreshProviders(): Promise<void>;
   subscribe(listener: () => void): () => void;
   /** Offers a provider while the calling plugin runs, or until the returned
    * function removes it. `Decisions` exposes no way to choose the provider;
@@ -277,7 +279,7 @@ export class DecisionsService extends Service implements Decisions {
   registerProviderDiscovery(discovery: DecisionProviderDiscovery): () => void {
     return this.discoveries.register(this.ctx, discovery);
   }
-  /** Host-only: refresh availability without changing the saved provider choice. */
+  /** Refresh availability without changing the saved provider choice. */
   refreshProviders = async (): Promise<void> => {
     await Promise.allSettled(
       this.discoveries

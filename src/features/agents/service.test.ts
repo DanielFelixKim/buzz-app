@@ -1,3 +1,6 @@
+import { federatedFixture } from "../federated-identity/testing";
+import { createNativeSession } from "../../bundled/builderlab/session";
+import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
 import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices } from "./choices";
@@ -6573,6 +6576,63 @@ it("without a key the classifier does not run and the turn is told so", async ()
     classifier: { outcome: "not-run" },
   });
   expect(service.classifier()).toBe("unavailable");
+});
+
+it("discovers newly granted Decisions access before Attention skips an unconfigured classifier", async () => {
+  const jev = fakeJev(false);
+  const h = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(h.ctx.decisions.status()).toBe("needs-setup"));
+  let now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  let granted = false;
+  const identity = federatedFixture();
+  identity.request.mockImplementation(async () => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      subject: "user",
+      capabilities: { can_use_builderlab_decisions: granted },
+    }),
+  }));
+  const session = createNativeSession(identity.service);
+  const decide = vi.fn(async (input: unknown) => {
+    const state = JSON.parse((input as DecisionRequest).state) as {
+      event: { content: string };
+    };
+    return answered(state.event.content === "qualifies" ? 0.9 : 0.2);
+  });
+  const plugin = h.ctx
+    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, decide));
+  try {
+    await plugin.await();
+    await session.signIn();
+    await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+    expect(h.ctx.decisions.status()).toBe("needs-setup");
+    expect(identity.request).toHaveBeenCalledOnce();
+    granted = true;
+    now += 60_000;
+    h.emit({
+      events: [
+        event("a", { content: "does not qualify" }),
+        event("b", { content: "qualifies" }),
+      ],
+    });
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledOnce());
+    expect(h.run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "watch",
+      event: { content: "qualifies" },
+      classifier: { outcome: "passed" },
+    });
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(jev.decide).not.toHaveBeenCalled();
+    expect(identity.request).toHaveBeenCalledTimes(2);
+    expect(identity.service.signIn).toHaveBeenCalledOnce();
+  } finally {
+    await h.ctx.fiber.dispose();
+    session.dispose();
+    clock.mockRestore();
+  }
 });
 
 it("a key set or cleared takes effect at once, and one removed elsewhere is noticed", async () => {
