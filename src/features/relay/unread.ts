@@ -844,25 +844,41 @@ export function createUnread({
       const by = (other: string, through: number) =>
         (frontier(other) ?? -1) >= through ? other : undefined;
       // A channel read reads everything its row has seen.
-      if (kind === "activity" || kind === "seen") return by(id, value);
+      if (kind === "activity" || (kind === "seen" && !id.startsWith("msg:")))
+        return by(id, value);
+      // A receipt is redundant once its message is read, by any mark.
+      if (kind === "seen") {
+        const message = id.slice("msg:".length);
+        if (by(`msg:${message}`, value)) return `msg:${message}`;
+        return messageCover(message, value);
+      }
       // Both marks name the same thread root, so this needs no event.
       if (kind === "thread-activity" && by(`thread:${id}`, value))
         return `thread:${id}`;
-      if (closed) return undefined;
-      indexEvidence();
-      const entry = byId.get(id);
-      const channel = entry?.channelId ?? home(id);
-      if (channel === undefined) return undefined;
-      if (kind === "msg")
+      if (kind === "msg") return messageCover(id, value);
+      if (kind === "thread" || kind === "thread-activity") {
+        const channel = where(id);
+        return channel === undefined ? undefined : by(channel.id, value);
+      }
+      return undefined;
+      function where(target: string) {
+        if (closed) return undefined;
+        indexEvidence();
+        const entry = byId.get(target);
+        const channel = entry?.channelId ?? home(target);
+        return channel === undefined ? undefined : { id: channel, entry };
+      }
+      function messageCover(target: string, through: number) {
+        const found = where(target);
+        if (!found) return undefined;
+        const { id: channel, entry } = found;
         return (
-          by(channel, entry?.event.created_at ?? value) ??
+          by(channel, entry?.event.created_at ?? through) ??
           (entry && caughtUp(entry, frontier)
             ? `activity:${entry.channelId}`
             : undefined)
         );
-      if (kind === "thread" || kind === "thread-activity")
-        return by(channel, value);
-      return undefined;
+      }
     },
     home(id) {
       if (closed) return undefined;

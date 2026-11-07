@@ -100,7 +100,8 @@ catch-up (including a message taller than the viewport):
   not already hide writes nothing. These saves, from any window, do not
   advance `revision()` (the journal counts them apart as `quiet`), so a
   reader's entry evidence outlives them. A channel read covers the channel
-  mark and reading a message covers its receipt; retention keeps row marks
+  mark, and any read of a message (its own mark or a channel read) covers its
+  receipt; retention keeps row marks
   last and never treats them as override ancestry.
 - Both keys use verified event timestamps, never wall time. Neither enters generic
   channel/thread inheritance or remote override baselines. Channel catch-up ends

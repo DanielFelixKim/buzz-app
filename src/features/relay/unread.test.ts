@@ -4813,3 +4813,24 @@ it("inactive entry sees nothing until the open visit resumes", async () => {
     expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
   );
 });
+
+it("a channel read prunes the row receipts of the messages it reads", async () => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+  );
+  await h.session.unread.markChannelRead("room");
+  await vi.waitFor(() =>
+    expect(
+      h.journal()?.state.frontiers[`seen:msg:${mention.id}`],
+    ).toBeUndefined(),
+  );
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+});
