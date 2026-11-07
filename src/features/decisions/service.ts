@@ -147,6 +147,13 @@ export type DecisionProvider = Readonly<{
   order?: number;
 }>;
 
+/** A permission check that can offer a provider which is currently absent.
+ * Receives no decision text; the host runs it on Settings entry and before routing. */
+export type DecisionProviderDiscovery = Readonly<{
+  id: string;
+  refresh(): Promise<void>;
+}>;
+
 /** What plugins get as `ctx.decisions`. `decide` never rejects. */
 export interface Decisions {
   decide(request: DecisionRequest): Promise<DecisionResult>;
@@ -160,6 +167,9 @@ export interface Decisions {
    * function removes it. `Decisions` exposes no way to choose the provider;
    * the user does in Settings. */
   registerProvider(provider: DecisionProvider): () => void;
+  /** Discover optional providers independently of their current registration.
+   * Removed with the plugin or the returned function; failures retain current providers. */
+  registerProviderDiscovery(discovery: DecisionProviderDiscovery): () => void;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -209,6 +219,7 @@ export const DEFAULT_DECISION_PROVIDERS: readonly string[] = [
  * than sent somewhere else. */
 export class DecisionsService extends Service implements Decisions {
   private readonly registry;
+  private readonly discoveries;
   /** The user's choice in Settings; undefined until they make one. */
   private chosen: string | undefined;
   private sorted: readonly RegisteredProvider[] = [];
@@ -229,6 +240,7 @@ export class DecisionsService extends Service implements Decisions {
   ) {
     super(ctx, "decisions");
     this.registry = createContributions<DecisionProvider>(ctx);
+    this.discoveries = createContributions<DecisionProviderDiscovery>(ctx);
     try {
       this.chosen = storage?.getItem(DECISION_BACKEND_KEY) ?? undefined;
     } catch {
@@ -262,6 +274,17 @@ export class DecisionsService extends Service implements Decisions {
     // a plugin calls through its injected `ctx.decisions`.
     return this.registry.register(this.ctx, provider);
   }
+  registerProviderDiscovery(discovery: DecisionProviderDiscovery): () => void {
+    return this.discoveries.register(this.ctx, discovery);
+  }
+  /** Host-only: refresh availability without changing the saved provider choice. */
+  refreshProviders = async (): Promise<void> => {
+    await Promise.allSettled(
+      this.discoveries
+        .snapshot()
+        .map((entry) => Promise.resolve().then(() => entry.refresh())),
+    );
+  };
   /** Host-only: every registered provider, in Settings order. */
   providers = (): readonly RegisteredProvider[] => this.sorted;
   private current(): RegisteredProvider | undefined {
@@ -306,11 +329,12 @@ export class DecisionsService extends Service implements Decisions {
     return () => void this.listeners.delete(listener);
   };
   async decide(request: DecisionRequest): Promise<DecisionResult> {
-    const provider = this.current();
-    const backend = provider?.key;
+    let provider = this.current();
+    let backend = provider?.key;
     const failed = (reason: DecisionFailure): DecisionResult =>
       Object.freeze({ outcome: "failed", backend, reason });
-    if (!provider) return failed("unavailable");
+    if (!provider && !this.discoveries.snapshot().length)
+      return failed("unavailable");
     const invalid = checkRequest(request);
     if (invalid) return failed(invalid);
     const timeoutMs = Math.min(
@@ -330,11 +354,16 @@ export class DecisionsService extends Service implements Decisions {
     let reply: unknown;
     try {
       reply = await Promise.race([
-        Promise.resolve().then(() =>
-          provider.decide(Object.freeze({ ...request, timeoutMs }), {
+        Promise.resolve().then(async () => {
+          await this.refreshProviders();
+          if (abort.signal.aborted) return "timeout";
+          provider = this.current();
+          backend = provider?.key;
+          if (!provider) return { outcome: "failed", reason: "unavailable" };
+          return provider.decide(Object.freeze({ ...request, timeoutMs }), {
             signal: abort.signal,
-          }),
-        ),
+          });
+        }),
         deadline,
       ]);
     } catch {

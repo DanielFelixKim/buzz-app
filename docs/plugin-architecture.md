@@ -2663,6 +2663,17 @@ export function apply(ctx: Context) {
 }
 ```
 
+A plugin whose provider depends on changing account permissions can register
+`ctx.decisions.registerProviderDiscovery({ id, refresh })` while that provider is
+absent. The host calls `refresh(): Promise<void>` when Decisions Settings opens
+and before choosing a provider for a request, within that request's deadline.
+The callback receives no decision text. It may register or withdraw its provider;
+cache/coalesce its reads and retain previous availability on failure. The host
+isolates discovery failures and preserves the saved provider choice. Discovery
+uses the same active-plugin ownership and removal rules as provider registration;
+the returned function can remove it early. No checks run without a discovery
+registration, and no polling is implied.
+
 The host owns everything around the call, so every provider is held to the same
 rules: it checks the request against the limits before any provider sees it,
 stops waiting at the deadline, turns a throw into `service_error`, and checks

@@ -1302,6 +1302,7 @@ it("opens Manage plugins from the Decisions API hint", async () => {
     providers: () => providers,
     subscribe: () => () => {},
     setBackend: vi.fn(),
+    refreshProviders: async () => {},
   } as unknown as DecisionsService;
   const onSection = vi.fn();
   const view = (section: string) => (

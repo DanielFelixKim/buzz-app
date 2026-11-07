@@ -43,6 +43,10 @@ export function offerBuilderlabDecisions(
   openIdentity?: () => void,
 ) {
   if (!native) return;
+  ctx.decisions.registerProviderDiscovery({
+    id: "capabilities",
+    refresh: session.refreshCapabilities,
+  });
   const provider = builderlabProvider(
     session,
     loginAvailable,
@@ -52,7 +56,6 @@ export function offerBuilderlabDecisions(
   let withdraw: (() => void) | undefined;
   const update = () => {
     const state = session.snapshot();
-    if (state.status === "signed-in") void session.refreshCapabilities();
     const allowed =
       state.status === "signed-in" &&
       state.account?.canUseBuilderlabDecisions === true;
@@ -90,7 +93,6 @@ export function builderlabProvider(
     description: "Use your Builderlab account.",
     // A sign-in in progress cannot answer yet.
     status: (): DecisionProviderStatus => {
-      void session.refreshCapabilities();
       const credential = signedIn();
       return native && credential && permitted(credential)
         ? "ready"

@@ -29,11 +29,14 @@ export function DecisionsSettings({
 }: {
   decisions: Pick<
     DecisionsService,
-    "backend" | "subscribe" | "setBackend" | "providers"
+    "backend" | "subscribe" | "setBackend" | "providers" | "refreshProviders"
   >;
   active(): boolean;
   onSection?: ((section: string) => void) | undefined;
 }) {
+  useEffect(() => {
+    if (active()) void decisions.refreshProviders();
+  }, [decisions, active]);
   const backend = useSyncExternalStore(
     decisions.subscribe,
     decisions.backend,

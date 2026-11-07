@@ -251,7 +251,9 @@ The plugin also offers Builderlab as a Decisions API provider. It reads
 Builderlab is not listed in Settings > Decisions API and no decision request
 goes to it. While it is registered, it answers unless the user chose another
 provider; when it goes away, TypeSafe answers. It uses the same capability refresh
-cache. The plugin names the NIP-FI session by its revision, and
+cache. Opening Decisions API settings or making a decision request also checks
+for newly granted access while Builderlab is absent from the provider list.
+The plugin names the NIP-FI session by its revision, and
 native `decide` posts to the identity origin's API with that
 session as `Authorization: Bearer`, as for the build's other Builderlab calls;
 the token never reaches the webview. A 401 there refuses only that call, and

@@ -418,3 +418,73 @@ it("stops waiting at the deadline and aborts the provider", async () => {
   expect(signal?.aborted).toBe(true);
   expect(timers).toEqual([]);
 });
+
+it("keeps routing to the existing provider when discovery fails and retires discovery with its plugin", async () => {
+  const h = setup();
+  const decide = vi.fn(async () => reply);
+  await h.plugin("buzz.typesafe", { id: "typesafe", decide });
+  const refresh = vi.fn(async () => {
+    throw new Error("Offline");
+  });
+  const discovery = h.root
+    .extend({ pluginOwner: { id: "example.discovery", revision: "one" } })
+    .plugin((ctx) =>
+      ctx.decisions.registerProviderDiscovery({ id: "account", refresh }),
+    );
+  await discovery.await();
+  await flush();
+  await expect(h.service.decide(request)).resolves.toMatchObject({
+    outcome: "answered",
+    backend: "buzz.typesafe/typesafe",
+  });
+  expect(refresh).toHaveBeenCalledOnce();
+  await discovery.dispose();
+  await h.service.refreshProviders();
+  expect(refresh).toHaveBeenCalledOnce();
+  await h.root.fiber.dispose();
+});
+
+it("includes discovery in the existing deadline and never dispatches a decision after it expires", async () => {
+  const h = setup();
+  const decide = vi.fn(async () => reply);
+  await h.plugin("buzz.typesafe", { id: "typesafe", decide });
+  let release = () => {};
+  let reached = () => {};
+  const started = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const discovery = h.root
+    .extend({ pluginOwner: { id: "example.discovery", revision: "one" } })
+    .plugin((ctx) =>
+      ctx.decisions.registerProviderDiscovery({
+        id: "account",
+        refresh: () => {
+          reached();
+          return held;
+        },
+      }),
+    );
+  await discovery.await();
+  await flush();
+  const result = h.service.decide({ ...request, timeoutMs: 1_000 });
+  try {
+    await started;
+    h.timers[0]?.run();
+    await expect(result).resolves.toMatchObject({
+      outcome: "failed",
+      reason: "timeout",
+    });
+  } finally {
+    release();
+    await result;
+  }
+  // Join a refresh behind the released gate, then drain its dispatch continuation.
+  await h.service.refreshProviders();
+  await flush();
+  expect(decide).not.toHaveBeenCalled();
+  expect(h.timers).toEqual([]);
+  await h.root.fiber.dispose();
+});

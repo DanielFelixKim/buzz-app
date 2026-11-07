@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { DecisionsSettings } from "../../app/DecisionsSettings";
+import { federatedFixture } from "../../features/federated-identity/testing";
+import { createNativeSession } from "./session";
 import { createTestSession } from "./test-helpers";
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
@@ -36,6 +40,7 @@ const tauri = vi.hoisted(() => ({
 }));
 vi.mock("@tauri-apps/api/core", () => tauri);
 afterEach(() => {
+  cleanup();
   vi.unstubAllEnvs();
   tauri.isTauri.mockReturnValue(false);
 });
@@ -211,3 +216,143 @@ it("offers Builderlab only while the signed-in account may use decisions", async
   expect(keys()).toEqual([]);
   expect(decide).not.toHaveBeenCalled();
 });
+
+it.each(["settings", "request", "chosen-provider"] as const)(
+  "discovers newly granted Decisions access through %s while Builderlab is absent",
+  async (entry) => {
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    let allowed = false;
+    const identity = federatedFixture();
+    identity.request.mockImplementation(async () => ({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        subject: "user",
+        email: "a@example.com",
+        capabilities: { can_use_builderlab_decisions: allowed },
+      }),
+    }));
+    const session = createNativeSession(identity.service);
+    const root = new Context();
+    root.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const decisions = new DecisionsService(root, {
+      getItem: () => null,
+      setItem: () => {},
+    } as unknown as Storage);
+    const answered = {
+      outcome: "answered" as const,
+      model: "test",
+      answers: { a: { type: "yes_no" as const, probability: 0.7 } },
+    };
+    const fallback = vi.fn(async () => answered);
+    const native = vi.fn<BuilderlabDecide>(async () => answered);
+    const chosen = vi.fn(async () => answered);
+    const fallbackPlugin = root
+      .extend({ pluginOwner: { id: "buzz.typesafe", revision: "one" } })
+      .plugin((ctx) =>
+        ctx.decisions.registerProvider({
+          id: "typesafe",
+          label: "TypeSafe",
+          description: "Fallback",
+          status: () => "ready",
+          subscribe: () => () => {},
+          decide: fallback,
+        }),
+      );
+    const builderlab = root
+      .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+      .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, native));
+    try {
+      await Promise.all([fallbackPlugin.await(), builderlab.await()]);
+      if (entry === "chosen-provider") {
+        const custom = root
+          .extend({ pluginOwner: { id: "example.provider", revision: "one" } })
+          .plugin((ctx) =>
+            ctx.decisions.registerProvider({
+              id: "custom",
+              label: "Custom",
+              description: "Chosen",
+              status: () => "ready",
+              subscribe: () => () => {},
+              decide: chosen,
+            }),
+          );
+        await custom.await();
+        await flush();
+        decisions.setBackend("example.provider/custom");
+      }
+      await session.signIn();
+      await expect.poll(() => session.snapshot().status).toBe("signed-in");
+      await flush();
+      expect(
+        decisions
+          .providers()
+          .some((p) => p.key === "block.builderlab/builderlab"),
+      ).toBe(false);
+      const beforeBackend =
+        entry === "chosen-provider"
+          ? "example.provider/custom"
+          : "buzz.typesafe/typesafe";
+      await expect(decisions.decide(request)).resolves.toMatchObject({
+        backend: beforeBackend,
+      });
+      const owner = session.credential();
+      expect(identity.request).toHaveBeenCalledOnce();
+      const settings =
+        entry === "settings"
+          ? render(
+              <DecisionsSettings decisions={decisions} active={() => false} />,
+            )
+          : undefined;
+      expect(identity.request).toHaveBeenCalledOnce();
+      allowed = true;
+      now += 60_000;
+      if (entry === "settings") {
+        settings?.rerender(
+          <DecisionsSettings decisions={decisions} active={() => true} />,
+        );
+        expect(
+          await screen.findByRole("radio", { name: /Builderlab/ }),
+        ).toBeVisible();
+      } else {
+        await expect(decisions.decide(request)).resolves.toMatchObject({
+          backend:
+            entry === "chosen-provider"
+              ? beforeBackend
+              : "block.builderlab/builderlab",
+        });
+      }
+      expect(
+        decisions
+          .providers()
+          .some((p) => p.key === "block.builderlab/builderlab"),
+      ).toBe(true);
+      expect(decisions.backend()).toBe(
+        entry === "chosen-provider"
+          ? beforeBackend
+          : "block.builderlab/builderlab",
+      );
+      expect(fallback).toHaveBeenCalledTimes(
+        entry === "chosen-provider" ? 0 : 1,
+      );
+      if (entry === "chosen-provider") expect(native).not.toHaveBeenCalled();
+      expect(identity.request).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await decisions.decide(request);
+      });
+      expect(identity.request).toHaveBeenCalledTimes(2);
+      expect(session.credential()).toBe(owner);
+      expect(identity.service.signIn).toHaveBeenCalledOnce();
+      expect(identity.service.signOut).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+      await root.fiber.dispose();
+      session.dispose();
+      clock.mockRestore();
+    }
+  },
+);

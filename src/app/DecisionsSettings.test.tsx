@@ -55,6 +55,7 @@ function fake(
     providers.find((provider) => provider.key === (chosen ?? TYPESAFE))?.key;
   return {
     providers: () => providers,
+    refreshProviders: async () => {},
     backend,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
