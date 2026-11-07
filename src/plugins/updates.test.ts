@@ -599,3 +599,81 @@ it("checks a newly attached Git source after an older batch reserved a source-le
     updates.dispose();
   }
 });
+
+it.each(["removed", "disabled", "replaced"] as const)(
+  "does not authorize a queued Git source after it is %s",
+  async (change) => {
+    const f = fixture();
+    const state = f.get();
+    if (state.status !== "ready") throw new Error("fixture catalog missing");
+    const queued = {
+      ...f.plugin,
+      manifest: { ...f.plugin.manifest, id: "queued" },
+      updateSource: {
+        repository: "https://example.com/queued.git",
+        reference: "main",
+        path: ".",
+      },
+    };
+    const later = {
+      ...queued,
+      manifest: { ...queued.manifest, id: "later" },
+      updateSource: {
+        ...queued.updateSource,
+        repository: "https://example.com/later.git",
+      },
+    };
+    f.set({
+      ...state,
+      catalog: { ...state.catalog, plugins: [f.plugin, queued, later] },
+    });
+    let release!: (preview: ImportPreview) => void;
+    f.checkGit.mockImplementationOnce(
+      () =>
+        new Promise<ImportPreview>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const updates = createPluginUpdates(f.manager, f.authorize);
+    const pending = updates.check();
+    try {
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      const changed =
+        change === "disabled"
+          ? { ...queued, updateChecks: false }
+          : {
+              ...queued,
+              updateSource: {
+                ...queued.updateSource,
+                repository: "https://example.com/replacement.git",
+              },
+            };
+      f.set({
+        ...state,
+        catalog: {
+          ...state.catalog,
+          plugins: [
+            f.plugin,
+            ...(change === "removed" ? [] : [changed]),
+            later,
+          ],
+        },
+      });
+      const retry = updates.check();
+      release(f.preview);
+      await Promise.all([pending, retry]);
+      expect(f.authorize).not.toHaveBeenCalledWith(
+        queued.updateSource.repository,
+      );
+      expect(f.authorize).toHaveBeenCalledWith(later.updateSource.repository);
+      if (change === "replaced")
+        expect(f.authorize).toHaveBeenCalledWith(
+          changed.updateSource.repository,
+        );
+    } finally {
+      release?.(f.preview);
+      await pending;
+      updates.dispose();
+    }
+  },
+);
