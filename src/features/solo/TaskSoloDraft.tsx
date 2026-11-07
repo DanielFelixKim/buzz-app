@@ -528,7 +528,7 @@ export function TaskSoloDraft({
         inviteAgents
         label="Message your task agent"
         placeholder="What do you want to accomplish?"
-        autoFocus={!!focusRequest}
+        focusRequest={focusRequest}
         taskDraft={{
           region:
             context?.region ??
