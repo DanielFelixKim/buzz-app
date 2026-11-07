@@ -1994,3 +1994,78 @@ it("preserves the pending overlap interval after its boundary root is deleted", 
   await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
   expect(h.window().rows.some((row) => row.id === root.id)).toBe(true);
 });
+
+it("keeps the pending composite boundary after newer live eviction", async () => {
+  const h = setup({ count: 100, maxHistoryRows: 40, seed: 1 });
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const boundary = h.history[60];
+  assert.exists(boundary);
+  const delayed = Array.from({ length: 64 }, (_, i) =>
+    message(h.alice, "c", `late same second ${i}`, boundary.created_at),
+  ).find((event) => event.id > boundary.id);
+  assert.exists(delayed);
+  let release!: () => void;
+  h.gate.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const before = h.reads.length;
+  h.channels.loadOlder("c");
+  try {
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+    h.live.receive(
+      Array.from({ length: 41 }, (_, i) =>
+        message(h.alice, "c", `advance pending ${i}`, T0 + (102 + i) * HOUR),
+      ),
+      { channelId: "c", phase: "live" },
+    );
+    h.live.receive([delayed], { channelId: "c", phase: "live" });
+  } finally {
+    h.gate.hold = undefined;
+    release();
+  }
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows.some((row) => row.id === delayed.id)).toBe(true);
+});
+
+it.each(["tail", "lookup"])(
+  "does not charge a foreign reference-only overlay from %s to pending history",
+  async (source) => {
+    const h = setup({ count: 100, maxHistoryBytes: 12000 });
+    await h.open();
+    const foreign = message(h.alice, "other", "other root", T0 + 100 * HOUR);
+    h.live.receive([
+      roster(h.relay, "other", [h.viewer.pubkey]),
+      metadata(h.relay, "other", "Other"),
+      ...(source === "tail" ? [foreign] : []),
+    ]);
+    if (source === "lookup") {
+      h.history.push(foreign);
+      await h.owner.session.read([{ ids: [foreign.id], limit: 1 }]);
+      h.history.pop();
+    }
+    let release!: () => void;
+    h.gate.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.channels.loadOlder("c");
+    try {
+      h.live.receive([
+        signed(h.alice, {
+          kind: 40003,
+          content: "x".repeat(12000),
+          created_at: T0 + 101 * HOUR,
+          tags: [["e", foreign.id]],
+        }),
+      ]);
+      expect(h.window().error).toBeUndefined();
+      expect(h.window().loadingOlder).toBe(true);
+    } finally {
+      h.gate.hold = undefined;
+      release();
+    }
+    await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    expect(h.window().error).toBeUndefined();
+  },
+);

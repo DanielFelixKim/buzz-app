@@ -27,6 +27,7 @@ import {
   compareChannelAge,
 } from "./channel-labels";
 import { foldMessages } from "./fold";
+import { eventVisibility } from "./event-access";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import {
   LARGE_READ_DEADLINE_MS,
@@ -71,6 +72,8 @@ type WindowState = {
   cursor: WindowCursor | null;
   events: readonly RelayEvent[];
   joining?: Map<string, RelayEvent> | undefined;
+  /** Original older-read boundary, independent of live trimming. */
+  joiningCursor?: WindowCursor | undefined;
   atHead: boolean;
   /** Detached: rows created at or after this (unix seconds) are not loaded;
    * the window holds a seek segment below it. Undefined at the head. */
@@ -1100,6 +1103,7 @@ export function createChannelStore(
       ? new Map(state.events.map((event) => [event.id, event]))
       : undefined;
     state.joining = joining;
+    state.joiningCursor = cursor ?? undefined;
     const controller = new AbortController();
     state.controller = controller;
     // Shown rows wait on this head read; a seek must not treat it as the end.
@@ -1221,7 +1225,10 @@ export function createChannelStore(
             },
       );
     } finally {
-      if (state.joining === joining) state.joining = undefined;
+      if (state.joining === joining) {
+        state.joining = undefined;
+        state.joiningCursor = undefined;
+      }
       if (state.controller === controller) {
         state.controller = undefined;
         if (live(state, generation)) setWindow(state, { loadingOlder: false });
@@ -4080,6 +4087,7 @@ export function createChannelStore(
           state.controller?.abort();
           state.controller = undefined;
           state.joining = undefined;
+          state.joiningCursor = undefined;
           setWindow(state, { loadingOlder: false });
         }
         return;
@@ -4228,10 +4236,28 @@ export function createChannelStore(
       const tail = { events: retained, preview };
       tails.set(channelId, tail, tailBytes(tail));
     }
+    const evidence = new Map(
+      ([...windows.values()].some((state) => state.joining)
+        ? [
+            ...[...heads.entries()].flatMap(([, head]) => head.events),
+            ...[...tails.entries()].flatMap(([, tail]) => tail.events),
+            ...[...windows.values()].flatMap((state) => [
+              ...state.events,
+              ...(state.joining?.values() ?? []),
+            ]),
+            ...events,
+          ]
+        : []
+      ).map((event) => [event.id, event]),
+    );
     for (const state of windows.values()) {
       if (disposed || generation !== epoch) return;
       if (!authorized(state.channelId)) continue;
       if (state.joining) {
+        const foreign = eventVisibility(
+          (channelId) => channelId !== state.channelId,
+          (id) => evidence.get(id),
+        );
         // Keep deleted roots with their tombstones until commit: they still
         // define the pending read's overlap interval.
         const joiningRoots = [...state.joining.values()]
@@ -4252,7 +4278,8 @@ export function createChannelStore(
                 oldest &&
                 newestFirst(newest, event) <= 0 &&
                 (newestFirst(event, oldest) <= 0 ||
-                  (live && event.created_at === state.cursor?.createdAt)))) &&
+                  (live &&
+                    event.created_at === state.joiningCursor?.createdAt)))) &&
               event.tags.some(
                 ([name, id]) =>
                   (name === "h" && id === state.channelId) ||
@@ -4260,7 +4287,8 @@ export function createChannelStore(
               )) ||
             ([40003, 5, 9005, 7, 39005].includes(event.kind) &&
               !event.tags.some(([name]) => name === "h") &&
-              event.tags.some(([name]) => name === "e"))
+              event.tags.some(([name]) => name === "e") &&
+              !foreign(event))
           )
             // Reference-only overlays may precede their incoming page's roots.
             // The scoped fold associates them only after the page arrives.
@@ -4278,6 +4306,7 @@ export function createChannelStore(
         if (listByteSize([...state.joining.values()]) > maxHistoryBytes) {
           state.joining.clear();
           state.joining = undefined;
+          state.joiningCursor = undefined;
           state.controller?.abort();
           setWindow(state, {
             loadingOlder: false,
@@ -4493,6 +4522,7 @@ export function createChannelStore(
         state.controller = undefined;
         state.above = undefined;
         state.joining = undefined;
+        state.joiningCursor = undefined;
         state.events = [];
         attached(state);
         state.atHead = true;
@@ -4515,6 +4545,7 @@ export function createChannelStore(
       state.controller = undefined;
       state.above = undefined;
       state.joining = undefined;
+      state.joiningCursor = undefined;
       state.events = visible([...state.events, ...state.traffic.values()]);
       state.notices = new Map(
         visible([...state.notices.values()]).map((event) => [event.id, event]),
