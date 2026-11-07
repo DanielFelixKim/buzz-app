@@ -369,7 +369,7 @@ export function TypingIndicator({
     : undefined;
   const agentStatus = (
     pubkey: string,
-    navigate: (target: string, origin?: MessageLinkOrigin) => void,
+    navigate: (target: string, origin?: MessageLinkOrigin | null) => void,
     work?: LocalWork,
     workRoot?: string | null,
   ) => {
@@ -426,7 +426,7 @@ export function TypingIndicator({
               workRoot !== undefined
                 ? workRoot
                   ? { rootId: workRoot }
-                  : undefined
+                  : null
                 : activityOrigin(pubkey),
             )
           }
@@ -540,8 +540,12 @@ export function TypingIndicator({
                   openActivity &&
                   ((target, origin) => {
                     const agent = profileActivityViewKey(target);
-                    const show = (next: string) => openActivity(next, origin);
-                    return agent && (origin?.rootId || knownConversation(agent))
+                    const show = (next: string) =>
+                      openActivity(next, origin ?? undefined);
+                    return agent &&
+                      (origin === null ||
+                        origin?.rootId ||
+                        knownConversation(agent))
                       ? openProfileTranscript(target, show)
                       : show(target);
                   })
@@ -602,6 +606,7 @@ export function TypingIndicator({
   );
 }
 
+// A null origin selects known channel work; undefined leaves scope inferred.
 function AgentChooser({
   label,
   content,
@@ -612,11 +617,11 @@ function AgentChooser({
   label: string;
   content: ReactNode;
   openTarget?:
-    | ((target: string, origin?: MessageLinkOrigin) => boolean)
+    | ((target: string, origin?: MessageLinkOrigin | null) => boolean)
     | undefined;
   directTarget?: string | undefined;
   children(
-    navigate: (target: string, origin?: MessageLinkOrigin) => void,
+    navigate: (target: string, origin?: MessageLinkOrigin | null) => void,
   ): ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -645,7 +650,7 @@ function AgentChooser({
     document.addEventListener("keydown", dismiss, true);
     return () => document.removeEventListener("keydown", dismiss, true);
   }, [open]);
-  const navigate = (target: string, origin?: MessageLinkOrigin) => {
+  const navigate = (target: string, origin?: MessageLinkOrigin | null) => {
     const previous = document.activeElement;
     // The popup action unmounts after navigation. Existing panel navigation
     // captures activeElement, so give it the retained avatar control instead.

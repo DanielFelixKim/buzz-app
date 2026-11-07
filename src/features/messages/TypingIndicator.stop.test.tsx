@@ -8,6 +8,10 @@ import type { Agents } from "../agents/service";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 import { TypingIndicator } from "./TypingIndicator";
 import {
+  claimProfileTranscript,
+  profileActivityViewTarget,
+} from "../profiles/target";
+import {
   agent,
   other,
   root,
@@ -334,12 +338,17 @@ it("keeps Stop for a stoppable Solo follow-up when older work cannot stop", asyn
   );
 });
 
-it.each([true, false])(
-  "opens the Solo conversation when the same agent also works in a thread (stoppable: %s)",
-  async (stoppable) => {
+it.each([
+  { stoppable: true, profileActivity: false },
+  { stoppable: false, profileActivity: false },
+  { stoppable: true, profileActivity: true },
+  { stoppable: false, profileActivity: true },
+])(
+  "opens the Solo conversation when the same agent also works in a thread (stoppable: $stoppable, profile activity: $profileActivity)",
+  async ({ stoppable, profileActivity }) => {
     const f = fixture();
     const user = userEvent.setup();
-    const openActivity = vi.fn();
+    const openActivity = vi.fn(() => true);
     f.update([], {
       local: [
         {
@@ -373,6 +382,7 @@ it.each([true, false])(
         session={f.session}
         channelId="channel"
         openActivity={openActivity}
+        canOpenActivity={profileActivity ? () => true : undefined}
       />,
     );
     await user.click(screen.getByRole("button", { name: "Reading first.txt" }));
@@ -380,13 +390,24 @@ it.each([true, false])(
       expect(screen.queryByText(/Channel conversation \/ Thread/)).toBeNull();
       expect(screen.getByText("Channel conversation")).toBeVisible();
     }
-    await user.click(
-      screen.getByRole("button", { name: "Open conversation for Agent" }),
-    );
+    const [row] = screen.getAllByRole("button", {
+      name: profileActivity
+        ? "View Agent activity"
+        : "Open conversation for Agent",
+    });
+    if (!row) throw new Error("Missing Activity row");
+    await user.click(row);
     expect(openActivity).toHaveBeenCalledWith(
-      "buzz://channel/channel",
+      profileActivity
+        ? profileActivityViewTarget(agent)
+        : "buzz://channel/channel",
       undefined,
     );
+    if (profileActivity)
+      expect(
+        claimProfileTranscript(profileActivityViewTarget(agent) ?? "") !==
+          undefined,
+      ).toBe(stoppable);
   },
 );
 
