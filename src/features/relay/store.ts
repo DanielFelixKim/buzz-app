@@ -4758,6 +4758,7 @@ export function createChannelStore(
       }
       const epochAtStart = epoch;
       const generation = retained.generation;
+      const headOnly = retained.sliding;
       const valid = () => epoch === epochAtStart && live(retained, generation);
       if (!retained.snapshot.rows.length)
         setWindow(retained, { status: "loading", error: undefined });
@@ -4808,6 +4809,10 @@ export function createChannelStore(
         const head = await requestHead(channelId, priority);
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
+        if (headOnly && !retained.sliding) {
+          retained.kept = keptAfter();
+          return true;
+        }
         retained.restored = false;
         retained.readAt = head.readAt;
         accept(head.events, true);
@@ -4860,6 +4865,10 @@ export function createChannelStore(
       } catch (error) {
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
+        if (headOnly && !retained.sliding) {
+          retained.kept = keptAfter();
+          return true;
+        }
         // A denied head has purged in requestHead; a page denied after it must too.
         if (readErrorKind(error) === "denied") {
           denyChannel(channelId, error);

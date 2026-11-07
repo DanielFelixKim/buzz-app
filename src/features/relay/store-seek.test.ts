@@ -2185,3 +2185,66 @@ it("keeps the live head attached when new messages exceed the byte budget", asyn
     byteSize(h.history.filter((event) => ids.has(event.id))),
   ).toBeLessThanOrEqual(8 * 1024 * 1024);
 });
+
+it.each([false, true])(
+  "does not let a held head-only catch-up replace a forward-attached cursor (failed=%s)",
+  async (failed) => {
+    const h = setup({ count: 300, maxHistoryRows: 40 });
+    await h.open();
+    h.live.state({ status: "connected", routes: [] });
+    h.live.established("c");
+    await vi.waitFor(() =>
+      expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+        channelId: "c",
+        state: "verified",
+      }),
+    );
+    for (let page = 0; page < 10; page++) {
+      h.channels.loadOlder("c");
+      await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    }
+    let release!: () => void;
+    h.gate.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const before = h.reads.length;
+    h.live.state({ status: "retrying", routes: [] });
+    h.live.state({ status: "connected", routes: [] });
+    h.live.established("c");
+    try {
+      await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+      h.gate.hold = undefined;
+      for (let page = 0; h.window().hasNewer && page < 30; page++) {
+        h.channels.loadNewer?.("c");
+        await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+      }
+      expect(h.window().hasNewer).toBeFalsy();
+      const oldest = Math.min(...h.times());
+      h.gate.failHead = failed;
+      release();
+      await vi.waitFor(() =>
+        expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+          channelId: "c",
+          state: "verified",
+        }),
+      );
+      expect(h.window().error).toBeUndefined();
+      h.live.state({ status: "retrying", routes: [] });
+      h.live.state({ status: "connected", routes: [] });
+      h.gate.failHead = false;
+      h.live.established("c");
+      await vi.waitFor(() =>
+        expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+          channelId: "c",
+          state: "verified",
+        }),
+      );
+      h.channels.loadOlder("c");
+      await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+      expect(h.times()).toContain(oldest - HOUR);
+    } finally {
+      h.gate.hold = undefined;
+      release();
+    }
+  },
+);
