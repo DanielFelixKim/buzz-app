@@ -467,3 +467,41 @@ it("refreshes only capabilities through the broker while preserving its owner an
     clock.mockRestore();
   }
 });
+
+it("restores the broker's capability cache age instead of starting another minute on reload", async () => {
+  let now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const h = setup();
+  const checkedAt = now;
+  // A reload restores the broker's last projection halfway through its cache lifetime.
+  now += 30_000;
+  h.events.onmessage?.({
+    data: JSON.stringify({
+      revision: "one",
+      pending: false,
+      capabilitiesCheckedAt: checkedAt,
+      auth: {
+        subject: "A",
+        email: "A@example.org",
+        expiresAt: "2030",
+        capabilities: { can_use_remote_agents: true },
+      },
+    }),
+  });
+  try {
+    await signedIn(h.session);
+    now = checkedAt + 59_999;
+    await h.session.refreshCapabilities();
+    expect(h.fetch).not.toHaveBeenCalled();
+    now += 1;
+    h.fetch.mockResolvedValueOnce(
+      Response.json({ capabilities: { can_use_remote_agents: false } }),
+    );
+    await h.session.refreshCapabilities();
+    expect(h.fetch).toHaveBeenCalledOnce();
+    expect(h.session.snapshot().account?.canUseRemoteAgents).toBe(false);
+  } finally {
+    h.session.dispose();
+    clock.mockRestore();
+  }
+});

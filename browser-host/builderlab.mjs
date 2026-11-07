@@ -236,6 +236,8 @@ export function createBuilderlab({
 }) {
   let credential;
   let account;
+  let capabilitiesCheckedAt;
+  let capabilityRead;
   let pending = false;
   let loginError;
   let linking = Promise.resolve();
@@ -246,6 +248,7 @@ export function createBuilderlab({
     revision,
     pending,
     auth: account ?? null,
+    capabilitiesCheckedAt,
     ...(loginError ? { error: loginError } : {}),
   });
   const notify = () => {
@@ -314,7 +317,22 @@ export function createBuilderlab({
       if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("Builderlab returned invalid capabilities");
       const { capabilities } = value;
-      return { capabilities };
+      if (
+        capabilities !== undefined &&
+        (!capabilities ||
+          typeof capabilities !== "object" ||
+          Array.isArray(capabilities))
+      )
+        throw new Error("Builderlab returned invalid capabilities");
+      return {
+        capabilities: {
+          can_use_remote_agents: capabilities?.can_use_remote_agents === true,
+          can_use_builderlab_decisions:
+            capabilities?.can_use_builderlab_decisions === true,
+          can_delete_buzz_communities:
+            capabilities?.can_delete_buzz_communities === true,
+        },
+      };
     }
     const { subject, email, name, expires_at, capabilities } =
       await response.json();
@@ -349,6 +367,8 @@ export function createBuilderlab({
     pending = false;
     loginError = undefined;
     account = undefined;
+    capabilitiesCheckedAt = undefined;
+    capabilityRead = undefined;
     session?.abort();
     session = new AbortController();
     credential = undefined;
@@ -368,6 +388,7 @@ export function createBuilderlab({
   };
   const publishAccount = (value) => {
     account = value;
+    capabilitiesCheckedAt = Date.now();
     notify();
   };
   const broker = {
@@ -378,10 +399,25 @@ export function createBuilderlab({
     },
     async capabilities() {
       if (!credential) throw new Error("Sign in to Builderlab first");
+      if (capabilityRead) return capabilityRead;
       const started = generation;
-      const result = await me(credential, session.signal, true);
-      if (started !== generation) throw new Error("Builderlab session changed");
-      return result;
+      const checkedAt = Date.now();
+      capabilityRead = (async () => {
+        try {
+          const result = await me(credential, session.signal, true);
+          if (started !== generation)
+            throw new Error("Builderlab session changed");
+          // Restored pages retain refreshed flags without changing the sign-in profile.
+          account = { ...account, capabilities: result.capabilities };
+          return result;
+        } finally {
+          if (started === generation) {
+            capabilitiesCheckedAt = checkedAt;
+            capabilityRead = undefined;
+          }
+        }
+      })();
+      return capabilityRead;
     },
     async auth() {
       const current = credential;

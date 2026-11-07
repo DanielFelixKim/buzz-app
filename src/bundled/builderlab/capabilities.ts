@@ -12,8 +12,8 @@ export function createCapabilityRefresh(
   previous: Capabilities,
   read: () => Promise<unknown>,
   update: (capabilities: Capabilities) => void,
+  checkedAt = Date.now(),
 ) {
-  let checkedAt = Date.now();
   let pending: Promise<void> | undefined;
   return function refresh(): Promise<void> {
     if (pending) return pending;

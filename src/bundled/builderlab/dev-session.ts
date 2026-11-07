@@ -26,6 +26,7 @@ export const brokerBuilderlab = () =>
 type State = {
   revision: string;
   pending: boolean;
+  capabilitiesCheckedAt?: number;
   error?: string;
   auth: null | {
     subject: string;
@@ -116,6 +117,7 @@ export function createDevSession() {
         account = Object.freeze({ ...account, ...capabilities });
         publish({ status: "signed-in", account });
       },
+      next.capabilitiesCheckedAt,
     );
     viewer = {
       broker: { origin: window.location.origin, revision: next.revision },
