@@ -8,7 +8,11 @@ import {
 } from "./desktop-config.mjs";
 import { worktreePort } from "./worktree-port.mjs";
 
-const args = process.argv.slice(2);
+// `me` (from `just desktop me`) signs in with the release build's key, read-only.
+// Only this argument sets the variable: .env.local is copied into every
+// worktree, agents' included, so it must never turn this on.
+const me = process.argv[2] === "me";
+const args = process.argv.slice(me ? 3 : 2);
 const { values, forwarded, rest } = options(args, ["port"]);
 if (
   values.port !== undefined &&
@@ -24,6 +28,8 @@ const port = values.port === undefined ? undefined : Number(values.port);
 const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
 const root = fileURLToPath(new URL("../", import.meta.url));
 const env = launchEnvironment(root);
+delete env.BUZZ_DEV_RELEASE_KEY;
+if (me) env.BUZZ_DEV_RELEASE_KEY = "1";
 // Give Rust the development frontend's effective public pin (including an
 // explicit empty override), so native agent starts select the signer the
 // frontend actually uses.

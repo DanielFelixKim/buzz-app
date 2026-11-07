@@ -167,6 +167,11 @@ trait Store: Send + Sync {
     fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     /// Sign out removes the key under both services; an absent item is success.
     fn delete_previous(&self) -> Result<()>;
+    /// The key under this build's own service, which Sign out removes. It differs
+    /// from `read` only when `just desktop me` signs in with the release key.
+    fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        self.read()
+    }
 }
 struct OsStore;
 #[cfg(not(test))]
@@ -206,6 +211,9 @@ mod platform {
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_human)
+        }
+        fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_own_human)
         }
         fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_previous_human)
@@ -264,6 +272,9 @@ mod keyring_platform {
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_human)
+        }
+        fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_own_human)
         }
         fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_previous_human)
@@ -324,7 +335,7 @@ impl Store for OsStore {
 fn remove_key(store: &dyn Store) -> Result<()> {
     store.delete_previous()?;
     store.delete()?;
-    match (store.read()?, store.previous()?) {
+    match (store.own()?, store.previous()?) {
         (None, None) => Ok(()),
         _ => Err("Your key is still saved in secure storage".into()),
     }

@@ -460,7 +460,17 @@ One native owner keeps the key in memory after successful restore. The new
 create-only secure-storage item is service `xyz.block.buzz.desktop.identity` in release
 builds, or `xyz.block.buzz.desktop.identity.debug` with Rust debug assertions,
 account `human`. Debug worktrees share the debug item, not the release identity;
-ports and frontend dev mode do not isolate it. macOS keeps its existing default
+ports and frontend dev mode do not isolate it. `just desktop me` is the one
+exception: it signs in with the release key, read from
+`xyz.block.buzz.desktop.identity` (else its pre-1.0 service), and never copies,
+replaces or deletes it. Create, import and Sign out still use only the debug item,
+so Sign out ends the session but the next launch reads the release key again. A
+denied or broken read of the release key is an error, never a fallback; only
+an absent one falls back to the debug item. Only the `me` argument sets
+`BUZZ_DEV_RELEASE_KEY`: the launcher drops it from `.env.local` and the shell,
+since bootstrap copies `.env.local` into agent worktrees. On macOS the release
+item trusts only the release app, so Keychain asks for your password after each
+rebuild. macOS keeps its existing default
 file Keychain/security-framework implementation. Windows uses Credential Manager;
 Linux uses Secret Service through keyring 3.6.3, as old Buzz does. Linux requires
 a running desktop Secret Service with a default collection (for example GNOME

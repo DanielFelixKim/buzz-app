@@ -9,9 +9,17 @@ struct Memory {
     legacy_reads: Mutex<usize>,
     previous: Mutex<Option<Vec<u8>>>,
     deletes: Mutex<Vec<&'static str>>,
+    /// The release build's key a `just desktop me` build reads but never writes.
+    release: Mutex<Option<Vec<u8>>>,
 }
 impl Store for Arc<Memory> {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        if let Some(release) = self.release.lock().unwrap().clone() {
+            return Ok(Some(Zeroizing::new(release)));
+        }
+        self.own()
+    }
+    fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
         *self.reads.lock().unwrap() += 1;
         if *self.denied.lock().unwrap() {
             return Err("denied".into());
@@ -559,6 +567,28 @@ fn remove_key_also_deletes_the_key_under_its_previous_service() {
     *store.previous.lock().unwrap() = Some(b"previous".to_vec());
     remove_key(&store).unwrap();
     assert!(store.previous.lock().unwrap().is_none());
+}
+
+#[test]
+fn a_me_build_signs_in_with_the_release_key_but_never_replaces_or_removes_it() {
+    let store = Arc::new(Memory::default());
+    let release = fixture();
+    let nsec = release.nsec().unwrap();
+    *store.release.lock().unwrap() = Some(nsec.as_bytes().to_vec());
+    let mut me = identity(&store);
+    assert_eq!(me.restore().unwrap(), Some(release.viewer().unwrap()));
+    assert!(me.save(None).is_err());
+    let other = Key::new(Zeroizing::new([2; 32])).nsec().unwrap();
+    assert!(me.save(Some(&other)).is_err());
+    assert!(store.saved.lock().unwrap().is_none());
+    // Sign out removes only this build's items and succeeds with the release
+    // key still saved; the next launch reads it again.
+    remove_key(&store).unwrap();
+    assert_eq!(*store.deletes.lock().unwrap(), ["previous", "current"]);
+    assert_eq!(
+        store.release.lock().unwrap().as_deref(),
+        Some(nsec.as_bytes())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

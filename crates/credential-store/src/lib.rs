@@ -308,10 +308,49 @@ fn optional(result: Result<Zeroizing<Vec<u8>>>) -> Result<Option<Zeroizing<Vec<u
     }
 }
 
-/// Read only the human identity used by the desktop app; never create or select
-/// another key. One saved before 1.0 is copied to the current service first.
+/// Whether this is a debug build `just desktop me` started, which signs in with
+/// the release build's human key. Only that launcher sets the variable.
+pub fn reads_release_human() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var_os("BUZZ_DEV_RELEASE_KEY").as_deref() == Some(std::ffi::OsStr::new("1"))
+}
+
+/// The human identity the desktop app signs with. A `just desktop me` build reads
+/// the release build's key, read-only: it never copies, replaces or deletes it,
+/// and creates, imports and Sign out still use only its own item. With no release
+/// key saved it falls back to its own.
 #[cfg(not(test))]
 pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
+    release_or_own(
+        reads_release_human(),
+        |service| read(service, HUMAN_ACCOUNT),
+        read_own_human,
+    )
+}
+
+/// The release key, under its current service or the one from before 1.0, else
+/// this build's own. Only absence falls through: a denied or broken read of the
+/// release key never swaps in another key.
+fn release_or_own(
+    release: bool,
+    read: impl Fn(&str) -> Result<Zeroizing<Vec<u8>>>,
+    own: impl FnOnce() -> Result<Zeroizing<Vec<u8>>>,
+) -> Result<Zeroizing<Vec<u8>>> {
+    if release {
+        for service in [human_service(false), human_store(false)] {
+            match read(service) {
+                Err(Error::Absent) => {}
+                result => return result,
+            }
+        }
+    }
+    own()
+}
+
+/// Read only this build's own human identity; never create or select another
+/// key. One saved before 1.0 is copied to the current service first.
+#[cfg(not(test))]
+pub fn read_own_human() -> Result<Zeroizing<Vec<u8>>> {
     #[cfg(all(target_os = "macos", debug_assertions))]
     if let Some(helper) = std::env::var_os("BUZZ_DEV_CREDENTIAL_HELPER") {
         return dev_helper::read(&helper);
