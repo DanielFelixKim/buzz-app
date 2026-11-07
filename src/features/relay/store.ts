@@ -4386,7 +4386,8 @@ export function createChannelStore(
           .filter((event) => channelRowKind(event.kind))
           .sort(newestFirst);
         while (retained.length && listByteSize(retained) > maxHistoryBytes) {
-          roots.splice(0, Math.max(1, Math.ceil(roots.length / 4)));
+          const count = Math.max(1, Math.ceil(roots.length / 4));
+          roots.splice(state.ceiling === undefined ? -count : 0, count);
           retained = relatedEvents(
             retained,
             new Set(roots.map((event) => event.id)),

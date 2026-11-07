@@ -1430,9 +1430,12 @@ it("admits live arrivals beyond the loaded composite cursor within its first sec
   }
 });
 
-it("keeps live boundary arrivals from advancing the cursor across unread same-second roots", async () => {
+it("keeps detached live boundary arrivals from advancing the cursor across unread same-second roots", async () => {
   const h = setup({ count: 450, spacing: 0, maxHistoryBytes: 12000 });
   await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().hasNewer).toBe(true);
   const cursor = h
     .window()
     .rows.map((row) => row.id)
@@ -2152,4 +2155,33 @@ it("recovers byte-evicted neighbours around a late interior live root", async ()
   expect(h.window().hasNewer).toBeFalsy();
   expect(expected.filter((id) => !seen.has(id))).toEqual([]);
   expect(seen.has(late.id)).toBe(true);
+});
+
+it("keeps the live head attached when new messages exceed the byte budget", async () => {
+  const h = setup({
+    count: 50,
+    maxHistoryRows: 100,
+    maxHistoryBytes: 8 * 1024 * 1024,
+  });
+  for (let i = 0; i < h.history.length; i++)
+    h.history[i] = message(h.alice, "c", `m${i}`, T0 + i * HOUR, [
+      ["metadata", "x".repeat(128 * 1024)],
+    ]);
+  await h.open();
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.window().rows).toHaveLength(40);
+  expect(h.window().hasNewer).toBeFalsy();
+  const latest = message(h.alice, "c", "new live head", T0 + 50 * HOUR, [
+    ["metadata", "x".repeat(4 * 1024 * 1024)],
+  ]);
+  h.history.push(latest);
+  h.live.receive([latest], { channelId: "c", phase: "live" });
+  expect(h.window().rows.some((row) => row.id === latest.id)).toBe(true);
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(h.window().hasMore).toBe(true);
+  const ids = new Set(h.window().rows.map((row) => row.id));
+  expect(
+    byteSize(h.history.filter((event) => ids.has(event.id))),
+  ).toBeLessThanOrEqual(8 * 1024 * 1024);
 });
