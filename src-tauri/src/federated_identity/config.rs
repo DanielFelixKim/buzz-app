@@ -45,38 +45,6 @@ const INVALID: &str = "Invalid BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG";
 pub(crate) const BUILT_IN: &str =
     include_str!("../../../src/features/federated-identity/built-in-server.json");
 
-/// The sign-in server of a Builderlab customer's community, derived from its
-/// host: `buzz.{name}.builderlab.xyz` signs in at `https://{name}.builderlab.xyz`.
-/// Only builds that trust the built-in server (`is_built_in`) use it, and a
-/// compiled server that covers the host wins over it. Like a compiled host
-/// pattern, it trusts Builderlab's DNS; the relay never names the server.
-#[allow(dead_code)] // Called by the app, not build.rs.
-pub(crate) fn builderlab_customer(relay: &str) -> Option<Config> {
-    let relay = Url::parse(&canonical_relay(relay).ok()?).ok()?;
-    let name = relay
-        .host_str()?
-        .strip_prefix("buzz.")?
-        .strip_suffix(".builderlab.xyz")?;
-    if relay.port().is_some()
-        || name.is_empty()
-        || name.starts_with('-')
-        || name.ends_with('-')
-        || !name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-    {
-        return None;
-    }
-    let origin = format!("https://{name}.builderlab.xyz");
-    Config::parse(
-        &serde_json::json!({"version": 1, "id": format!("builderlab-{name}"),
-            "identityOrigin": origin, "communityHosts": [format!("buzz.{name}.builderlab.xyz")],
-            "adapterBase": format!("{origin}/api/goose"), "apiBasePath": "/api/goose/"})
-        .to_string(),
-    )
-    .ok()
-}
-
 /// A build's pinned development viewer (`BUZZ_DEV_VIEWER`), kept only for a
 /// `tauri dev` run, which serves the development broker. Tauri marks that run
 /// by building without `custom-protocol` (`DEP_TAURI_DEV`); a packaged build,
@@ -252,7 +220,7 @@ impl Config {
     }
 
     /// Whether this is the built-in server, which Builderlab customers'
-    /// servers (`builderlab_customer`) come with.
+    /// servers (`customers::builderlab_customer`) come with.
     #[allow(dead_code)] // Called by the app, not build.rs.
     pub(crate) fn is_built_in(&self) -> bool {
         Self::parse(BUILT_IN).is_ok_and(|built_in| {
@@ -519,47 +487,6 @@ mod tests {
             ids(&compiled(Some(STAGING), None, None).unwrap()),
             ["bb-public-staging", "bb-public"]
         );
-    }
-
-    #[test]
-    fn a_builderlab_customer_server_is_derived_from_its_host() {
-        let config = builderlab_customer("wss://buzz.acme-2.builderlab.xyz").unwrap();
-        assert_eq!(config.id, "builderlab-acme-2");
-        assert_eq!(config.identity_origin, "https://acme-2.builderlab.xyz");
-        assert_eq!(
-            config.endpoint("/v1/login/start").as_str(),
-            "https://acme-2.builderlab.xyz/api/goose/v1/login/start"
-        );
-        assert!(config.sign_in == SignIn::OnDemand && config.organization.is_none());
-        assert!(config
-            .matches_relay("wss://buzz.acme-2.builderlab.xyz")
-            .unwrap());
-        assert!(!config
-            .matches_relay("wss://buzz.other.builderlab.xyz")
-            .unwrap());
-        for relay in [
-            "wss://buzz.builderlab.xyz",
-            "wss://buzz..builderlab.xyz",
-            "wss://buzz.a.b.builderlab.xyz",
-            "wss://buzz.-acme.builderlab.xyz",
-            "wss://buzz.acme-.builderlab.xyz",
-            "wss://buzz.acme.builderlab.xyz:8443",
-            "wss://buzz.acme.builderlab.xyz/path",
-            "wss://buzz.acme.builderlab.xyz.example",
-            "wss://xbuzz.acme.builderlab.xyz",
-            "wss://acme.builderlab.xyz",
-            "ws://buzz.acme.builderlab.xyz",
-            &format!("wss://buzz.{}.builderlab.xyz", "a".repeat(54)),
-        ] {
-            assert!(builderlab_customer(relay).is_none(), "{relay}");
-        }
-        let built_in = Config::parse(BUILT_IN).unwrap();
-        assert!(built_in.is_built_in());
-        assert!(!config.is_built_in());
-        // Presentation is not identity.
-        let mut presented = built_in.clone();
-        presented.organization = Some("Builderlab".into());
-        assert!(presented.is_built_in());
     }
 
     #[test]

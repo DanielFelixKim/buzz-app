@@ -4,12 +4,14 @@ pub(crate) mod access;
 pub(crate) mod agent;
 pub(crate) mod assertion;
 pub(crate) mod config;
+mod customers;
 pub(crate) mod protocol;
 pub(crate) mod socket;
 pub(crate) mod store;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use config::Config;
+use customers::Customers;
 use protocol::{expiry, now, Failure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -140,11 +142,11 @@ struct Inner {
     /// The build's other sign-in servers, each with its own session. Only the
     /// first server, the build's Builderlab, has them.
     peers: Vec<FederatedIdentity>,
-    /// The profile whose Builderlab customers' servers this first server adds
-    /// (`config::builderlab_customer`), when the build trusts the built-in one.
-    customers: Option<String>,
+    /// How this first server adds Builderlab customers' servers
+    /// (`customers::builderlab_customer`), when the build trusts the built-in one.
+    customers: Option<Customers>,
     /// Those servers, each added the first time one of its communities is
-    /// routed, and kept for the app's life.
+    /// routed, and again at every later launch (`Customers::record`).
     derived: Mutex<Vec<FederatedIdentity>>,
     /// What each added server gets, as compiled peers get it at startup.
     on_peer: Mutex<Vec<OnPeer>>,
@@ -186,14 +188,11 @@ impl FederatedIdentity {
         if profile.is_empty() || profile.len() > 128 {
             return Err("Invalid federated identity profile".into());
         }
-        let customers = servers
-            .iter()
-            .any(Config::is_built_in)
-            .then(|| profile.clone());
+        let customers = servers.iter().any(Config::is_built_in);
         let mut servers = servers.into_iter().map(Some);
         let first = servers.next().flatten();
         let peers = servers
-            .map(|config| Self::open(config, &profile, Vec::new(), None))
+            .map(|config| Self::open(config, &profile, Vec::new(), false))
             .collect::<Result<_, _>>()?;
         Self::open(first, &profile, peers, customers)
     }
@@ -203,7 +202,7 @@ impl FederatedIdentity {
         config: Option<Config>,
         profile: &str,
         peers: Vec<FederatedIdentity>,
-        customers: Option<String>,
+        customers: bool,
     ) -> Result<Self, String> {
         let fingerprint = format!(
             "{:x}",
@@ -213,9 +212,14 @@ impl FederatedIdentity {
             )
         );
         let account = format!("{:x}", Sha256::digest(format!("{profile}\0{fingerprint}")));
+        let root = store::root()?;
+        let customers = customers.then(|| Customers {
+            profile: profile.into(),
+            record: Some(root.join(format!("{account}.customers"))),
+        });
         let store = Arc::new(store::SecureStore {
             account: account.clone(),
-            root: store::root()?,
+            root,
             bundled: store::BUNDLED,
         });
         Ok(Self::build(
@@ -242,7 +246,7 @@ impl FederatedIdentity {
         account: String,
         store: Arc<dyn Store>,
         peers: Vec<FederatedIdentity>,
-        customers: Option<String>,
+        customers: Option<Customers>,
     ) -> Self {
         let snapshot = Snapshot {
             status: if config.is_some() {
@@ -267,7 +271,7 @@ impl FederatedIdentity {
         };
         let (changes, _) = watch::channel(snapshot.clone());
         let (account_changes, _) = watch::channel(None);
-        Self(Arc::new(Inner {
+        let identity = Self(Arc::new(Inner {
             config,
             fingerprint,
             account,
@@ -300,7 +304,16 @@ impl FederatedIdentity {
             on_peer: Mutex::default(),
             #[cfg(test)]
             revocations: Mutex::default(),
-        }))
+        }));
+        // Every customer server added before, so its grants and session are
+        // reachable whether or not its communities are still joined.
+        let known = identity.0.customers.as_ref().map(Customers::hosts);
+        for host in known.into_iter().flatten() {
+            if let Err(error) = identity.server_for(&format!("wss://{host}")) {
+                eprintln!("A Builderlab customer's sign-in server was not added: {error}");
+            }
+        }
+        identity
     }
     /// The server for a canonical relay, chosen by its host from the
     /// compiled list, else the Builderlab customer's server its host names,
@@ -315,11 +328,15 @@ impl FederatedIdentity {
                 }
             }
         }
-        let (Some(profile), Some(config)) = (&self.0.customers, config::builderlab_customer(relay))
+        let (Some(customers), Some(config)) =
+            (&self.0.customers, customers::builderlab_customer(relay))
         else {
             return Ok(self.clone());
         };
         let same = |server: &Self| server.config().is_some_and(|c| c.id == config.id);
+        // Held while the server is made and prepared, so it is used only once
+        // every `on_peer` hook has run. No hook may route a community or list
+        // servers (`server_for`, `servers`, `peers`): that would deadlock.
         let mut derived = lock(&self.0.derived);
         if let Some(server) = derived.iter().find(|server| same(server)) {
             return Ok(server.clone());
@@ -329,7 +346,11 @@ impl FederatedIdentity {
         if compiled().any(same) || self.closed() {
             return Ok(self.clone());
         }
-        let server = Self::open(Some(config), profile, Vec::new(), None)?;
+        let host = config.community_hosts[0].clone();
+        let server = Self::open(Some(config), &customers.profile, Vec::new(), false)?;
+        // Listed first, so no grant is ever stored with a server a later
+        // launch would not add again.
+        customers.remember(&host)?;
         for prepare in lock(&self.0.on_peer).iter() {
             prepare(&server);
         }
@@ -337,7 +358,8 @@ impl FederatedIdentity {
         Ok(server)
     }
     /// Has every server added after startup, and each one added already,
-    /// first get `prepare`.
+    /// first get `prepare`. It runs holding the list of added servers, so it
+    /// must not route a community or list servers (see `server_for`).
     pub(crate) fn on_peer(&self, prepare: OnPeer) {
         let derived = lock(&self.0.derived);
         for server in derived.iter() {

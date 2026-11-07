@@ -964,6 +964,9 @@ impl AgentTokens {
         agents: impl Fn() -> Result<Vec<(String, String)>, String> + Send + Sync + 'static,
     ) {
         let agents: Arc<Agents> = Arc::new(agents);
+        // This server's first: a server added from here on finds its supplier
+        // (`with_stores`), and one added before is in the list below.
+        self.follow_account(agents.clone());
         for tokens in self.servers() {
             tokens.follow_account(agents.clone());
         }

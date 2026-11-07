@@ -158,11 +158,20 @@ fn each_community_routes_by_host_to_its_own_server() {
 }
 
 /// The build's first server, with `peers`, adding Builderlab customers'
-/// servers when `customers`.
+/// servers when `customers`, listed in memory only.
 pub(super) fn with_customers(
     first: Config,
     peers: Vec<FederatedIdentity>,
     customers: bool,
+) -> FederatedIdentity {
+    customers_listed_in(first, peers, customers.then_some(None))
+}
+/// The build's first server, adding Builderlab customers' servers when
+/// `customers`, listed in its file if it has one.
+pub(super) fn customers_listed_in(
+    first: Config,
+    peers: Vec<FederatedIdentity>,
+    customers: Option<Option<std::path::PathBuf>>,
 ) -> FederatedIdentity {
     FederatedIdentity::build(
         Some(first),
@@ -170,7 +179,10 @@ pub(super) fn with_customers(
         String::new(),
         Arc::new(Memory::default()),
         peers,
-        customers.then(|| "default".into()),
+        customers.map(|record| Customers {
+            profile: "default".into(),
+            record,
+        }),
     )
 }
 
@@ -263,13 +275,11 @@ fn a_builderlab_customer_gets_its_own_server_unless_a_compiled_one_covers_it() {
     }));
     assert_eq!(late.load(Ordering::SeqCst), 1);
     // Its saved session is found again after a restart: the same account.
-    let restarted = FederatedIdentity::open(
-        Some(config::Config::parse(config::BUILT_IN).unwrap()),
-        "default",
+    let restarted = with_customers(
+        config::Config::parse(config::BUILT_IN).unwrap(),
         Vec::new(),
-        Some("default".into()),
-    )
-    .unwrap();
+        true,
+    );
     let account = |server: &FederatedIdentity, relay: &str| {
         server.server_for(relay).unwrap().0.account.clone()
     };
@@ -298,6 +308,64 @@ fn a_builderlab_customer_gets_its_own_server_unless_a_compiled_one_covers_it() {
         .server_for("wss://buzz.other.builderlab.xyz")
         .unwrap()
         .is(&without));
+}
+
+#[test]
+fn a_builderlab_customer_server_is_added_again_at_every_launch() {
+    let root = tempfile::tempdir().unwrap();
+    let record = root.path().join("first.customers");
+    let launch = || {
+        customers_listed_in(
+            config::Config::parse(config::BUILT_IN).unwrap(),
+            Vec::new(),
+            Some(Some(record.clone())),
+        )
+    };
+    let ids = |first: &FederatedIdentity| {
+        first
+            .servers()
+            .iter()
+            .map(|server| server.config().unwrap().id.clone())
+            .collect::<Vec<_>>()
+    };
+    let first = launch();
+    let kept = first.server_for("wss://buzz.kept.builderlab.xyz").unwrap();
+    first.server_for("wss://buzz.kept.builderlab.xyz").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap(),
+        "buzz.kept.builderlab.xyz\n"
+    );
+    // A later launch adds it before any of its communities is routed, under
+    // the same account, without listing it twice.
+    let next = launch();
+    assert_eq!(ids(&next), ["bb-public", "builderlab-kept"]);
+    let again = next.server_for("wss://buzz.kept.builderlab.xyz").unwrap();
+    assert_eq!(again.0.account, kept.0.account);
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap(),
+        "buzz.kept.builderlab.xyz\n"
+    );
+    // The list names hosts, never servers: other lines add nothing.
+    std::fs::write(
+        &record,
+        "buzz.kept.builderlab.xyz\nidentity.example\nbuzz.a.b.builderlab.xyz\n\n",
+    )
+    .unwrap();
+    assert_eq!(ids(&launch()), ["bb-public", "builderlab-kept"]);
+    // A server that could not be listed is not used.
+    let unlisted = customers_listed_in(
+        config::Config::parse(config::BUILT_IN).unwrap(),
+        Vec::new(),
+        Some(Some(root.path().join("missing").join("\0"))),
+    );
+    assert!(unlisted
+        .server_for("wss://buzz.other.builderlab.xyz")
+        .is_err());
+    assert_eq!(ids(&unlisted), ["bb-public"]);
+    // A full Buzz sign-out deletes the list.
+    store::remove_all(root.path().into()).unwrap();
+    assert!(!record.exists());
+    assert_eq!(ids(&launch()), ["bb-public"]);
 }
 
 #[tokio::test]
