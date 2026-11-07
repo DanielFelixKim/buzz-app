@@ -113,7 +113,7 @@ it.each(["loading", "error"])(
   },
 );
 it("keeps embedded prose literal while recognizing standalone, chained and overlapping codes", () => {
-  const prose = "~19:25Z: DRAFT 14:30:00 word:party:";
+  const prose = "~19:25Z: DRAFT 14:30:00 word:party: 𝐀:party: 𝟙:party:";
   expect(referencedEmoji(prose)).toEqual([]);
   expect(
     contentEmojiTags(prose, [

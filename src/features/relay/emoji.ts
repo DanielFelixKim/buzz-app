@@ -88,7 +88,9 @@ function* shortcodeMatches(content: string) {
   for (const match of content.matchAll(/(?=(:([a-zA-Z0-9_-]{1,64}):))/g)) {
     if (
       match.index !== end - 1 &&
-      /[\p{L}\p{N}_]/u.test(content[match.index - 1] ?? "")
+      /[\p{L}\p{N}_]$/u.test(
+        content.slice(Math.max(0, match.index - 2), match.index),
+      )
     )
       continue;
     end = match.index + (match[1]?.length ?? 0);
