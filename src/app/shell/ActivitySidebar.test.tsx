@@ -155,13 +155,17 @@ const rowNames = () =>
 
 test("Team lists channels by their newest activity, threads included", () => {
   setup();
-  // old-news has an older top-level message but a newer thread reply.
+  // old-news has an older top-level message but a newer thread reply, which
+  // becomes its preview.
   expect(rowNames()).toEqual(["old", "new"]);
-  expect(screen.getByText("a reply in the old channel")).toBeInTheDocument();
+  expect(
+    screen.getByText("Alice in a thread: a reply in the old channel"),
+  ).toBeInTheDocument();
 });
 
 test("a thread row opens the thread beside its channel", async () => {
   const { open } = setup();
+  await userEvent.click(screen.getByRole("tab", { name: "Threads" }));
   await userEvent.click(screen.getByText("a reply in the old channel"));
   expect(open).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -214,11 +218,11 @@ test("Team's Mentions view lists mentions and opens them in their thread", async
   );
 });
 
-test("Team's Threads view lists only channels with threads, as headers", async () => {
+test("Team's Threads view is a flat list of threads, not channels", async () => {
   setup();
   await userEvent.click(screen.getByRole("tab", { name: "Threads" }));
-  expect(rowNames()).toEqual(["old"]);
-  expect(screen.getByText("a reply in the old channel")).toBeInTheDocument();
-  // The channel row is a header there: its own preview is left out.
+  expect(rowNames()).toEqual([]);
+  expect(screen.getByText("Alice")).toBeInTheDocument();
+  expect(screen.getByText("#old-news")).toBeInTheDocument();
   expect(screen.queryByText("ancient")).not.toBeInTheDocument();
 });
