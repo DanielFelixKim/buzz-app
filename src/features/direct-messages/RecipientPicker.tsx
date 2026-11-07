@@ -16,6 +16,7 @@ import { useSearchHighlight } from "../search/use-search-highlight";
 import {
   abbreviatedPublicKey,
   publicKeyLabels,
+  typedPublicKey,
 } from "../../shared/identity/public-key";
 import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -187,13 +188,15 @@ export function RecipientPicker({
         }
       }
     const byVerifiedName = withVerifiedNames(pool, pageNames, profiles);
-    const byAgentName = query.trim()
+    const typedKey = typedPublicKey(query);
+    const localAgents = query.trim()
       ? agents.identities.flatMap((agent): Recipient[] => {
           if (
             !canMessageAgent(agent) ||
             !agent.name ||
             inDirectory.has(agent.pubkey) ||
-            matchPerson(agent.name, query) === undefined
+            (agent.pubkey !== typedKey &&
+              matchPerson(agent.name, query) === undefined)
           )
             return [];
           // Show the profile already seen for this key, as browsing did.
@@ -211,7 +214,7 @@ export function RecipientPicker({
     const eligible: VerifiedPerson<Recipient>[] = [
       ...people,
       ...byVerifiedName,
-      ...byAgentName,
+      ...localAgents,
     ].filter(
       (person) =>
         person.pubkey !== viewer &&
@@ -255,7 +258,7 @@ export function RecipientPicker({
     // Rows as found, before naming: a choice keeps these facts, so its label
     // follows the current verification instead of the one shown when chosen.
     const raw = new Map(
-      [...directory.people, ...pool, ...byAgentName].map((person) => [
+      [...directory.people, ...pool, ...localAgents].map((person) => [
         person.pubkey,
         person,
       ]),
@@ -470,7 +473,8 @@ export function RecipientPicker({
           className={styles.toField}
           onClick={focus}
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
+            // Escape closes an open list; otherwise it is the host's.
+            if (event.key === "Escape" && open && !disabled) {
               event.stopPropagation();
               setOpen(false);
             }
@@ -560,9 +564,11 @@ export function RecipientPicker({
                 const last = selected.at(-1);
                 if (last) remove(last.pubkey);
               } else if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
-                setOpen(false);
+                if (open && !disabled) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setOpen(false);
+                }
               } else if (
                 event.key === "Tab" &&
                 !event.shiftKey &&

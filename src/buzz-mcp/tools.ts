@@ -1,3 +1,4 @@
+import { messageAuthor } from "../features/relay/fold";
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
@@ -154,6 +155,22 @@ export const TOOLS: readonly Tool[] = [
     "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Nothing changes until they save it.",
     { agent: str, name: str, type: str, instructions: str, picture: str },
     ["agent"],
+  ),
+  tool(
+    "agent_read",
+    "Read one of your owner's agents here, yourself included: name, type, instructions, whether they sync and their current revision; a hosted agent or one on another device says its config is unavailable when it can't be read here. agent is its pubkey or exact name; without it, lists them all.",
+    { agent: str },
+  ),
+  tool(
+    "team_read",
+    "Read one of your owner's teams here: name, instructions, members, whether it syncs and its current revision. team is its id or exact name; without it, lists them all.",
+    { team: str },
+  ),
+  tool(
+    "team_update",
+    "Submit an unsaved draft of a new name or instructions for one of your owner's teams, for them to review. team is its id or exact name. Members never change this way. Nothing changes until they save it.",
+    { team: str, name: str, instructions: str },
+    ["team"],
   ),
   tool(
     "send",
@@ -533,6 +550,32 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       }),
     );
   },
+  async agent_read({ client }, args) {
+    if (!client.readAgents)
+      throw new Error("Agent reads are unavailable on this host");
+    return JSON.stringify(await client.readAgents(text(args.agent)));
+  },
+  async team_read({ client }, args) {
+    if (!client.readTeams)
+      throw new Error("Team reads are unavailable on this host");
+    return JSON.stringify(await client.readTeams(text(args.team)));
+  },
+  async team_update({ client }, args) {
+    if (!client.updateTeam)
+      throw new Error("Team changes are unavailable on this host");
+    const team = text(args.team);
+    if (!team) throw new Error("team is required");
+    const name = text(args.name);
+    // Empty instructions propose clearing them.
+    const { instructions } = args;
+    return JSON.stringify(
+      await client.updateTeam({
+        team,
+        ...(name && { name }),
+        ...(typeof instructions === "string" && { instructions }),
+      }),
+    );
+  },
   async send(tools, args) {
     const { context } = tools;
     const reply =
@@ -629,7 +672,21 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const id = required(args, "id");
     const emoji = required(args, "emoji");
     if (args.off !== true) {
-      await client.publish({ kind: 7, content: emoji, tags: [["e", id]] });
+      const target = await tools.event(id);
+      await client.publish({
+        kind: 7,
+        content: emoji,
+        tags: [
+          ["e", id],
+          [
+            "p",
+            messageAuthor(
+              { ...target, tags: target.tags.map((tag) => [...tag]) },
+              client.signingAuthority,
+            ),
+          ],
+        ],
+      });
       return "reacted";
     }
     const mine = await client.query([

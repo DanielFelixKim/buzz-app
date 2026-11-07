@@ -152,8 +152,10 @@ it.each([false, true])(
         if (property === "protect")
           return protectedSession ? protect : undefined;
         if (property === "nativeToolGate") return undefined;
-        // The tool list checks whether settings can change here.
-        if (property === "settings") return undefined;
+        // The tool list checks whether settings can change and owner tools
+        // apply here.
+        if (property === "settings" || property === "ownerAccess")
+          return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
       },
     });
@@ -4044,6 +4046,45 @@ it("hands off to the agent in another of its conversations it can see", async ()
     [{ channel: "chan", root, text: "carry on", from: {} }],
   ]);
 });
+it("reads agents and teams and drafts team changes without members", async () => {
+  const { client } = fake([]);
+  for (const name of ["agent_read", "team_read"])
+    await expect(callTool(client, {}, name, {})).rejects.toThrow("unavailable");
+  client.readAgents = vi.fn(async () => []);
+  client.readTeams = vi.fn(async () => ({
+    id: "t",
+    name: "Crew",
+    instructions: "",
+    members: [],
+    synced: true,
+    revision: "r",
+  }));
+  client.updateTeam = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  expect(await callTool(client, {}, "agent_read", {})).toBe("[]");
+  expect(client.readAgents).toHaveBeenCalledWith(undefined);
+  expect(
+    JSON.parse(
+      (await callTool(client, {}, "team_read", { team: "Crew" })) as string,
+    ),
+  ).toMatchObject({ id: "t", revision: "r" });
+  expect(client.readTeams).toHaveBeenCalledWith("Crew");
+  await expect(callTool(client, {}, "team_update", {})).rejects.toThrow(
+    "required",
+  );
+  await callTool(client, {}, "team_update", {
+    team: "Crew",
+    name: " ",
+    instructions: "",
+    members: ["x"],
+  });
+  expect(client.updateTeam).toHaveBeenCalledWith({
+    team: "Crew",
+    instructions: "",
+  });
+});
 it("validates change drafts and passes only the proposed fields", async () => {
   const { client } = fake([]);
   await expect(
@@ -4409,5 +4450,24 @@ it("saves a canvas of exactly the live limit in UTF-8 bytes, and refuses one byt
       content: `${exact.slice(1)}xyz`,
     }),
   ).rejects.toThrow(`over its limit of ${LIVE_CANVAS_BYTES} bytes`);
+  expect(published).toHaveLength(1);
+});
+
+it("addresses a new reaction to the actual message author and fails before publishing if the target is unavailable", async () => {
+  const { client, published } = fake([event({ id: root, pubkey: alice })]);
+  await callTool(client, {}, "react", { id: root, emoji: "❤️" });
+  expect(published).toEqual([
+    {
+      kind: 7,
+      content: "❤️",
+      tags: [
+        ["e", root],
+        ["p", alice],
+      ],
+    },
+  ]);
+  await expect(
+    callTool(client, {}, "react", { id: nested, emoji: "❤️" }),
+  ).rejects.toThrow("No message");
   expect(published).toHaveLength(1);
 });

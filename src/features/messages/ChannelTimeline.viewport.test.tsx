@@ -19,6 +19,35 @@ import { writeView } from "../../shared/view-state";
 import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
+import {
+  ActivityIndicatorPresentation,
+  TypingPresentation,
+  useActivityTypingReplacement,
+  useTypingReplacement,
+} from "../conversation/typing-presentation";
+import type { RelaySession } from "../relay/session";
+
+function RecordedTyping({ session }: { session: RelaySession }) {
+  useTypingReplacement(
+    { session, channelId: "alpha", threadRootId: undefined, pubkey: "agent" },
+    true,
+  );
+  return null;
+}
+/** A message's live bubble registers presence in the conversation's store. */
+function LiveBubble({ session }: { session: RelaySession }) {
+  useActivityTypingReplacement(
+    {
+      session,
+      channelId: "alpha",
+      threadRootId: undefined,
+      pubkey: "agent",
+      presence: true,
+    },
+    true,
+  );
+  return null;
+}
 
 const viewport = vi.hoisted(() => ({
   size: 0,
@@ -287,7 +316,7 @@ it("reveals an older folded message for an exact visit, then permits folding it 
 });
 
 it.each([1, 4])(
-  "hides a %i-step completed run while keeping subsequent work in channels",
+  "keeps a %i-step historical run expandable alongside subsequent work in channels",
   (count) => {
     const { owner, updates, content } = activityFixture();
     try {
@@ -305,7 +334,8 @@ it.each([1, 4])(
           ...rows.slice(count + 1),
         ]),
       );
-      expect(screen.queryByText("Update 0")).toBeNull();
+      if (count === 1) expect(screen.getByText("Update 0")).toBeVisible();
+      else expect(screen.queryByText("Update 0")).toBeNull();
       const label = `${count} completed ${count === 1 ? "step" : "steps"}`;
       expect(screen.queryByText(label)).toBeNull();
       const reply = screen.getByText("Main reply");
@@ -313,67 +343,91 @@ it.each([1, 4])(
       expect(screen.getByText(`Update ${count * 2}`)).toBeVisible();
       expect(
         screen.getAllByRole("button", { name: /Show activity history/ }),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
     } finally {
       owner.dispose();
     }
   },
 );
 
-it("keeps ongoing typing in the reply group after completed history", () => {
-  const { owner, updates, content } = activityFixture();
-  try {
-    const history = updates(2);
-    const last = history.at(-1);
-    if (!last) throw new Error("Missing activity");
-    const { audience: _audience, ...reply } = last;
-    const activity = owner.session.agentActivity.snapshot();
-    const snapshot = {
-      ...activity,
-      local: [
-        {
-          scope: "test",
-          agent: reply.authorId,
-          channelId: "alpha",
-          messageId: "request",
-          threadRootId: "request",
-          state: "working" as const,
-          startedAt: 1,
+it.each([
+  [false, false],
+  [true, false],
+  [true, true],
+])(
+  "keeps ongoing typing in the reply group after completed history (replaced=%s, presented=%s)",
+  (replaced, presented) => {
+    const { owner, updates, content } = activityFixture();
+    try {
+      const history = updates(2);
+      const last = history.at(-1);
+      if (!last) throw new Error("Missing activity");
+      const { audience: _audience, ...reply } = last;
+      const activity = owner.session.agentActivity.snapshot();
+      const snapshot = {
+        ...activity,
+        local: [
+          {
+            scope: "test",
+            agent: reply.authorId,
+            channelId: "alpha",
+            messageId: "request",
+            threadRootId: "request",
+            state: "working" as const,
+            startedAt: 1,
+          },
+        ],
+      };
+      const queries = {
+        ...owner.session,
+        agentActivity: {
+          ...owner.session.agentActivity,
+          snapshot: () => snapshot,
         },
-      ],
-    };
-    const queries = {
-      ...owner.session,
-      agentActivity: {
-        ...owner.session.agentActivity,
-        snapshot: () => snapshot,
-      },
-    };
-    const view = render(
-      content(
-        [...history, { ...reply, id: "reply", content: "Main reply" }],
-        undefined,
-        true,
-        queries,
-      ),
-    );
-    expect(screen.queryByText("2 completed steps")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /Activity: .*working/ }),
-    ).toBeVisible();
-    expect(
-      view.container.querySelector(
-        "[data-conversation-activity] [data-agent-response-preview]",
-      ),
-    ).toHaveAttribute("data-stack-previous", "true");
-    expect(screen.getByText("Main reply").closest("li")).toHaveAttribute(
-      "data-stack-next",
-      "true",
-    );
-  } finally {
-    owner.dispose();
-  }
-});
+      };
+      const view = render(
+        <ActivityIndicatorPresentation>
+          <TypingPresentation active>
+            {replaced && !presented && <RecordedTyping session={queries} />}
+            {presented && <LiveBubble session={queries} />}
+            {content(
+              [...history, { ...reply, id: "reply", content: "Main reply" }],
+              undefined,
+              true,
+              queries,
+            )}
+          </TypingPresentation>
+        </ActivityIndicatorPresentation>,
+      );
+      expect(screen.queryByText("2 completed steps")).toBeNull();
+      if (presented) {
+        // A live bubble elsewhere shows the agent: no conversation cue, and
+        // the reply does not join one.
+        expect(
+          screen.queryByRole("button", { name: /Activity: .*working/ }),
+        ).toBeNull();
+        expect(
+          screen.getByText("Main reply").closest("li"),
+        ).not.toHaveAttribute("data-stack-next", "true");
+        return;
+      }
+      expect(
+        screen.getByRole("button", { name: /Activity: .*working/ }),
+      ).toBeVisible();
+      expect(
+        view.container.querySelector(
+          "[data-conversation-activity] [data-agent-response-preview]",
+        ),
+      ).toHaveAttribute("data-stack-previous", "true");
+      expect(screen.getByText("Main reply").closest("li")).toHaveAttribute(
+        "data-stack-next",
+        "true",
+      );
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
 it.each([
   { anchor: "activity-8", expanded: true },
@@ -848,6 +902,81 @@ it("hides the owner's starting agents only in a complete personal chat", () => {
   }
 });
 
+it("offline, says older messages can be loaded once Buzz reconnects instead of offering an inert Load older", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const viewer = keypair(),
+    relay = keypair();
+  // The relay service's saved-conversations session and the connected
+  // session that replaces it share one identity and scope.
+  const transport = {
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async () => [],
+  };
+  const offline = createRelaySession(transport, { cachedOnly: true });
+  const online = createRelaySession(transport);
+  // One saved page of a longer history.
+  const window: ChannelWindow = {
+    channelId: "alpha",
+    rows: foldMessages("alpha", relay.pubkey, [
+      message(viewer, "alpha", "Saved message", 100),
+    ]),
+    status: "ready",
+    hasMore: true,
+    loadingOlder: false,
+    freshness: "cached",
+    error: undefined,
+  };
+  const timeline = (
+    owner: typeof offline,
+    historyControl: "button" | "scroll" = "button",
+  ) => (
+    <ChannelTimeline
+      channelId="alpha"
+      scope="offline-history"
+      continuityKey="relay:1"
+      queries={owner.session}
+      window={window}
+      historyControl={historyControl}
+      onOpenLink={() => false}
+    />
+  );
+  const waiting = "You can load older messages once Buzz reconnects.";
+  try {
+    const view = render(timeline(offline));
+    expect(screen.getByText(waiting)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /older messages/ })).toBeNull();
+    // Solo chats page on scroll, which reads nothing offline either.
+    view.rerender(timeline(offline, "scroll"));
+    expect(screen.getByText(waiting)).toBeVisible();
+    // The connected session replaces it without remounting the timeline.
+    const history = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    view.rerender(timeline(online));
+    expect(
+      screen.getByRole("region", { name: "Channel message history" }),
+    ).toBe(history);
+    expect(
+      screen.getByRole("button", { name: "Load older messages" }),
+    ).toBeEnabled();
+    expect(screen.queryByText(waiting)).toBeNull();
+    view.unmount();
+  } finally {
+    offline.dispose();
+    online.dispose();
+  }
+});
+
 it.each([0, 600])(
   "prepend compensation requires a measured virtualizer viewport (%s)",
   (size) => {
@@ -952,7 +1081,7 @@ it.each([
   }
 });
 
-it("hides historical steps after the agent returns to a public reply without live completion state", () => {
+it("keeps historical steps expandable after a public reply without live completion state", () => {
   const { owner, updates, content } = activityFixture();
   try {
     const rows = updates(3);
@@ -969,7 +1098,11 @@ it("hides historical steps after the agent returns to a public reply without liv
     expect(screen.queryByText("3 completed steps")).toBeNull();
     view.rerender(content([...rows, response]));
     expect(screen.queryByText("3 completed steps")).toBeNull();
-    expect(screen.queryByText("Update 2")).toBeNull();
+    expect(screen.getByText("Update 2")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    );
+    expect(screen.getByText("Update 0")).toBeVisible();
     expect(screen.getByText("Here is the result.")).toBeVisible();
   } finally {
     owner.dispose();
@@ -1007,7 +1140,7 @@ it("moves a request's stopped note to its agent's latest public reply", () => {
   }
 });
 
-it("reveals a directly linked completed step without restoring the completed summary", () => {
+it("opens the preserved history for a directly linked completed step", () => {
   const f = activityFixture();
   const steps = f.updates(2);
   const first = steps[0];
@@ -1023,7 +1156,9 @@ it("reveals a directly linked completed step without restoring the completed sum
     },
   ];
   const view = render(f.content(rows));
-  expect(screen.queryByText("Update 1")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /Show activity history/ }),
+  ).toBeVisible();
   view.rerender(
     f.content(rows, {
       messageId: "activity-1",
@@ -1031,8 +1166,10 @@ it("reveals a directly linked completed step without restoring the completed sum
     }),
   );
   expect(screen.getByText("Update 1")).toBeVisible();
-  expect(screen.queryByText("Update 0")).toBeNull();
-  expect(screen.queryByRole("button", { name: /activity history/ })).toBeNull();
+  expect(screen.getByText("Update 0")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Collapse activity history/ }),
+  ).toBeVisible();
   view.unmount();
   f.owner.dispose();
 });

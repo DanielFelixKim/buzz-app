@@ -100,6 +100,16 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
+A bundled plugin may own Rust as a Cargo workspace member under
+`bundled/<plugin>/<crate>/`, including its Tauri commands (Mesh:
+`bundled/mesh-compute/compute/`). Its host adapter is one `src-tauri/src/<plugin>.rs`
+module that lends it narrow identity/relay access and exposes `setup` and
+`commands`; `lib.rs` only manages its state, routes its command prefix, and calls
+its shutdown. The crate must not enable Tauri features, entitlements or app
+config for the whole host. Source colocation does not make Rust dynamically
+installable. When adding such a crate, include its path in the Rust input
+selection in `scripts/check-push.mjs` and cover that selection in the hook tests.
+
 ## Open a Git import from a link
 
 Open `buzz://plugin-install?repository=<encoded-repository>[&ref=<encoded-ref>][&path=<encoded-folder>][&commit=<hex>]`
@@ -313,8 +323,20 @@ type PluginInstaller = {
     path?: string; // relative folder inside the repository
     commit?: string; // 40- or 64-hex; install exactly this commit
   }): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
+  getInstallationStatus(
+    id: string,
+  ): "installed" | "absent" | "unavailable";
+  subscribeInstallationStatus(
+    id: string,
+    listener: (status: "installed" | "absent" | "unavailable") => void,
+  ): () => void;
 };
 ```
+
+These status methods may be missing on an older host even when the optional
+service is available. Feature-check each method before calling it; see the
+[plugin authoring guide](plugin-authoring-guide.md#extension-points) for
+status semantics and subscription-lifetime guidance.
 
 `requestInstall` never installs silently. It opens Settings → Plugins with the Git
 source prefilled and read-only, and the user still chooses **Find**, reviews the
@@ -558,7 +580,15 @@ which uploads of local files use. The kit grants nothing `ctx.agents` and
 A plugin, bundled or installed, can add a tab to the settings of agents
 running here or hosted, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives
-`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. An
+`{ agent, open, canOpen }`; it reads and saves through the plugin's own `ctx.agents`.
+`open(target)` opens a link, such as a `nostr:npub…` profile, where the tab is
+shown: the profile panel opens it beside the conversation and the Agents page
+selects that agent. `canOpen(target)` says whether `open` can open that link
+there, so the tab can show it as plain text when it can't. `open` returns true
+once it has opened the link, and false otherwise: either it can't, or the host
+first asks whether to discard unsaved edits and opens the link only if the
+person agrees. So false is not an error. Both are absent where the tab can open
+nothing. An
 optional `when(agent)` limits the tab to the agents it returns true for, and an
 optional `subscribe(listener)` tells the host when `when` may answer
 differently, so the tab appears or goes without a reload. A `when` that throws
@@ -865,7 +895,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Bestie,
-Todos, Usage, Reminders and Workflows are off by default for fresh installs. Feedback, Diff viewer, Identity
+Todos, Usage, Reminders, Workflows and Shared compute are off by default for fresh installs. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -920,8 +950,10 @@ placement in Channels → Channel actions. Channels owns the menu, selected chan
 tab geometry, focus, and close behavior; it opens the **exact active contribution**
 without resolving a target matcher. Eligibility is evaluated again at activation
 against the current connected session, selected non-cached channel and membership.
-Disabling or replacing a plugin retires its open tab; a channel change or loss of
-eligibility closes it and unmounts its archive reader. `eligible` also decides
+Disabling or replacing a plugin retires its open tab, and loss of eligibility closes
+it. A channel change unmounts it with the rest of the channel's tabs; the tab stays
+open in that channel's workspace and remounts, after eligibility is checked again,
+when the viewer returns, until they close it. `eligible` also decides
 archived-channel availability; exclude `channel.archived` if the panel writes.
 Re-enabling never reopens a
 stale tab. Eligibility and `channelContext` are presentation, **not authority**:
@@ -929,7 +961,7 @@ the panel must independently verify access before reading any sensitive data and
 fence asynchronous reads on revocation. Channels registers **View canvas** this
 way. Canvas has no separate plugin toggle; Solo,
 Todos, and agents use the same session capability. Its editor keeps the channel's
-draft locally, so reopening after a channel change restores it. Members of archived
+draft locally, so returning to the channel or reopening Canvas restores it. Members of archived
 channels can read Canvas and History, but cannot edit, save, or restore through the panel.
 A retained unpublished draft is labeled as local; History shows the saved versions.
 
@@ -977,12 +1009,12 @@ stays in the existing Join a community dialog; the card only copies the new rela
 account backend follows the same split as `HostService`: live development with a
 pinned viewer uses the broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`),
 which keep their own session credential and signing key in Node. Desktop builds use
-`native.ts`, the same routes with the plugin's shared session credential, host HTTP to
-the configured `BUZZ_BUILDERLAB_URL` grant, and `identity_sign_builderlab_binding`, which
-validates the challenge and signs only the fixed kind 24243 binding. They read the
-account after sign-in's automatic identity link settles. The desktop credential lives in
-plugin memory for the plugin's lifetime and is never persisted, so restarting the app
-signs out. Builds without a configured Builderlab URL show the unavailable notice.
+`native.ts`, the same routes through the native forwarder with the NIP-FI session,
+and `identity_sign_builderlab_binding`, which validates the challenge and signs only
+the fixed kind 24243 binding. They read the account after sign-in's automatic
+identity link settles. The session token stays native in the system keyring and
+survives a restart. A build with neither the session nor the broker has no
+Builderlab.
 
 ### Composer accessories
 
@@ -1017,7 +1049,10 @@ A panel may additionally contribute `channelLauncher: ComponentType<ChannelLaunc
 Channels renders these in its conversation header with public `context`, `pressed`,
 `available()`, `toggle(target)` and the channel's `canOpen`/`open`. The page owns one selected channel panel, placed
 in the bottom drawer by default or the existing companion column when the contribution
-sets `channelPlacement: "side"`. With `channelPlacement: "tab"` the launcher instead
+sets `channelPlacement: "side"`. The bottom drawer closes when the viewer leaves the
+channel. A side-column panel stays open in the channel's workspace: leaving the channel
+or page unmounts it, and returning shows it again until the viewer closes it, another
+channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
 The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
@@ -1072,6 +1107,7 @@ Unordered checkbox items in that section are shown, including nested tasks. Nest
 Quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
+People who can’t write the channel’s Canvas, such as guests, see Todos read-only.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
 the convenience UI, not the saved list: Channel actions → View canvas remains editable.
 
@@ -1231,15 +1267,16 @@ Stop painting while the document is hidden, and never flash more than three
 times in any one second (WCAG 2.3.1).
 
 The host keeps the shell usable over any backdrop. While one is present, each
-header control group and the sidebar resize grip keeps a solid `bg-app` floor,
-so controls, their state fills and focus rings stay on the background they were
-designed for. Panes stay opaque. When the user prefers reduced motion or reduced
+header control group and the app dock keep a solid `bg-app` floor, so controls,
+their state fills and focus rings stay on the background they were designed
+for. Panes stay opaque; the sidebar resize grip sits on the seam of the joined
+sidebar and conversation surface, so no backdrop reaches it. When the user prefers reduced motion or reduced
 transparency, or forced colors are active, the host does not mount backdrops at
 all, which also stops their animation; they return when the preference does.
 
 A backdrop that needs to stay clear of shell controls may read, but not style,
 these layout roles: `.shell-header` and its direct children (each a group of
-controls), `.shell-center-capsule` (centered pages; it moves into the header's
+controls), `.shell-side-dock` (the app dock), `.shell-center-capsule` (centered pages; it moves into the header's
 flow while `.shell-header` has `data-compact-pages`), `.shell-body`, and the
 outermost `.panel` elements inside it (nested panels are content). On macOS the
 native window controls sit in the header's leading inset, outside these roles.
@@ -1446,6 +1483,11 @@ which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and
 never searches PATH; the Goose plugin runs `goose-acp` this way.
 
+Every process also gets `BUZZ_VERSION`, the running app's version, which `env`
+cannot change or remove. A script or shell config can check for it to tell that
+it runs under Buzz; an agent's shell commands see it when its runtime passes its
+environment on, as Claude Code does.
+
 `mcp` supplies an app-held MCP session URL and headers. The bundled command
 helper initializes that session and supplies an agent-scoped `buzz` tool command
 to the worker. Agent identity, signing authority and tool authorization stay in
@@ -1497,11 +1539,10 @@ require the plugin to be enabled in the native catalog. External grants require 
 enabled current artifact and its integrity checks; safe mode pauses external
 plugins while enabled bundled plugins remain usable.
 
-Builderlab's effective manifest derives its exact origin from the validated
-[`BUZZ_BUILDERLAB_URL` build input](configuration.md#builderlab-url-build-input).
-With the [FI descriptor](configuration.md#federated-identity-build-input), it
-instead gets a `host.federatedIdentity` grant of exact Builderlab routes and no
-network origins or files. Its source manifest contains no deployment origins;
+Builderlab's effective manifest has only a `host.federatedIdentity` grant of
+exact Builderlab routes for the build's
+[first sign-in server](configuration.md#federated-identity-build-input), and no
+network origins or files; a build without one grants nothing. Its source manifest contains no deployment origins;
 external plugin declarations remain fixed in their installed artifacts.
 
 The `federatedIdentity` service forwards a granted operation natively to the
@@ -2425,14 +2466,18 @@ intent survives optional plugin removal and remains subject to session validatio
 One host-owned, viewport-bounded portal renders the active listbox. Focus stays on
 the textarea with `aria-controls`/`aria-activedescendant`; arrows follow stable IDs,
 plain Enter/forward Tab accept, and Escape dismisses pending results. A typed
-terminator accepts the provider-verified unique exact match: plain Space for a
-mention, the closing colon for an emoji shortcode. Emoji publishes an exact-match ID
+terminator accepts the provider-verified unique exact match: plain Space or closing
+punctuation for a mention
+([mentions README §5](../src/bundled/mentions/README.md#5-space-or-closing-punctuation-selects-only-an-exact-unique-name)),
+the closing colon for an emoji shortcode. Emoji publishes an exact-match ID
 only after both Unicode and community catalogs successfully settle. The editor refuses
 typed terminators in rich or raw Markdown literal ranges; colon conversion records the
 typed source first so undo restores the closing colon and collapsed caret. A rejected
 displayed choice must not fall through to sending. Retry is a selectable menu action
 using the same arrow/Enter/Tab path, including when there are no results. Modified
-keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior.
+keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior, except
+that Shift may type any terminator but Space, and Option a mention's closing
+punctuation.
 
 Emoji lazily copies native-only records (including aliases and keywords) from the
 pinned data package; it does not use Emoji Mart's mutable global search singleton.
@@ -2708,10 +2753,14 @@ app shortcuts (including live rebinds) win there; unhandled keys stay with xterm
 No plugin shortcut API or preference access is added. Ordinary editors continue
 to handle keys before the window's bubbling dispatcher.
 
-Slack-style message keys are host bindings. In an empty composer, Up selects the
-newest message (by id, not tree order) of the timeline or thread sharing its edit scope (on macOS ⌘↑ keeps editing
-the latest own message directly; elsewhere use Up, then E); a selection is
-DOM focus on that message's box (`features/messages/message-selection.ts`), so
+Slack-style message keys are host bindings. With the device-local
+**Settings → Shortcuts → Editing messages → Edit last message with Up Arrow**
+preference off (the default), Up in an empty composer selects the newest message
+(by id, not tree order) of the timeline or thread sharing its edit scope; E then
+edits an eligible own message. With the preference on, plain Up edits the latest
+eligible own message instead of selecting messages. On macOS, ⌘↑ edits directly
+with either preference value. A selection is DOM focus on that message's box
+(`features/messages/message-selection.ts`), so
 the timeline's Virtua keeps the row mounted and assistive technology follows it.
 Membership notices and folded or collapsed rows are skipped. While a message
 itself is focused, Up/Down move between rendered messages, Down past the newest and
