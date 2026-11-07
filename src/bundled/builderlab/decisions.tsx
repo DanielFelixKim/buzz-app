@@ -1,4 +1,4 @@
-import { useCapabilities } from "./capabilities";
+import { useSessionWithCapabilityRefresh } from "./capabilities";
 // Builderlab as a decision provider: the user's Builderlab sign-in, which
 // native code sends with each call. The NIP-FI session is named by its
 // revision; its token never leaves native. It is offered only while that sign-in's account may use
@@ -142,7 +142,7 @@ export function builderlabProvider(
       ) as DecisionReply;
     },
     Settings: ({ active }) => {
-      useCapabilities(session);
+      useSessionWithCapabilityRefresh(session);
       return (
         <Login
           session={session}

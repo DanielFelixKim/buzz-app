@@ -61,8 +61,8 @@ const signedOut = Object.freeze({ status: "signed-out" as const });
 const noSubscribe = () => () => {};
 const noSnapshot = () => signedOut;
 
-/** Refresh on entry to permission-gated surfaces, including disabled ones. */
-export function useCapabilities(session?: BuilderlabSession) {
+/** Return the full session snapshot and refresh permissions on gated surfaces. */
+export function useSessionWithCapabilityRefresh(session?: BuilderlabSession) {
   const state = useSyncExternalStore(
     session?.subscribe ?? noSubscribe,
     session?.snapshot ?? noSnapshot,

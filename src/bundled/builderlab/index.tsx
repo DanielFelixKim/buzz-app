@@ -1,4 +1,4 @@
-import { useCapabilities } from "./capabilities";
+import { useSessionWithCapabilityRefresh } from "./capabilities";
 import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 import { handoffFederatedBackupSession } from "../../features/identity/backup";
@@ -120,7 +120,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     };
     const stopProvider = session.subscribe(updateProvider);
     const ProviderDialogBody = () => {
-      const state = useCapabilities(session);
+      const state = useSessionWithCapabilityRefresh(session);
       return (
         <div className="grid gap-3">
           <InlineHeader level={3} title="Connection" />

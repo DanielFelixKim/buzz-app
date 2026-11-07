@@ -1,4 +1,4 @@
-import { useCapabilities } from "../capabilities";
+import { useSessionWithCapabilityRefresh } from "../capabilities";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AgentSaveButton } from "../../../features/agents/AgentSaveButton";
@@ -59,7 +59,7 @@ export function ModelSettings({
     | { agent: RemoteAgent; subject: string; email?: string }
     | { pending: boolean; error: unknown; retry(): void };
 }) {
-  const login = useCapabilities(session);
+  const login = useSessionWithCapabilityRefresh(session);
   const [retrySignIn, setRetrySignIn] = useState<
     "switching" | "waiting" | "ready"
   >();

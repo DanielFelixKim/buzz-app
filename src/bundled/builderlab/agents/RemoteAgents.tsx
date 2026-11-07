@@ -1,4 +1,4 @@
-import { useCapabilities } from "../capabilities";
+import { useSessionWithCapabilityRefresh } from "../capabilities";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
   ArrowsClockwiseIcon,
@@ -20,7 +20,7 @@ export function RemoteAgents({
   session: BuilderlabSession;
   active(): boolean;
 }) {
-  const login = useCapabilities(session);
+  const login = useSessionWithCapabilityRefresh(session);
   const [revision, setRevision] = useState(0);
   if (login.status === "signed-in" && !login.account?.canUseRemoteAgents)
     return (

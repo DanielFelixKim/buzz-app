@@ -1,5 +1,5 @@
 import type { BuilderlabSession } from "../session";
-import { useCapabilities } from "../capabilities";
+import { useSessionWithCapabilityRefresh } from "../capabilities";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import {
   type ReactNode,
@@ -80,7 +80,7 @@ export function HostedCommunities({
   sharedSignIn?: boolean;
   session?: BuilderlabSession;
 }) {
-  const login = useCapabilities(session);
+  const login = useSessionWithCapabilityRefresh(session);
   const activeRef = useRef(active);
   activeRef.current = active;
   const [auth, setAuth] = useState<Account | null>();
