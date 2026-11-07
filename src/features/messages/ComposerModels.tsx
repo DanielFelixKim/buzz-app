@@ -453,9 +453,11 @@ function unavailableSavedPick(
   if (!unavailableModel && !unavailableEffort) return undefined;
   const defaultEffort = runs.efforts.find((item) => item.id === runs.effort);
   const modelIsKnown =
-    (choice.sendDefaults && !explicitOnly) || choice.current === runs.id;
+    selectedModel ||
+    (choice.sendDefaults && !explicitOnly) ||
+    choice.current === runs.id;
   const fallback = runs.id
-    ? unavailableModel && !modelIsKnown
+    ? !modelIsKnown
       ? "Send omits model and effort overrides; the agent or provider decides which model runs"
       : `Using ${runs.label}${
           defaultEffort
