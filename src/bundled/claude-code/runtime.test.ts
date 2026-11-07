@@ -85,11 +85,11 @@ function setup(
   }> = {},
 ) {
   const fake = fakeSpawn();
-  const transcriptReaders: { id: string; options: unknown }[] = [];
+  const transcriptReaders: { options: unknown }[] = [];
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
     if (options.nativeHistory && id === "transcript-protected") {
-      transcriptReaders.push({ id, options: spawnOptions });
+      transcriptReaders.push({ options: spawnOptions });
       const bytes = Buffer.from(
         options.nativeHistory.map((row) => JSON.stringify(row)).join("\n") +
           (options.nativeTail ?? ""),

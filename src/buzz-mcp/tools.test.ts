@@ -389,7 +389,6 @@ it("enforces a plugin’s captured-file budget before review or publication", as
       update: async () => {},
     },
   );
-  const check = vi.fn(async () => true);
   ctx
     .extend({ pluginOwner: { id: "security.test", revision: "one" } })
     .agentProtection.register({
@@ -414,7 +413,6 @@ it("enforces a plugin’s captured-file budget before review or publication", as
       }),
     ).rejects.toThrow("denied by its protection policy");
     expect(client.read).toHaveBeenCalledExactlyOnceWith("large.md");
-    expect(check).not.toHaveBeenCalled();
     expect(client.upload).not.toHaveBeenCalled();
     expect(published).toEqual([]);
   } finally {

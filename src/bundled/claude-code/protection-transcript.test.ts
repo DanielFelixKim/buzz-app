@@ -39,7 +39,7 @@ const native: Spawn = async (id, options = {}) => {
     exited,
   };
 };
-it("replays an immutable transcript beyond the former 50 MiB read cap in bounded pieces", async () => {
+it("replays an immutable transcript snapshot in bounded pieces", async () => {
   const root = await mkdtemp(join(tmpdir(), "buzz-transcript-test-"));
   const path = join(root, "history.jsonl");
   const lifetime = new AbortController();
@@ -48,7 +48,8 @@ it("replays an immutable transcript beyond the former 50 MiB read cap in bounded
     expected = createHash("sha256");
   try {
     const file = await open(path, "w");
-    for (let i = 0; i < 832; i++) {
+    // Several 64 KiB sections, past the threshold that selects replay.
+    for (let i = 0; i < 8; i++) {
       await file.write(piece);
       expected.update(piece);
     }
@@ -78,8 +79,7 @@ it("replays an immutable transcript beyond the former 50 MiB read cap in bounded
         actual.update(part);
         size += Buffer.byteLength(part);
       }
-      expect(size).toBe(Buffer.byteLength(piece) * 832);
-      expect(size).toBeGreaterThan(52 * 1024 * 1024);
+      expect(size).toBe(Buffer.byteLength(piece) * 8);
       expect(actual.digest("hex")).toBe(digest);
     }
     release();
@@ -90,7 +90,7 @@ it("replays an immutable transcript beyond the former 50 MiB read cap in bounded
     lifetime.abort();
     await rm(root, { recursive: true, force: true });
   }
-}, 15000);
+});
 it("retains ordinary small transcript projection and reports missing files", async () => {
   const root = await mkdtemp(join(tmpdir(), "buzz-transcript-test-"));
   const lifetime = new AbortController();

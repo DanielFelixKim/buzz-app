@@ -62,9 +62,6 @@ function fixture(initialization: "success" | "error" | "held" = "success") {
     spawn,
     protection,
     launch,
-    checkEvidence: async () => {
-      throw new Error("Unexpected streamed check in this fixture");
-    },
     check,
     acknowledge: () => acknowledge(),
   };

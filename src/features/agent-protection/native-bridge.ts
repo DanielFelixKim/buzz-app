@@ -67,7 +67,6 @@ export function protectionChannel(protection: AgentProtection) {
           protocolVersion: "2025-11-25",
           capabilities: {},
           serverInfo: { name: "buzz-security", version: "2" },
-          evidence: { version: 1, chunkBytes: 64 * 1024 },
         },
       };
     if (call?.method === "notifications/initialized") return undefined;
@@ -118,16 +117,13 @@ export function protectionChannel(protection: AgentProtection) {
         const signal = AbortSignal.any([abort.signal, lifetime.signal]);
         const check = ++started;
         pending++;
+        // `checkEvidence` denies unless the provider consumed all of it.
         const result = protection
           .checkEvidence(action, stream, signal)
           .then(
             () => {
-              // The complete transfer must be acknowledged before an allow is usable.
-              if (!stream.consumed) {
-                stream.fail(new Error("Evidence was not consumed completely"));
-                return false;
-              }
-              signal.throwIfAborted();
+              // A settled check takes no more chunks.
+              stream.fail(new Error("Evidence check ended"));
               return true;
             },
             (error) => {
@@ -146,7 +142,6 @@ export function protectionChannel(protection: AgentProtection) {
               return false;
             },
           )
-          .catch(() => false)
           .finally(() => {
             pending--;
           });

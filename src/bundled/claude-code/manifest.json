@@ -46,11 +46,7 @@
         "program": "base64",
         "args": ["-i"]
       },
-      {
-        "id": "size",
-        "program": "wc",
-        "args": ["-c"]
-      },
+      { "id": "size", "program": "wc", "args": ["-c"] },
       {
         "id": "read-page",
         "program": "bash",

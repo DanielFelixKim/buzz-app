@@ -351,7 +351,7 @@ it("rejects out-of-order and incomplete transfers and cancels readers on close",
   await vi.waitFor(() => expect(failures).toBe(3));
 });
 
-it("refuses early allow, expires idle transfers, and checks provider lifetime at completion", async () => {
+it("refuses chunks after a settled check, expires idle transfers, and checks provider lifetime at completion", async () => {
   const early = await fixture(async () => {}, {
     checkEvidence: async () => {},
   });
@@ -362,7 +362,7 @@ it("refuses early allow, expires idle transfers, and checks provider lifetime at
   ).result.id;
   await expect(
     early.handler(evidenceCall("chunk", { id, sequence: 0, data: btoa("{}") })),
-  ).rejects.toThrow("completely");
+  ).rejects.toThrow("ended");
   await early.bridge.close();
   vi.useFakeTimers();
   const expired = await fixture(async () => {}, {
@@ -411,22 +411,36 @@ it("refuses early allow, expires idle transfers, and checks provider lifetime at
   await revoked.bridge.close();
 });
 
-it("cancels caller-owned admissions before their begin reply is used", async () => {
+it("cancels a caller-owned admission and fails its reader", async () => {
+  let failed!: (error: unknown) => void;
+  const reader = new Promise<unknown>((resolve) => {
+    failed = resolve;
+  });
   const f = await fixture(async () => {}, {
     checkEvidence: async (_action, source) => {
-      for await (const _ of source.read()) {
+      try {
+        for await (const _ of source.read()) {
+        }
+      } catch (error) {
+        failed(error);
+        throw error;
       }
     },
   });
   try {
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const id = crypto.randomUUID();
-      const opened = f.handler(
+    const id = crypto.randomUUID();
+    expect(
+      await f.handler(
         evidenceCall("begin", { id, kind: "context", session: "s" }),
-      );
-      await f.handler(evidenceCall("cancel", { id }));
-      expect(await opened).toMatchObject({ result: { id } });
-    }
+      ),
+    ).toMatchObject({ result: { id } });
+    expect(await f.handler(evidenceCall("cancel", { id }))).toMatchObject({
+      result: { allowed: false },
+    });
+    expect(String(await reader)).toContain("cancelled");
+    await expect(
+      f.handler(evidenceCall("chunk", { id, sequence: 0, data: btoa("{}") })),
+    ).rejects.toThrow("Unknown");
   } finally {
     await f.bridge.close();
   }

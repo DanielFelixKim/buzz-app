@@ -37,9 +37,6 @@ function start(check,protectedAgent=agent) {
     const stop=new AbortController();checks.set(m.id,stop);actions.push(params);
     Promise.resolve().then(()=>check(params,stop.signal)).then(allowed=>reply({allowed:allowed===true}),()=>reply({allowed:false})).finally(()=>checks.delete(m.id));
    } else if(operation==='cancel'){transfers.delete(p.id);reply({allowed:false});}
-  } else if(m.method==='security') {
-   const stop=new AbortController();checks.set(m.id,stop);actions.push(m.params);
-   Promise.resolve().then(()=>check(m.params,stop.signal)).then(allowed=>input.write(JSON.stringify({id:m.id,result:allowed===true})+'\n'),()=>input.write(JSON.stringify({id:m.id,result:false})+'\n')).finally(()=>checks.delete(m.id));
   } else if(m.method==='hook'){nativeHooks.push(m.params);input.write(JSON.stringify({id:m.id,result:undefined})+'\n');}
   else if(m.method==='security_cancel')checks.get(m.params.id)?.abort();
   else if(m.method==='tool')input.write(JSON.stringify({id:m.id,result:{content:[{type:'text',text:'sent'}]}})+'\n');

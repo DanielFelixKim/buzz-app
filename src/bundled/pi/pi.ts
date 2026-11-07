@@ -99,7 +99,7 @@ type ProtectedLaunch = {
 };
 type Connection = {
   lifetime: AbortController;
-  /** Security checks and tool calls the host can cancel, by request id. */
+  /** Tool calls the host can cancel, by request id. */
   checks: Map<number | string, AbortController>;
   process: HostProcess;
   calls: Map<
@@ -274,8 +274,6 @@ export class Pi {
           .catch(() => connection.process.kill());
       } else if (message.method === "security_cancel") {
         connection.checks.get((message.params as { id: string }).id)?.abort();
-      } else if (message.method === "security" && message.id !== undefined) {
-        void this.security(connection, message.id, message.params);
       } else if (message.method === "ready") ready();
       else if (message.method === "event")
         this.handlers.event(message.params as PiEvent);
@@ -421,42 +419,6 @@ export class Pi {
     await started;
     if (connection.gone) throw connection.gone;
     return connection;
-  }
-
-  private async security(
-    connection: Connection,
-    id: number | string,
-    raw: unknown,
-  ) {
-    const controller = new AbortController();
-    const signal = AbortSignal.any([
-      controller.signal,
-      connection.lifetime.signal,
-    ]);
-    if (connection.checks.has(id)) {
-      await connection.process.kill();
-      return;
-    }
-    connection.checks.set(id, controller);
-    let allowed = false;
-    try {
-      const request = raw as {
-        agent: string;
-        action: Parameters<AgentProtection["check"]>[0];
-      };
-      if (!this.protectedLaunch || request.agent !== this.protectedLaunch.agent)
-        throw new Error("No matching protected agent");
-      await this.protectedLaunch.gate.check(request.action, signal);
-      allowed = !signal.aborted;
-    } catch {
-      /* Native checks fail closed. */
-    } finally {
-      connection.checks.delete(id);
-    }
-    if (!connection.gone)
-      await connection.process
-        .write(`${JSON.stringify({ id, result: allowed })}\n`)
-        .catch(() => undefined);
   }
 
   /** Runs a Buzz tool the host called, and sends it the result. */

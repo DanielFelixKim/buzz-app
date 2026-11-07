@@ -9,8 +9,6 @@ export class EvidenceTransfer implements TextSource {
   private wake?: () => void;
   private failure?: Error;
   private ended = false;
-  consumed = false;
-  private reading = false;
   private inFlight = false;
   private bytes = 0;
   private sequence = 0;
@@ -36,8 +34,6 @@ export class EvidenceTransfer implements TextSource {
     this.inFlight = true;
     try {
       this.bytes += data.length;
-      if (!Number.isSafeInteger(this.bytes))
-        throw new Error("Evidence byte count is not representable");
       const text = this.decoder.decode(data, { stream: true });
       await new Promise<void>((resolve, reject) => {
         this.pending = { data: text, resolve, reject };
@@ -66,8 +62,6 @@ export class EvidenceTransfer implements TextSource {
     this.wake?.();
   }
   async *read(): AsyncGenerator<string> {
-    if (this.reading) throw new Error("Evidence can be consumed only once");
-    this.reading = true;
     try {
       for (;;) {
         if (this.failure) throw this.failure;
@@ -76,10 +70,8 @@ export class EvidenceTransfer implements TextSource {
           yield item.data;
           this.pending = undefined;
           item.resolve();
-        } else if (this.ended) {
-          this.consumed = true;
-          return;
-        } else
+        } else if (this.ended) return;
+        else
           await new Promise<void>((resolve) => {
             this.wake = resolve;
           });
