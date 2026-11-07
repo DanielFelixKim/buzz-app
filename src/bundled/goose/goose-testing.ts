@@ -91,6 +91,12 @@ export type FakeMcpServer = {
  * in-memory MCP servers those processes reach. */
 export function fakeSpawn(
   options: Readonly<{
+    /** Shared device config, including secrets (masked by config/read). */
+    config?: Map<string, unknown>;
+    configWrite?: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<void>;
     /** Whether goose says it can reach HTTP MCP servers. */
     http?: boolean;
     home?: string;
@@ -375,8 +381,30 @@ export function fakeSpawn(
                   ? (options.namingDisabled ?? null)
                   : params.key === "DATABRICKS_MODEL_FILTER"
                     ? (options.modelFilter ?? null)
-                    : null,
+                    : options.config?.has(String(params.key))
+                      ? params.isSecret
+                        ? "********"
+                        : options.config.get(String(params.key))
+                      : null,
           });
+        case "_goose/unstable/config/upsert":
+        case "_goose/unstable/config/remove":
+          void (async () => {
+            try {
+              await options.configWrite?.(method, params);
+              if (method.endsWith("/remove"))
+                options.config?.delete(String(params.key));
+              else options.config?.set(String(params.key), params.value);
+              reply(id, {});
+            } catch {
+              send({
+                jsonrpc: "2.0",
+                ...(id !== undefined && { id }),
+                error: { code: -32603, message: "Config write failed" },
+              });
+            }
+          })();
+          return;
         case "_goose/unstable/defaults/read":
           return reply(id, defaults ?? {});
         case "_goose/unstable/defaults/save": {

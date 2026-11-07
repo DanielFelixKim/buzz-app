@@ -1393,3 +1393,33 @@ it.each(["startup", "provider"] as const)(
     sessions.dispose();
   },
 );
+
+it("refuses admission after a failed process refresh until it is retried", async () => {
+  const fake = fakeSpawn();
+  let kills = 0;
+  const process = new AgentProcess(
+    {
+      ...fake,
+      spawn: async (id, options) => {
+        const child = await fake.spawn(id, options);
+        return {
+          ...child,
+          kill: async () => {
+            if (++kills === 1) throw new Error("kill failed");
+            await child.kill();
+          },
+        };
+      },
+    },
+    fake.serve,
+  );
+  await process.get();
+  process.refresh();
+  await expect(process.get()).rejects.toThrow("kill failed");
+  await expect(process.get()).rejects.toThrow("kill failed");
+  expect(fake.geese).toHaveLength(1);
+  process.refresh();
+  await process.get();
+  expect(fake.geese).toHaveLength(2);
+  await process.shutdown();
+});

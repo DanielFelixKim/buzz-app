@@ -115,8 +115,18 @@ export class AcpSession {
     private preamble = "",
   ) {}
 
+  /** A retained voice session can run work initiated by the harness. */
+  private externalRuns = false;
+  observeExternalRuns(enabled: boolean) {
+    this.externalRuns = enabled;
+    this.wake();
+    void this.pump();
+  }
+  private get externalRun() {
+    return this.externalRuns && !!this.runId && !this.prompting;
+  }
   get busy() {
-    return this.pending > 0;
+    return this.pending > 0 || this.externalRun;
   }
   get working() {
     return !this.quiet();
@@ -215,6 +225,15 @@ export class AcpSession {
     this.acp.notify("session/cancel", { sessionId: this.id });
   }
 
+  /** Leaving voice cancels only its delegated work. Typed work, including
+   * messages queued behind that delegation, keeps its turn. */
+  interruptExternalRun() {
+    if (!this.externalRun || this.closed || this.stopped) return;
+    this.generation++;
+    this.stopped = { waiters: [], receipts: new Set() };
+    this.acp.notify("session/cancel", { sessionId: this.id });
+  }
+
   /** A Buzz tool that answers, such as `send`, succeeded. */
   answered() {
     this.acted = true;
@@ -240,8 +259,22 @@ export class AcpSession {
     const { steering } = this.acp.hooks;
     const runId = steering ? steering.runId(update) : null;
     if (runId !== null) {
+      if (this.externalRuns && !this.prompting && runId !== this.runId) {
+        // A queued tool from an earlier delegated run has no authority in
+        // its successor, even when the harness skips the idle notification.
+        this.generation++;
+        // Delegated results belong to voice, not the next queued text turn.
+        this.acted = false;
+        this.written = "";
+        this.lastStep = "";
+        if (!runId) this.stopped = undefined;
+      }
       this.runId = runId;
       if (runId) this.ranAs(runId);
+      if (this.externalRuns && !runId) {
+        this.wake();
+        void this.pump();
+      }
     }
     if (kind === "session_info_update" || runId !== null) return;
     const step = stepLabel(update);
@@ -360,7 +393,7 @@ export class AcpSession {
   }
 
   private async pump() {
-    if (this.prompting || this.handingOff) return;
+    if (this.prompting || this.handingOff || this.externalRun) return;
     this.prompting = true;
     try {
       while (this.queue.length && !this.handingOff && !this.closed) {
@@ -574,7 +607,8 @@ export class AcpSession {
   private quiet() {
     return (
       this.closed ||
-      (!this.prompting &&
+      (!this.externalRun &&
+        !this.prompting &&
         !this.steering.size &&
         !this.pending &&
         !this.queue.length)

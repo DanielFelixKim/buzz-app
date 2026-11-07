@@ -2251,3 +2251,80 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     expect.anything(),
   );
 });
+
+it("refreshes the process after a voice switch change only once typed model work is idle", async () => {
+  const f = setup({ hold: true });
+  try {
+    await f.deliver(message("1", "Working"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const old = f.goose();
+    const turn = old?.turns[0];
+    if (!old || !turn) throw new Error("Expected typed turn");
+    await f.runtime.voiceSettings.setEnabled(true);
+    expect(old.killed).toBe(false);
+    // A final send answers Buzz, but goose's model can still be running.
+    await old.mcp(turn.sessionId, "tools/call", {
+      name: "send",
+      arguments: { audience: "everyone", text: "Done", final: true },
+    });
+    expect(old.killed).toBe(false);
+    turn.finish();
+    await vi.waitFor(() => expect(old.killed).toBe(true));
+    await f.deliver(message("2", "Next"));
+    await vi.waitFor(() => expect(f.fake.geese[1]?.turns).toHaveLength(1));
+    expect(f.fake.geese[1]?.env.GOOSE_LIVE_VOICE_ENABLED).toBe("true");
+    f.fake.geese[1]?.turns[0]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("holds typed admission until a voice-settings process refresh has exited", async () => {
+  let release!: () => void;
+  let stopping!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const stopped = new Promise<void>((resolve) => {
+    stopping = resolve;
+  });
+  let spawned = 0;
+  const f = setup({
+    scope: "channel",
+    wrap: (spawn) => async (id, options) => {
+      const process = await spawn(id, options);
+      if (++spawned !== 1) return process;
+      return {
+        ...process,
+        kill: async () => {
+          stopping();
+          await gate;
+          await process.kill();
+        },
+      };
+    },
+  });
+  try {
+    await f.deliver(message("1", "First"));
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(self)).toMatchObject([{ busy: false }]),
+    );
+    const old = f.fake.geese[0];
+    if (!old) throw new Error("Expected the old process");
+    await f.runtime.voiceSettings.setEnabled(true);
+    await stopped;
+    const next = f.deliver(message("2", "During shutdown"));
+    await flush(30);
+    expect(old.turns).toHaveLength(1);
+    expect(f.fake.geese).toHaveLength(1);
+    release();
+    await next;
+    await vi.waitFor(() => expect(f.fake.geese[1]?.turns).toHaveLength(1));
+    expect(old.turns).toHaveLength(1);
+    expect(f.fake.geese[1]?.env.GOOSE_LIVE_VOICE_ENABLED).toBe("true");
+    expect(f.fake.geese[1]?.turns[0]?.text).toContain("During shutdown");
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});

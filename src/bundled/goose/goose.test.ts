@@ -73,6 +73,155 @@ afterEach(() => {
 });
 
 describe("GooseProcess", () => {
+  it("authorizes only the current external run while voice retains the session", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    const run = (activeRunId: string | null) =>
+      process.update(session.id, {
+        sessionUpdate: "session_info_update",
+        _meta: { goose: { activeRunId } },
+      });
+    run("unowned");
+    await flush();
+    expect(session.current()()).toBe(false);
+    session.observeExternalRuns(true);
+    run("first");
+    await flush();
+    const first = session.current();
+    expect(first()).toBe(true);
+    run("second");
+    await flush();
+    expect(first()).toBe(false);
+    const second = session.current();
+    expect(second()).toBe(true);
+    session.interrupt();
+    expect(second()).toBe(false);
+    run(null);
+    await flush();
+    await session.idle();
+    run("third");
+    await flush();
+    expect(session.current()()).toBe(true);
+    session.observeExternalRuns(false);
+    expect(session.current()()).toBe(false);
+    await goose.kill();
+  });
+
+  it("queues typed turns behind voice delegation and drains after its end", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    session.observeExternalRuns(true);
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: "delegated" } },
+    });
+    await flush();
+    const typed = session.send("typed after speech");
+    await flush();
+    expect(process.turns).toHaveLength(0);
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: null } },
+    });
+    await expect(typed).resolves.toMatchObject({ ok: true });
+    expect(process.turns.map((turn) => turn.text)).toEqual([
+      "typed after speech",
+    ]);
+    await goose.kill();
+  });
+
+  it("routes marked voice transcript to subscribers without adding it to typed output", async () => {
+    const { open, process, goose } = await start();
+    process.hold = true;
+    const session = await open();
+    const received = vi.fn();
+    const off = goose.onNotification(received);
+    const typed = session.send("typed work");
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    const transcript = {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "spoken transcript" },
+      _meta: { goose: { liveTranscript: true, messageId: "voice-1" } },
+    };
+    process.update(session.id, transcript);
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "typed reply" },
+    });
+    process.turns[0]?.finish();
+    await expect(typed).resolves.toEqual({ ok: true, text: "typed reply" });
+    expect(received).toHaveBeenCalledWith("session/update", {
+      sessionId: session.id,
+      update: transcript,
+    });
+    off();
+    await goose.kill();
+  });
+
+  it("does not publish a voice delegation result as the queued typed reply", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    session.observeExternalRuns(true);
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: "delegated" } },
+    });
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "spoken result only" },
+    });
+    await flush();
+    const typed = session.send("unrelated typed request");
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: null } },
+    });
+    await expect(typed).resolves.toEqual({ ok: true });
+    await goose.kill();
+  });
+
+  it("leaving voice preserves a running typed turn and its authority", async () => {
+    const { open, process, goose } = await start();
+    process.hold = true;
+    const session = await open();
+    session.observeExternalRuns(true);
+    const typed = session.send("typed work");
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    const current = session.current();
+    session.interruptExternalRun();
+    expect(process.cancelled).toEqual([]);
+    expect(current()).toBe(true);
+    process.turns[0]?.finish();
+    await expect(typed).resolves.toMatchObject({ ok: true });
+    await goose.kill();
+  });
+
+  it("leaving voice cancels delegated authority but preserves queued typed work", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    session.observeExternalRuns(true);
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: "delegated" } },
+    });
+    await flush();
+    const current = session.current();
+    const typed = session.send("queued typed work");
+    session.interruptExternalRun();
+    expect(current()).toBe(false);
+    await flush();
+    expect(process.cancelled).toEqual([session.id]);
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: null } },
+    });
+    await expect(typed).resolves.toMatchObject({ ok: true });
+    expect(process.turns.map((turn) => turn.text)).toEqual([
+      "queued typed work",
+    ]);
+    await goose.kill();
+  });
+
   it.each([false, true])(
     "suppresses auxiliary title inference only for protected workers (%s)",
     async (protectedWorker) => {
