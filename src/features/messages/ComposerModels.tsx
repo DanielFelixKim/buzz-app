@@ -349,7 +349,7 @@ export function ComposerModels({
             initialFocus={thumb}
           >
             <div
-              className={unavailableDescriptionText ? styles.status : "sr-only"}
+              className="sr-only"
               role="status"
               aria-label="Saved model and effort availability"
               aria-atomic="true"
@@ -409,6 +409,12 @@ export function ComposerModels({
               <AgentChoice
                 key={choice.pubkey}
                 choice={choice}
+                availability={unavailableSavedPick(
+                  choice,
+                  value[choice.pubkey] ?? {},
+                  resettable,
+                  explicitOnly,
+                )}
                 avatarSrc={avatarMedia(
                   portraits.get(choice.pubkey)?.picture,
                   media,
@@ -477,6 +483,7 @@ function unavailableSavedPick(
 
 function AgentChoice({
   choice,
+  availability,
   avatarSrc,
   place,
   value,
@@ -487,6 +494,7 @@ function AgentChoice({
   thumb,
 }: {
   choice: MentionModelChoice;
+  availability: string | undefined;
   avatarSrc: string | undefined;
   place: SessionPlace;
   value: RunPick;
@@ -601,6 +609,11 @@ function AgentChoice({
           )
         }
       />
+      {availability && (
+        <div className={styles.status} aria-hidden="true">
+          <span className={styles.statusCopy}>{availability}</span>
+        </div>
+      )}
       <div className={styles.controls}>
         {choice.failed ? (
           <div className={styles.status}>

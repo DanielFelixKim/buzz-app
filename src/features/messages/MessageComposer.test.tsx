@@ -5652,10 +5652,21 @@ it("shows an unavailable Solo pick when the catalog has no selectable controls",
     /Saved model is unavailable\. Using Fast\./,
   );
   await composer.user.click(trigger);
-  const status = within(screen.getByRole("dialog")).getByRole("status", {
+  const dialog = within(screen.getByRole("dialog"));
+  const status = dialog.getByRole("status", {
     name: "Saved model and effort availability",
   });
   expect(status).toHaveTextContent(/Saved model is unavailable\. Using Fast\./);
+  const cardNotice = dialog
+    .getAllByText(/Saved model is unavailable\. Using Fast\./)
+    .find((node) => node.closest("[data-agent-model-card]"));
+  expect(cardNotice).toBeDefined();
+  if (!cardNotice)
+    throw new Error("The fallback notice should be in its card.");
+  expect(cardNotice).toBeVisible();
+  expect(cardNotice.closest("[data-agent-model-card]")).toHaveClass(
+    "floating-surface",
+  );
   expect(screen.getByText(/Fast · No thinking options/)).toBeVisible();
   expect(readView("scope", "solo:model-picks:channel", null)).toEqual({
     [first.pubkey]: removedPick,
