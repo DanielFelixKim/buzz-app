@@ -389,6 +389,12 @@ export function foldMessages(
       const body = objectBody(content);
       if (typeof body?.content === "string") content = body.content;
     }
+    // Each shortcode the content still uses keeps its latest explicit
+    // mapping: newest edit first.
+    const mappings = emojiTags({
+      tags: [...edits, event].flatMap((item) => item.tags),
+    });
+    const used = mappings.length ? referencedEmoji(content) : [];
     const attachmentEvent =
       edits.find((edit) => edit.tags.some(([name]) => name === "imeta")) ??
       event;
@@ -504,13 +510,7 @@ export function foldMessages(
         attachments: Object.freeze(
           parseAttachments(attachmentEvent, projected.urls, attachmentNames),
         ),
-        // Each shortcode the content still uses keeps its latest explicit
-        // mapping: newest edit first.
-        emoji: emojiTags({
-          tags: [...edits, event].flatMap((item) => item.tags),
-        }).filter(({ shortcode }) =>
-          referencedEmoji(content).includes(shortcode),
-        ),
+        emoji: mappings.filter(({ shortcode }) => used.includes(shortcode)),
         reactions: groupReactions(
           aux.filter((item) => item.kind === 7),
           deleted,
