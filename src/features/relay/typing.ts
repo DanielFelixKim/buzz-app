@@ -1,3 +1,4 @@
+import { lagRecorder } from "../developer/lag-recorder";
 import type { RelayEvent } from "./events";
 import { threadReference } from "./thread-reference";
 
@@ -62,7 +63,13 @@ export function createTyping(
     )
       return;
     snapshot = Object.freeze(next);
-    for (const listener of listeners) notify(listener);
+    lagRecorder.time(
+      "typing.notify",
+      () => {
+        for (const listener of listeners) notify(listener);
+      },
+      `${listeners.size} listeners`,
+    );
   }
   function receiveActivity(
     record: ParticipantActivity,

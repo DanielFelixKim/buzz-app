@@ -1,3 +1,4 @@
+import { lagRecorder } from "../developer/lag-recorder";
 import {
   VERIFIED_PROFILE_MAX_SYNCS,
   verifiedProfileFilter,
@@ -1743,6 +1744,13 @@ export function subscribeRelayTraffic(
       });
     };
     function receive(data: unknown[], checked?: RelayEvent) {
+      const kind = (data[2] as { kind?: unknown } | undefined)?.kind;
+      lagRecorder.time(
+        `live.${data[0] === "EVENT" ? `kind${String(kind)}` : String(data[0])}`,
+        () => receiveNow(data, checked),
+      );
+    }
+    function receiveNow(data: unknown[], checked?: RelayEvent) {
       if (!valid()) return;
       const sync =
         typeof data[1] === "string" ? syncWires.get(data[1]) : undefined;

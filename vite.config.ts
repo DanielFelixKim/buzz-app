@@ -166,6 +166,7 @@ export default defineConfig(async ({ command, mode }) => {
       (await import("./scripts/developer-settings.ts")).developerSettingsPlugin(
         process.cwd(),
       ),
+      (await import("./scripts/lag-log.ts")).lagLogPlugin(process.cwd()),
     );
   if (live)
     plugins.push(

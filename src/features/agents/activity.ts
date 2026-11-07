@@ -1,3 +1,4 @@
+import { lagRecorder } from "../developer/lag-recorder";
 import type { LocalAgentSource, LocalWork } from "./local-activity";
 import { activityPromptThread } from "./activity-transcript";
 import type { EventData } from "../relay/events";
@@ -149,6 +150,9 @@ export function createAgentActivity(
     return JSON.stringify(entries.map((entry) => JSON.stringify(entry)).sort());
   }
   function publish() {
+    lagRecorder.time("activity.publish", publishNow);
+  }
+  function publishNow() {
     const localWork =
       local && !closed
         ? local.source
@@ -248,9 +252,15 @@ export function createAgentActivity(
       trimmed,
       turnsTrimmed,
     });
-    for (const listener of listeners) notify(listener);
-    if (workingChanged)
-      for (const listener of workingListeners) notify(listener);
+    lagRecorder.time(
+      "activity.notify",
+      () => {
+        for (const listener of listeners) notify(listener);
+        if (workingChanged)
+          for (const listener of workingListeners) notify(listener);
+      },
+      `${listeners.size} listeners, ${records.length} records, ${visible.length} turns`,
+    );
   }
   function reset() {
     records = [];

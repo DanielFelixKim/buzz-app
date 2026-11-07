@@ -1,3 +1,4 @@
+import { lagRecorder } from "../developer/lag-recorder";
 export const REPLY_CORRELATION_MS = 120_000;
 
 export type LocalWorkState =
@@ -77,7 +78,13 @@ export function createLocalAgentActivity() {
   const replyTimers = new Map<symbol, ReturnType<typeof setTimeout>>();
   const publish = () => {
     work = Object.freeze([...entries.values()]);
-    for (const listener of workListeners) listener();
+    lagRecorder.time(
+      "localActivity.notify",
+      () => {
+        for (const listener of workListeners) listener();
+      },
+      `${workListeners.size} listeners`,
+    );
   };
   const subscribe = (listeners: Set<() => void>, listener: () => void) => {
     listeners.add(listener);

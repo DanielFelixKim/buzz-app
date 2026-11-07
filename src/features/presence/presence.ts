@@ -1,3 +1,4 @@
+import { lagRecorder } from "../developer/lag-recorder";
 import type { ReadTransport } from "../relay/transport";
 import type { LiveSubscription } from "../relay/live";
 import { transportPartition } from "../relay/partition";
@@ -71,7 +72,13 @@ export function createPresence(
   const change = (subject: Subject, status: PresenceStatus) => {
     if (subject.status === status) return;
     subject.status = status;
-    for (const listener of subject.listeners.keys()) notify(listener);
+    lagRecorder.time(
+      "presence.notify",
+      () => {
+        for (const listener of subject.listeners.keys()) notify(listener);
+      },
+      `${subject.listeners.size} listeners`,
+    );
   };
   const eligible = () =>
     !closed &&

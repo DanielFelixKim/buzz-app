@@ -1,3 +1,4 @@
+import { lagRecorder } from "../features/developer/lag-recorder";
 // View intent is durable and explicitly partitioned; connection generations are not storage keys.
 const viewListeners = new Map<string, Set<(key?: string) => void>>();
 const composerDraftKey =
@@ -9,9 +10,14 @@ export function draftCoordinates(key: string) {
     : undefined;
 }
 // `key` names the one key that changed; undefined means any key may have.
-const changed = (scope: string, key?: string) => {
-  for (const listener of viewListeners.get(scope) ?? []) listener(key);
-};
+const changed = (scope: string, key?: string) =>
+  lagRecorder.time(
+    "view.changed",
+    () => {
+      for (const listener of viewListeners.get(scope) ?? []) listener(key);
+    },
+    key?.startsWith("draft:") ? "draft" : key?.split(":")[0],
+  );
 /** Same durable view keys as the composer; no parallel draft store or index. */
 export function subscribeView(scope: string, listener: (key?: string) => void) {
   let listeners = viewListeners.get(scope);
@@ -59,6 +65,9 @@ export function viewRevision(scope: string, key: string) {
   }
 }
 export function writeView(scope: string, key: string, value: unknown) {
+  return lagRecorder.time("view.write", () => writeViewNow(scope, key, value));
+}
+function writeViewNow(scope: string, key: string, value: unknown) {
   try {
     const revision = JSON.stringify(value);
     localStorage.setItem(
