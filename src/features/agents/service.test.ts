@@ -2165,7 +2165,7 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
     attention: {
       "watch/channel": null,
       "watch/a": watch("a", 9),
-      "watch/b": watch("b", 11),
+      "watch/b": watch("b", 40100),
     },
   });
   await settle();
@@ -2195,8 +2195,8 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
     events: [
       event("a1", { content: "a1", created_at: 101 }),
       event("a2", { content: "a2", created_at: 102 }),
-      event("b1", { content: "b1", kind: 11, created_at: 103 }),
-      event("b2", { content: "b2", kind: 11, created_at: 104 }),
+      event("b1", { content: "b1", kind: 40100, created_at: 103 }),
+      event("b2", { content: "b2", kind: 40100, created_at: 104 }),
     ],
   });
   await vi.waitFor(() => expect(working()).toEqual(["a1", "b1"]));
@@ -2234,7 +2234,8 @@ it("runs at most eight Interests at once, and the oldest waiting one next", asyn
       enabled: true,
       since: 1,
       channels: [channel],
-      kinds: [20 + i],
+      kinds: [9],
+      tags: { t: [String(i)] },
     };
   await service.save(bot, {
     attentionEnabled: true,
@@ -2251,7 +2252,14 @@ it("runs at most eight Interests at once, and the oldest waiting one next", asyn
   );
   emit({
     events: Array.from({ length: 10 }, (_, i) =>
-      event(`e${i}`, { content: `e${i}`, kind: 20 + i, created_at: 101 + i }),
+      event(`e${i}`, {
+        content: `e${i}`,
+        created_at: 101 + i,
+        tags: [
+          ["h", channel],
+          ["t", String(i)],
+        ],
+      }),
     ),
   });
   await vi.waitFor(() => expect(pending.size).toBe(8));
@@ -6861,7 +6869,7 @@ it("gives the classifier Buzz's thread parent: the marked reply, in any case; a 
   ]);
 });
 
-it("keeps encrypted DMs and reactions to its own messages away from watches", async () => {
+it("keeps encrypted DMs, unscoped reactions and global events away from channel watches", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
@@ -6887,7 +6895,14 @@ it("keeps encrypted DMs and reactions to its own messages away from watches", as
       event("dm", { kind: 4, tags: [["p", bot]] }),
       // p1 is what the run above published.
       event("like", { kind: 7, tags: [["e", "p1".padEnd(64, "0")]] }),
+      // Global events cannot acquire a channel from the fixture's h tag.
       event("note", { kind: 1 }),
+      event("long-form", { kind: 30023 }),
+      event("profile", { kind: 0 }),
+      event("repository", { kind: 30617 }),
+      // A workflow trigger's source comes from its definition, not its h tag.
+      event("workflow-trigger", { kind: 46020 }),
+      event("channel-note"),
     ],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
@@ -6896,7 +6911,7 @@ it("keeps encrypted DMs and reactions to its own messages away from watches", as
   expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
     type: "watch",
     slug: "watch/everything",
-    event: { id: "note".padEnd(64, "0") },
+    event: { id: "channel-note".padEnd(64, "0") },
   });
 });
 
@@ -8219,12 +8234,14 @@ it("catches up a watch of other kinds, or of every kind, on what it missed", asy
   }
 });
 
+// Reminders are channel-scoped but absent from the live subscription kinds.
 it.each([
-  { case: "a kind live does not hear", kind: 30023, unroute: false },
+  { case: "a kind live does not hear", kind: 40007, unroute: false },
   { case: "a channel live does not route", kind: 9, unroute: true },
 ])(
   "reads again what live does not hear while it stays connected, rather than pass over it: $case",
   async ({ kind, unroute }) => {
+    if (!unroute) expect(CHANNEL_KINDS).not.toContain(kind);
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     try {
       const { service, run, history, recover, storage, unrouted } = await setup(
@@ -8283,7 +8300,7 @@ it("reads again what live does not hear while its watch is edited more often tha
     });
     const now = nowSeconds();
     vi.setSystemTime(now * 1000);
-    const quiet = { ...chat["watch/chat"], kinds: [30023] };
+    const quiet = { ...chat["watch/chat"], kinds: [40007] };
     await service.save(bot, {
       attentionEnabled: true,
       attention: { "watch/channel": null, "watch/quiet": quiet },
@@ -8295,7 +8312,7 @@ it("reads again what live does not hear while its watch is edited more often tha
     history.push(
       eventDto(
         signed(author, {
-          kind: 30023,
+          kind: 40007,
           content: "while edited",
           created_at: now + 2,
           tags: [["h", channel]],
@@ -8331,7 +8348,7 @@ it("finds an event the relay stores late with an older time, after a read passed
       attentionEnabled: true,
       attention: {
         "watch/channel": null,
-        "watch/notes": { ...chat["watch/chat"], kinds: [30023] },
+        "watch/notes": { ...chat["watch/chat"], kinds: [40007] },
       },
     });
     await settle();
@@ -8346,7 +8363,7 @@ it("finds an event the relay stores late with an older time, after a read passed
     history.push(
       eventDto(
         signed(author, {
-          kind: 30023,
+          kind: 40007,
           content: "stored late",
           created_at: nowSeconds() - 55,
           tags: [["h", channel]],
@@ -8376,7 +8393,7 @@ it("finds an event the relay stores late with an older time, after a read passed
     expect(
       vi
         .mocked(second.session.read)
-        .mock.calls.some(([filters]) => filters[0]?.kinds?.includes(30023)),
+        .mock.calls.some(([filters]) => filters[0]?.kinds?.includes(40007)),
     ).toBe(true);
     expect(heard(second.run)).toEqual([]);
   } finally {
@@ -8413,7 +8430,7 @@ it("finds an event stored late below where an interrupted read went on, and give
       attentionEnabled: true,
       attention: {
         "watch/channel": null,
-        "watch/notes": { ...chat["watch/chat"], kinds: [30023] },
+        "watch/notes": { ...chat["watch/chat"], kinds: [40007] },
       },
     });
     await settle();
@@ -8422,7 +8439,7 @@ it("finds an event stored late below where an interrupted read went on, and give
     const note = (content: string, created_at: number) =>
       eventDto(
         signed(author, {
-          kind: 30023,
+          kind: 40007,
           content: `${content} ${"x".repeat(20_000)}`,
           created_at,
           tags: [["h", channel]],
