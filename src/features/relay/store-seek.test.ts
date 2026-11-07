@@ -2248,3 +2248,75 @@ it.each([false, true])(
     }
   },
 );
+
+it("preserves the committed older cursor through a head-only catch-up at the byte cap", async () => {
+  const h = setup({ count: 450, spacing: 0, maxHistoryBytes: 12000, seed: 30 });
+  await h.open();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+      channelId: "c",
+      state: "verified",
+    }),
+  );
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const boundary = h
+    .window()
+    .rows.map((row) => row.id)
+    .sort()
+    .at(-1);
+  assert.exists(boundary);
+  const threshold = [...h.history].sort(newestFirst)[350];
+  assert.exists(threshold);
+  const payload = "x".repeat(
+    12000 - byteSize([message(h.alice, "c", "", T0)]) - 100,
+  );
+  let isolated!: RelayEvent;
+  for (
+    let nonce = 0;
+    !isolated || isolated.id <= threshold.id || isolated.id <= boundary;
+    nonce++
+  ) {
+    assert(nonce < 100, "bounded signed fixture search");
+    isolated = message(h.alice, "c", `isolated${nonce}${payload}`, T0);
+  }
+  h.history.push(isolated);
+  expect(byteSize([isolated])).toBeLessThan(12000);
+  h.live.receive([isolated], { channelId: "c", phase: "live" });
+  expect(h.window().rows.some((row) => row.id === isolated.id)).toBe(true);
+
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  const before = h.reads.at(-1)?.before_id;
+  const head = [...h.history].sort(newestFirst)[0];
+  assert.exists(head);
+  h.gate.aux = [
+    signed(h.alice, {
+      kind: 7,
+      content: "+",
+      created_at: T0 + HOUR,
+      tags: [
+        ["h", "c"],
+        ["e", head.id],
+        ["metadata", "x".repeat(1000)],
+      ],
+    }),
+  ];
+  h.live.state({ status: "retrying", routes: [] });
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(h.owner.session.live?.snapshot().heads).toContainEqual({
+      channelId: "c",
+      state: "verified",
+    }),
+  );
+  h.gate.aux = [];
+  const reads = h.reads.length;
+  h.channels.loadOlder("c");
+  await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+  expect(h.reads.length).toBeGreaterThan(reads);
+  expect(h.reads.at(-1)?.before_id).toBe(before);
+});

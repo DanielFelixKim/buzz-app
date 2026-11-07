@@ -4815,7 +4815,7 @@ export function createChannelStore(
         }
         retained.restored = false;
         retained.readAt = head.readAt;
-        accept(head.events, true);
+        accept(head.events, !retained.sliding);
         page = head;
         const reached = (last: Page) =>
           !last.hasMore ||
