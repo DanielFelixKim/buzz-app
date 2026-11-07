@@ -177,6 +177,7 @@ export function useMessageOpening(
               target.created_at,
               controller.signal,
               target.id,
+              true,
             );
             if (
               !controller.signal.aborted &&

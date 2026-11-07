@@ -1019,3 +1019,66 @@ it.each([true, false])(
     }
   },
 );
+
+it.each([true, false])(
+  "validates delayed lookup after reconnect wins (present=%s)",
+  async (present) => {
+    const c = await relayChannel(true);
+    try {
+      const newest = c.post("newest", 20),
+        oldest = c.post("oldest", 10),
+        target = c.post("gone before seek", 30);
+      c.channels.ensure("a");
+      c.read().respond(c.head(newest));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().fail(new Error("older page failed"));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().respond(c.end(newest, oldest));
+      await flush();
+      c.live.state({ status: "connected", routes: [] });
+      c.live.established("a");
+      await flush();
+      const reconnectRead = c.read();
+      const view = renderHook(() =>
+        useMessageOpening(
+          c.channels,
+          "a",
+          target.id,
+          undefined,
+          c.store.session.read,
+        ),
+      );
+      try {
+        const lookup = c.read();
+        await act(async () => {
+          reconnectRead.respond(c.head(newest, oldest));
+          await flush();
+        });
+        expect(c.channels.window("a").freshness).toBe("verified");
+        expect(view.result.current).toBeUndefined();
+        await act(async () => {
+          lookup.respond([target]);
+          await flush();
+        });
+        expect(view.result.current).toBeUndefined();
+        await act(async () => {
+          c.read().respond(
+            c.head(...(present ? [target] : []), newest, oldest),
+          );
+          await flush();
+          if (present) {
+            c.read().respond(c.head(target, newest, oldest));
+            await flush();
+          }
+        });
+        expect(view.result.current).toBe(present);
+      } finally {
+        view.unmount();
+      }
+    } finally {
+      c.store.dispose();
+    }
+  },
+);

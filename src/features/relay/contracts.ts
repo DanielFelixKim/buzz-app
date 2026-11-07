@@ -385,12 +385,14 @@ export interface ChannelQueries {
   loadOlder(channelId: string, anchorId?: string): void;
   /** Detach the window to history at `from` (unix seconds; 0 is the channel
    * start). Resolves the first message at or after `from`, else the newest.
-   * With `fromId`, resolves that target only when this seek validates it. */
+   * With `fromId`, resolves that target only when this seek validates it.
+   * `revalidate` requires a fresh seek read even when the target is held. */
   seek?(
     channelId: string,
     from: number,
     signal: AbortSignal,
     fromId?: string,
+    revalidate?: boolean,
   ): Promise<string | undefined>;
   /** Read the rows above a detached window; reattaches on reaching the head. */
   loadNewer?(channelId: string, anchorId?: string): void;

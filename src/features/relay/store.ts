@@ -3880,6 +3880,7 @@ export function createChannelStore(
       from: number,
       signal: AbortSignal,
       fromId?: string,
+      revalidate = false,
     ) {
       const state = windows.get(channelId);
       if (
@@ -3894,6 +3895,7 @@ export function createChannelStore(
       // Held rows answer when they reach below `from` and either hold a row
       // at or after it or end at the head.
       if (
+        !revalidate &&
         state.snapshot.freshness !== "cached" &&
         (!fromId || rows.some((row) => row.id === fromId)) &&
         (!state.snapshot.hasMore || rows.some((row) => row.createdAt < from)) &&
