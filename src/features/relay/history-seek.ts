@@ -149,12 +149,6 @@ export async function locate(
               page: { ...page, events },
             };
           }
-          if (second !== from || target === "f".repeat(64)) {
-            if (!page.cursor) throw new SeekLimitError();
-            previous = page;
-            cursor = page.cursor;
-            continue;
-          }
           // A probe may land in the ID gap immediately before the target.
           // Read after the last newer page to recover its adjacent context.
           if (reached || !page.cursor) {

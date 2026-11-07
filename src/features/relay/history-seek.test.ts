@@ -312,3 +312,16 @@ it.each([1, 5, 200])(
     expect(source.calls.length).toBeLessThanOrEqual(SEEK_READS);
   },
 );
+
+it("reaches the oldest edge of a dense second from a timestamp-only boundary", async () => {
+  const source = relay([T0 - 1, ...Array.from({ length: 12000 }, () => T0)]);
+  const step = (1n << 256n) / 12002n;
+  for (const [index, row] of source.rows.entries())
+    row.id = (step * BigInt(index + 1)).toString(16).padStart(64, "0");
+  const located = await locate(source.read, T0, T0 + DAY, true, "f".repeat(64));
+  assert.equal(located.kind, "segment");
+  if (located.kind !== "segment") return;
+  expect(located.page.events.some((row) => row.created_at === T0)).toBe(true);
+  expect(located.page.events.some((row) => row.created_at < T0)).toBe(true);
+  expect(source.calls.length).toBeLessThanOrEqual(SEEK_READS);
+});
