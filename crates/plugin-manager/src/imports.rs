@@ -2298,7 +2298,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn access_rule_socket_reaches_git() {
-        use std::os::unix::net::UnixListener;
+        use std::os::unix::{fs::symlink, net::UnixListener};
 
         let home = tempfile::tempdir_in("/tmp").unwrap();
         let socket = home.path().join("team.sock");
@@ -2318,18 +2318,18 @@ mod tests {
         let mut git = Git::new().unwrap();
         git.ssh_auth_sock = transport.ssh_auth_sock;
 
-        // Use the installed Git instead of executing a freshly written script,
-        // which can race parallel process creation with ETXTBSY on Linux.
-        let output = git
-            .run(
-                &[
-                    "-c",
-                    "alias.socket=!/usr/bin/printenv SSH_AUTH_SOCK",
-                    "socket",
-                ],
-                1024,
-            )
-            .unwrap();
+        let bin = home.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let executable = bin.join("git");
+        // A parallel fork can retain a runtime-written executable's writer (ETXTBSY).
+        symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ssh-auth-sock.sh"),
+            &executable,
+        )
+        .unwrap();
+        let mut command = git.command();
+        command.env("PATH", &bin);
+        let output = git.run_command(command, 1024).unwrap();
         assert_eq!(
             String::from_utf8(output).unwrap().trim(),
             socket.to_str().unwrap()
