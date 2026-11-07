@@ -1,7 +1,10 @@
 /**
  * PROTOTYPE: Activity as the primary navigation. The sidebar lists
  * conversations, newest first, with their latest event as the preview, under
- * Solo / Team / DMs scopes. Team has a sub-view for Threads and Mentions.
+ * two scopes grouped by who is in the conversation: Solo (you and agents) and
+ * Team (you and people). Each scope has its own views, so the header keeps one
+ * shape: Solo is All / Working / Waiting; Team is Channels / Threads / Direct,
+ * Direct being DMs and mentions of you, everything addressed to you.
  * Rows open in the Messages page, so a thread opens beside its channel with
  * its root revealed there: list | channel | thread.
  */
@@ -38,10 +41,12 @@ import { readView, writeView } from "../../shared/view-state";
 import styles from "./ActivitySidebar.module.css";
 import { useLatestMessages, type LatestMessage } from "./activity-previews";
 
-export type ActivityScope = "solo" | "team" | "dms";
-type TeamView = "channels" | "threads" | "mentions";
+export type ActivityScope = "solo" | "team";
+type SoloView = "all" | "working" | "waiting";
+type TeamView = "channels" | "threads" | "direct";
 export type ActivityView = {
   scope: ActivityScope;
+  solo: SoloView;
   team: TeamView;
   unread: boolean;
 };
@@ -50,33 +55,42 @@ type View = ActivityView;
 const scopes = [
   { value: "solo", label: "Solo" },
   { value: "team", label: "Team" },
-  { value: "dms", label: "DMs" },
+] as const;
+const soloViews = [
+  { value: "all", label: "All" },
+  { value: "working", label: "Working" },
+  { value: "waiting", label: "Waiting" },
 ] as const;
 const teamViews = [
   { value: "channels", label: "Channels" },
   { value: "threads", label: "Threads" },
-  { value: "mentions", label: "Mentions" },
+  { value: "direct", label: "Direct" },
 ] as const;
-const viewKey = "activity-sidebar:view:v3";
+const viewKey = "activity-sidebar:view:v4";
 
 function readSavedView(scope: string): View {
   const saved = readView<Partial<View> | null>(scope, viewKey, null);
   return {
-    scope:
-      saved?.scope === "team" || saved?.scope === "dms" ? saved.scope : "solo",
+    scope: saved?.scope === "team" ? "team" : "solo",
+    solo:
+      saved?.solo === "working" || saved?.solo === "waiting"
+        ? saved.solo
+        : "all",
     team:
-      saved?.team === "threads" || saved?.team === "mentions"
+      saved?.team === "threads" || saved?.team === "direct"
         ? saved.team
         : "channels",
     unread: saved?.unread === true,
   };
 }
 
-const scopeOf = (channel: ChannelSummary): ActivityScope | undefined =>
+/** What kind of conversation a channel is: a DM lists under Team's Direct. */
+type Kind = "solo" | "team" | "dm";
+const kindOf = (channel: ChannelSummary): Kind | undefined =>
   channel.channelType === "solo"
     ? "solo"
     : channel.channelType === "dm"
-      ? "dms"
+      ? "dm"
       : channel.channelType === "stream" ||
           channel.channelType === "forum" ||
           channel.channelType === undefined
@@ -86,13 +100,25 @@ const scopeOf = (channel: ChannelSummary): ActivityScope | undefined =>
 const listed = (channel: ChannelSummary) =>
   !channel.archived && !channel.huddle && !channel.metadataPending;
 
-/** The scope a destination belongs to, so opening one shows its list. */
-export function activityScopeOf(
+/** The view that lists a destination, so opening one from elsewhere shows it;
+ * undefined when the current view already can. A Team channel keeps the Team
+ * view, since Direct lists its mentions. */
+export function activityViewFor(
   channels: readonly ChannelSummary[] | undefined,
   id: string,
-): ActivityScope | undefined {
+  view: View,
+): View | undefined {
   const channel = channels?.find((entry) => entry.id === id);
-  return channel ? scopeOf(channel) : undefined;
+  const kind = channel ? kindOf(channel) : undefined;
+  if (kind === "solo")
+    return view.scope === "solo" ? undefined : { ...view, scope: "solo" };
+  if (kind === "dm")
+    return view.scope === "team" && view.team === "direct"
+      ? undefined
+      : { ...view, scope: "team", team: "direct" };
+  if (kind === "team")
+    return view.scope === "team" ? undefined : { ...view, scope: "team" };
+  return undefined;
 }
 
 export function useActivityView(scope: string) {
@@ -123,8 +149,8 @@ export function ActivityScopeTabs({
   );
 }
 
-/** Under the scope: Team's own outlined radio for what it lists, then the
- * Unread switch, right-aligned, for every scope. */
+/** Under the scope, one row in every scope: its views as an outlined radio,
+ * then the Unread switch at the right end. */
 export function ActivityFilters({
   view,
   onChange,
@@ -134,8 +160,8 @@ export function ActivityFilters({
 }) {
   return (
     <div className={styles.filters}>
-      {view.scope === "team" && (
-        <div className={styles.teamViews}>
+      <div className={styles.views}>
+        {view.scope === "team" ? (
           <Tabs
             label="Team view"
             variant="segmented"
@@ -144,8 +170,17 @@ export function ActivityFilters({
             items={teamViews}
             onValueChange={(team) => onChange({ ...view, team })}
           />
-        </div>
-      )}
+        ) : (
+          <Tabs
+            label="Solo view"
+            variant="segmented"
+            size="sm"
+            value={view.solo}
+            items={soloViews}
+            onValueChange={(solo) => onChange({ ...view, solo })}
+          />
+        )}
+      </div>
       <div className={styles.unread}>
         <Switch
           label="Unread"
@@ -209,14 +244,17 @@ export function ActivitySidebar({
     });
 
   const unreadOnly = view.unread;
-  const filter = view.scope === "team" ? view.team : "channels";
-  const flat = filter === "threads" || filter === "mentions";
-  const channels = list.channels.filter(
-    (channel) => listed(channel) && scopeOf(channel) === view.scope,
+  const filter = view.scope === "team" ? view.team : view.solo;
+  const flat = filter === "threads";
+  const direct = filter === "direct";
+  const kind: Kind = view.scope === "solo" ? "solo" : direct ? "dm" : "team";
+  const working = useWorkingChannels(session);
+  const scoped = list.channels.filter(
+    (channel) => listed(channel) && kindOf(channel) === kind,
   );
   const fetched = useLatestMessages(
     session,
-    channels.map((channel) => channel.id),
+    scoped.map((channel) => channel.id),
   );
   // inbox changes re-render this list, which reads unread evidence directly.
   void inbox;
@@ -239,12 +277,25 @@ export function ActivitySidebar({
         ? live
         : read;
   };
+  // Solo's Working: an agent is on it. Waiting: no agent is, and the agent
+  // spoke last, so it is your move: it finished, or it is asking you.
+  const channels =
+    filter === "working"
+      ? scoped.filter((channel) => working.has(channel.id))
+      : filter === "waiting"
+        ? scoped.filter((channel) => {
+            const author = latestOf(channel)?.authorId;
+            return (
+              !working.has(channel.id) && !!author && author !== session.viewer
+            );
+          })
+        : scoped;
   // Team ranks by what is relevant to you: top-level messages, threads you
   // are in, and your Activity (mentions, replies). Other people's thread
   // chatter does not move a channel. Solo chats and DMs rank by any message.
   const recency = (channel: ChannelSummary) => {
     const latest = latestOf(channel)?.createdAt ?? 0;
-    if (view.scope !== "team")
+    if (kind !== "team")
       return Math.max(
         latest,
         channel.lastActivityAt ?? 0,
@@ -263,23 +314,35 @@ export function ActivitySidebar({
     .sort(
       (a, b) => b.at - a.at || a.channel.name.localeCompare(b.channel.name),
     );
-  const order = useFrozenOrder(
-    flat ? "" : sorted.map((entry) => entry.channel.id).join("\n"),
-  );
   const byId = new Map(sorted.map((entry) => [entry.channel.id, entry]));
   const teamIds = new Set(
     list.channels
-      .filter((channel) => listed(channel) && scopeOf(channel) === "team")
+      .filter((channel) => listed(channel) && kindOf(channel) === "team")
       .map((channel) => channel.id),
   );
   const channelsById = new Map(list.channels.map((c) => [c.id, c]));
   const shownEvents = (
-    !flat
-      ? []
-      : filter === "threads"
-        ? threadEvents(inbox.items, [...teamIds], session, teamIds)
-        : mentionEvents(inbox.items, teamIds)
+    flat
+      ? threadEvents(inbox.items, [...teamIds], session, teamIds)
+      : direct
+        ? mentionEvents(inbox.items, teamIds)
+        : []
   ).filter((event) => !unreadOnly || event.unread);
+  // Direct interleaves DMs and mentions by time; other lists hold one kind.
+  const eventsByKey = new Map(shownEvents.map((event) => [event.key, event]));
+  const entries = flat
+    ? []
+    : [
+        ...sorted.map((entry) => ({
+          key: `c:${entry.channel.id}`,
+          at: entry.at,
+        })),
+        ...shownEvents.map((event) => ({
+          key: `e:${event.key}`,
+          at: event.createdAt,
+        })),
+      ].sort((a, b) => b.at - a.at);
+  const order = useFrozenOrder(entries.map((entry) => entry.key).join("\n"));
 
   const ids = [
     ...shownEvents.slice(0, 100).map((event) => event.authorId),
@@ -303,68 +366,73 @@ export function ActivitySidebar({
   const nameOf = (id: string) =>
     profiles.get(id)?.name ?? formatPublicKey(id) ?? "Someone";
 
+  /** A thread or mention: a message, opened where it lives. */
+  const eventRow = (event: ActivityEvent) => {
+    const channel = channelsById.get(event.channelId);
+    const name = nameOf(event.authorId);
+    return (
+      <li key={event.key}>
+        <ConversationRow
+          selected={
+            selectedChannel === event.channelId &&
+            !!event.rootId &&
+            selectedThread === event.rootId
+          }
+          onClick={() =>
+            open(event.channelId, {
+              messageId: event.messageId,
+              ...(event.rootId ? { threadRootId: event.rootId } : {}),
+            })
+          }
+          avatar={
+            <PersonAvatar
+              session={session}
+              profile={profiles.get(event.authorId)}
+              name={name}
+            />
+          }
+          placeIcon={
+            event.rootId ? (
+              <MessageReplyIcon size={14} aria-label="Thread" />
+            ) : (
+              privateIcon(channel)
+            )
+          }
+          place={
+            channel ? `${event.rootId ? "in " : ""}${channelText(channel)}` : ""
+          }
+          sender={event.authorId === session.viewer ? "You" : undefined}
+          time={shortTime(event.createdAt)}
+          preview={messagePreview(event.preview)}
+          state={event.unread ? "unread" : "read"}
+          onMarkRead={() => void markEventRead(session, event)}
+        />
+      </li>
+    );
+  };
+
   return (
     <div className={styles.activity} data-activity-sidebar="">
       <ul className={styles.rows} aria-label="Conversations">
         {flat
-          ? shownEvents.map((event) => {
-              const channel = channelsById.get(event.channelId);
-              const name = nameOf(event.authorId);
-              return (
-                <li key={event.key}>
-                  <ConversationRow
-                    selected={
-                      selectedChannel === event.channelId &&
-                      !!event.rootId &&
-                      selectedThread === event.rootId
-                    }
-                    onClick={() =>
-                      open(event.channelId, {
-                        messageId: event.messageId,
-                        ...(event.rootId ? { threadRootId: event.rootId } : {}),
-                      })
-                    }
-                    avatar={
-                      <PersonAvatar
-                        session={session}
-                        profile={profiles.get(event.authorId)}
-                        name={name}
-                      />
-                    }
-                    placeIcon={
-                      event.rootId ? (
-                        <MessageReplyIcon size={14} aria-label="Thread" />
-                      ) : (
-                        privateIcon(channel)
-                      )
-                    }
-                    place={
-                      channel
-                        ? `${event.rootId ? "in " : ""}${channelText(channel)}`
-                        : ""
-                    }
-                    sender={
-                      event.authorId === session.viewer ? "You" : undefined
-                    }
-                    time={shortTime(event.createdAt)}
-                    preview={messagePreview(event.preview)}
-                    state={event.unread ? "unread" : "read"}
-                    onMarkRead={() => void markEventRead(session, event)}
-                  />
-                </li>
-              );
-            })
-          : order.map((id) => {
+          ? shownEvents.map((event) => eventRow(event))
+          : order.map((key) => {
+              if (key.startsWith("e:")) {
+                const event = eventsByKey.get(key.slice(2));
+                return event ? eventRow(event) : null;
+              }
+              const id = key.slice(2);
               const entry = byId.get(id);
               if (!entry) return null;
               return (
                 <ChannelRow
-                  key={id}
+                  key={key}
                   session={session}
                   channel={entry.channel}
                   at={entry.at}
                   latest={latestOf(entry.channel)}
-                  team={view.scope === "team"}
+                  team={kind === "team"}
+                  working={working.has(id)}
                   profiles={profiles}
                   unreadOnly={unreadOnly}
                   selected={selectedChannel === id && !selectedThread}
@@ -374,13 +442,18 @@ export function ActivitySidebar({
             })}
       </ul>
       {list.status === "ready" &&
-        (flat ? !shownEvents.length : !channels.length) && (
+        !shownEvents.length &&
+        (flat || !channels.length) && (
           <p className={`text-body-sm text-subtle ${styles.empty}`}>
             {filter === "threads"
               ? "No thread activity yet."
-              : filter === "mentions"
-                ? "No one has mentioned you yet."
-                : "Nothing here yet."}
+              : filter === "direct"
+                ? "No DMs or mentions yet."
+                : filter === "working"
+                  ? "No agent is working right now."
+                  : filter === "waiting"
+                    ? "Nothing is waiting on you."
+                    : "Nothing here yet."}
           </p>
         )}
     </div>
@@ -400,7 +473,7 @@ export function shortTime(unixSeconds: number, nowSeconds = Date.now() / 1000) {
   });
 }
 
-/** One row in Threads or Mentions: a message, opened where it lives. */
+/** One row in Threads or Direct: a message, opened where it lives. */
 type ActivityEvent = Readonly<{
   key: string;
   channelId: string;
@@ -488,6 +561,29 @@ function mentionEvents(
     .sort(newestFirst);
 }
 
+/** Channels an agent is working in: a working turn, or typing that isn't
+ * yours. Read as a primitive so unrelated activity doesn't re-render. */
+function useWorkingChannels(session: RelaySession): ReadonlySet<string> {
+  const agents = useSyncExternalStore(session.agentActivity.subscribe, () => {
+    const snapshot = session.agentActivity.snapshot();
+    const ids = new Set<string>();
+    for (const turn of snapshot.turns)
+      if (turn.state === "working" && turn.channelId) ids.add(turn.channelId);
+    for (const entry of snapshot.typing) ids.add(entry.channelId);
+    return [...ids].sort().join(",");
+  });
+  const typing = useSyncExternalStore(session.typing.subscribe, () => {
+    const ids = new Set<string>();
+    for (const entry of session.typing.snapshot())
+      if (entry.pubkey !== session.viewer) ids.add(entry.channelId);
+    return [...ids].sort().join(",");
+  });
+  return useMemo(
+    () => new Set([agents, typing].join(",").split(",").filter(Boolean)),
+    [agents, typing],
+  );
+}
+
 /**
  * Keeps rows where they are while the pointer or keyboard is in the list, so a
  * new message doesn't move a row out from under a click. New rows go at the end.
@@ -533,6 +629,7 @@ function ChannelRow({
   at,
   latest,
   team,
+  working,
   profiles,
   unreadOnly,
   selected,
@@ -543,6 +640,8 @@ function ChannelRow({
   at: number;
   latest: LatestMessage | undefined;
   team: boolean;
+  /** An agent is on it: the typing dots take the state slot. */
+  working: boolean;
   profiles: ReadonlyMap<string, Profile>;
   unreadOnly: boolean;
   selected: boolean;
@@ -624,7 +723,7 @@ function ChannelRow({
         sender={latestAuthor === session.viewer ? "You" : undefined}
         time={at ? shortTime(at) : ""}
         preview={preview}
-        state={unread ? "unread" : "read"}
+        state={working ? "working" : unread ? "unread" : "read"}
         onMarkRead={() =>
           void session.unread.markChannelRead(channel.id).catch(() => {})
         }

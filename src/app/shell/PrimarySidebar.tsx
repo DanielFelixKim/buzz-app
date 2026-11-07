@@ -37,7 +37,7 @@ import {
   ActivityFilters,
   ActivityScopeTabs,
   ActivitySidebar,
-  activityScopeOf,
+  activityViewFor,
   useActivityView,
 } from "./ActivitySidebar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -234,12 +234,15 @@ function ScopedSidebar({
   const [activityLocation, setActivityLocation] = useState(location);
   if (location !== activityLocation) {
     setActivityLocation(location);
-    const owner =
+    const next =
       target.kind === "conversation"
-        ? activityScopeOf(channels?.list().channels, target.channelId)
+        ? activityViewFor(
+            channels?.list().channels,
+            target.channelId,
+            activityView,
+          )
         : undefined;
-    if (owner && owner !== activityView.scope)
-      setActivityView({ ...activityView, scope: owner });
+    if (next) setActivityView(next);
   }
   const activityToggle = (
     <IconButton

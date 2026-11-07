@@ -25,7 +25,11 @@ const scope = { viewer, communityOrigin: "https://relay.test" };
 
 function setup(
   inboxItems: InboxItem[] = [],
-  topLevel: Record<string, { createdAt: number; content: string }> = {},
+  topLevel: Record<
+    string,
+    { createdAt: number; content: string; authorId?: string }
+  > = {},
+  workingIn: readonly string[] = [],
 ) {
   const base = createRelaySession(null).session;
   const channels = [
@@ -48,6 +52,13 @@ function setup(
       name: "My chat",
       channelType: "solo" as const,
       lastActivityAt: 300,
+    },
+    {
+      id: "dm",
+      name: "DM",
+      channelType: "dm" as const,
+      participants: [alice],
+      lastActivityAt: 450,
     },
   ];
   const list = { status: "ready" as const, channels };
@@ -125,6 +136,22 @@ function setup(
       ensure: async () => {},
     },
     inboxFeed: { ...base.inboxFeed, ensure: async () => {} },
+    agentActivity: {
+      ...base.agentActivity,
+      subscribe: () => () => {},
+      snapshot: () =>
+        ({
+          ...base.agentActivity.snapshot(),
+          turns: workingIn.map((channelId, index) => ({
+            agent: alice,
+            turnId: `t${index}`,
+            channelId,
+            timestamp: 1,
+            state: "working" as const,
+          })),
+          typing: [],
+        }) as never,
+    },
     unread: {
       ...base.unread,
       markChannelRead,
@@ -150,6 +177,7 @@ function setup(
   function Harness() {
     const [view, setView] = useState<ActivityView>({
       scope: "team",
+      solo: "all",
       team: "channels",
       unread: false,
     });
@@ -175,7 +203,7 @@ function setup(
 
 const rowNames = () =>
   within(screen.getByRole("list", { name: "Conversations" }))
-    .getAllByRole("listitem")
+    .queryAllByRole("listitem")
     .filter((li) => li.hasAttribute("data-activity-row"))
     .map((li) => li.getAttribute("data-activity-row"));
 
@@ -209,13 +237,13 @@ test("Unread hides read conversations and scopes switch lists", async () => {
   await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
   await userEvent.click(screen.getByRole("switch", { name: "Unread" }));
   expect(rowNames()).toEqual(["solo"]);
-  // Only Team has the Channels / Threads / Mentions radio.
+  // Each scope has its own views.
   expect(
     screen.queryByRole("tab", { name: "Threads" }),
   ).not.toBeInTheDocument();
 });
 
-test("Team's Mentions view lists mentions and opens them in their thread", async () => {
+const mentionItem = () => {
   const mention = {
     id: "m",
     channelId: "new",
@@ -234,8 +262,12 @@ test("Team's Mentions view lists mentions and opens them in their thread", async
     manual: false,
     readThrough: [],
   } as unknown as InboxItem;
-  const { open } = setup([{ ...mention, mention }]);
-  await userEvent.click(screen.getByRole("tab", { name: "Mentions" }));
+  return { ...mention, mention } as InboxItem;
+};
+
+test("Team's Direct view lists mentions and opens them in their thread", async () => {
+  const { open } = setup([mentionItem()]);
+  await userEvent.click(screen.getByRole("tab", { name: "Direct" }));
   await userEvent.click(screen.getByText("hey @you"));
   expect(open).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -283,4 +315,46 @@ test("an unread row's checkmark marks its channel read without opening it", asyn
   expect(
     within(read as HTMLElement).queryByRole("button", { name: "Mark as read" }),
   ).not.toBeInTheDocument();
+});
+
+test("Direct interleaves DMs and mentions of you, newest first", async () => {
+  setup([mentionItem()]);
+  await userEvent.click(screen.getByRole("tab", { name: "Direct" }));
+  const items = within(screen.getByRole("list", { name: "Conversations" }))
+    .getAllByRole("listitem")
+    .map((li) => li.getAttribute("data-activity-row") ?? li.textContent);
+  // The mention (500) is newer than the DM (450); Team channels stay out.
+  expect(items).toHaveLength(2);
+  expect(items[0]).toContain("hey @you");
+  expect(items[1]).toBe("dm");
+});
+
+test("Solo's Working and Waiting split chats by whose move it is", async () => {
+  setup([], { solo: { createdAt: 300, content: "done, have a look" } }, []);
+  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  expect(rowNames()).toEqual(["solo"]);
+  await userEvent.click(screen.getByRole("tab", { name: "Working" }));
+  expect(rowNames()).toEqual([]);
+  expect(
+    screen.getByText("No agent is working right now."),
+  ).toBeInTheDocument();
+  // The agent spoke last and isn't working: it is waiting on you.
+  await userEvent.click(screen.getByRole("tab", { name: "Waiting" }));
+  expect(rowNames()).toEqual(["solo"]);
+});
+
+test("a chat with a working agent is Working, not Waiting", async () => {
+  setup([], { solo: { createdAt: 300, content: "on it" } }, ["solo"]);
+  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Working" }));
+  expect(rowNames()).toEqual(["solo"]);
+  await userEvent.click(screen.getByRole("tab", { name: "Waiting" }));
+  expect(rowNames()).toEqual([]);
+});
+
+test("your own last message is not Waiting", async () => {
+  setup([], { solo: { createdAt: 300, content: "go", authorId: viewer } });
+  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Waiting" }));
+  expect(rowNames()).toEqual([]);
 });

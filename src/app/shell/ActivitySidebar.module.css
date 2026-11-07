@@ -5,30 +5,37 @@
   flex-direction: column;
   min-width: 0;
 }
-/* Below the scope: Team's outlined radio, then Unread on the right. */
+/* Below the scope, one row in every scope: its views, then Unread at the
+ * right end. The same shape everywhere, so switching scope moves nothing. */
 .filters {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
   margin-block-end: var(--space-2);
   margin-inline: var(--space-1);
 }
 /* The same segmented radio as the scope, one size down: an outline in place
  * of the inset tray, caption type, shorter tabs. */
-.teamViews [data-variant="segmented"][data-variant="segmented"] {
+.views [data-variant="segmented"][data-variant="segmented"] {
   padding: var(--space-half);
   border: 1px solid var(--border-standard);
   background: transparent;
 }
-.teamViews
+.views
   [data-variant="segmented"]
   [class~="buzz-tabs-tab"][class~="buzz-tabs-tab"] {
   min-height: var(--space-6);
   font-size: var(--text-caption);
 }
+.views {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .unread {
   display: flex;
+  flex: none;
   justify-content: flex-end;
+  margin-inline-start: auto;
 }
 .rows {
   display: flex;
@@ -43,7 +50,7 @@
 }
 /* On the plain panel the scope's selected surface barely shows; the outlined
  * radio marks its choice with the scope tray's inset fill instead. */
-.teamViews
+.views
   [data-variant="segmented"]
   [class~="buzz-tabs-indicator"][class~="buzz-tabs-indicator"] {
   background: var(--surface-inset);
