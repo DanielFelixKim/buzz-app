@@ -179,9 +179,12 @@ export function useMessageOpening(
             );
             if (
               !controller.signal.aborted &&
-              !channels
-                .window(channelId)
-                .rows.some((row) => row.id === messageId && !row.threadRootId)
+              (channels.window(channelId).freshness === "cached" ||
+                !channels
+                  .window(channelId)
+                  .rows.some(
+                    (row) => row.id === messageId && !row.threadRootId,
+                  ))
             )
               setDecided({ key, inTimeline: false });
           })
