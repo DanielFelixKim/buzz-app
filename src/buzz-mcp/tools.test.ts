@@ -47,6 +47,9 @@ const event = (fields: Partial<BuzzEvent>): BuzzEvent => ({
   ...fields,
 });
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+/** A community media blob's URL, as an upload returns it. */
+const blob = (char: string, ext = "png") =>
+  `https://relay/media/${char.repeat(64)}.${ext}`;
 const emojiSet = (pubkey: string, created_at: number, entries: string[][]) =>
   event({
     id: `${created_at}`.padStart(64, "d"),
@@ -1396,10 +1399,8 @@ it("adds an uploaded image to the agent's own emoji set, keeping the rest", asyn
     callTool(client, {}, "emoji_set", { shortcode: ":Brows:", path: "b.png" }),
   ).resolves.toBe("Added :brows: (https://relay/media/x.png).");
   expect(client.upload).toHaveBeenCalledWith(PNG, "image/png");
-  await callTool(client, {}, "emoji_set", {
-    shortcode: "nod",
-    url: "https://relay/media/nod.gif",
-  });
+  await callTool(client, {}, "emoji_set", { shortcode: "nod", url: blob("1") });
+  expect(client.media).toHaveBeenCalledWith(blob("1"));
   expect(published).toEqual([
     {
       kind: 30030,
@@ -1417,7 +1418,7 @@ it("adds an uploaded image to the agent's own emoji set, keeping the rest", asyn
         ["d", "buzz:custom-emoji"],
         ["emoji", "wave", "https://relay/media/wave.png"],
         ["emoji", "brows", "https://relay/media/x.png"],
-        ["emoji", "nod", "https://relay/media/nod.gif"],
+        ["emoji", "nod", blob("1")],
       ],
     },
   ]);
@@ -1429,28 +1430,101 @@ it("refuses an emoji it cannot add without changing anyone else's", async () => 
   ]);
   const add = (args: Record<string, unknown>) =>
     callTool(client, {}, "emoji_set", args);
-  await expect(
-    add({ shortcode: "party", url: "https://x/p.png" }),
-  ).rejects.toThrow(":party: is taken");
-  await expect(
-    add({ shortcode: "a b", url: "https://x/p.png" }),
-  ).rejects.toThrow("A shortcode is 1 to 64");
+  await expect(add({ shortcode: "party", url: blob("1") })).rejects.toThrow(
+    ":party: is taken",
+  );
+  await expect(add({ shortcode: "a b", url: blob("1") })).rejects.toThrow(
+    "A shortcode is 1 to 64",
+  );
   await expect(add({ shortcode: "ok" })).rejects.toThrow("Pass path or url");
   await expect(
-    add({ shortcode: "ok", path: "a.png", url: "https://x/p.png" }),
+    add({ shortcode: "ok", path: "a.png", url: blob("1") }),
   ).rejects.toThrow("Pass path or url");
   await expect(add({ shortcode: "ok", path: "notes.md" })).rejects.toThrow(
     "not a PNG, JPEG, GIF or WebP image",
   );
-  await expect(add({ shortcode: "ok", url: "file:///p.png" })).rejects.toThrow(
-    "url must be a Buzz media URL",
+  // Only this community's image blobs: clients load anything else from the
+  // host it names.
+  for (const url of [
+    "file:///p.png",
+    "https://tracker.example/pixel.png",
+    "https://relay/media/x.png",
+    `${blob("1")}?t=1`,
+  ])
+    await expect(add({ shortcode: "ok", url })).rejects.toThrow(
+      "url must be a Buzz media URL",
+    );
+  vi.mocked(client.media).mockRejectedValueOnce(
+    new Error("Agents fetch only their community's media"),
+  );
+  await expect(
+    add({ shortcode: "ok", url: blob("1").replace("relay", "other") }),
+  ).rejects.toThrow("url must be a Buzz media URL");
+  await expect(add({ shortcode: "ok", url: blob("1", "mp4") })).rejects.toThrow(
+    "is not an image",
   );
   // Without keep, the read after the write does not find it.
-  await expect(
-    add({ shortcode: "ok", url: "https://x/p.png" }),
-  ).rejects.toThrow("conflict");
+  await expect(add({ shortcode: "ok", url: blob("1") })).rejects.toThrow(
+    "conflict",
+  );
   expect(published).toHaveLength(1);
   expect(client.upload).not.toHaveBeenCalled();
+});
+
+it("refuses an emoji when the catalog read cannot show the shortcode is free", async () => {
+  const sets = Array.from({ length: 500 }, (_, i) =>
+    emojiSet(i.toString(16).padStart(64, "0"), 100 + i, [["x", blob("2")]]),
+  );
+  const { client, published } = fake(sets);
+  await expect(
+    callTool(client, {}, "emoji_set", { shortcode: "ok", url: blob("1") }),
+  ).rejects.toThrow("too many emoji sets to check that :ok: is free");
+  expect(published).toEqual([]);
+});
+
+it("does not bring back an emoji of its own that another member replaced", async () => {
+  const { client, published } = fake(
+    [
+      emojiSet(me, 10, [
+        ["wave", blob("1")],
+        ["nod", blob("2")],
+      ]),
+      emojiSet(alice, 20, [["wave", blob("3")]]),
+    ],
+    { keep: true },
+  );
+  await expect(
+    callTool(client, {}, "emoji_set", { shortcode: "wave", url: blob("4") }),
+  ).rejects.toThrow(":wave: is taken");
+  await expect(
+    callTool(client, {}, "emoji_set", { shortcode: "yes", url: blob("5") }),
+  ).resolves.toBe(
+    `Added :yes: (${blob("5")}). Left out :wave:, which other members' emoji replaced.`,
+  );
+  expect(published).toEqual([
+    {
+      kind: 30030,
+      content: "",
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "nod", blob("2")],
+        ["emoji", "yes", blob("5")],
+      ],
+    },
+  ]);
+});
+
+it("saves an agent's concurrent emoji additions one after another", async () => {
+  const { client, published } = fake([], { keep: true });
+  await Promise.all([
+    callTool(client, {}, "emoji_set", { shortcode: "one", url: blob("1") }),
+    callTool(client, {}, "emoji_set", { shortcode: "two", url: blob("2") }),
+  ]);
+  expect(published.at(-1)?.tags).toEqual([
+    ["d", "buzz:custom-emoji"],
+    ["emoji", "one", blob("1")],
+    ["emoji", "two", blob("2")],
+  ]);
 });
 
 it("refuses a protected emoji upload before reading the file", async () => {
