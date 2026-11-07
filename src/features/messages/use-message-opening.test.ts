@@ -589,7 +589,7 @@ it("does not reattach an already decided request when its row is later evicted",
 
 it.each([true, false])(
   "revalidates a retained cached target with hasNewer=%s",
-  (hasNewer) => {
+  async (hasNewer) => {
     const c = channel([["target"]]);
     const attach = vi.fn();
     const target = { id: "target", createdAt: 123 } as ChannelMessage;
@@ -613,6 +613,7 @@ it.each([true, false])(
       "target",
     );
     expect(attach).not.toHaveBeenCalled();
+    await act(flush);
     expect(view.result.current).toBe(true);
   },
 );
@@ -796,3 +797,35 @@ it("settles retained cached revalidation when seeking installs no segment", asyn
   expect(seek).toHaveBeenCalledTimes(1);
   expect(view.result.current).toBe(false);
 });
+
+it.each([true, false])(
+  "keeps a retained-target seek pending through concurrent verification (present=%s)",
+  async (present) => {
+    const c = channel([["target"]]);
+    const target = { id: "target", createdAt: 123 } as ChannelMessage;
+    let release!: (id: string | undefined) => void;
+    const seek = vi.fn(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          release = resolve;
+        }),
+    );
+    c.set({ status: "ready", freshness: "cached", rows: [target] });
+    const queries = { ...c.queries, attach: vi.fn(), seek };
+    const view = renderHook(() => useMessageOpening(queries, "c", "target"));
+    try {
+      expect(seek).toHaveBeenCalledOnce();
+      c.set({ freshness: "verified" });
+      expect(view.result.current).toBeUndefined();
+      await act(async () => {
+        c.set({ freshness: "verified", rows: present ? [target] : [] });
+        release(present ? target.id : undefined);
+        await flush();
+      });
+      expect(view.result.current).toBe(present);
+    } finally {
+      release(undefined);
+      view.unmount();
+    }
+  },
+);

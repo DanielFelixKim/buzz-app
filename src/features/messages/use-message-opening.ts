@@ -128,18 +128,27 @@ export function useMessageOpening(
       const retained = window.rows.find((row) => row.id === messageId);
       const controller = revalidation.current;
       if (!verified && retained && channels.seek && controller) {
+        setLocating(key);
         void channels
           .seek(channelId, retained.createdAt, controller.signal, retained.id)
           .then(() => {
             if (
               !controller.signal.aborted &&
-              channels.window(channelId).freshness === "cached"
+              (channels.window(channelId).freshness === "cached" ||
+                !channels
+                  .window(channelId)
+                  .rows.some(
+                    (row) => row.id === messageId && !row.threadRootId,
+                  ))
             )
               setDecided({ key, inTimeline: false });
           })
           .catch(() => {
             if (!controller.signal.aborted)
               setDecided({ key, inTimeline: false });
+          })
+          .finally(() => {
+            if (!controller.signal.aborted) setLocating(undefined);
           });
         return;
       }
