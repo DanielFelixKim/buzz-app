@@ -8,7 +8,11 @@ import { createRelaySession } from "../../features/relay/session";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import type { Navigation } from "../../features/navigation/controller";
-import { ActivitySidebar, ActivityScopeTabs } from "./ActivitySidebar";
+import {
+  ActivitySidebar,
+  ActivityScopeTabs,
+  type ActivityView,
+} from "./ActivitySidebar";
 
 afterEach(cleanup);
 
@@ -18,7 +22,10 @@ const root = "d".repeat(64);
 const reply = "e".repeat(64);
 const scope = { viewer, communityOrigin: "https://relay.test" };
 
-function setup(inboxItems: InboxItem[] = []) {
+function setup(
+  inboxItems: InboxItem[] = [],
+  topLevel: Record<string, { createdAt: number; content: string }> = {},
+) {
   const base = createRelaySession(null).session;
   const channels = [
     {
@@ -51,7 +58,23 @@ function setup(inboxItems: InboxItem[] = []) {
     freshness: "observed" as const,
     manual: "none" as const,
   });
-  const snapshots = new Map(channels.map((c) => [c.id, quiet(c.id)]));
+  const snapshots = new Map(
+    channels.map((c) => [
+      c.id,
+      {
+        ...quiet(c.id),
+        ...(topLevel[c.id]
+          ? {
+              latestTopLevel: {
+                id: `${c.id}-top`,
+                authorId: alice,
+                ...topLevel[c.id],
+              },
+            }
+          : {}),
+      },
+    ]),
+  );
   const thread = {
     channelId: "old",
     rootId: root,
@@ -122,10 +145,9 @@ function setup(inboxItems: InboxItem[] = []) {
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const navigator = { open } as unknown as Navigation;
   function Harness() {
-    const [view, setView] = useState({
-      scope: "team" as const as "team" | "solo" | "dms",
-      team: "all" as "all" | "threads" | "mentions",
-      unread: false,
+    const [view, setView] = useState<ActivityView>({
+      scope: "team",
+      filters: { solo: "all", team: "all", dms: "all" },
     });
     return (
       <>
@@ -138,7 +160,6 @@ function setup(inboxItems: InboxItem[] = []) {
             { version: 1, kind: "page", pluginId: "x", pageId: "y" } as never
           }
           view={view}
-          onViewChange={setView}
         />
       </>
     );
@@ -178,13 +199,21 @@ test("a thread row opens the thread beside its channel", async () => {
   );
 });
 
-test("Unread hides read conversations and scopes switch lists", async () => {
+test("Unread is a level of the one selector, remembered per scope", async () => {
   setup();
-  await userEvent.click(screen.getByRole("button", { name: "Unread only" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Unread" }));
   expect(rowNames()).toEqual(["old"]);
   await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
-  await userEvent.click(screen.getByRole("button", { name: "Unread only" }));
   expect(rowNames()).toEqual(["solo"]);
+  // Solo lists only All and Unread.
+  expect(
+    screen.queryByRole("tab", { name: "Threads" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("tab", { name: "Team" }));
+  expect(screen.getByRole("tab", { name: "Unread" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 test("Team's Mentions view lists mentions and opens them in their thread", async () => {
@@ -225,4 +254,13 @@ test("Team's Threads view is a flat list of threads, not channels", async () => 
   expect(screen.getByText("Alice")).toBeInTheDocument();
   expect(screen.getByText("#old-news")).toBeInTheDocument();
   expect(screen.queryByText("ancient")).not.toBeInTheDocument();
+});
+
+test("a Team row previews its latest top-level message and its author", () => {
+  setup([], {
+    old: { createdAt: 600, content: "a new post" },
+    new: { createdAt: 150, content: "older post" },
+  });
+  expect(rowNames()).toEqual(["old", "new"]);
+  expect(screen.getByText("Alice: a new post")).toBeInTheDocument();
 });

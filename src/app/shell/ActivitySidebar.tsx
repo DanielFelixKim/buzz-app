@@ -28,38 +28,58 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { MessageListRow } from "../../features/messages/MessageListRow";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { ChatUnreadIcon } from "../../shared/design-system/icons";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./ActivitySidebar.module.css";
+import { useLatestMessages, type LatestMessage } from "./activity-previews";
 
 export type ActivityScope = "solo" | "team" | "dms";
-type TeamView = "all" | "threads" | "mentions";
-type View = { scope: ActivityScope; team: TeamView; unread: boolean };
+/** The second level of the one selector: what the chosen scope lists. */
+type Filter = "all" | "unread" | "threads" | "mentions";
+export type ActivityView = {
+  scope: ActivityScope;
+  filters: Record<ActivityScope, Filter>;
+};
+type View = ActivityView;
 
 const scopes = [
   { value: "solo", label: "Solo" },
   { value: "team", label: "Team" },
   { value: "dms", label: "DMs" },
 ] as const;
-const teamViews = [
-  { value: "all", label: "Channels" },
-  { value: "threads", label: "Threads" },
-  { value: "mentions", label: "Mentions" },
-] as const;
-const viewKey = "activity-sidebar:view";
+const filtersFor = {
+  solo: [
+    { value: "all", label: "All" },
+    { value: "unread", label: "Unread" },
+  ],
+  dms: [
+    { value: "all", label: "All" },
+    { value: "unread", label: "Unread" },
+  ],
+  team: [
+    { value: "all", label: "All" },
+    { value: "unread", label: "Unread" },
+    { value: "threads", label: "Threads" },
+    { value: "mentions", label: "Mentions" },
+  ],
+} as const satisfies Record<
+  ActivityScope,
+  readonly { value: Filter; label: string }[]
+>;
+const viewKey = "activity-sidebar:view:v2";
 
 function readSavedView(scope: string): View {
   const saved = readView<Partial<View> | null>(scope, viewKey, null);
+  const filter = (scope: ActivityScope): Filter => {
+    const value = saved?.filters?.[scope];
+    return filtersFor[scope].some((item) => item.value === value)
+      ? (value as Filter)
+      : "all";
+  };
   return {
     scope:
       saved?.scope === "team" || saved?.scope === "dms" ? saved.scope : "solo",
-    team:
-      saved?.team === "threads" || saved?.team === "mentions"
-        ? saved.team
-        : "all",
-    unread: saved?.unread === true,
+    filters: { solo: filter("solo"), team: filter("team"), dms: filter("dms") },
   };
 }
 
@@ -94,6 +114,10 @@ export function useActivityView(scope: string) {
   return [view, setView] as const;
 }
 
+/**
+ * One selector, two levels: the scope, then what it lists, unread included.
+ * Both sit in one tray so the second row reads as part of the first.
+ */
 export function ActivityScopeTabs({
   view,
   onChange,
@@ -102,14 +126,32 @@ export function ActivityScopeTabs({
   onChange(view: View): void;
 }) {
   return (
-    <Tabs
-      label="Activity scope"
-      variant="segmented"
-      size="sm"
-      value={view.scope}
-      items={scopes}
-      onValueChange={(scope) => onChange({ ...view, scope })}
-    />
+    <div className={styles.selector}>
+      <Tabs
+        label="Activity scope"
+        variant="segmented"
+        size="sm"
+        value={view.scope}
+        items={scopes}
+        onValueChange={(scope) => onChange({ ...view, scope })}
+      />
+      <div className={styles.subSelector}>
+        <Tabs
+          key={view.scope}
+          label="Show"
+          variant="segmented"
+          size="sm"
+          value={view.filters[view.scope]}
+          items={filtersFor[view.scope]}
+          onValueChange={(filter: Filter) =>
+            onChange({
+              ...view,
+              filters: { ...view.filters, [view.scope]: filter },
+            })
+          }
+        />
+      </div>
+    </div>
   );
 }
 
@@ -119,7 +161,6 @@ export function ActivitySidebar({
   scope,
   target,
   view,
-  onViewChange,
 }: {
   session: RelaySession;
   navigator: Navigation;
@@ -127,7 +168,6 @@ export function ActivitySidebar({
   scope: NavigationScope;
   target: OpenTarget;
   view: View;
-  onViewChange(view: View): void;
 }) {
   const list = useChannelList(session.channels);
   const inbox = useSyncExternalStore(
@@ -166,21 +206,54 @@ export function ActivitySidebar({
         : {}),
     });
 
+  const filter = view.filters[view.scope];
+  const unreadOnly = filter === "unread";
+  const flat =
+    view.scope === "team" && (filter === "threads" || filter === "mentions");
   const channels = list.channels.filter(
     (channel) => listed(channel) && scopeOf(channel) === view.scope,
   );
-  // Recency includes thread replies and the latest evidence the unread
-  // service has; inbox changes re-render this list.
+  const fetched = useLatestMessages(
+    session,
+    channels.map((channel) => channel.id),
+  );
+  // inbox changes re-render this list, which reads unread evidence directly.
   void inbox;
-  const recency = (channel: ChannelSummary) => {
-    const threads = session.unread.activity(channel.id).items ?? [];
-    const latest = session.unread.snapshot({
+  const inboxAt = new Map<string, number>();
+  for (const item of inbox.items)
+    inboxAt.set(
+      item.channelId,
+      Math.max(inboxAt.get(item.channelId) ?? 0, item.createdAt),
+    );
+  /** Newest top-level message, from live evidence or the per-channel read. */
+  const latestOf = (channel: ChannelSummary): LatestMessage | undefined => {
+    const live = session.unread.snapshot({
       kind: "channel",
       channelId: channel.id,
-    }).latestMessage?.createdAt;
+    }).latestTopLevel;
+    const read = fetched.get(channel.id) ?? undefined;
+    return !live
+      ? read
+      : !read || live.createdAt >= read.createdAt
+        ? live
+        : read;
+  };
+  // Team ranks by what is relevant to you: top-level messages, threads you
+  // are in, and your Activity (mentions, replies). Other people's thread
+  // chatter does not move a channel. Solo chats and DMs rank by any message.
+  const recency = (channel: ChannelSummary) => {
+    const latest = latestOf(channel)?.createdAt ?? 0;
+    if (view.scope !== "team")
+      return Math.max(
+        latest,
+        channel.lastActivityAt ?? 0,
+        session.unread.snapshot({ kind: "channel", channelId: channel.id })
+          .latestMessage?.createdAt ?? 0,
+      );
+    const threads = session.unread.activity(channel.id).items ?? [];
     return Math.max(
-      channel.lastActivityAt ?? 0,
-      latest ?? 0,
+      latest,
+      inboxAt.get(channel.id) ?? 0,
       ...threads.map((item) => item.createdAt),
     );
   };
@@ -189,8 +262,6 @@ export function ActivitySidebar({
     .sort(
       (a, b) => b.at - a.at || a.channel.name.localeCompare(b.channel.name),
     );
-  const team = view.scope === "team" ? view.team : undefined;
-  const flat = team === "threads" || team === "mentions";
   const order = useFrozenOrder(
     flat ? "" : sorted.map((entry) => entry.channel.id).join("\n"),
   );
@@ -201,22 +272,21 @@ export function ActivitySidebar({
       .map((channel) => channel.id),
   );
   const channelsById = new Map(list.channels.map((c) => [c.id, c]));
-  const events =
-    team === "threads"
+  const shownEvents = !flat
+    ? []
+    : filter === "threads"
       ? threadEvents(inbox.items, [...teamIds], session, teamIds)
-      : team === "mentions"
-        ? mentionEvents(inbox.items, teamIds)
-        : [];
-  const shownEvents = view.unread
-    ? events.filter((event) => event.unread)
-    : events;
+      : mentionEvents(inbox.items, teamIds);
 
   const ids = [
     ...shownEvents.slice(0, 100).map((event) => event.authorId),
-    ...channels
-      .filter((channel) => channel.channelType === "dm")
-      .flatMap((channel) => channel.participants?.slice(0, 1) ?? []),
-  ];
+    ...channels.flatMap((channel) => [
+      ...(channel.channelType === "dm"
+        ? (channel.participants?.slice(0, 1) ?? [])
+        : []),
+      latestOf(channel)?.authorId ?? "",
+    ]),
+  ].filter(Boolean);
   const profileKey = [...new Set(ids)].sort().join(":");
   useEffect(() => {
     if (profileKey && list.status === "ready")
@@ -229,31 +299,6 @@ export function ActivitySidebar({
 
   return (
     <div className={styles.activity} data-activity-sidebar="">
-      <div className={styles.controls}>
-        {team ? (
-          <div className={styles.teamTabs}>
-            <Tabs
-              label="Team view"
-              variant="panel"
-              size="sm"
-              value={team}
-              items={teamViews}
-              onValueChange={(team) => onViewChange({ ...view, team })}
-            />
-          </div>
-        ) : (
-          <span className={styles.spacer} />
-        )}
-        <IconButton
-          variant={view.unread ? "subtle" : "ghost"}
-          size="sm"
-          aria-label="Unread only"
-          title="Unread only"
-          aria-pressed={view.unread}
-          onClick={() => onViewChange({ ...view, unread: !view.unread })}
-          icon={<ChatUnreadIcon aria-hidden="true" size={16} />}
-        />
-      </div>
       <ul className={styles.rows} aria-label="Conversations">
         {flat
           ? shownEvents.map((event) => {
@@ -298,9 +343,11 @@ export function ActivitySidebar({
                   session={session}
                   channel={entry.channel}
                   at={entry.at}
+                  latest={latestOf(entry.channel)}
+                  team={view.scope === "team"}
                   profiles={profiles}
                   nameOf={nameOf}
-                  unreadOnly={view.unread}
+                  unreadOnly={unreadOnly}
                   selected={selectedChannel === id && !selectedThread}
                   onOpen={() => open(id)}
                 />
@@ -310,13 +357,11 @@ export function ActivitySidebar({
       {list.status === "ready" &&
         (flat ? !shownEvents.length : !channels.length) && (
           <p className={`text-body-sm text-subtle ${styles.empty}`}>
-            {view.unread
-              ? "You're all caught up."
-              : team === "threads"
-                ? "No thread activity yet."
-                : team === "mentions"
-                  ? "No one has mentioned you yet."
-                  : "Nothing here yet."}
+            {filter === "threads"
+              ? "No thread activity yet."
+              : filter === "mentions"
+                ? "No one has mentioned you yet."
+                : "Nothing here yet."}
           </p>
         )}
     </div>
@@ -467,6 +512,8 @@ function ConversationRow({
   session,
   channel,
   at,
+  latest,
+  team,
   profiles,
   nameOf,
   unreadOnly,
@@ -476,6 +523,8 @@ function ConversationRow({
   session: RelaySession;
   channel: ChannelSummary;
   at: number;
+  latest: LatestMessage | undefined;
+  team: boolean;
   profiles: ReadonlyMap<string, Profile>;
   nameOf(id: string): string;
   unreadOnly: boolean;
@@ -491,17 +540,21 @@ function ConversationRow({
   if (unreadOnly && !unread && !selected) return null;
   const Icon = channelIcon(channel);
   const peer = dm ? channel.participants?.[0] : undefined;
-  // The latest event: a newer thread reply wins over the channel's own tail.
-  const thread = [...(state.activity.items ?? [])].sort(
-    (a, b) => b.createdAt - a.createdAt,
-  )[0];
-  const tail = (channel.lastActivityAt ?? 0) >= (thread?.createdAt ?? 0);
+  // The latest event: an unread thread reply you're in, when it is newer.
+  const thread = team
+    ? [...(state.activity.items ?? [])].sort(
+        (a, b) => b.createdAt - a.createdAt,
+      )[0]
+    : undefined;
+  const author = (id: string) => (dm || !team ? "" : `${nameOf(id)}: `);
   const preview =
-    !thread || tail
-      ? channel.preview
-        ? messagePreview(channel.preview)
-        : "No recent messages"
-      : `${nameOf(thread.authorId)} in a thread: ${messagePreview(thread.preview)}`;
+    thread && thread.createdAt > (latest?.createdAt ?? 0)
+      ? `${nameOf(thread.authorId)} in a thread: ${messagePreview(thread.preview)}`
+      : latest
+        ? `${author(latest.authorId)}${messagePreview(latest.content)}`
+        : channel.preview
+          ? messagePreview(channel.preview)
+          : "";
   return (
     <li data-activity-row={channel.id}>
       <MessageListRow

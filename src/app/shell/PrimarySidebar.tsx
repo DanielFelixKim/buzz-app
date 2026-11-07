@@ -293,7 +293,8 @@ function ScopedSidebar({
         {!restriction && activityToggle}
         {props.creationAction}
       </div>
-      {props.children && !restriction && (
+      {/* PROTOTYPE: the Activity sidebar leaves out Drafts & sent. */}
+      {props.children && !restriction && !showActivity && (
         <div className={styles.destinations}>{props.children}</div>
       )}
     </>
@@ -326,7 +327,6 @@ function ScopedSidebar({
                 }}
                 target={props.target}
                 view={activityView}
-                onViewChange={setActivityView}
               />
             </SidebarList>
           </SidebarFrame>
