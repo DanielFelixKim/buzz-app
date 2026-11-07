@@ -47,6 +47,8 @@ import { taskHeaderUI } from "./TaskHeaderTitle";
 import { regionLabels } from "./region-labels";
 import { useDefaultAgent } from "./default-agent";
 import composerStyles from "../messages/Messages.module.css";
+import type { MentionPicks } from "../relay/messages";
+import { MAX_PENDING } from "../relay/outbox";
 
 const noopSubscribe = () => () => {};
 const noSnapshot = () => undefined;
@@ -170,7 +172,11 @@ export function TaskSoloDraft({
         }
       : undefined;
   };
-  async function start(draft: MentionDraft, files: AttachmentDraft) {
+  async function start(
+    draft: MentionDraft,
+    files: AttachmentDraft,
+    picks?: MentionPicks,
+  ) {
     if (attempt.current || !context) return;
     const currentContext = context;
     const outbox = session.outbox;
@@ -569,8 +575,8 @@ export function TaskSoloDraft({
               <Header draft={input} {...controls} ui={taskHeaderUI} />
             ) : null;
           },
-          submit: (draft, files) => {
-            void start(draft, files);
+          submit: (draft, files, _addressed, picks) => {
+            void start(draft, files, picks);
           },
         }}
       />
