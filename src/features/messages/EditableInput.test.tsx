@@ -194,6 +194,22 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   expect(h.input).toHaveValue(":x");
 });
 
+it("separates an inserted shortcode from the word before the caret", () => {
+  for (const [initial, text, value] of [
+    ["nice", ":party:", "nice :party:"],
+    ["café", ":party:", "café :party:"],
+    ["nice ", ":party:", "nice :party:"],
+    ["(", ":party:", "(:party:"],
+    ["nice", "🎉", "nice🎉"],
+    ["nice", ":)", "nice:)"],
+  ] as const) {
+    const h = mount(initial);
+    act(() => expect(h.input.insertText(text)).toBe(true));
+    expect(h.input).toHaveValue(value);
+    cleanup();
+  }
+});
+
 it("keeps native autocorrection off until this device opts in, then follows the choice live", async () => {
   try {
     const h = mount("teh");

@@ -49,6 +49,7 @@ import {
   resourceBlockingMarks,
 } from "./composer-document";
 import { scanMarkdown } from "../relay/message-content";
+import { separateShortcode } from "../relay/emoji";
 import type { ComposerResource } from "../conversation/contracts";
 import {
   activeBlockFormats,
@@ -788,6 +789,12 @@ export function EditableInput({
         .allowedMarks(editor.state.storedMarks ?? $from.marks())
         .filter((mark) => mark.type !== composerSchema.marks.recipient);
       text = text.replace(/\r\n?/g, "\n");
+      // A picked shortcode joined to the word before it would read as text.
+      if (!range && !$from.parent.type.spec.code)
+        text = separateShortcode(
+          $from.parent.textBetween(0, $from.parentOffset, null, "\ufffc"),
+          text,
+        );
       const tr = closeHistory(editor.state.tr);
       if (recipient) {
         const recipients: readonly MentionRecipient[] = Array.isArray(recipient)

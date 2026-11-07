@@ -94,6 +94,13 @@ function* shortcodeMatches(content: string) {
     yield match;
   }
 }
+/** Text inserted after `before`, spaced so a leading shortcode stays one. */
+export function separateShortcode(before: string, text: string) {
+  wordEnd.lastIndex = before.length;
+  return /^:[a-zA-Z0-9_-]{1,64}:/.test(text) && wordEnd.test(before)
+    ? ` ${text}`
+    : text;
+}
 export function* emojiMatches(
   content: string,
   entries: readonly CustomEmoji[],
