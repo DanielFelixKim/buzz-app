@@ -240,7 +240,8 @@ private GitHub organizations, repositories or org SSH users, internal hosts,
 cloud accounts, IAM roles or buckets, internal ticket keys, go/ links, Slack
 channels, or personal setups. Public Builderlab
 (`app.builderlab.xyz`, `*.communities.builderlab.xyz`) is a supported public
-service and is fine.
+service and is fine, as is the generic rule that routes any
+`buzz.{name}.builderlab.xyz` community to `{name}.builderlab.xyz` sign-in.
 
 The rule covers functionality, not only identifiers. Every feature here must be
 generic: useful and complete for any community or distributor, with no knowledge

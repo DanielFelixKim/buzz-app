@@ -140,6 +140,14 @@ struct Inner {
     /// The build's other sign-in servers, each with its own session. Only the
     /// first server, the build's Builderlab, has them.
     peers: Vec<FederatedIdentity>,
+    /// The profile whose Builderlab customers' servers this first server adds
+    /// (`config::builderlab_customer`), when the build trusts the built-in one.
+    customers: Option<String>,
+    /// Those servers, each added the first time one of its communities is
+    /// routed, and kept for the app's life.
+    derived: Mutex<Vec<FederatedIdentity>>,
+    /// What each added server gets, as compiled peers get it at startup.
+    on_peer: Mutex<Vec<OnPeer>>,
     /// Each detached logout `revoke` started, so tests can wait for it.
     #[cfg(test)]
     revocations: Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
@@ -154,6 +162,14 @@ pub(crate) type Retiring = Arc<
         + Sync,
 >;
 pub(crate) type RetiringGuard = Box<dyn Send + Sync>;
+/// Prepares a server added after startup; see [`FederatedIdentity::on_peer`].
+pub(crate) type OnPeer = Arc<dyn Fn(&FederatedIdentity) + Send + Sync>;
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 /// A sign-in server's session. The app holds the build's first server, which
 /// routes each community to its own server (`server_for`).
 #[derive(Clone)]
@@ -170,12 +186,16 @@ impl FederatedIdentity {
         if profile.is_empty() || profile.len() > 128 {
             return Err("Invalid federated identity profile".into());
         }
+        let customers = servers
+            .iter()
+            .any(Config::is_built_in)
+            .then(|| profile.clone());
         let mut servers = servers.into_iter().map(Some);
         let first = servers.next().flatten();
         let peers = servers
-            .map(|config| Self::open(config, &profile, Vec::new()))
+            .map(|config| Self::open(config, &profile, Vec::new(), None))
             .collect::<Result<_, _>>()?;
-        Self::open(first, &profile, peers)
+        Self::open(first, &profile, peers, customers)
     }
     /// Each server's sessions are stored under its own descriptor, so a
     /// build's first server keeps the sessions it saved as the only one.
@@ -183,6 +203,7 @@ impl FederatedIdentity {
         config: Option<Config>,
         profile: &str,
         peers: Vec<FederatedIdentity>,
+        customers: Option<String>,
     ) -> Result<Self, String> {
         let fingerprint = format!(
             "{:x}",
@@ -197,7 +218,14 @@ impl FederatedIdentity {
             root: store::root()?,
             bundled: store::BUNDLED,
         });
-        Ok(Self::build(config, fingerprint, account, store, peers))
+        Ok(Self::build(
+            config,
+            fingerprint,
+            account,
+            store,
+            peers,
+            customers,
+        ))
     }
     #[cfg(test)]
     fn with_store(
@@ -206,7 +234,7 @@ impl FederatedIdentity {
         account: String,
         store: Arc<dyn Store>,
     ) -> Self {
-        Self::build(config, fingerprint, account, store, Vec::new())
+        Self::build(config, fingerprint, account, store, Vec::new(), None)
     }
     fn build(
         config: Option<Config>,
@@ -214,6 +242,7 @@ impl FederatedIdentity {
         account: String,
         store: Arc<dyn Store>,
         peers: Vec<FederatedIdentity>,
+        customers: Option<String>,
     ) -> Self {
         let snapshot = Snapshot {
             status: if config.is_some() {
@@ -266,28 +295,68 @@ impl FederatedIdentity {
             discoveries: Mutex::new(Default::default()),
             retiring: Mutex::default(),
             peers,
+            customers,
+            derived: Mutex::default(),
+            on_peer: Mutex::default(),
             #[cfg(test)]
             revocations: Mutex::default(),
         }))
     }
     /// The server for a canonical relay, chosen by its host from the
-    /// compiled list, never by the relay. A community no server covers stays
-    /// with this one, which attaches no token for it.
+    /// compiled list, else the Builderlab customer's server its host names,
+    /// never by the relay. A community no server covers stays with this one,
+    /// which attaches no token for it.
     pub(crate) fn server_for(&self, relay: &str) -> Result<Self, String> {
-        for peer in &self.0.peers {
-            if let Some(config) = &peer.0.config {
+        let compiled = || std::iter::once(self).chain(&self.0.peers);
+        for server in compiled() {
+            if let Some(config) = &server.0.config {
                 if config.matches_relay(relay)? {
-                    return Ok(peer.clone());
+                    return Ok(server.clone());
                 }
             }
         }
-        Ok(self.clone())
+        let (Some(profile), Some(config)) = (&self.0.customers, config::builderlab_customer(relay))
+        else {
+            return Ok(self.clone());
+        };
+        let same = |server: &Self| server.config().is_some_and(|c| c.id == config.id);
+        let mut derived = lock(&self.0.derived);
+        if let Some(server) = derived.iter().find(|server| same(server)) {
+            return Ok(server.clone());
+        }
+        // A compiled server already has that id: the community has none.
+        // Nor does it once the app is closing.
+        if compiled().any(same) || self.closed() {
+            return Ok(self.clone());
+        }
+        let server = Self::open(Some(config), profile, Vec::new(), None)?;
+        for prepare in lock(&self.0.on_peer).iter() {
+            prepare(&server);
+        }
+        derived.push(server.clone());
+        Ok(server)
+    }
+    /// Has every server added after startup, and each one added already,
+    /// first get `prepare`.
+    pub(crate) fn on_peer(&self, prepare: OnPeer) {
+        let derived = lock(&self.0.derived);
+        for server in derived.iter() {
+            prepare(server);
+        }
+        lock(&self.0.on_peer).push(prepare);
+    }
+    /// The other servers: compiled peers, then those added since.
+    fn peers(&self) -> Vec<Self> {
+        let mut peers = self.0.peers.clone();
+        peers.extend(lock(&self.0.derived).iter().cloned());
+        peers
     }
     /// This server, then its peers: every configured sign-in server.
-    fn servers(&self) -> impl Iterator<Item = &Self> {
-        std::iter::once(self)
-            .chain(&self.0.peers)
+    fn servers(&self) -> Vec<Self> {
+        std::iter::once(self.clone())
+            .chain(self.peers())
             .filter(|server| server.0.config.is_some())
+            .collect()
     }
     /// The server named by a sign-in command, by community or by id: this
     /// one with neither.
@@ -300,8 +369,8 @@ impl FederatedIdentity {
             (Some(relay), None) => self.server_for(&config::canonical_relay(relay)?),
             (None, Some(id)) => self
                 .servers()
+                .into_iter()
                 .find(|server| server.0.config.as_ref().is_some_and(|c| c.id == id))
-                .cloned()
                 .ok_or_else(|| "Unknown sign-in server".into()),
             (None, None) => Ok(self.clone()),
             (Some(_), Some(_)) => Err("Name a community or a sign-in server, not both".into()),
@@ -354,6 +423,9 @@ impl FederatedIdentity {
         for peer in &self.0.peers {
             peer.emit(app.clone(), "federated-identity-community");
         }
+        self.on_peer(Arc::new(move |peer| {
+            peer.emit(app.clone(), "federated-identity-community");
+        }));
     }
     fn emit<R: tauri::Runtime>(&self, app: tauri::AppHandle<R>, event: &'static str) {
         let mut changes = self.0.changes.subscribe();
@@ -564,10 +636,16 @@ impl FederatedIdentity {
             peer.close();
         }
         self.clear_discoveries();
-        let mut state = self.state();
-        self.retire_state(&mut state, Status::SignedOut, None);
-        state.closed = true;
-        state.retirements += 1;
+        {
+            let mut state = self.state();
+            self.retire_state(&mut state, Status::SignedOut, None);
+            state.closed = true;
+            state.retirements += 1;
+        }
+        // After closing, so none is added that stays open (`server_for`).
+        for peer in lock(&self.0.derived).iter() {
+            peer.close();
+        }
     }
     async fn storage<T: Send + 'static>(
         &self,

@@ -2049,3 +2049,38 @@ async fn a_revision_fenced_sign_out_leaves_a_newer_session_and_its_grants() {
     let snapshot = f.tokens.sign_out(Some(&newer.revision)).await.unwrap();
     assert!(snapshot.status == crate::federated_identity::Status::SignedOut);
 }
+
+#[tokio::test]
+async fn a_builderlab_customer_server_added_later_gets_its_own_tokens() {
+    let first = crate::federated_identity::tests::with_customers(
+        crate::federated_identity::config::Config::parse(
+            crate::federated_identity::config::BUILT_IN,
+        )
+        .unwrap(),
+        Vec::new(),
+        true,
+    );
+    // Added before the tokens exist, and after.
+    let early = first.server_for("wss://buzz.early.builderlab.xyz").unwrap();
+    let tokens = AgentTokens::in_memory(first.clone());
+    tokens.watch(|| Ok(Vec::new()));
+    let late = first.server_for("wss://buzz.late.builderlab.xyz").unwrap();
+    for (server, relay) in [
+        (&early, "wss://buzz.early.builderlab.xyz"),
+        (&late, "wss://buzz.late.builderlab.xyz"),
+    ] {
+        let own = tokens.for_server(server).unwrap();
+        assert!(own.0.identity.is(server));
+        // It follows the owner's account, as compiled servers' tokens do.
+        assert!(own.0.agents.get().is_some());
+        assert!(tokens.server_for(relay).unwrap().0.identity.is(server));
+    }
+    // A community routed by its host alone reaches it too.
+    assert!(tokens
+        .server_for("wss://buzz.third.builderlab.xyz")
+        .unwrap()
+        .0
+        .identity
+        .is(&first.server_for("wss://buzz.third.builderlab.xyz").unwrap()));
+    assert_eq!(tokens.servers().len(), 4);
+}

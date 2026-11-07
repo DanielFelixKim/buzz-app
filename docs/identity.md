@@ -965,8 +965,9 @@ The consent hooks are the base of the draft stack:
 
 Federated identity ([NIP-FI](https://github.com/block/buzz/blob/main/docs/nips/NIP-FI.md),
 [NIP-FA](https://github.com/block/buzz/blob/main/docs/nips/NIP-FA.md)) adds a native
-owner separate from the human Nostr key, one per compiled sign-in server. The
-list of servers is documented in
+owner separate from the human Nostr key, one per sign-in server: each compiled
+one, and each Builderlab customer's server, added when its first community
+connects. The servers are documented in
 [configuration](configuration.md#federated-identity-build-input). Each relay is
 routed by its host to the server that covers it, never by anything the relay
 publishes; that server issues its assertions and later checks ask it alone. A

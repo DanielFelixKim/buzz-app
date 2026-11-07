@@ -104,6 +104,7 @@ fn each_community_routes_by_host_to_its_own_server() {
         String::new(),
         Arc::new(Memory::default()),
         vec![public.clone()],
+        None,
     );
     let id = |relay: &str| {
         first
@@ -149,10 +150,154 @@ fn each_community_routes_by_host_to_its_own_server() {
     assert_eq!(
         first
             .servers()
+            .iter()
             .map(|server| server.0.config.as_ref().unwrap().id.as_str())
             .collect::<Vec<_>>(),
         ["bb-acme", "bb-public"]
     );
+}
+
+/// The build's first server, with `peers`, adding Builderlab customers'
+/// servers when `customers`.
+pub(super) fn with_customers(
+    first: Config,
+    peers: Vec<FederatedIdentity>,
+    customers: bool,
+) -> FederatedIdentity {
+    FederatedIdentity::build(
+        Some(first),
+        String::new(),
+        String::new(),
+        Arc::new(Memory::default()),
+        peers,
+        customers.then(|| "default".into()),
+    )
+}
+
+#[test]
+fn a_builderlab_customer_gets_its_own_server_unless_a_compiled_one_covers_it() {
+    let mut servers = config::compiled(
+        Some(r#"[{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"},{"version":1,"id":"builderlab-taken","identityOrigin":"https://identity.example","communityHosts":["taken.example"],"adapterBase":"https://identity.example","apiBasePath":"/api/"}]"#),
+        None,
+        None,
+    )
+    .unwrap()
+    .into_iter();
+    let first = servers.next().unwrap();
+    let peers: Vec<_> = servers
+        .map(|config| {
+            FederatedIdentity::with_store(
+                Some(config),
+                String::new(),
+                String::new(),
+                Arc::new(Memory::default()),
+            )
+        })
+        .collect();
+    let first = with_customers(first, peers, true);
+    let prepared = Arc::new(Mutex::new(Vec::new()));
+    first.on_peer(Arc::new({
+        let prepared = prepared.clone();
+        move |server: &FederatedIdentity| {
+            prepared
+                .lock()
+                .unwrap()
+                .push(server.config().unwrap().id.clone())
+        }
+    }));
+    let id = |relay: &str| {
+        first
+            .server_for(relay)
+            .unwrap()
+            .config()
+            .unwrap()
+            .id
+            .clone()
+    };
+    // A compiled server wins for its own host.
+    assert_eq!(id("wss://buzz.acme.builderlab.xyz"), "bb-acme");
+    assert_eq!(id("wss://buzz.other.builderlab.xyz"), "builderlab-other");
+    let other = first.server_for("wss://buzz.other.builderlab.xyz").unwrap();
+    assert!(first
+        .server_for("https://BUZZ.other.builderlab.xyz:443")
+        .unwrap()
+        .is(&other));
+    assert_eq!(
+        other.config().unwrap().endpoint("/v1/session").as_str(),
+        "https://other.builderlab.xyz/api/goose/v1/session"
+    );
+    assert!(first
+        .server_for_command(None, Some("builderlab-other"))
+        .unwrap()
+        .is(&other));
+    // A compiled server's id is never taken over, and other hosts stay unrouted.
+    for relay in [
+        "wss://buzz.taken.builderlab.xyz",
+        "wss://buzz.a.b.builderlab.xyz",
+        "wss://buzz.other.builderlab.xyz:8443",
+        "wss://app.other.builderlab.xyz",
+    ] {
+        assert_eq!(id(relay), "bb-acme", "{relay}");
+    }
+    assert_eq!(
+        first
+            .servers()
+            .iter()
+            .map(|server| server.config().unwrap().id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "bb-acme",
+            "builderlab-taken",
+            "bb-public",
+            "builderlab-other"
+        ]
+    );
+    // Each added server is prepared once, before it is used.
+    assert_eq!(*prepared.lock().unwrap(), ["builderlab-other"]);
+    let late = Arc::new(AtomicUsize::new(0));
+    first.on_peer(Arc::new({
+        let late = late.clone();
+        move |_: &FederatedIdentity| {
+            late.fetch_add(1, Ordering::SeqCst);
+        }
+    }));
+    assert_eq!(late.load(Ordering::SeqCst), 1);
+    // Its saved session is found again after a restart: the same account.
+    let restarted = FederatedIdentity::open(
+        Some(config::Config::parse(config::BUILT_IN).unwrap()),
+        "default",
+        Vec::new(),
+        Some("default".into()),
+    )
+    .unwrap();
+    let account = |server: &FederatedIdentity, relay: &str| {
+        server.server_for(relay).unwrap().0.account.clone()
+    };
+    assert_eq!(
+        account(&restarted, "wss://buzz.other.builderlab.xyz"),
+        other.0.account
+    );
+    assert_ne!(
+        account(&restarted, "wss://buzz.third.builderlab.xyz"),
+        other.0.account
+    );
+    // Closing closes them, and adds no more.
+    first.close();
+    assert!(other.closed());
+    assert!(first
+        .server_for("wss://buzz.fourth.builderlab.xyz")
+        .unwrap()
+        .is(&first));
+    // Without the built-in server there are no customers' servers.
+    let without = with_customers(
+        config::Config::parse(config::BUILT_IN).unwrap(),
+        Vec::new(),
+        false,
+    );
+    assert!(without
+        .server_for("wss://buzz.other.builderlab.xyz")
+        .unwrap()
+        .is(&without));
 }
 
 #[tokio::test]
@@ -176,6 +321,7 @@ async fn signing_out_of_one_server_keeps_the_others_session() {
             "account".into(),
             store.clone(),
             peers,
+            None,
         );
         {
             let mut state = server.state();
