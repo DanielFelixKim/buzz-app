@@ -2363,3 +2363,48 @@ it("R20 forward seek admits a newly returned interior root", async () => {
   await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
   expect(h.window().rows.some((row) => row.id === missed.id)).toBe(true);
 });
+
+it.each([10, 30])(
+  "keeps a backdated live root in its read-owned page (offset=%s)",
+  async (offset) => {
+    const h = setup({ count: 100, maxHistoryRows: 2400 });
+    await h.open();
+    const oldest = h.window().rows[0];
+    assert.exists(oldest);
+    const root = message(
+      h.alice,
+      "c",
+      "backdated during older read",
+      oldest.createdAt - offset * HOUR + 1,
+    );
+    let release!: () => void;
+    h.gate.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const before = h.reads.length;
+    h.channels.loadOlder("c");
+    try {
+      await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(before));
+      h.live.receive([root], { channelId: "c", phase: "live" });
+    } finally {
+      release();
+      h.gate.hold = undefined;
+      await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+    }
+    expect(h.window().rows.some((row) => row.id === root.id)).toBe(
+      offset === 10,
+    );
+    if (offset === 30) {
+      const boundary = h.window().rows[0];
+      assert.exists(boundary);
+      h.history.push(root);
+      h.channels.loadOlder("c");
+      await vi.waitFor(() => expect(h.window().loadingOlder).toBe(false));
+      expect(h.reads.at(-1)).toMatchObject({
+        until: boundary.createdAt,
+        before_id: boundary.id,
+      });
+      expect(h.window().rows.some((row) => row.id === root.id)).toBe(true);
+    }
+  },
+);

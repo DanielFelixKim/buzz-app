@@ -71,8 +71,6 @@ type WindowState = {
   cursor: WindowCursor | null;
   events: readonly RelayEvent[];
   joining?: Map<string, RelayEvent> | undefined;
-  /** Original older-read boundary, independent of live trimming. */
-  joiningCursor?: WindowCursor | undefined;
   atHead: boolean;
   /** Detached: rows created at or after this (unix seconds) are not loaded;
    * the window holds a seek segment below it. Undefined at the head. */
@@ -1107,7 +1105,6 @@ export function createChannelStore(
       ? new Map(state.events.map((event) => [event.id, event]))
       : undefined;
     state.joining = joining;
-    state.joiningCursor = cursor ?? undefined;
     const controller = new AbortController();
     state.controller = controller;
     // Shown rows wait on this head read; a seek must not treat it as the end.
@@ -1126,9 +1123,27 @@ export function createChannelStore(
       // A settled catch-up aborts an older read that has already resolved.
       if (!live(state, generation) || controller.signal.aborted) return;
       const interrupted = !!cursor && state.cursor !== cursor;
+      // Live roots below the old cursor wait until this page proves their range.
+      const pending = [...(joining?.values() ?? [])];
+      const boundary = page.cursor;
+      const roots = new Set(
+        [...pending, ...page.events]
+          .filter(
+            (event) =>
+              channelRowKind(event.kind) &&
+              (!boundary ||
+                event.created_at > boundary.createdAt ||
+                (event.created_at === boundary.createdAt &&
+                  event.id <= boundary.eventId)),
+          )
+          .map((event) => event.id),
+      );
       const combined = new Map(
         (cursor
-          ? [...(joining?.values() ?? []), ...(interrupted ? [] : state.events)]
+          ? [
+              ...relatedEvents(pending, roots),
+              ...(interrupted ? [] : state.events),
+            ]
           : []
         ).map((event) => [event.id, event]),
       );
@@ -1231,7 +1246,6 @@ export function createChannelStore(
     } finally {
       if (state.joining === joining) {
         state.joining = undefined;
-        state.joiningCursor = undefined;
       }
       if (state.controller === controller) {
         state.controller = undefined;
@@ -4109,7 +4123,6 @@ export function createChannelStore(
           state.controller?.abort();
           state.controller = undefined;
           state.joining = undefined;
-          state.joiningCursor = undefined;
           setWindow(state, { loadingOlder: false });
         }
         return;
@@ -4273,8 +4286,8 @@ export function createChannelStore(
         const known = new Set(
           (tails.peek(state.channelId)?.events ?? []).map((event) => event.id),
         );
-        // Keep accepted overlap roots, including live IDs beyond the cursor
-        // in its boundary second, until the pending page commits its bounds.
+        // Buffer live roots until the pending page establishes its older bound.
+        // Isolated lookup results still need to lie within the retained overlap.
         for (const event of events)
           if (
             (([40003, 5, 9005, 7, 39005].includes(event.kind) ||
@@ -4282,9 +4295,7 @@ export function createChannelStore(
                 newest &&
                 oldest &&
                 newestFirst(newest, event) <= 0 &&
-                (newestFirst(event, oldest) <= 0 ||
-                  (live &&
-                    event.created_at === state.joiningCursor?.createdAt)))) &&
+                (newestFirst(event, oldest) <= 0 || live))) &&
               event.tags.some(
                 ([name, id]) =>
                   (name === "h" && id === state.channelId) ||
@@ -4311,7 +4322,6 @@ export function createChannelStore(
         if (listByteSize([...state.joining.values()]) > maxHistoryBytes) {
           state.joining.clear();
           state.joining = undefined;
-          state.joiningCursor = undefined;
           state.controller?.abort();
           setWindow(state, {
             loadingOlder: false,
@@ -4536,7 +4546,6 @@ export function createChannelStore(
         state.controller = undefined;
         state.above = undefined;
         state.joining = undefined;
-        state.joiningCursor = undefined;
         state.events = [];
         attached(state);
         state.atHead = true;
@@ -4559,7 +4568,6 @@ export function createChannelStore(
       state.controller = undefined;
       state.above = undefined;
       state.joining = undefined;
-      state.joiningCursor = undefined;
       state.events = visible([...state.events, ...state.traffic.values()]);
       state.notices = new Map(
         visible([...state.notices.values()]).map((event) => [event.id, event]),
