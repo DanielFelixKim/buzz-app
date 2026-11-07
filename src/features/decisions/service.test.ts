@@ -493,7 +493,7 @@ it.each(["buzz.typesafe/typesafe", "example.provider/custom"])(
   "does not wait for discovery when %s is explicitly chosen and registered",
   async (key) => {
     const h = setup(memory({ [DECISION_BACKEND_KEY]: key }));
-    const [plugin = "", id] = key.split("/");
+    const [plugin = "", id = ""] = key.split("/");
     const decide = vi.fn(async () => reply);
     await h.plugin(plugin, { id, decide });
     let release = () => {};
