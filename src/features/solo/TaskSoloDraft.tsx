@@ -192,7 +192,7 @@ export function TaskSoloDraft({
       signal.throwIfAborted();
       const journal = outbox;
       await journal.withChat(`solo-task:${route.draftId}`, async (owned) => {
-        async function resumeSaved() {
+        async function resumeSaved(newlyStaged = false) {
           const operations = journal.snapshot();
           const pending = operations.filter(
             (item) => item.recovery?.key === `solo-task:${route.draftId}`,
@@ -242,6 +242,7 @@ export function TaskSoloDraft({
                   !currentContext.signal.aborted &&
                   taskDraftContext(session, currentContext.label)?.binding
                     .incarnation === currentContext.binding.incarnation &&
+                  recipients.every(eligible) &&
                   recipients.length > 0 &&
                   recipients.length <=
                     (currentContext.mode.participants.maxRecipients ?? 1) &&
@@ -280,14 +281,15 @@ export function TaskSoloDraft({
               }
             }
             const edited =
-              !outgoing ||
-              outgoing.content !== saved.event.content ||
-              JSON.stringify(outgoing.tags) !==
-                JSON.stringify(
-                  saved.event.tags.filter(([name]) => name === "imeta"),
-                ) ||
-              JSON.stringify([...(selection?.recipients ?? [])].sort()) !==
-                JSON.stringify([...new Set(recipients)].sort());
+              !newlyStaged &&
+              (!outgoing ||
+                outgoing.content !== saved.event.content ||
+                JSON.stringify(outgoing.tags) !==
+                  JSON.stringify(
+                    saved.event.tags.filter(([name]) => name === "imeta"),
+                  ) ||
+                JSON.stringify([...(selection?.recipients ?? [])].sort()) !==
+                  JSON.stringify([...new Set(recipients)].sort()));
             const targetFiles = attachmentDraft(
               session,
               `${scope}:${targetKey}`,
@@ -327,6 +329,10 @@ export function TaskSoloDraft({
                   signal,
                 );
                 signal.throwIfAborted();
+                if (!active())
+                  throw new Error(
+                    "A saved task participant is no longer eligible.",
+                  );
                 if (claim !== "start" && claim !== "resume")
                   throw new Error("The saved task claim is invalid.");
               }
@@ -379,35 +385,52 @@ export function TaskSoloDraft({
           return false;
         }
         if (await resumeSaved()) return;
-        const recipients = [
-          ...new Set(draft.recipients.map((item) => item.pubkey)),
-        ];
+        const recipients = selection?.recipients ?? [];
+        const primary = selection?.primary;
         if (
           recipients.length >
           (currentContext.mode.participants.maxRecipients ?? 1)
         )
           throw new Error("Tag one agent per message");
-        changed(draft);
-        const uploaded = await files.prepareForSend(signal);
-        signal.throwIfAborted();
-        const input = snapshot(draft, uploaded);
-        if (
-          !input?.primary ||
-          !input.recipients.includes(input.primary) ||
-          input.recipients.some(
-            (key) => !currentContext.mode.participants.eligible(key),
-          )
-        )
+        if (!selection || !primary || !recipients.includes(primary))
           throw new Error("Choose an eligible primary agent before sending.");
+        changed(draft, primary);
+        const input = {
+          ...selection,
+          primary,
+          revision: current.current.revision,
+        };
+        const active = () =>
+          owned() &&
+          !signal.aborted &&
+          taskDraftContext(session, currentContext.label)?.binding
+            .incarnation === currentContext.binding.incarnation &&
+          input.recipients.every(eligible);
+        const checkActive = () => {
+          signal.throwIfAborted();
+          if (!active())
+            throw new Error(
+              "A selected task agent is no longer eligible. Choose an available agent.",
+            );
+        };
+        checkActive();
+        const uploaded = await files.prepareForSend(signal);
+        checkActive();
+        input.attachments = uploaded;
         const message = session.messages.prepareNewChat(
           input.text,
           [input.primary],
           uploaded,
+          Object.fromEntries(
+            Object.entries(picks ?? {}).filter(
+              ([pubkey]) => pubkey === input.primary,
+            ),
+          ),
         );
         if (message.content.length > 32_000)
           throw new Error("The task message exceeds 32,000 characters.");
         const result = await currentContext.mode.prepare(input, signal);
-        signal.throwIfAborted();
+        checkActive();
         if (!result.ok) {
           if (result.reason === "already_sent" && result.channelId) {
             const channelId = result.channelId;
@@ -473,7 +496,9 @@ export function TaskSoloDraft({
           members: Object.freeze([...result.members]),
         });
         if (
-          !prepared.channelId ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+            prepared.channelId,
+          ) ||
           !prepared.preparationId ||
           prepared.revision !== input.revision ||
           !prepared.members.includes(input.primary) ||
@@ -487,6 +512,10 @@ export function TaskSoloDraft({
         )
           throw new Error(
             "The prepared task has changed. Review its agents and retry.",
+          );
+        if (journal.snapshot().length > MAX_PENDING - 2)
+          throw new Error(
+            "Resolve or dismiss pending operations before creating a task.",
           );
         const create = session.channelWrites.prepareStart(
           prepared.channelId,
@@ -507,7 +536,7 @@ export function TaskSoloDraft({
           }),
         );
         signal.throwIfAborted();
-        if (!(await resumeSaved()))
+        if (!(await resumeSaved(true)))
           throw new Error("The saved task submission is unavailable.");
       });
     } catch (reason) {

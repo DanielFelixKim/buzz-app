@@ -24,6 +24,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
 import {
   createOutbox,
+  type Outbox,
   type OutboxInput,
   type OutboxRecovery,
   type OutgoingEvent,
@@ -330,7 +331,7 @@ function setup(available = true) {
       ready: Promise.resolve(),
     })),
   });
-  return { session, channelWrites, messages, stageChat };
+  return { session, channelWrites, messages, stageChat, enqueue };
 }
 it("uses restored explicit mentions, not a separate picker", async () => {
   const test = setup(),
@@ -3525,7 +3526,7 @@ it.each(["projects", "token"] as const)(
         await user.click(screen.getByRole("button", { name: "Send message" }));
         expect(prepare).not.toHaveBeenCalled();
         expect(f.channelWrites.start).not.toHaveBeenCalled();
-        expect(f.enqueue).not.toHaveBeenCalled();
+        expect(f.stageChat).not.toHaveBeenCalled();
         view.unmount();
         expect(localStorage.getItem(storage)).toBe(saved);
       }
@@ -3630,7 +3631,9 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
         .filter(([name]) => name === "p")
         .map((tag) => tag[1]),
     ).toEqual([agent]);
-    expect(f.stageChat.mock.calls[0]?.[1].content).not.toContain(workspace.label);
+    expect(f.stageChat.mock.calls[0]?.[1].content).not.toContain(
+      workspace.label,
+    );
     const recovery = f.stageChat.mock.calls[0]?.[2];
     expect(JSON.parse(recovery?.value ?? "null")).toMatchObject({
       draftId: route.draftId,
@@ -3709,7 +3712,7 @@ it("rejects multiple task targets before preparation or creation and retains the
     );
     expect(prepare).not.toHaveBeenCalled();
     expect(f.channelWrites.start).not.toHaveBeenCalled();
-    expect(f.enqueue).not.toHaveBeenCalled();
+    expect(f.stageChat).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Help");
     expect(
       readView("task-many", `solo:task:${route.draftId}:new-draft`, null),
@@ -3936,7 +3939,7 @@ it.each(["text", "foreign", "workspace"] as const)(
       await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
       expect(prepare).not.toHaveBeenCalled();
       expect(f.channelWrites.start).not.toHaveBeenCalled();
-      expect(f.enqueue).not.toHaveBeenCalled();
+      expect(f.stageChat).not.toHaveBeenCalled();
       expect(resumeStart).toHaveBeenCalledWith(
         create.id,
         channelId,
@@ -4150,8 +4153,14 @@ it.each([
       expect(prepare).toHaveBeenCalledTimes(1);
       expect(f.stageChat).toHaveBeenCalledTimes(1);
       if (implicit) {
-        expect(f.stageChat.mock.calls[0]?.[1].content).not.toContain("@Member agent");
-        expect(f.stageChat.mock.calls[0]?.[1].tags.filter(([name]) => name === "p").map((tag) => tag[1])).toEqual(["a".repeat(64)]);
+        expect(f.stageChat.mock.calls[0]?.[1].content).not.toContain(
+          "@Member agent",
+        );
+        expect(
+          f.stageChat.mock.calls[0]?.[1].tags
+            .filter(([name]) => name === "p")
+            .map((tag) => tag[1]),
+        ).toEqual(["a".repeat(64)]);
       }
       expect(retry).toHaveBeenCalledWith(eventId, expect.any(Function));
       expect(JSON.stringify(operations[0]?.event)).toBe(savedBytes);
@@ -5001,13 +5010,15 @@ it.each([
       expect(prepare.mock.calls[0]?.[0].workspace).toEqual(
         removed ? undefined : project,
       );
-      expect(f.enqueue.mock.calls[0]?.[0].content).toBe(prose);
-      expect(f.enqueue.mock.calls[0]?.[0].tags).toEqual([
+      expect(f.stageChat.mock.calls[0]?.[1].content).toBe(prose);
+      expect(f.stageChat.mock.calls[0]?.[1].tags).toEqual([
         ["h", "22222222-2222-4222-8222-222222222222"],
         ["p", primary],
       ]);
       expect(readView(scope, "solo:default-agent", null)).toBe(b);
-      expect(f.enqueue.mock.calls[0]?.[0].content).not.toContain(project.label);
+      expect(f.stageChat.mock.calls[0]?.[1].content).not.toContain(
+        project.label,
+      );
     } finally {
       adopt?.(b);
       cleanup();
@@ -5112,7 +5123,8 @@ it.each([
         ),
       );
       expect(f.channelWrites.start).not.toHaveBeenCalled();
-      expect(f.enqueue).not.toHaveBeenCalled();
+      expect(f.stageChat).toHaveBeenCalledTimes(phase === "claim" ? 1 : 0);
+      expect(f.session.outbox?.retry).not.toHaveBeenCalled();
       expect(prepare.mock.calls.every(([input]) => input.primary === a)).toBe(
         true,
       );
@@ -5390,10 +5402,10 @@ it.each(["selected", "refused", "typed later"] as const)(
         screen.getByRole("button", { name: "Send message" }),
       );
       await waitFor(() => expect(started).toHaveBeenCalledOnce());
-      expect(f.enqueue.mock.calls[0]?.[0].content).toBe(
+      expect(f.stageChat.mock.calls[0]?.[1].content).toBe(
         mode === "typed later" ? `@A ${before}` : before,
       );
-      expect(f.enqueue.mock.calls[0]?.[0].tags).toEqual([
+      expect(f.stageChat.mock.calls[0]?.[1].tags).toEqual([
         ["h", "22222222-2222-4222-8222-222222222222"],
         ["p", refused || mode === "typed later" ? a : b],
       ]);
