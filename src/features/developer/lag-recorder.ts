@@ -63,6 +63,7 @@ type Fiber = {
   child: Fiber | null;
   sibling: Fiber | null;
   alternate: Fiber | null;
+  flags: number;
   memoizedProps: unknown;
   memoizedState: unknown;
   actualDuration?: number;
@@ -174,19 +175,18 @@ function createLagRecorder(enabled: boolean) {
     };
     if (ms >= SLOW_COMMIT_MS) {
       // Fibers that re-rendered in this commit, by component, with self time.
-      // Mounts have no alternate and are not counted.
+      // Mounts have no alternate and are not counted. A subtree React skipped
+      // keeps its old child fibers, whose alternates and flags are stale, so
+      // descend only where the child list was rebuilt, and count a fiber only
+      // when it performed work (PerformedWork, flag 1) in this render.
       const self = new Map<string, [number, number]>();
-      const stack: Fiber[] = current.child ? [current.child] : [];
+      const stack: Fiber[] = [current];
       let visited = 0;
       while (stack.length && visited < 200_000) {
         const fiber = stack.pop() as Fiber;
         visited++;
         const previous = fiber.alternate;
-        if (
-          previous &&
-          (fiber.memoizedProps !== previous.memoizedProps ||
-            fiber.memoizedState !== previous.memoizedState)
-        ) {
+        if (previous && fiber !== current && fiber.flags & 1) {
           commit.fibers++;
           const name = fiberName(fiber);
           if (name) {
@@ -196,8 +196,9 @@ function createLagRecorder(enabled: boolean) {
             self.set(name, entry);
           }
         }
-        if (fiber.sibling) stack.push(fiber.sibling);
-        if (fiber.child) stack.push(fiber.child);
+        if (previous && previous.child === fiber.child) continue;
+        for (let child = fiber.child; child; child = child.sibling)
+          stack.push(child);
       }
       commit.top = [...self]
         .sort((a, b) => b[1][0] - a[1][0])
