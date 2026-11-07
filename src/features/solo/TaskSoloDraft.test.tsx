@@ -11,6 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { MAX_PENDING, type Outbox, type OutgoingEvent } from "../relay/outbox";
 import { createMessages } from "../relay/messages";
+import { createChannelWrites } from "../relay/channel-writes";
 import type { UploadedAttachment } from "../relay/attachments";
 import { keypair, signed } from "../relay/testing";
 import { profileTarget } from "../profiles/target";
@@ -83,7 +84,8 @@ async function fixture(
   initialDraft?: MentionDraft,
   upload?: (file: File) => Promise<UploadedAttachment>,
 ) {
-  const region = createSoloRegionFixture();
+  const viewer = keypair();
+  const region = createSoloRegionFixture(viewer.pubkey);
   disposals.push(region.dispose);
   const rows = [{ pubkey: agent, name: "Task agent", managed: false }];
   const original = region.session.agentChoices.snapshot();
@@ -101,21 +103,34 @@ async function fixture(
   const ready = gate(),
     sent = gate();
   const outboxReady = vi.fn(() => ready.promise);
-  const whenPrepared = vi.fn(async () => {
+  let operations: readonly OutgoingEvent[] = [];
+  const whenPrepared = vi.fn(async (id: string) => {
     await sent.promise;
-    return signed(keypair(), {
-      kind: 9,
-      content: "Prepared message",
-      tags: [["h", channelId]],
-      created_at: 1,
-    });
+    const item = operations.find((row) => row.event.id === id);
+    if (!item) throw new Error("Missing staged message");
+    return signed(viewer, item.event);
   });
-  const start = vi.fn(() => ({
-    create: "create-event",
+  const resumeStart = vi.fn((create: string) => ({
+    create,
     ready: Promise.resolve(),
   }));
-  const enqueue = vi.fn<Outbox["send"]>(() => "first-event");
-  let operations: readonly OutgoingEvent[] = [];
+  const stageChat = vi.fn<Outbox["stageChat"]>(
+    async (create, message, recovery) => {
+      operations = [create, message].map((input, index) => ({
+        event: {
+          ...input,
+          id: (index ? "d" : "c").repeat(64),
+          pubkey: region.session.viewer,
+          created_at: 1,
+        },
+        recovery: index
+          ? recovery
+          : { key: `create:${recovery.key}`, value: recovery.value },
+        delivery: "unknown",
+        guarded: true,
+      }));
+    },
+  );
   const outbox = {
     ...region.session.outbox,
     supports: () => true,
@@ -123,8 +138,40 @@ async function fixture(
     ready: outboxReady,
     snapshot: () => operations,
     whenPrepared,
-    send: enqueue,
+    withChat: async (_key, run) => run(() => true),
+    stageChat,
+    resume: async (id, active) => {
+      if (!active()) throw new Error("Submission cancelled");
+      const event = await whenPrepared(id);
+      if (!active()) throw new Error("Submission cancelled");
+      operations = operations.map((item) =>
+        item.event.id === id
+          ? { ...item, signed: event, delivery: "accepted" }
+          : item,
+      );
+      return event;
+    },
+    acknowledge: async (id) => {
+      operations = operations.map((item) =>
+        item.event.id === id ? { ...item, recovery: undefined } : item,
+      );
+    },
+    send: () => {
+      throw new Error("Unexpected unstaged send");
+    },
   } as Outbox;
+  const writes = createChannelWrites(
+    outbox,
+    region.session.channels,
+    {} as Parameters<typeof createChannelWrites>[2],
+    new AbortController().signal,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    true,
+  );
   Object.assign(region.session, {
     agentChoices: {
       ...region.session.agentChoices,
@@ -143,7 +190,12 @@ async function fixture(
       snapshot: () => profiles,
       ensure: async () => {},
     },
-    channelWrites: { ...region.session.channelWrites, available: true, start },
+    channelWrites: {
+      ...region.session.channelWrites,
+      available: true,
+      prepareStart: writes.prepareStart,
+      resumeStart,
+    },
     messages: createMessages(
       outbox,
       region.session.viewer,
@@ -218,8 +270,8 @@ async function fixture(
     sent,
     outboxReady,
     whenPrepared,
-    start,
-    enqueue,
+    resumeStart,
+    stageChat,
     prepare,
     started,
     mounted,
@@ -268,7 +320,7 @@ it.each(["accepted", "rejected"] as const)(
       f.refresh(true);
       await act(async () => f.ready.resolve());
       await waitFor(() =>
-        expect(f.whenPrepared).toHaveBeenCalledWith("first-event"),
+        expect(f.whenPrepared).toHaveBeenCalledWith("d".repeat(64)),
       );
       expect(selected()).toBeDisabled();
       f.refresh(false);
@@ -279,7 +331,8 @@ it.each(["accepted", "rejected"] as const)(
         recipients: [agent],
         text: "Review the task",
       });
-      expect(f.enqueue).toHaveBeenCalledWith(
+      expect(f.stageChat).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 9007 }),
         {
           kind: 9,
           content: "Review the task",
@@ -290,6 +343,7 @@ it.each(["accepted", "rejected"] as const)(
         },
         expect.any(Object),
       );
+      f.refresh(true);
       if (outcome === "accepted") {
         await act(async () => f.sent.resolve());
         await waitFor(() =>
@@ -312,7 +366,7 @@ it.each(["accepted", "rejected"] as const)(
       }
       f.refresh(true);
       await waitFor(() => expect(selected()).toBeEnabled());
-      expect(f.start).toHaveBeenCalledOnce();
+      expect(f.resumeStart).toHaveBeenCalledOnce();
     } finally {
       await act(async () => {
         f.ready.resolve();
@@ -344,8 +398,8 @@ it("keeps the pending label without granting a revoked agent permission to start
       "A selected task agent is no longer eligible",
     );
     expect(f.prepare).not.toHaveBeenCalled();
-    expect(f.start).not.toHaveBeenCalled();
-    expect(f.enqueue).not.toHaveBeenCalled();
+    expect(f.resumeStart).not.toHaveBeenCalled();
+    expect(f.stageChat).not.toHaveBeenCalled();
     expect(f.started).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Keep this request");
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
@@ -404,8 +458,8 @@ it("refuses a task before claiming its marker when fewer than two outbox slots r
       "Resolve or dismiss pending operations",
     );
     expect(f.claim).not.toHaveBeenCalled();
-    expect(f.start).not.toHaveBeenCalled();
-    expect(f.enqueue).not.toHaveBeenCalled();
+    expect(f.resumeStart).not.toHaveBeenCalled();
+    expect(f.stageChat).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent(
       "Keep the full queue draft",
     );
@@ -413,8 +467,8 @@ it("refuses a task before claiming its marker when fewer than two outbox slots r
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
     expect(f.claim).toHaveBeenCalledOnce();
-    expect(f.start).toHaveBeenCalledOnce();
-    expect(f.enqueue).toHaveBeenCalledOnce();
+    expect(f.resumeStart).toHaveBeenCalledOnce();
+    expect(f.stageChat).toHaveBeenCalledOnce();
   } finally {
     f.ready.resolve();
     f.sent.resolve();
@@ -445,7 +499,7 @@ it("keeps an ineligible identity link in a new task without claiming or sending"
     );
     expect(f.prepare).not.toHaveBeenCalled();
     expect(f.claim).not.toHaveBeenCalled();
-    expect(f.enqueue).not.toHaveBeenCalled();
+    expect(f.stageChat).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Unavailable");
   } finally {
     f.ready.resolve();
@@ -523,7 +577,8 @@ it("sends the selected model and effort to the first task primary", async () => 
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
-    expect(f.enqueue).toHaveBeenCalledExactlyOnceWith(
+    expect(f.stageChat).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ kind: 9007 }),
       {
         kind: 9,
         content: "@Task agent Use the selected model",
@@ -574,8 +629,8 @@ it.each([32_000, 32_001])(
         );
         expect(f.prepare).not.toHaveBeenCalled();
         expect(f.claim).not.toHaveBeenCalled();
-        expect(f.start).not.toHaveBeenCalled();
-        expect(f.enqueue).not.toHaveBeenCalled();
+        expect(f.resumeStart).not.toHaveBeenCalled();
+        expect(f.stageChat).not.toHaveBeenCalled();
         expect(screen.getByRole("textbox")).toHaveTextContent(text);
         await user.clear(screen.getByRole("textbox"));
         await user.type(screen.getByRole("textbox"), "Read the file");
@@ -584,8 +639,8 @@ it.each([32_000, 32_001])(
       await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
       expect(f.prepare).toHaveBeenCalledOnce();
       expect(f.claim).toHaveBeenCalledOnce();
-      expect(f.enqueue).toHaveBeenCalledOnce();
-      const event = f.enqueue.mock.calls[0]?.[0];
+      expect(f.stageChat).toHaveBeenCalledOnce();
+      const event = f.stageChat.mock.calls[0]?.[1];
       expect(event?.content).toBe(
         `${length > 32_000 ? "Read the file" : text}${link}`,
       );
@@ -652,18 +707,20 @@ it.each([
       );
       expect(f.prepare).not.toHaveBeenCalled();
       expect(f.claim).not.toHaveBeenCalled();
-      expect(f.start).not.toHaveBeenCalled();
-      expect(f.enqueue).not.toHaveBeenCalled();
+      expect(f.resumeStart).not.toHaveBeenCalled();
+      expect(f.stageChat).not.toHaveBeenCalled();
       expect(screen.getByRole("textbox")).toHaveTextContent(text);
       await user.clear(screen.getByRole("textbox"));
       await user.type(screen.getByRole("textbox"), "A smaller request 😀");
       await user.click(screen.getByRole("button", { name: "Send message" }));
       await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
-      expect(f.enqueue.mock.calls[0]?.[0].content).toBe(
+      expect(f.stageChat.mock.calls[0]?.[1].content).toBe(
         `A smaller request 😀${files.length ? metadataLinks : ""}`,
       );
       expect(
-        f.enqueue.mock.calls[0]?.[0].tags.filter(([name]) => name === "imeta"),
+        f.stageChat.mock.calls[0]?.[1].tags.filter(
+          ([name]) => name === "imeta",
+        ),
       ).toHaveLength(files.length);
       expect(f.claim).toHaveBeenCalledOnce();
     } finally {
@@ -694,8 +751,8 @@ it("refuses a prepared channel that cannot preserve the UUID event budget", asyn
     );
     expect(f.prepare).toHaveBeenCalledOnce();
     expect(f.claim).not.toHaveBeenCalled();
-    expect(f.start).not.toHaveBeenCalled();
-    expect(f.enqueue).not.toHaveBeenCalled();
+    expect(f.resumeStart).not.toHaveBeenCalled();
+    expect(f.stageChat).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Keep this task");
   } finally {
     f.ready.resolve();

@@ -4619,12 +4619,11 @@ it.each(["accepted", "seen", "cancelled"] as const)(
       resumeStart: () => ({ create: create.id, ready }),
     });
     const acknowledge = vi.fn(async () => {
-      expect(
-        readView("accepted-recovery", `draft:${channelId}`, null),
-      ).toMatchObject({ text: expect.stringContaining("Edited request") });
-      expect(
-        readView("accepted-recovery", `solo:task:${draftId}:new-draft`, null),
-      ).toBe("");
+      expect(record).toHaveBeenCalledOnce();
+      expect(started).not.toHaveBeenCalled();
+      expect(readView("accepted-recovery", key, null)).toMatchObject({
+        text: expect.stringContaining("Edited request"),
+      });
     });
     Object.assign(f.session.outbox as object, {
       acknowledge,
@@ -4684,6 +4683,12 @@ it.each(["accepted", "seen", "cancelled"] as const)(
         await act(async () => finishBinding());
         await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
         expect(acknowledge).toHaveBeenCalledExactlyOnceWith(event.id);
+        expect(
+          readView("accepted-recovery", `draft:${channelId}`, null),
+        ).toMatchObject({
+          text: expect.stringContaining("Edited request"),
+        });
+        expect(readView("accepted-recovery", key, null)).toBe("");
         expect(retry).not.toHaveBeenCalled();
       }
     } finally {
