@@ -131,10 +131,11 @@ export function useMessageOpening(
         setLocating(key);
         void channels
           .seek(channelId, retained.createdAt, controller.signal, retained.id)
-          .then(() => {
+          .then((validated) => {
             if (
               !controller.signal.aborted &&
-              (channels.window(channelId).freshness === "cached" ||
+              (validated !== messageId ||
+                channels.window(channelId).freshness === "cached" ||
                 !channels
                   .window(channelId)
                   .rows.some(
@@ -171,7 +172,7 @@ export function useMessageOpening(
               setDecided({ key, inTimeline: false });
               return;
             }
-            await channels.seek?.(
+            const validated = await channels.seek?.(
               channelId,
               target.created_at,
               controller.signal,
@@ -179,7 +180,8 @@ export function useMessageOpening(
             );
             if (
               !controller.signal.aborted &&
-              (channels.window(channelId).freshness === "cached" ||
+              (validated !== messageId ||
+                channels.window(channelId).freshness === "cached" ||
                 !channels
                   .window(channelId)
                   .rows.some(

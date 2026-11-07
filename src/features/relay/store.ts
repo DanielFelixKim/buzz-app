@@ -3900,7 +3900,7 @@ export function createChannelStore(
         (state.ceiling === undefined ||
           rows.some((row) => row.createdAt >= from))
       )
-        return landing(state, from);
+        return fromId ?? landing(state, from);
       const generation = state.generation;
       const controller = new AbortController();
       const abort = () => controller.abort();
@@ -3927,7 +3927,11 @@ export function createChannelStore(
             located.ceilingId,
             fromId,
           );
-        return landing(state, from);
+        return fromId
+          ? located.kind === "segment"
+            ? state.snapshot.rows.find((row) => row.id === fromId)?.id
+            : undefined
+          : landing(state, from);
       } catch (error) {
         if (
           !controller.signal.aborted &&

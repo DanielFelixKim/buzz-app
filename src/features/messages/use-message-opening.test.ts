@@ -172,16 +172,28 @@ it("reads no window without a message", () => {
 
 /** A real relay session with one channel, "a", whose head the test scripts.
  * `head(...)` is a first page whose oldest row has more history before it. */
-async function relayChannel() {
+async function relayChannel(withLive = false) {
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
   const time = { now: 1_000_000 };
   const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const store = createRelaySession(scripted.transport, {
-    prepared: true,
-    now: () => time.now,
-  });
+  let live!: LiveCallbacks;
+  const store = createRelaySession(
+    withLive
+      ? {
+          ...scripted.transport,
+          subscribe(callbacks) {
+            live = callbacks;
+            return { update() {}, retry() {}, dispose() {} };
+          },
+        }
+      : scripted.transport,
+    {
+      prepared: true,
+      now: () => time.now,
+    },
+  );
   store.session.channels.ensureList();
   scripted
     .next()
@@ -190,6 +202,7 @@ async function relayChannel() {
   return {
     store,
     channels: store.session.channels,
+    live,
     pending: scripted.pending,
     time,
     post: (content: string, at: number) => message(alice, "a", content, at),
@@ -878,6 +891,62 @@ it("settles a lookup-admitted target when seeking leaves attached history cached
       expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
         target.id,
       );
+      expect(view.result.current).toBe(false);
+    } finally {
+      view.unmount();
+    }
+  } finally {
+    c.store.dispose();
+  }
+});
+
+it("rejects a lookup target when unrelated reconnect verification precedes a no-install seek", async () => {
+  const c = await relayChannel(true);
+  try {
+    const newest = c.post("newest", 20),
+      oldest = c.post("oldest", 10),
+      target = c.post("gone before seek", 30);
+    c.channels.ensure("a");
+    c.read().respond(c.head(newest));
+    await flush();
+    c.channels.loadOlder("a");
+    c.read().fail(new Error("older page failed"));
+    await flush();
+    c.channels.loadOlder("a");
+    c.read().respond(c.end(newest, oldest));
+    await flush();
+    c.live.state({ status: "connected", routes: [] });
+    c.live.established("a");
+    await flush();
+    const reconnectRead = c.read();
+    const view = renderHook(() =>
+      useMessageOpening(
+        c.channels,
+        "a",
+        target.id,
+        undefined,
+        c.store.session.read,
+      ),
+    );
+    try {
+      await act(async () => {
+        c.read().respond([target]);
+        await flush();
+      });
+      const seekRead = c.read();
+      expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
+        target.id,
+      );
+      await act(async () => {
+        reconnectRead.respond(c.head(newest, oldest));
+        await flush();
+      });
+      expect(c.channels.window("a").freshness).toBe("verified");
+      expect(view.result.current).toBeUndefined();
+      await act(async () => {
+        seekRead.respond(c.head(newest, oldest));
+        await flush();
+      });
       expect(view.result.current).toBe(false);
     } finally {
       view.unmount();

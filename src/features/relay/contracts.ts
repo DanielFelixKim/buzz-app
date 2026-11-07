@@ -384,7 +384,8 @@ export interface ChannelQueries {
   /** Preserve this rendered row when a bounded page displaces its opposite edge. */
   loadOlder(channelId: string, anchorId?: string): void;
   /** Detach the window to history at `from` (unix seconds; 0 is the channel
-   * start). Resolves the first message at or after `from`, else the newest. */
+   * start). Resolves the first message at or after `from`, else the newest.
+   * With `fromId`, resolves that target only when this seek validates it. */
   seek?(
     channelId: string,
     from: number,
