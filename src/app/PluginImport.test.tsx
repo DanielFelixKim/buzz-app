@@ -3254,6 +3254,9 @@ it.each([false, true])(
     expect(
       screen.getAllByRole("button", { name: /^Update(?: Remembered)?$/ }),
     ).toHaveLength(1);
+    expect(checks.snapshot()[rememberedManifest.id]?.candidate).toEqual(
+      rememberedPreview.candidates[multiple ? 1 : 0],
+    );
     expect(manager.installImport).not.toHaveBeenCalled();
   },
 );

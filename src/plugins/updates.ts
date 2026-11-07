@@ -101,21 +101,40 @@ export function createPluginUpdates(
     );
   }
   const prune = () => {
-    const next = updates.filter((update) => {
-      if (!current(update)) return false;
+    const next = updates.flatMap((update) => {
+      if (!current(update)) return [];
       const result = pluginUpdateCheck(
         observedChecks?.snapshot() ?? {},
         installed(update.id),
       );
+      if (!result || result.checking) return [update];
+      if (
+        !result.error &&
+        result.candidate &&
+        result.revision !== update.installedRevision &&
+        result.revision !== update.candidate?.revision
+      )
+        return [
+          {
+            id: update.id,
+            source: update.source,
+            installedRevision: update.installedRevision,
+            candidate: result.candidate,
+          },
+        ];
       return (
-        !result ||
-        result.checking ||
-        (update.error
+        update.error
           ? result.error === update.error
-          : !result.error && result.revision === update.candidate?.revision)
-      );
+          : !result.error && result.revision === update.candidate?.revision
+      )
+        ? [update]
+        : [];
     });
-    if (next.length !== updates.length) publish(next);
+    if (
+      next.some((update, index) => update !== updates[index]) ||
+      next.length !== updates.length
+    )
+      publish(next);
   };
   const unsubscribe = plugins.subscribe(prune);
   function sourceIdentity() {

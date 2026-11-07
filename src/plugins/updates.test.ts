@@ -677,3 +677,40 @@ it.each(["removed", "disabled", "replaced"] as const)(
     }
   },
 );
+
+it.each(["review", "details"])(
+  "retains the latest candidate after a newer %s result without installing",
+  async (entry) => {
+    const f = fixture();
+    const updates = createPluginUpdates(f.manager, f.authorize);
+    await updates.check();
+    const first = updates.snapshot()[0];
+    if (!first) throw new Error("Expected update");
+    updates.later(first);
+    const candidate = {
+      ...f.candidate,
+      revision: "newer",
+      manifest: { ...f.candidate.manifest, name: "New notes" },
+      readmeRevision: "new-readme",
+    };
+    const checks = sharedPluginUpdateChecks(f.manager.imports);
+    if (entry === "review")
+      checks.observe(f.plugin)(candidate.revision, null, candidate);
+    else {
+      f.checkGit.mockResolvedValueOnce({
+        ...f.preview,
+        candidates: [candidate],
+      });
+      await checks.check(f.plugin, f.authorize);
+    }
+    expect(updates.snapshot()).toEqual([{ ...first, candidate }]);
+    const latest = updates.snapshot()[0];
+    if (!latest) throw new Error("Expected latest update");
+    expect(updates.hidden(latest)).toBe(false);
+    expect(pluginUpdateAvailable(checks.snapshot(), f.plugin)).toBe(true);
+    await updates.check();
+    expect(updates.snapshot()[0]?.candidate).toEqual(candidate);
+    expect(f.imports.install).not.toHaveBeenCalled();
+    updates.dispose();
+  },
+);

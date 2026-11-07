@@ -501,7 +501,7 @@ export function PluginImport({
         }
       }
       if (next?.candidates.length === 1 && next.candidates[0])
-        observe?.(next.candidates[0].revision);
+        observe?.(next.candidates[0].revision, null, next.candidates[0]);
       setError(null);
       setPreview(next);
       setReviewing(next?.candidates.length === 1);
@@ -1037,7 +1037,11 @@ export function PluginImport({
                   disabled={blocked || !candidate}
                   onClick={() => {
                     if (currentPlugin && candidate)
-                      checks.observe(currentPlugin)(candidate.revision);
+                      checks.observe(currentPlugin)(
+                        candidate.revision,
+                        null,
+                        candidate,
+                      );
                     setExisting(
                       catalog.plugins.find(
                         (item) => item.manifest.id === candidate?.manifest.id,

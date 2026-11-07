@@ -10,6 +10,7 @@ export type UpdateCheck = {
   checking: boolean;
   revision: string | undefined;
   error: string | null;
+  candidate?: ImportPreview["candidates"][number] | undefined;
 };
 type Snapshot = Readonly<Record<string, UpdateCheck>>;
 const identity = (plugin: PluginInfo) => JSON.stringify(plugin.updateSource);
@@ -128,12 +129,13 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
     if ((snapshot[id]?.sequence ?? 0) > request.sequence) return;
     publish(id, next);
     let revision: string | undefined;
+    let candidate: ImportPreview["candidates"][number] | undefined;
     let error: string | null = null;
     try {
       const result = await request.promise;
       if (typeof result === "string") revision = result;
       else {
-        const candidate = result?.candidates.find(
+        candidate = result?.candidates.find(
           (item) => item.manifest.id === id && item.path === source.path,
         );
         if (!candidate) {
@@ -152,7 +154,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
       publish(id, {
         ...snapshot[id],
         checking: false,
-        ...(eligible() && { revision, error }),
+        ...(eligible() && { revision, error, candidate }),
       });
   }
   return {
@@ -168,7 +170,11 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
       const started = ++sequence;
       const installed = installation(plugin);
       installations.set(plugin.manifest.id, installed);
-      return (revision: string | undefined, error: string | null = null) => {
+      return (
+        revision: string | undefined,
+        error: string | null = null,
+        candidate?: ImportPreview["candidates"][number],
+      ) => {
         if (
           installations.get(plugin.manifest.id) !== installed ||
           (snapshot[plugin.manifest.id]?.sequence ?? 0) > started
@@ -181,6 +187,7 @@ export function createPluginUpdateChecks(imports: PluginImports | undefined) {
           checking: false,
           revision,
           error,
+          candidate,
         });
         return true;
       };
