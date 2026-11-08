@@ -66,7 +66,14 @@ import {
   applyComposerInlineInput,
   composerInlineDelimiters,
 } from "./composer-inline-input";
-import { composerMarkdown } from "./composer-markdown";
+import {
+  composerMarkdown,
+  type ComposerMarkdownMode,
+} from "./composer-markdown";
+import {
+  documentEditorDraft,
+  documentEditorMarkdown,
+} from "./document-editor-markdown";
 import {
   buzzCopyDocument,
   externalLinkMarkdown,
@@ -382,8 +389,8 @@ export type EditableInputProps = Omit<
   disabled: boolean;
   placeholder: string;
   maxLength: number;
-  /** The owner's wire format determines the serialized editing budget. */
-  serializeDraft?(draft: MentionDraft): string;
+  /** One policy for wire output, editing budgets and both clipboard flavors. */
+  markdownMode?: ComposerMarkdownMode;
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
   onEditLink?(edit: ComposerLinkEdit): void;
@@ -404,7 +411,7 @@ export function EditableInput({
   disabled,
   placeholder,
   maxLength,
-  serializeDraft = composerMarkdown,
+  markdownMode = "chat",
   onDraftChange,
   onFormatsChange,
   onEditLink,
@@ -415,6 +422,8 @@ export function EditableInput({
   draft: MentionDraft;
   decorationsFor(draft: MentionDraft): readonly EditorDecoration[];
 }) {
+  const serializeDraft =
+    markdownMode === "document" ? documentEditorMarkdown : composerMarkdown;
   const mount = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const { enabled: autocorrect } = useMessageAutocorrectPreference();
@@ -422,6 +431,7 @@ export function EditableInput({
     draft,
     decorationsFor,
     maxLength,
+    markdownMode,
     serializeDraft,
     onDraftChange,
     onFormatsChange,
@@ -436,6 +446,7 @@ export function EditableInput({
     draft,
     decorationsFor,
     maxLength,
+    markdownMode,
     serializeDraft,
     onDraftChange,
     onFormatsChange,
@@ -1479,7 +1490,11 @@ export function EditableInput({
           ? content
           : composerSchema.nodes.paragraph.create(null, content),
       );
-      const { text, html } = composerClipboard(doc, editor.dom.ownerDocument);
+      const { text, html } = composerClipboard(
+        doc,
+        editor.dom.ownerDocument,
+        current.current.markdownMode,
+      );
       event.clipboardData?.setData("text/plain", text);
       event.clipboardData?.setData("text/html", html);
       event.preventDefault();
@@ -2160,7 +2175,9 @@ export function EditableInput({
             const html = event.clipboardData?.getData("text/html") ?? "";
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
-            const copy = code ? undefined : buzzCopyDocument(html);
+            const copy = code
+              ? undefined
+              : buzzCopyDocument(html, current.current.markdownMode);
             // Unformatted prose takes the text path: it inherits the caret's
             // marks and the link spacing below. Structure pastes as nodes.
             const paragraph = copy?.childCount === 1 ? copy.firstChild : null;
@@ -2231,6 +2248,27 @@ export function EditableInput({
                 current.current.maxLength
             )
               text += " ";
+            if (
+              !code &&
+              current.current.markdownMode === "document" &&
+              text.trim()
+            ) {
+              const draft = documentEditorDraft(text);
+              if (draft.document) {
+                const parsed = readComposerDocument(draft, []);
+                const paragraph =
+                  parsed.childCount === 1 ? parsed.firstChild : null;
+                // Plain prose still inherits the caret's active marks.
+                if (
+                  paragraph?.type === composerSchema.nodes.paragraph &&
+                  paragraph.childCount <= 1 &&
+                  !paragraph.firstChild?.marks.length
+                )
+                  insertPastedText(text.replace(/\r\n?|\n/g, " "));
+                else insertDocument(parsed);
+                return true;
+              }
+            }
             if (!insertPastedText(text)) return true;
             const inserted = projection().source(editor.state.selection.to);
             if (reuse) {

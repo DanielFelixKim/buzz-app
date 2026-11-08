@@ -166,3 +166,31 @@ it("reads crafted HTML whose anchors have no text as an empty paste, not an erro
     ],
   });
 });
+
+it("keeps default chat clipboard output when document list metadata is present", () => {
+  const tree = doc.create(null, [
+    paragraph.create(null, [
+      composerSchema.text("First"),
+      composerSchema.nodes.hard_break.create(),
+      composerSchema.text("Second"),
+    ]),
+    bullet_list.create({ spread: true }, [
+      list_item.create(
+        null,
+        paragraph.create(null, composerSchema.text("One")),
+      ),
+      list_item.create(
+        null,
+        paragraph.create(null, composerSchema.text("Two")),
+      ),
+    ]),
+  ]);
+  const chat = composerClipboard(tree, document);
+  expect(chat.text).toBe("First\nSecond\n\n- One\n- Two");
+  expect(chat.html).toBe(
+    '<div data-buzz-copy="composer"><p>First<br>Second</p><ul><li><p>One</p></li><li><p>Two</p></li></ul></div>',
+  );
+  const copied = composerClipboard(tree, document, "document");
+  const imported = buzzCopyDocument(copied.html);
+  expect(imported?.lastChild?.attrs.spread).toBe(false);
+});
