@@ -324,8 +324,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   read: unread threads keep their dots in the conversation and in Activity →
   Threads, and **New messages** still marks where you left off. A mention, DM or
   reply to you that arrives after you leave lights the row again, as does any
-  newer message; **Mark as unread** still shows on it. On another device, rows
-  with unread mentions, DMs or replies to you light again until you read them.
+  newer message; **Mark as unread** still shows on it. The channel message
+  menu's **Mark unread** keeps the selected message and currently loaded reply
+  subtree unread when you leave and reopen that channel during this window
+  session. Reading the selected subtree or channel in that window clears the exact mark. It is
+  not restored after Buzz restarts. On another device, rows with unread
+  mentions, DMs or replies to you light again until you read them.
 - **Communities** have their own channels, people, and agents. Switch with
   the community switcher at the bottom of the dock; in **Personal space**,
   Messages offers **Choose a community**, which opens it. Switching

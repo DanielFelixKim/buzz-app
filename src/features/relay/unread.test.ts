@@ -1577,28 +1577,432 @@ it("forces loaded reply subtrees independently and preserves channel manual inte
   expect(h.snapshot().manual).toBe("local-only"); // Independent channel action survives.
 });
 
-it("leaves only the sidebar hint after channel leave and reconciles it on reopen", async () => {
+it("keeps selected messages unread across leave and re-entry for exact selectors", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "read root", 11);
+  const child = message(h.alice, "room", "read reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const other = message(h.alice, "room", "read other", 13);
+  h.emit([root, child, other]);
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  await unread.markMessageRead("room", root.id);
+  await unread.markMessageRead("room", other.id);
+  await unread.markMessageUnread("room", root.id);
+  await unread.markMessageUnread("room", other.id);
+  const later = message(h.alice, "room", "unrelated newer arrival", 20);
+  h.emit([later]);
+
+  const rootTarget = {
+    kind: "message" as const,
+    channelId: "room",
+    messageId: root.id,
+  };
+  expect(unread.snapshot(rootTarget).manual).toBe("local-only");
+  expect(unread.attention("room", root.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+  expect(unread.attention("room", child.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+  expect(unread.attention("room", other.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+
+  unread.leaveChannel("room");
+  expect(unread.snapshot(rootTarget)).toMatchObject({
+    observedCount: 1,
+    manual: "local-only",
+  });
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 4,
+    latestMessage: { id: later.id },
+  });
+  for (const id of [root.id, child.id, other.id])
+    expect(unread.attention("room", id)).toMatchObject({
+      unread: true,
+      forced: true,
+    });
+  expect(unread.attention("room", later.id)).toMatchObject({
+    unread: true,
+    forced: false,
+  });
+
+  await unread.enterChannel("room");
+  expect(h.snapshot()).toMatchObject({ observedCount: 4 });
+  expect(unread.snapshot(rootTarget)).toMatchObject({
+    observedCount: 1,
+    manual: "local-only",
+  });
+  expect(unread.attention("room", root.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+
+  await unread.markMessageRead("room", root.id);
+  expect(unread.attention("room", root.id)).toMatchObject({
+    unread: false,
+    forced: false,
+  });
+  expect(unread.attention("room", child.id)).toMatchObject({
+    unread: false,
+    forced: false,
+  });
+  expect(unread.attention("room", later.id)).toMatchObject({
+    unread: true,
+    forced: false,
+  });
+  expect(unread.attention("room", other.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+  await unread.markMessageRead("room", other.id);
+  expect(unread.attention("room", other.id)).toMatchObject({
+    unread: false,
+    forced: false,
+  });
+  expect(unread.attention("room", later.id).forced).toBe(false);
+  await unread.markMessageRead("room", later.id);
+  expect(h.snapshot()).toMatchObject({ observedCount: 0, manual: "none" });
+});
+
+it("does not retain a selected-message override when its initial save fails", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "read message", 11);
+  h.emit([row]);
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  await unread.markMessageRead("room", row.id);
+
+  h.failNextSave();
+  await expect(unread.markMessageUnread("room", row.id)).rejects.toThrow(
+    "Storage update rejected",
+  );
+
+  expect(unread.attention("room", row.id)).toMatchObject({
+    unread: false,
+    forced: false,
+  });
+  expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
+});
+
+it("channel read while away clears retained selected-message intent", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "selected", 11);
+  const child = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, child]);
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  await unread.markMessageRead("room", root.id);
+  await unread.markMessageUnread("room", root.id);
+  unread.leaveChannel("room");
+
+  for (const id of [root.id, child.id])
+    expect(unread.attention("room", id)).toMatchObject({
+      unread: true,
+      forced: true,
+    });
+
+  await unread.markChannelRead("room");
+
+  for (const id of [root.id, child.id])
+    expect(unread.attention("room", id)).toMatchObject({
+      unread: false,
+      forced: false,
+    });
+  expect(
+    unread.snapshot({
+      kind: "message",
+      channelId: "room",
+      messageId: root.id,
+    }),
+  ).toMatchObject({ manual: "none", observedCount: 0 });
+  expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
+});
+
+it("unread cache clear retires the in-memory selected-message override", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "read root", 11);
+  const child = message(h.alice, "room", "read reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, child]);
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  await unread.markMessageRead("room", root.id);
+  await unread.markMessageUnread("room", root.id);
+  expect(unread.attention("room", child.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+
+  await h.clearCache();
+  h.grant("room");
+  h.emit([root, child]);
+  await vi.waitFor(() => expect(h.snapshot().observedCount).toBe(0));
+
+  for (const id of [root.id, child.id])
+    expect(unread.attention("room", id)).toMatchObject({
+      unread: false,
+      forced: false,
+    });
+});
+
+it.each(["markMessageRead", "markMessageUnread"] as const)(
+  "%s keeps its committed result when the channel is left before storage resolves",
+  async (action) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "read root", 11);
+    const child = message(h.alice, "room", "read reply", 12, [
+      ["e", root.id, "", "reply"],
+    ]);
+    h.emit([root, child]);
+    const unread = h.session.unread;
+    await unread.enterChannel("room");
+    await unread.markMessageRead("room", root.id);
+    if (action === "markMessageRead")
+      await unread.markMessageUnread("room", root.id);
+
+    const held = h.holdCommit();
+    const marking = unread[action]("room", root.id);
+    await held.committed;
+    try {
+      unread.leaveChannel("room");
+    } finally {
+      held.release();
+    }
+    await marking;
+    await unread.enterChannel("room");
+
+    const forced = action === "markMessageUnread";
+    for (const id of [root.id, child.id])
+      expect(unread.attention("room", id)).toMatchObject({
+        unread: forced,
+        forced,
+      });
+    expect(
+      unread.snapshot({
+        kind: "message",
+        channelId: "room",
+        messageId: root.id,
+      }),
+    ).toMatchObject({ manual: forced ? "local-only" : "none" });
+  },
+);
+
+it.each(["message", "thread", "channel", "timeline"] as const)(
+  "an explicit %s read retires only its covered retained targets after persistence",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    h.emit([metadata(h.relay, "room", "room", 11, [["t", "stream"]])]);
+    const root = message(h.alice, "room", "root", 11);
+    const child = message(h.alice, "room", "reply", 12, [
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]);
+    const other = message(h.alice, "room", "independent", 14);
+    h.emit([root, child, other]);
+    const unread = h.session.unread;
+    await unread.enterChannel("room");
+    await unread.markMessageRead("room", root.id);
+    await unread.markMessageRead("room", other.id);
+    await unread.markMessageUnread("room", root.id);
+    await unread.markMessageUnread("room", other.id);
+    unread.leaveChannel("room");
+    await unread.enterChannel("room");
+    const read = () =>
+      kind === "timeline"
+        ? unread.markTimelineRead("room", [root.id])
+        : unread.markThrough(
+            kind === "message"
+              ? { kind, channelId: "room", messageId: root.id }
+              : kind === "thread"
+                ? { kind, channelId: "room", rootId: root.id }
+                : { kind, channelId: "room" },
+            kind === "thread" ? child.id : root.id,
+          );
+
+    h.failNextSave();
+    await expect(read()).rejects.toThrow("Storage update rejected");
+    for (const id of [root.id, child.id, other.id])
+      expect(unread.attention("room", id).forced).toBe(true);
+    await read();
+    expect(unread.attention("room", root.id)).toMatchObject({
+      unread: false,
+      forced: false,
+    });
+    expect(unread.attention("room", child.id)).toMatchObject({
+      unread: kind !== "thread",
+      forced: kind !== "thread",
+    });
+    expect(unread.attention("room", other.id)).toMatchObject({
+      unread: true,
+      forced: true,
+    });
+  },
+);
+
+it("does not restore selected-message intent after access retires during a committed save", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "read message", 11);
+  h.emit([row]);
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  await unread.markMessageRead("room", row.id);
+
+  const held = h.holdCommit();
+  const marking = unread.markMessageUnread("room", row.id);
+  await held.committed;
+  try {
+    h.emit([roster(h.relay, "room", [], 20)]);
+  } finally {
+    held.release();
+  }
+  await marking;
+
+  expect(unread.attention("room", row.id)).toMatchObject({
+    status: "unknown",
+    unread: false,
+    forced: false,
+  });
+});
+
+it("cancels a selected-message save across access revoke and regrant", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "read message", 11);
+  h.emit([row]);
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  await unread.markMessageRead("room", row.id);
+
+  const held = h.holdSaveStarted();
+  const marking = unread.markMessageUnread("room", row.id);
+  await held.started;
+  try {
+    h.emit([roster(h.relay, "room", [], 20)]);
+    h.grant("room", 21);
+  } finally {
+    held.release();
+  }
+  await expect(marking).rejects.toThrow("Reading observation expired");
+
+  expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
+  h.emit([row]);
+  await unread.enterChannel("room");
+  expect(unread.attention("room", row.id)).toMatchObject({
+    unread: false,
+    forced: false,
+  });
+});
+
+it.each([false, true])(
+  "Mark all read after an observation reset: %s",
+  async (readAll) => {
+    const h = setup();
+    h.grant("room");
+    const marked = message(h.alice, "room", "selected", 11);
+    h.emit([marked]);
+    const unread = h.session.unread;
+    await unread.enterChannel("room");
+    await unread.markMessageRead("room", marked.id);
+    await unread.markMessageUnread("room", marked.id);
+    unread.leaveChannel("room");
+    await unread.enterChannel("room");
+
+    // The observation index is intentionally bounded; dropping its cache is not
+    // an explicit read of a mark that names a still-fetchable message.
+    // Synthetic admitted rows keep this capacity check independent of signing cost.
+    h.emit(
+      Array.from(
+        { length: 4096 },
+        (_, index) =>
+          ({
+            id: `f${index.toString(16).padStart(63, "0")}`,
+            pubkey: h.alice.pubkey,
+            sig: "0".repeat(128),
+            kind: 9,
+            created_at: 100 + index,
+            tags: [["h", "room"]],
+            content: `filler ${index}`,
+          }) as RelayEvent,
+      ),
+    );
+    expect(h.snapshot().freshness).toBe("stale");
+
+    if (readAll) expect(await unread.markAllChannelsRead()).toHaveLength(1);
+    h.emit([marked]);
+    expect(unread.attention("room", marked.id)).toMatchObject({
+      unread: !readAll,
+      forced: !readAll,
+    });
+  },
+);
+
+it("drops a retained selected-message mark when its message is deleted", async () => {
   const h = setup();
   h.grant("room");
   const row = message(h.alice, "room", "read", 11);
   h.emit([row]);
-  await h.session.unread.enterChannel("room");
-  await h.session.unread.markThrough(
-    { kind: "message", channelId: "room", messageId: row.id },
-    row.id,
-  );
-  await h.session.unread.markMessageUnread("room", row.id);
-  expect(h.snapshot()).toMatchObject({
-    observedCount: 1,
-    manual: "local-only",
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  await unread.markMessageRead("room", row.id);
+  await unread.markMessageUnread("room", row.id);
+  unread.leaveChannel("room");
+  expect(unread.attention("room", row.id)).toMatchObject({
+    unread: true,
+    forced: true,
   });
-  h.session.unread.leaveChannel("room");
-  expect(h.snapshot()).toMatchObject({
-    observedCount: 0,
-    manual: "local-only",
+
+  h.emit([signed(h.alice, { kind: 5, content: "", tags: [["e", row.id]] })]);
+  expect(unread.attention("room", row.id)).toMatchObject({
+    status: "ineligible",
+    unread: false,
+    forced: false,
   });
-  await h.session.unread.enterChannel("room");
-  expect(h.snapshot()).toMatchObject({ observedCount: 0, manual: "none" });
+  expect(
+    unread.snapshot({
+      kind: "message",
+      channelId: "room",
+      messageId: row.id,
+    }),
+  ).toMatchObject({ manual: "none", observedCount: 0 });
+});
+
+it("does not revive a retained selected-message mark after access is restored", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "read", 11);
+  h.emit([row]);
+  const unread = h.session.unread;
+  await unread.enterChannel("room");
+  await unread.markMessageRead("room", row.id);
+  await unread.markMessageUnread("room", row.id);
+  unread.leaveChannel("room");
+  expect(unread.attention("room", row.id).forced).toBe(true);
+
+  h.emit([roster(h.relay, "room", [], 20)]);
+  expect(unread.attention("room", row.id).status).toBe("unknown");
+  h.grant("room", 21);
+  h.emit([row]);
+  await unread.enterChannel("room");
+  expect(unread.attention("room", row.id)).toMatchObject({
+    unread: false,
+    forced: false,
+  });
 });
 
 it("manual message intent participates in shared counts and is cleared by explicit subtree read", async () => {

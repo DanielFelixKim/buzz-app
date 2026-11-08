@@ -74,6 +74,13 @@ viewport):
   marked unread keep their intent. These marks stay on this device:
   frontier-only sync never publishes `msg:` marks, though it still reads them
   from older clients.
+- The channel message menu's **Mark unread** keeps the selected message and its
+  currently loaded reply subtree as exact unread targets for the current window
+  session. Leaving and reopening the channel does not clear those IDs: shared
+  message selectors continue to report them after the sidebar hint is
+  reconciled. Reading the selected subtree or channel in this window clears
+  that intent; deletion, access retirement, and session disposal end it. The exact target
+  set is not restored as a restart-persistent mark.
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.
