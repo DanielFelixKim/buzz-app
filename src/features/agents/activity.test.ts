@@ -630,5 +630,27 @@ it("a remote final send ends its turn provisionally: the harness confirms it, li
     }),
   );
   expect(state("three")).toBe("working");
+
+  // An end the harness never confirms goes unknown for status recovery,
+  // whose authoritative readback replaces the provisional outcome.
+  // Recovery reads back by session.
+  f.send(
+    f.item("turn_started", "four", { timestamp: at(-4000), sessionId: "S" }),
+  );
+  f.send(
+    f.item("acp_read", "four", {
+      timestamp: at(-3000),
+      sessionId: "S",
+      payload: tool("last", { status: "completed", rawInput: final }),
+    }),
+  );
+  expect(state("four")).toBe("ended");
+  vi.advanceTimersByTime(31000);
+  const four = () => f.snapshot().turns.find((turn) => turn.turnId === "four");
+  expect(four()).toMatchObject({ state: "unknown", provisional: true });
+  const unknown = four();
+  if (unknown) f.activity.queries.reconcile(unknown, "error");
+  expect(four()).toMatchObject({ state: "ended", outcome: "error" });
+  expect(four()?.provisional).toBeUndefined();
   f.activity.dispose();
 });

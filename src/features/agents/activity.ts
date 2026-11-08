@@ -202,14 +202,18 @@ export function createAgentActivity(
             ? { triggeringEventIds: turn.triggeringEventIds }
             : {}),
           ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
-          state: turn.ended
-            ? "ended"
-            : status === "listening" &&
-                turn.epoch === epoch &&
-                now - turn.timestamp <= ACTIVITY_FRESH_MS &&
-                turn.timestamp <= now + 5000
-              ? "working"
-              : "unknown",
+          state: (() => {
+            const fresh =
+              status === "listening" &&
+              turn.epoch === epoch &&
+              now - turn.timestamp <= ACTIVITY_FRESH_MS &&
+              turn.timestamp <= now + 5000;
+            // A final send's end the harness never confirms goes unknown, like
+            // a silent working turn, so status recovery can read it back.
+            if (turn.ended)
+              return turn.provisional && !fresh ? "unknown" : "ended";
+            return fresh ? "working" : "unknown";
+          })(),
         }),
     );
     // A primitive snapshot lets workspace subscribers ignore observer records and
@@ -465,14 +469,15 @@ export function createAgentActivity(
         const current = turns.get(`${turn.agent}:${turn.turnId}`);
         if (
           !current ||
-          current.ended ||
+          (current.ended && !current.provisional) ||
           !turn.sessionId ||
           current.sessionId !== turn.sessionId ||
           current.channelId !== turn.channelId
         )
           return;
+        const { provisional: _provisional, ...settled } = current;
         turns.set(`${turn.agent}:${turn.turnId}`, {
-          ...current,
+          ...settled,
           ended: true,
           outcome,
         });
