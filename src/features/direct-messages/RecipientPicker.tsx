@@ -135,7 +135,9 @@ export function RecipientPicker({
     key: query,
     settled: !directory.loading,
   });
-  const agents = useAgentChoices(session, false);
+  // The composer lists every agent you run, so it loads them; elsewhere the
+  // picker observes the ones already known.
+  const agents = useAgentChoices(session, !!onChooseChannel, !!onChooseChannel);
   const removal = useChipRemoval();
   const atLimit = selected.length >= maxRecipients;
   const needle = query.trim().toLowerCase();
