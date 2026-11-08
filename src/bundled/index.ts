@@ -48,6 +48,8 @@ import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
 import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
+import activitySidebarManifest from "./activity-sidebar/manifest.json";
+import * as activitySidebar from "./activity-sidebar";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
@@ -191,6 +193,13 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...inboxManifest, apiVersion: 1 },
     module: inbox,
     enabledByDefault: true,
+  },
+  // PROTOTYPE: on by default on this branch, except under unit tests, so
+  // the classic sidebar's coverage still runs.
+  {
+    manifest: { ...activitySidebarManifest, apiVersion: 1 },
+    module: activitySidebar,
+    enabledByDefault: import.meta.env.MODE !== "test",
   },
   {
     manifest: { ...remindersManifest, apiVersion: 1 },

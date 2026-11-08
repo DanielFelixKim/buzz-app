@@ -40,8 +40,6 @@ import {
   activityViewFor,
   useActivityView,
 } from "./ActivitySidebar";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { SidebarIcon } from "../../shared/design-system/icons";
 
 import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
@@ -216,19 +214,14 @@ function ScopedSidebar({
   useEffect(() => {
     writeView(scope, "navigation-scope", view);
   }, [scope, view]);
-  // PROTOTYPE: the Activity-style sidebar, on by default on this branch
-  // (off under test, so the classic sidebar's coverage still runs).
-  const [activityMode, setActivityMode] = useState(
+  // PROTOTYPE: the Activity sidebar plugin replaces this sidebar while on.
+  const activityMode = useSyncExternalStore(
+    props.sidebarScope?.subscribeViews ?? noSubscription,
     () =>
-      readView<boolean>(
-        scope,
-        "activity-sidebar:enabled",
-        import.meta.env.MODE !== "test",
-      ) !== false,
+      !!props.sidebarScope
+        ?.views?.()
+        .some((entry) => entry.sidebar === "activity"),
   );
-  useEffect(() => {
-    writeView(scope, "activity-sidebar:enabled", activityMode);
-  }, [scope, activityMode]);
   const [activityView, setActivityView] = useActivityView(scope);
   // Opening a conversation from elsewhere shows the scope it belongs to.
   const [activityLocation, setActivityLocation] = useState(location);
@@ -244,21 +237,6 @@ function ScopedSidebar({
         : undefined;
     if (next) setActivityView(next);
   }
-  const activityToggle = (
-    <IconButton
-      variant="ghost"
-      size="sm"
-      aria-label={
-        activityMode ? "Use the classic sidebar" : "Use the Activity sidebar"
-      }
-      title={
-        activityMode ? "Use the classic sidebar" : "Use the Activity sidebar"
-      }
-      aria-pressed={activityMode}
-      onClick={() => setActivityMode((on) => !on)}
-      icon={<SidebarIcon aria-hidden="true" size={16} />}
-    />
-  );
   const showActivity = activityMode && !restriction;
   const filter = restriction ? "solo" : view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
@@ -294,7 +272,6 @@ function ScopedSidebar({
             />
           )}
         </div>
-        {!restriction && activityToggle}
         {props.creationAction}
       </div>
       {showActivity && (
