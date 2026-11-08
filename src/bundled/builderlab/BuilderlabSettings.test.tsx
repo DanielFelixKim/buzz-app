@@ -124,9 +124,7 @@ it("keeps a pending login mounted while navigating between management and overvi
       },
     }),
   );
-  expect(
-    await screen.findByText("Signed in as builder@example.com."),
-  ).toBeVisible();
+  expect(await screen.findByText("builder@example.com")).toBeVisible();
   expect(acquire).toHaveBeenCalledTimes(1);
   expect(document.body).not.toHaveTextContent("secret");
   session.dispose();

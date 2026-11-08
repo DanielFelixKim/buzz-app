@@ -20,6 +20,7 @@ export type RemoteAgent = Readonly<{
   name: string;
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
+  createdAt?: number;
   instructions?: string;
   modelId?: string;
   reasoningEffort?: string;
@@ -695,6 +696,11 @@ export function createAgentClient(
         name: row.agent_name,
         pubkey: row.agent_pubkey,
         status: agentStatus(row.status),
+        ...(row.created_at !== undefined &&
+        Number.isFinite(Number(row.created_at)) &&
+        Number.isFinite(new Date(Number(row.created_at)).getTime())
+          ? { createdAt: Number(row.created_at) }
+          : {}),
         instructions: row.agent_instructions ?? "",
         ...(typeof row.model_id === "string" ? { modelId: row.model_id } : {}),
         ...(typeof row.reasoning_effort === "string"

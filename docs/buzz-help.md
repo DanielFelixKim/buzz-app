@@ -122,6 +122,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Hosted communities have Active/Archived filters, name/address search and row
   menus for copying addresses and available management actions. **Create community**
   opens the address form; quota and identity checks still govern creation.
+  Remote agents show model, setup state and creation date when available, with
+  **Copy key** on each row. Use **Open Agents** from the empty list to create one.
+  In builds using a shared sign-in, Builderlab's account notice names the provider;
+  **Manage account** opens Identity, where that sign-in is managed.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.

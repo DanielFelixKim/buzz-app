@@ -240,6 +240,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         summaries={{ communities: communityOverview, agents: agentOverview }}
         account={
           <Login
+            notice
             showHeading={false}
             session={session}
             available={loginAvailable}
@@ -262,6 +263,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
             active={active}
             onOverview={setAgentOverview}
             showHeading={false}
+            openAgents={() => {
+              if (active())
+                void ctx.navigation.open({
+                  version: 1,
+                  kind: "page",
+                  pluginId: "buzz.agents",
+                  pageId: "agents",
+                });
+            }}
           />
         }
       />

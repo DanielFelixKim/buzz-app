@@ -1,6 +1,7 @@
 import type { BuilderlabViewerSession } from "../../features/browser/api";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { HostResponse } from "../../features/host/service";
+import { serverName } from "../../features/federated-identity/community-servers";
 
 export type Account = Readonly<{
   subject: string;
@@ -37,6 +38,8 @@ export type BuilderlabRequest = Readonly<{
  * Neither hands its token to consumers.
  */
 export type BuilderlabSession = Readonly<{
+  /** Display name of the native sign-in provider, from its build configuration. */
+  providerName?: string | undefined;
   snapshot(): LoginSnapshot;
   subscribe(listener: () => void): () => void;
   credential(): Credential;
@@ -211,6 +214,10 @@ export function createNativeSession(
   const stop = identity.subscribe(project);
   project();
   const session: BuilderlabSession = {
+    get providerName() {
+      const authority = identity.snapshot().authority;
+      return authority ? serverName(authority) : undefined;
+    },
     snapshot: () => state,
     subscribe(listener) {
       listeners.add(listener);
