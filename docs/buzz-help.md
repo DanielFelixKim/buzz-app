@@ -20,9 +20,13 @@ the interface unless an available tool actually supports that action.
 On supported desktop hosts, a running local agent with voice support joins your
 connected Huddle when it is also a member of that Huddle's room. Membership of
 the parent conversation alone is insufficient. Several agents can participate.
-Your own active agents show “listening to you” in the Huddle. Remote participants
-see no listening badge: the agent’s own client enforces who it hears, and other
-clients cannot verify that. Each filters for audio from your connected devices
+Starting a Huddle in a one-to-one DM with your running voice-capable agent
+adds it to the Huddle room; joining an existing Huddle does not. You can also
+add agents through the Huddle's member controls. On the hosting computer, a
+seated agent shows a smaller avatar, a rotating ring while it works (activity
+dots in the compact player), and its normal size while speaking. This state is
+not shared with remote participants. The agent’s own client enforces who it
+hears. Each filters for audio from your connected devices
 and speaks to everyone. The current audio protocol can briefly misattribute delayed
 audio when a connection slot is reused; this is not a strict privacy guarantee.
 Other people or speakers near your microphones can also be heard. Simultaneous
@@ -297,6 +301,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   later. It may also be absent when unread evidence is incomplete, or when read
   intent or the read evidence needed to locate the boundary changes before it is
   established.
+- **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention
+  dot and the thread dot. Switching away from Buzz pauses this: new messages
+  can light the row even while that conversation stays selected. The macOS Dock dot follows the rows. Nothing is marked
+  read: unread threads keep their dots in the conversation and in Activity →
+  Threads, and **New messages** still marks where you left off. A mention, DM or
+  reply to you that arrives after you leave lights the row again, as does any
+  newer message; **Mark as unread** still shows on it. On another device, rows
+  with unread mentions, DMs or replies to you light again until you read them.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
@@ -305,6 +317,22 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Offline**: when Buzz can't reach a community, it shows the conversations
   saved on this device. Once Buzz reconnects, you can load messages older than
   those, and the top of the conversation says so.
+- **Losing the connection**: Buzz keeps retrying on its own and says nothing
+  for the first 30 seconds. If it still can't connect, a notice at the bottom
+  right says "Buzz is having trouble connecting" until it reconnects. There is
+  nothing to press.
+- **Refused by a community**: if a community refuses your account, one
+  notice at the bottom right says so on every page, with what fixes it. It
+  doesn't retry on its own.
+  - **Sign in to open this community**: your sign-in ended or expired.
+    **Sign in with** that community's server. If Buzz still thinks you're
+    signed in, **Sign in again** signs you out of that server and back in.
+  - **This community needs a sign-in Buzz doesn't support yet**: this build
+    can't sign in to that community. Ask its admin which Buzz version or
+    server to use.
+  - **You don't have access to this community**: when you're signed in through
+    the community's server, it names the account it refused and offers
+    **Switch account**. **Check again** once an admin has added you.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
@@ -617,6 +645,13 @@ available rather than silently discarding it.
 
 ## Choosing and customizing agents
 
+- Open an agent’s **Memory** tab and expand a memory to read it with Markdown
+  formatting, including headings, lists, code, tables, and line breaks. Memory
+  images stay as text rather than loading remote content. **Copy full body** in
+  a memory’s context menu copies its original Markdown.
+  Buzz links use the app’s link labels and previews and open their destination
+  in the same community. Links inside code stay as text.
+
 - Buzz supports different agent types, including Claude, Codex, Goose, and Pi.
   A **harness** is the software that runs an agent; a **model** is the AI it
   uses. Available types and models depend on the platform, active plugins, and
@@ -649,6 +684,9 @@ available rather than silently discarding it.
   then choose a supported **Thinking** level. If Builderlab recommends a model
   and thinking level, both start selected; change either to choose your own. Both
   choices are required; changing the model clears the thinking choice.
+  A bolt after a model's name means Builderlab serves it on faster hardware, so
+  it replies sooner. When only some models are fast, the menu also lists them
+  in a **Fast** section at the top, above the families.
   Instructions are optional. **Create agent** stays disabled until its name and
   required choices are complete; Builderlab also waits for sign-in and its model
   catalog.
@@ -743,8 +781,17 @@ available rather than silently discarding it.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there (or when creating a Claude agent), once for every Claude agent. Buzz
-  keeps it in the system's secure credential store (Keychain on macOS) and
+  there, once for every Claude agent. When creating a Claude agent or editing
+  one that runs on this computer, click **Add key** beside **Harness** to open
+  **Set up Claude**. Builds with interactive authentication show **Sign in**
+  instead. Selecting Claude does not open setup automatically; closing setup
+  keeps Claude selected. An interactive sign-in continues if you navigate Back;
+  returning to creation restores its pending controls with **Cancel**, without
+  starting another sign-in. Explicitly closing setup cancels a pending sign-in.
+  **Model**, **Thinking**, and agent creation wait until credentials are saved.
+  Agents on execution targets use that target's credentials, not a key on this
+  computer. Buzz keeps the API key in the system's secure credential store
+  (Keychain on macOS) and
   gives it to every Claude process, security reviews included. Commands a
   Claude agent runs inherit it, so they can read the key. Until a key is
   saved, Claude agents don't answer and Claude reviews fail closed.
@@ -820,17 +867,25 @@ available rather than silently discarding it.
   sessions**, which searches goose's local history and can take a while. Watch
   and timer turns from before this version aren't listed, and **Search older
   sessions** doesn't find them, because it only matches channel conversations.
-- Failed requests show **Couldn’t finish**, cancelled requests **Stopped**, and
-  unconfirmed outcomes **Status unavailable**. Choose **Details** for status
-  information. For your remote agents, Buzz checks again automatically when no
-  final result is available yet, or after a temporary lookup failure, while you
-  stay signed in and connected. Requests sent to several agents keep each
-  agent's stopped outcome visible alongside another agent's failure.
-- Automatic failure replies appear below their request as a compact status line;
-  **Details** expands the explanation inline. Failures of channel requests also
-  appear in the channel.
-- For agents running on this device, **Details** can offer **Retry** to ask again
-  and **Dismiss** to hide the failure.
+- Confirmed failures keep **Couldn’t finish** visible after the working indicator
+  stops, even when the agent sends no reply. Cancelled requests show **Stopped**.
+  There is no viewing timer. Outcomes supplied only by live activity may be lost
+  after restarting Buzz; signed failure messages remain in conversation history.
+  An uncertain status does not create an error balloon.
+  Expand the summary to read the explanation and recorded updates, view Activity,
+  or use supported recovery actions. The expanded outcome sits below **Collapse**;
+  collapsing keeps the outcome visible.
+  For your remote agents, Buzz checks again automatically when no final result is
+  available yet, or after a temporary lookup failure, while you stay signed in
+  and connected. Requests sent to several agents keep each agent's outcome visible.
+- Automatic failure explanations share the related activity history when linked
+  to the same request. Otherwise they have their own expandable outcome bubble.
+  Ordinary replies and partial results remain visible. Failures of channel
+  requests also appear in the channel.
+- For agents running on this device, expanded outcomes can offer **Retry** to ask
+  again and **Dismiss** to hide the outcome for the current app session. Dismiss
+  does not delete a recorded failure message; it can show the outcome again after
+  restarting Buzz.
 - Any agent running on this device can read and change some Buzz settings
   here when you ask it to: appearance mode, interface size, accent color,
   vibe level, where new threads open, Solo follow-up behavior, automatic
@@ -980,9 +1035,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   say when information is incomplete or inaccessible. Never join, invite, share,
   or change community content merely to explain how Buzz works.
 
-On macOS, debug builds can use a trusted local credential helper for human restore
-and agent creation, restore, and deletion. See [local helper setup](identity.md#local-restore-helper-on-macos).
-Release builds ignore this optional helper.
+On macOS, `just desktop me` debug builds keep their Keychain items through a local
+credential helper, so Keychain asks once per item rather than after each rebuild.
+See [local credential helper](identity.md#local-credential-helper-on-macos).
+Release builds ignore it.
 
 ### Builderlab in development
 
