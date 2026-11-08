@@ -66,8 +66,12 @@
   font-size: var(--text-label-sm);
   line-height: var(--text-label-sm--line-height);
   letter-spacing: var(--text-label-sm--letter-spacing);
-  font-weight: var(--type-weight-normal);
+  /* The place leads every row: medium weight in full ink, read or not. */
+  font-weight: var(--type-weight-medium);
   color: var(--navigation-item-text, var(--text-navigation));
+}
+[data-conversation-row]:not([data-selected]) .title {
+  color: var(--text-standard);
 }
 .placeIcon {
   display: inline-flex;
@@ -127,16 +131,7 @@
   background: var(--text-navigation-unread);
 }
 
-/* Unread: the dot, a medium-weight title, and full ink. */
-[data-conversation-row][data-state="unread"] .title {
-  font-weight: var(--type-weight-medium);
-}
-[data-conversation-row][data-state="unread"]:not([data-selected]) .title {
-  color: var(--text-navigation-unread);
-}
-[data-conversation-row][data-state="unread"]:not([data-selected]) .preview {
-  color: var(--text-standard);
-}
+/* Unread changes nothing but the dot: a read row looks the same without it. */
 
 /* A selected row takes the sidebar's accent; every part follows its ink. */
 [data-conversation-row][data-selected]
