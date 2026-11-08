@@ -897,6 +897,10 @@ shared Panel/Dialog/Popover components, including a nested Panel reset. Verify
 both themes, portals, supported states and actual product flows before adoption
 is called complete; token math alone cannot validate the CSS cascade.
 
+Body-copy links use `Button variant="link" size="text"`: small label type,
+no insets, and the shared keyboard focus treatment. Caption-sized `inline`
+buttons remain for compact controls such as composer choices.
+
 ## Controls
 
 An Input that must retain focus during asynchronous work can pair `readOnly` with

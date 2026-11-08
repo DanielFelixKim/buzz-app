@@ -2502,3 +2502,68 @@ it.each(["accepted", "bound abort", "definitive rejection"])(
     ).toEqual(next);
   },
 );
+
+it("shares owned/newer active previews and refreshes them on focus", async () => {
+  const overview = vi.fn();
+  const rows = [
+    {
+      id: "older",
+      name: "Older",
+      owner_pubkey: local,
+      created_at: "2026-01-01",
+    },
+    {
+      id: "other",
+      name: "Other",
+      owner_pubkey: other,
+      created_at: "2026-03-01",
+    },
+    {
+      id: "newer",
+      name: "Newer",
+      owner_pubkey: local,
+      created_at: "2026-02-01",
+    },
+    { id: "archived", name: "Archived", archived_at: "2026-04-01" },
+  ];
+  routes["/api/builderlab/list"] = () => ({
+    communities: rows,
+    quota_used: 4,
+    quota_limit: 5,
+    can_create: true,
+  });
+  render(
+    <HostedCommunities
+      api={brokerApi}
+      active={() => true}
+      onOverview={overview}
+    />,
+  );
+  expect(overview).toHaveBeenLastCalledWith({ kind: "pending" });
+  await waitFor(() =>
+    expect(overview).toHaveBeenLastCalledWith({
+      kind: "filled",
+      items: [
+        { key: "newer", label: "Newer" },
+        { key: "older", label: "Older" },
+        { key: "other", label: "Other" },
+      ],
+    }),
+  );
+  expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
+    1,
+  );
+  routes["/api/builderlab/list"] = () => ({
+    communities: [],
+    quota_used: 0,
+    quota_limit: 5,
+    can_create: true,
+  });
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(overview).toHaveBeenLastCalledWith({ kind: "empty" }),
+  );
+  expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
+    2,
+  );
+});

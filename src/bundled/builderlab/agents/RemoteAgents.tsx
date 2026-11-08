@@ -1,6 +1,8 @@
+import type { OverviewObserver } from "../overview";
 import {
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -19,26 +21,51 @@ export function RemoteAgents({
   client,
   session,
   active,
+  onOverview,
+  showHeading = true,
 }: {
   client: AgentClient;
   session: BuilderlabSession;
   active(): boolean;
+  onOverview?: OverviewObserver | undefined;
+  showHeading?: boolean;
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
   const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const focus = () => {
+      if (active() && session.snapshot().status === "signed-in")
+        setRevision((value) => value + 1);
+    };
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, [active, session]);
+  useLayoutEffect(() => {
+    if (
+      active() &&
+      (login.status !== "signed-in" || !login.account?.canUseRemoteAgents)
+    )
+      onOverview?.({
+        kind: login.status === "signed-in" ? "unavailable" : "empty",
+      });
+  }, [active, onOverview, login.status, login.account?.canUseRemoteAgents]);
   if (login.status === "signed-in" && !login.account?.canUseRemoteAgents)
     return (
       <section className="mt-section-gap" aria-label="Remote agents">
-        <InlineHeader
-          title="Remote agents"
-          subtitle="Unavailable for this account"
-        />
+        {showHeading && (
+          <InlineHeader
+            title="Remote agents"
+            subtitle="Unavailable for this account"
+          />
+        )}
       </section>
     );
   return login.status === "signed-in" ? (
     <AgentList
       key={`${login.account?.subject}:${revision}`}
       client={client}
+      onOverview={onOverview}
+      showHeading={showHeading}
       active={active}
       refresh={() => {
         if (active()) setRevision((value) => value + 1);
@@ -51,14 +78,39 @@ function AgentList({
   client,
   active,
   refresh,
+  onOverview,
+  showHeading,
 }: {
   client: AgentClient;
   active(): boolean;
   refresh(): void;
+  onOverview?: OverviewObserver | undefined;
+  showHeading: boolean;
 }) {
   const [agents, setAgents] = useState<readonly RemoteAgent[]>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  useLayoutEffect(() => {
+    if (!active() || !onOverview) return;
+    onOverview(
+      loading
+        ? { kind: "pending" }
+        : agents
+          ? agents.length
+            ? {
+                kind: "filled",
+                items: agents.map((agent) => ({
+                  key: agent.id,
+                  label: agent.name,
+                  ...(agentState(agent) === "Needs setup"
+                    ? { note: "Needs setup" }
+                    : {}),
+                })),
+              }
+            : { kind: "empty" }
+          : { kind: "failed" },
+    );
+  }, [active, onOverview, agents, loading]);
   const isActive = useEffectEvent(active);
   useEffect(() => {
     const controller = new AbortController();
@@ -90,16 +142,27 @@ function AgentList({
       className="mt-section-gap flex flex-col gap-3"
       aria-label="Remote agents"
     >
-      <InlineHeader
-        title="Remote agents"
-        subtitle="Create, edit and delete agents in the Agents tab."
-        actions={
-          <Button variant="ghost" size="sm" loading={loading} onClick={refresh}>
-            <ArrowsClockwiseIcon aria-hidden="true" />{" "}
-            {error ? "Retry" : "Refresh agents"}
-          </Button>
-        }
-      />
+      {showHeading ? (
+        <InlineHeader
+          title="Remote agents"
+          subtitle="Create, edit and delete agents in the Agents tab."
+          actions={
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={loading}
+              onClick={refresh}
+            >
+              <ArrowsClockwiseIcon aria-hidden="true" />{" "}
+              {error ? "Retry" : "Refresh agents"}
+            </Button>
+          }
+        />
+      ) : (
+        <Button variant="ghost" size="sm" loading={loading} onClick={refresh}>
+          {error ? "Retry" : "Refresh agents"}
+        </Button>
+      )}
       {loading && (
         <p role="status" className="text-body-sm text-secondary">
           Loading remote agents…
@@ -139,4 +202,14 @@ function AgentList({
       )}
     </section>
   );
+}
+
+function agentState(agent: RemoteAgent) {
+  return agent.status === "Revoked"
+    ? "Revoked"
+    : agent.status === "Unknown"
+      ? "Unknown"
+      : agent.status === "Active" && agent.modelSelectionStatus === "valid"
+        ? "Active"
+        : "Needs setup";
 }

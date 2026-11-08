@@ -1,8 +1,10 @@
+import type { OverviewObserver } from "../overview";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -70,11 +72,13 @@ export function HostedCommunities({
   api,
   active,
   sharedSignIn = false,
+  onOverview,
 }: {
   api: Api;
   active(): boolean;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
+  onOverview?: OverviewObserver;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -364,6 +368,13 @@ export function HostedCommunities({
       if (next) await load();
     });
   const busy = action !== null;
+  const refreshOnFocus = useEffectEvent(() => {
+    if (activeRef.current() && auth && !busy) void run("refresh", () => load());
+  });
+  useEffect(() => {
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, []);
   // Repeated inside open dialogs, whose modal backdrop hides the page copy.
   const failure = error && (
     <p role="alert" className="error flex items-start gap-2 break-words">
@@ -409,6 +420,32 @@ export function HostedCommunities({
     setIdentity(reply.identity ?? null);
     await settle();
   };
+  useLayoutEffect(() => {
+    if (!activeRef.current() || !onOverview) return;
+    if (auth === undefined) return onOverview({ kind: "pending" });
+    if (!auth)
+      return onOverview({ kind: error || unsupported ? "failed" : "empty" });
+    if (quotaState === null)
+      return onOverview({ kind: error ? "failed" : "pending" });
+    const own = (community: Community) =>
+      community.owner_pubkey === bound ? 0 : 1;
+    const created = (community: Community) =>
+      Date.parse(community.created_at ?? "") || 0;
+    const shown = communities
+      .filter((community) => !community.archived_at)
+      .sort((a, b) => own(a) - own(b) || created(b) - created(a));
+    onOverview(
+      shown.length
+        ? {
+            kind: "filled",
+            items: shown.map((community, index) => ({
+              key: community.id ?? String(index),
+              label: community.name ?? "Untitled",
+            })),
+          }
+        : { kind: "empty" },
+    );
+  }, [onOverview, auth, error, unsupported, quotaState, communities, bound]);
   const mutate = async (
     kind: "archive" | "unarchive",
     community: Community,

@@ -94,6 +94,16 @@
   .buzz-button[data-size="xs"]:has(> .buzz-button-label > svg:first-child) {
     padding-inline-start: var(--space-1);
   }
+  /* Text links align with adjacent body copy, with the shared focus treatment. */
+  .buzz-button[data-size="text"] {
+    @apply text-label-sm;
+    min-height: 0;
+    padding: 0;
+  }
+  .buzz-button[data-size="text"] .buzz-button-label > svg {
+    width: 1em;
+    height: 1em;
+  }
   /* Inline caption choices, such as the composer's model label. */
   .buzz-button[data-size="inline"] {
     @apply text-caption;

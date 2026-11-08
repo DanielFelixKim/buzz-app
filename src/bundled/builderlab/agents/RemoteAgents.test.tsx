@@ -46,15 +46,21 @@ async function fixture() {
 }
 it("loads automatically, refreshes and hides account data on sign-out", async () => {
   const h = await fixture();
-  render(<RemoteAgents {...h} active={() => true} />);
+  const overview = vi.fn();
+  render(<RemoteAgents {...h} active={() => true} onOverview={overview} />);
+  expect(overview).toHaveBeenLastCalledWith({ kind: "pending" });
   expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
+  expect(overview).toHaveBeenLastCalledWith({
+    kind: "filled",
+    items: [{ key: "one", label: "Helper", note: "Needs setup" }],
+  });
+  expect(h.request).toHaveBeenCalledTimes(1);
   expect(screen.getByText(row.agent_pubkey)).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent("secret");
   h.request.mockResolvedValue(response([]));
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Refresh agents" }));
+  act(() => window.dispatchEvent(new Event("focus")));
   expect(await screen.findByText("No remote agents yet.")).toBeInTheDocument();
+  expect(overview).toHaveBeenLastCalledWith({ kind: "empty" });
   act(() => h.session.signOut());
   expect(
     screen.queryByRole("region", { name: "Remote agents" }),
