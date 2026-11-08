@@ -310,7 +310,7 @@ it.each([
   ],
   [
     "network-timeout",
-    "Buzz couldn’t reach the sign-in service. Check your connection, then try again.",
+    "Buzz couldn’t reach the sign-in service. Check your connection and try again. If you’re online, the service may be having trouble.",
   ],
   [
     "storage-denied",

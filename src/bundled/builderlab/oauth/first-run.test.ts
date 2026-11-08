@@ -493,7 +493,7 @@ describe("the NIP-FI sign-in", () => {
         firstRunCredential(new AbortController().signal, fi.service),
       ).rejects.toThrow(
         new Error(
-          "Buzz couldn’t reach the sign-in service. Check your connection, then try again.",
+          "Buzz couldn’t reach the sign-in service. Check your connection and try again. If you’re online, the service may be having trouble.",
         ),
       );
       expect(fi.service.signIn).toHaveBeenCalledOnce();

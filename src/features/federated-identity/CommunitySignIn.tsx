@@ -11,7 +11,7 @@ import type { CommunityRefusal } from "../relay/http-admission";
 export const SIGN_IN_TIMED_OUT = "Sign-in timed out. Try again.";
 
 const UNREACHABLE =
-  "Buzz couldn’t reach the sign-in service. Check your connection, then try again.";
+  "Buzz couldn’t reach the sign-in service. Check your connection and try again. If you’re online, the service may be having trouble.";
 const UNUSABLE =
   "The sign-in service sent an answer Buzz couldn’t use. Try again in a few minutes.";
 /** What each failure code native reports for a sign-in means, with its next step. */
@@ -39,7 +39,7 @@ const RECOVERY: Readonly<Record<string, string>> = {
   "session-changed":
     "Another sign-in started before this one finished. Try again.",
   "adapter-refused":
-    "The sign-in service turned this sign-in down. Try again in a few minutes.",
+    "The sign-in service turned this sign-in down. Try again, or check your account.",
   "invalid-response": UNUSABLE,
   "response-too-large": UNUSABLE,
   "invalid-expiry": UNUSABLE,

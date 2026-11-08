@@ -30,8 +30,9 @@ your agents, one place.", with **Sign in with Builderlab**
 provider) and a live **Community URL** field with **Continue** beside it (the
 same field and normalisation as Join a community below). Sign in is the one
 Builderlab sign-in every Builderlab feature uses, the native NIP-FI session
-described next. A failed or canceled sign-in shows *Couldn’t sign in* with the
-error and **Back** to the welcome screen. The welcome screen carries the
+described next. A failed or canceled sign-in shows *Couldn’t sign in* with what
+went wrong and its next step, **Try again**, **Back** to the welcome screen,
+and a link to the sign-in server's account site for when it keeps happening. The welcome screen carries the
 onboarding artwork and wordmark, and every later first-run page sits on the
 same artwork; pages without a finished design are plain black-and-white
 wireframes. When a page replaces another, focus moves to the new page's

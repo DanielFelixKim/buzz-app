@@ -43,6 +43,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
   **Create account** and **Sign in**, which open the Builderlab account page;
   once this computer was set up through Builderlab, **Sign in** comes first.
+  If sign-in fails, *Couldn’t sign in* says what went wrong and what to do
+  (for example, verify your email first), with **Try again** and a link to
+  your account on the sign-in server's site.
   **Other options** reveals a **Community URL** field
   for an address or invite link; desktop does not offer QR scanning.
   With no communities yet, **Join** advances through full-page access and profile
