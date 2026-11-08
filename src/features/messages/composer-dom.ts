@@ -139,7 +139,7 @@ export type ComposerInputElement = HTMLDivElement & {
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
   toggleFormat(format: ComposerFormat): void;
-  insertLineBreak(): boolean;
+  insertLineBreak(kind?: "paragraph" | "hard"): boolean;
   editLink(): ComposerLinkEdit | null;
   removeRecipient(pubkey: string): void;
   undo(redo: boolean): void;
