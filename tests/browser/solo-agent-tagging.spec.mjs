@@ -41,12 +41,16 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
   let gapped = false;
   const held = Promise.withResolvers();
   const gate = Promise.withResolvers();
-  // The gap also clears the agent inventory. Refuse its re-read until the
-  // snapshot is in flight, so the read the viewer's Retry issues is the one
-  // scheduled against it. The library rejects a record from another author
-  // outright, with no transport error to retry or log.
-  let inventoryAnswered = true;
-  let refused = 0;
+  // The gap also clears the agent inventory. Refuse its first re-read, so
+  // the chat has no agents. The library rejects a record from another author
+  // outright, with no transport error to retry and no console error. Whether
+  // the reconnect rereads it again (#2948) depends on whether the chat is
+  // open when the connection returns, so hold every later read (that reread,
+  // or the one the viewer's Retry issues) until the viewer has clicked Retry.
+  // Each is scheduled against the held snapshot.
+  let refused = false;
+  const released = Promise.withResolvers();
+  const answered = [];
   const foreign = app.signRelay({
     kind: INVENTORY_KINDS[1],
     created_at: 1,
@@ -60,9 +64,13 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
         held.resolve(route.request());
         await gate.promise;
       }
-    } else if (isInventory(filters) && !inventoryAnswered) {
-      refused++;
-      return route.fulfill({ json: [foreign] });
+    } else if (gapped && isInventory(filters)) {
+      if (!refused) {
+        refused = true;
+        return route.fulfill({ json: [foreign] });
+      }
+      answered.push(route.request());
+      await released.promise;
     }
     await route.continue();
   });
@@ -75,42 +83,55 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     name: `Sending to ${agent.name}. Change agents`,
     exact: true,
   });
-  const retry = page.getByRole("button", { name: "Retry agents", exact: true });
-  const alert = page.getByRole("alert").filter({ has: retry });
+  const composer = page.getByRole("textbox", {
+    name: "Message your agents",
+    exact: true,
+  });
+  // The composer has no standing inventory notice (#2948): the mention menu
+  // offers Retry while the agent list has failed, even with a reread running.
+  const retry = page.getByRole("option", {
+    name: "Retry suggestions",
+    exact: true,
+  });
   try {
-    const started = page.waitForResponse(
-      (response) =>
-        query(response.request()) &&
-        isSnapshot(response.request().postDataJSON()),
-    );
+    const answers = (match) =>
+      page.waitForResponse(
+        (response) =>
+          query(response.request()) && match(response.request().postDataJSON()),
+      );
+    // Startup's inventory read completes, so the read the gap refuses is not
+    // one the gap then cancels.
+    const started = Promise.all([answers(isSnapshot), answers(isInventory)]);
     await page.goto(app.origin);
     await started;
     await expect(row).toBeVisible();
     gapped = true;
-    inventoryAnswered = false;
     app.relay.disconnect("primary");
     // A follow-up: switch from the team channel to the Solo chat.
     await row.click();
-    await expect(
-      page.getByRole("textbox", { name: "Message your agents", exact: true }),
-    ).toBeVisible();
+    await expect(composer).toBeVisible();
     const snapshot = await held.promise;
     expect(snapshot.headers()["x-buzz-read-priority"]).toBe("background");
-    // Without complete inventory the chat offers Retry and tags nobody.
-    await expect(alert).toBeVisible();
-    expect(refused).toBeGreaterThan(0);
+    // Without complete inventory the chat tags nobody and offers Retry.
+    await composer.pressSequentially("@");
+    await expect(retry).toBeVisible();
     await expect(pill).toHaveCount(0);
-    // The relay answers again. The snapshot is still running, so this read
-    // must not wait for it.
-    inventoryAnswered = true;
     await retry.click();
-    // Alone with one agent, the composer addresses it without a mention.
+    // The relay answers again. The snapshot is still running, so the
+    // inventory read must not wait for it.
+    released.resolve();
+    // Alone with one agent, the composer addresses it without a mention:
+    // Retry chose no one, and the draft is still the bare "@".
     await expect(pill).toBeVisible();
-    await expect(alert).toHaveCount(0);
+    await expect(retry).toHaveCount(0);
+    await expect(composer).toHaveText("@");
+    expect(answered.length).toBeGreaterThan(0);
+    for (const request of answered)
+      expect(request.headers()["x-buzz-read-priority"]).toBe("foreground");
   } finally {
+    released.resolve();
     gate.resolve();
   }
   // The snapshot completing changes nothing about the addressed agent.
   await expect(pill).toBeVisible();
-  await expect(alert).toHaveCount(0);
 });
