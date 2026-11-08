@@ -270,6 +270,9 @@ it("checks availability after a pause and creates a valid community", async () =
   const writeText = vi.fn(async () => {});
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   renderCard();
+  expect(
+    await screen.findByRole("button", { name: "Create community" }),
+  ).toHaveTextContent(/^Create$/);
   const input = await openCreate();
   await waitFor(() => expect(input).toBeEnabled());
   vi.useFakeTimers();

@@ -120,7 +120,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Builderlab** to return. Both lists load when the overview opens and refresh
   when the window regains focus; opening a section preserves its current draft.
   Hosted communities have Active/Archived filters, name/address search and row
-  menus for copying addresses and available management actions. **Create community**
+  menus for copying addresses and available management actions. **Create**
   opens the address form; quota and identity checks still govern creation.
   Remote agents show model, setup state and creation date when available, with
   **Copy key** on each row. Use **Open Agents** from the empty list to create one.

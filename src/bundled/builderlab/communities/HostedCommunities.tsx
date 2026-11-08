@@ -639,6 +639,7 @@ export function HostedCommunities({
         actions={
           <Button
             variant="prominent"
+            aria-label="Create community"
             disabled={
               !auth || !ready || busy || quotaState?.canCreate === false
             }
@@ -646,7 +647,7 @@ export function HostedCommunities({
               if (activeRef.current()) setCreateOpen(true);
             }}
           >
-            Create community
+            Create
           </Button>
         }
       />

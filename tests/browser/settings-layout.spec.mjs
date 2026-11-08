@@ -442,10 +442,14 @@ fiBuild(
                   name: "Sign in to manage hosted communities",
                 }),
               });
-          if (signedIn)
-            await expect(
-              card.getByRole("button", { name: "Create community" }),
-            ).toBeEnabled();
+          if (signedIn) {
+            const create = card.getByRole("button", {
+              name: "Create community",
+              exact: true,
+            });
+            await expect(create).toBeEnabled();
+            await expect(create).toHaveText("Create");
+          }
           await expect(card).toBeVisible();
           for (const scale of ["100%", "200%"]) {
             await page.evaluate((value) => {
