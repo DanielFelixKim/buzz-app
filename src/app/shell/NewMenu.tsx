@@ -92,7 +92,7 @@ function ReadyNewMenu({
       hint="familiar"
       ref={trigger}
       disabled={!available || !scope}
-      aria-label="New message"
+      aria-label="New"
       aria-haspopup="menu"
       title="New message (right-click for more)"
       variant="inset"
