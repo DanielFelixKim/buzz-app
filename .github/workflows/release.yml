@@ -23,6 +23,10 @@ env:
   # built-in server. The namespace must match that service's configuration.
   BUZZ_NSEC_BACKUP_SERVICE_URL: ${{ !vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG && 'https://app.builderlab.xyz/api/goose' || '' }}
   BUZZ_NSEC_BACKUP_NAMESPACE: ${{ !vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG && 'backup/bb-public/production' || '' }}
+  # The public Buzz mobile app's store listings, which the mobile Settings card
+  # offers to people signed in to app.builderlab.xyz (same condition as above).
+  BUZZ_MOBILE_APP_IOS_URL: ${{ !vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG && 'https://apps.apple.com/app/id6779728271' || '' }}
+  BUZZ_MOBILE_APP_ANDROID_URL: ${{ !vars.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG && 'https://play.google.com/store/apps/details?id=xyz.block.buzz.mobile' || '' }}
   # Public verification inputs; the native build and plugins.updater must match.
   # Candidate-only runs build without the updater.
   BUZZ_UPDATER_PUBLIC_KEY: ${{ !inputs.candidates && 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJDQjQ2RDZFMUEwOERFMTEKUldRUjNnZ2FibTIwTE10QkVaMzFyYkZlY0R4ajhmbFBjdncvNVRCYnNpSm9kaFNBaHQzemZlZHkK' || '' }}
