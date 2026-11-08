@@ -114,6 +114,8 @@ Settings is a reading/form column inside host-owned navigation. Reuse its center
 page surface, sidebar, fixed viewport width, or nested settings scroll container.
 A Settings destination starts with `Header`, then named groups with `InlineHeader`.
 Align headings with their groups' content, not just their outer borders.
+At narrow Settings widths, an end-aligned Header puts its actions below the
+title.
 
 Choose the group by how it behaves:
 

@@ -728,7 +728,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Introduce page content with a title and optional subtitle, eyebrow, icon, or actions. Use InlineHeader for groups within the page.",
     behavior:
-      "Semantic heading with caller-selected level. Top-aligned by default; align=end bottom-aligns the title and actions.",
+      "Semantic heading with caller-selected level. Top-aligned by default; align=end bottom-aligns the title and actions. Narrow Settings headers move end-aligned actions below the title.",
     variants: ["header", "inline", "align=end"],
     status: "proposed",
     collection: "components",

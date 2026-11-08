@@ -2662,17 +2662,20 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   ),
   header: () => (
     <SpecimenFrame
-      code={`<div>
+      code={`<div className="buzz-settings-page" style={{ containerType: "inline-size" }}>
   <Header
     title="Profile"
     eyebrow="Account"
     subtitle="Your local default for new communities."
   />
   <InlineHeader title="Preferences" subtitle="Choose what works for you." />
-  <Header title="Communities" align="end" actions={<Button>Create community</Button>} />
+  <Header title="Communities" align="end" actions={<Button aria-label="Create community">Create</Button>} />
 </div>`}
     >
-      <div>
+      <div
+        className="buzz-settings-page"
+        style={{ containerType: "inline-size" }}
+      >
         <Header
           title="Profile"
           eyebrow="Account"
@@ -2685,7 +2688,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
         <Header
           title="Communities"
           align="end"
-          actions={<Button>Create community</Button>}
+          actions={<Button aria-label="Create community">Create</Button>}
         />
       </div>
     </SpecimenFrame>
