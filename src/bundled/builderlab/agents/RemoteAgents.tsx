@@ -52,11 +52,15 @@ export function RemoteAgents({
   if (login.status === "signed-in" && !login.account?.canUseRemoteAgents)
     return (
       <section className="mt-section-gap" aria-label="Remote agents">
-        {showHeading && (
+        {showHeading ? (
           <InlineHeader
             title="Remote agents"
             subtitle="Unavailable for this account"
           />
+        ) : (
+          <p className="text-body-sm text-secondary">
+            Unavailable for this account
+          </p>
         )}
       </section>
     );

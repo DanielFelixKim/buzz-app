@@ -198,7 +198,9 @@ it.each([undefined, "", "http://builderlab.example"])(
       expect(screen.getByRole("status")).toHaveTextContent(
         /not configured|does not support/,
       );
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Sign in with Builderlab" }),
+      ).not.toBeInTheDocument();
       // Agents reads its own classifier key; Builderlab makes no native call.
       expect(
         native.invoke.mock.calls.filter(
@@ -486,6 +488,9 @@ it.each([true, false])(
           name: "Identity → Organization sign-in",
         }),
       ).toBeEnabled();
+      await user.click(
+        screen.getByRole("button", { name: "Open Remote agents" }),
+      );
       expect(
         await screen.findByText(
           canUseRemoteAgents
@@ -493,6 +498,12 @@ it.each([true, false])(
             : "Unavailable for this account",
         ),
       ).toBeInTheDocument();
+      await user.click(
+        screen.getByRole("button", { name: "Back to Builderlab" }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Open Communities" }),
+      );
       // Communities share the one sign-in and its identity link.
       expect(
         await screen.findByText("No hosted communities yet"),
@@ -501,6 +512,7 @@ it.each([true, false])(
       expect(
         screen.getAllByRole("button", {
           name: "Identity → Organization sign-in",
+          hidden: true,
         }),
       ).toHaveLength(1);
       expect(fetch).not.toHaveBeenCalled();
@@ -512,6 +524,9 @@ it.each([true, false])(
         generation: expect.any(Number),
         federated: "user:1",
       });
+      await user.click(
+        screen.getByRole("button", { name: "Back to Builderlab" }),
+      );
       await act(() => identity.service.signOut());
       expect(
         await screen.findByRole("button", { name: "Sign in with Builderlab" }),
@@ -1601,10 +1616,21 @@ it("uses one development-server login for the Settings account, hosting and remo
     expect(
       await screen.findByText("Signed in as dev@example.com."),
     ).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Communities" }),
+    );
     expect(await screen.findByText("No hosted communities yet")).toBeVisible();
-    expect(await screen.findByText("No remote agents yet.")).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "Sign out" })).toHaveLength(1);
     expect(screen.getByText(/Buzz identity connected/)).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Back to Builderlab" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Remote agents" }),
+    );
+    expect(await screen.findByText("No remote agents yet.")).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "Sign out", hidden: true }),
+    ).toHaveLength(1);
     expect(requests).toContainEqual(
       expect.objectContaining({
         revision: "server-one",
@@ -1628,6 +1654,9 @@ it("uses one development-server login for the Settings account, hosting and remo
       request: question,
       broker: { origin: window.location.origin, revision: "server-one" },
     });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Back to Builderlab" }),
+    );
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(
       await screen.findByRole("button", { name: "Sign in with Builderlab" }),
