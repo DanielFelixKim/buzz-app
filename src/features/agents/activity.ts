@@ -1,5 +1,5 @@
 import type { LocalAgentSource, LocalWork } from "./local-activity";
-import { activityPromptThread } from "./activity-transcript";
+import { activityFinalSend, activityPromptThread } from "./activity-transcript";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
@@ -69,6 +69,8 @@ type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   requests?: ActivityTurn["requests"];
   triggeringEventIds?: readonly string[];
   ended: boolean;
+  /** Ended by a final send, until the harness confirms it or the agent works on. */
+  provisional?: true;
   epoch: number;
   unresolvedTriggers?: readonly string[];
 };
@@ -289,13 +291,23 @@ export function createAgentActivity(
     const key = `${agent}:${item.turnId}`;
     const previous = turns.get(key);
     // Terminal evidence wins even when a delayed earlier heartbeat arrives later.
+    // A final send's end is provisional: the harness's end confirms it, and
+    // later agent work (a tool that shared its round) reopens the turn.
+    // Liveness alone doesn't, since the harness reports it until the task ends.
     if (
-      previous?.ended ||
+      (previous?.ended &&
+        !(
+          previous.provisional &&
+          (ends.has(item.kind) || item.kind.startsWith("acp_"))
+        )) ||
       (previous && previous.timestamp > timestamp && !ends.has(item.kind))
     )
       return;
     if (!previous && timestamp <= evidenceFloor) return;
     const payload = object(item.payload);
+    // A remote turn's posted final message ends it before the harness reports
+    // the task done, as a local agent's does.
+    const finalSend = item.kind === "acp_read" && activityFinalSend(payload);
     const root = payload?.threadRootEventId;
     const legacyRoot =
       item.kind === "acp_write" && !previous?.threadRootId
@@ -349,8 +361,11 @@ export function createAgentActivity(
       // Completion may precede liveness on a rolled-back producer clock. Keep
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
-      ended: ends.has(item.kind),
-      outcome: terminalOutcome(item.kind, payload?.outcome),
+      ended: ends.has(item.kind) || finalSend,
+      ...(finalSend && !ends.has(item.kind) ? { provisional: true } : {}),
+      outcome: finalSend
+        ? "ended"
+        : terminalOutcome(item.kind, payload?.outcome),
       epoch,
     };
     associate(turn);

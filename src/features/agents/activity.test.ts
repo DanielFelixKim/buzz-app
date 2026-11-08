@@ -561,3 +561,70 @@ it("skips the snapshot comparison for channel traffic that changes no typing", (
     f.activity.dispose();
   }
 });
+
+it("a remote final send ends its turn provisionally: the harness confirms it, liveness can't revive it, later work reopens it", () => {
+  const f = fixture();
+  const tool = (id: string, extra: object) => ({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId: "S",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: id,
+        title: "buzz__send",
+        kind: "other",
+        ...extra,
+      },
+    },
+  });
+  const at = (offset: number) => new Date(Date.now() + offset).toISOString();
+  const state = (turnId = "one") =>
+    f.snapshot().turns.find((turn) => turn.turnId === turnId)?.state;
+  const send = (turnId: string, offset: number, payload: object) =>
+    f.send(f.item("acp_read", turnId, { timestamp: at(offset), payload }));
+  const final = { text: "Done", final: true };
+
+  f.send(f.item("turn_started", "one", { timestamp: at(-4000) }));
+  send(
+    "one",
+    -3000,
+    tool("early", { status: "completed", rawInput: { text: "On it" } }),
+  );
+  expect(state()).toBe("working");
+  send("one", -2000, tool("last", { status: "completed", rawInput: final }));
+  expect(state()).toBe("ended");
+  // The harness keeps reporting liveness until it sees the task finish.
+  f.send(f.item("turn_liveness", "one", { timestamp: at(-1000) }));
+  expect(state()).toBe("ended");
+  f.send(f.item("turn_completed", "one", { timestamp: at(0) }));
+  expect(state()).toBe("ended");
+  send("one", 500, tool("after", { status: "in_progress" }));
+  expect(state()).toBe("ended");
+
+  // A sibling tool in the final send's round keeps the harness working.
+  f.send(f.item("turn_started", "two", { timestamp: at(-4000) }));
+  send("two", -3000, tool("last", { status: "completed", rawInput: final }));
+  expect(state("two")).toBe("ended");
+  send(
+    "two",
+    -2000,
+    tool("sibling", { title: "sandbox__bash", status: "in_progress" }),
+  );
+  expect(state("two")).toBe("working");
+
+  // A failed final send, or one whose result is an error, doesn't end it.
+  f.send(f.item("turn_started", "three", { timestamp: at(-4000) }));
+  send("three", -3000, tool("failed", { status: "failed", rawInput: final }));
+  send(
+    "three",
+    -2000,
+    tool("erred", {
+      status: "completed",
+      rawInput: final,
+      rawOutput: { isError: true },
+    }),
+  );
+  expect(state("three")).toBe("working");
+  f.activity.dispose();
+});

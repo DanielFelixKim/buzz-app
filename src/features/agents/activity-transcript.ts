@@ -100,6 +100,18 @@ const postsMessage = (title: string) => {
   const name = /^(?:mcp__)?buzz__(\w+)$/.exec(title.trim())?.[1];
   return !!name && isMessageTool(name);
 };
+/** Whether an observer payload reports a Buzz message tool, called with
+ * `final: true`, that completed without an error: the agent's last message. */
+export function activityFinalSend(payload: unknown) {
+  const update = object(object(object(payload)?.params)?.update);
+  return (
+    update?.sessionUpdate === "tool_call_update" &&
+    update.status === "completed" &&
+    postsMessage(str(update.title)) &&
+    object(update.rawInput)?.final === true &&
+    object(update.rawOutput)?.isError !== true
+  );
+}
 const number = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const eventId = (value: unknown) =>
