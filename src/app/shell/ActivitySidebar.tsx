@@ -50,6 +50,8 @@ import {
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./ActivitySidebar.module.css";
 import { useLatestMessages, type LatestMessage } from "./activity-previews";
+import { useIdentityNames } from "../../features/identity-names/react";
+import { dmLabel } from "../../bundled/inbox/dm-label";
 
 export type ActivityScope = "solo" | "team";
 type SoloView = "all" | "working" | "waiting";
@@ -405,15 +407,20 @@ export function ActivitySidebar({
   const order = useFrozenOrder(entries.map((entry) => entry.key).join("\n"));
 
   const ids = [
+    session.viewer ?? "",
     ...shownEvents.slice(0, 100).map((event) => event.authorId),
     ...channels.flatMap((channel) => [
+      // A DM's title names its people.
       ...(channel.channelType === "dm"
-        ? (channel.participants?.slice(0, 1) ?? [])
+        ? (channel.participants?.slice(0, 8) ?? [])
         : []),
       ...(channel.channelType === "solo"
         ? (channel.members ?? []).filter((key) => key !== session.viewer)
         : []),
       latestOf(channel)?.authorId ?? "",
+      ...(kind === "team"
+        ? [newestThread(session, channel)?.authorId ?? ""]
+        : []),
     ]),
   ].filter(Boolean);
   const profileKey = [...new Set(ids)].sort().join(":");
@@ -423,8 +430,9 @@ export function ActivitySidebar({
         .ensure(profileKey.split(":"), "background")
         .catch(() => {});
   }, [session, profileKey, list.status]);
+  const resolveName = useIdentityNames(session.names);
   const nameOf = (id: string) =>
-    profiles.get(id)?.name ?? formatPublicKey(id) ?? "Someone";
+    resolveName(id, profiles.get(id)?.name ?? formatPublicKey(id) ?? "Someone");
 
   /** A thread or mention: a message, opened where it lives. */
   const eventRow = (event: ActivityEvent) => {
@@ -461,7 +469,6 @@ export function ActivitySidebar({
           place={
             channel ? `${event.rootId ? "in " : ""}${channelText(channel)}` : ""
           }
-          sender={event.authorId === session.viewer ? "You" : undefined}
           time={shortTime(event.createdAt)}
           preview={messagePreview(event.preview)}
           state={event.unread ? "unread" : "read"}
@@ -494,6 +501,8 @@ export function ActivitySidebar({
                   team={kind === "team"}
                   working={working.has(id)}
                   profiles={profiles}
+                  nameOf={nameOf}
+                  resolveName={resolveName}
                   unreadOnly={unreadOnly}
                   selected={selectedChannel === id && !selectedThread}
                   onOpen={() => open(id)}
@@ -691,6 +700,8 @@ function ChannelRow({
   team,
   working,
   profiles,
+  nameOf,
+  resolveName,
   unreadOnly,
   selected,
   onOpen,
@@ -703,6 +714,8 @@ function ChannelRow({
   /** An agent is on it: the typing dots take the state slot. */
   working: boolean;
   profiles: ReadonlyMap<string, Profile>;
+  nameOf(id: string): string;
+  resolveName: ReturnType<typeof useIdentityNames>;
   unreadOnly: boolean;
   selected: boolean;
   onOpen(): void;
@@ -721,14 +734,10 @@ function ChannelRow({
   );
   const solo = channel.channelType === "solo";
   // The latest event: a thread reply you're in, when it is newer.
-  const thread = team
-    ? [...(state.activity.items ?? [])].sort(
-        (a, b) => b.createdAt - a.createdAt,
-      )[0]
-    : undefined;
+  const thread = team ? newestThread(session, channel) : undefined;
   const replyIsNewest = !!thread && thread.createdAt > (latest?.createdAt ?? 0);
   const latestAuthor = replyIsNewest ? thread.authorId : latest?.authorId;
-  // No sender: the avatar says who, except for your own message.
+  // No sender: the avatar says who, yours included.
   const preview = replyIsNewest
     ? messagePreview(thread.preview)
     : latest
@@ -736,19 +745,17 @@ function ChannelRow({
       : channel.preview
         ? messagePreview(channel.preview)
         : "";
-  // Who the row shows: a DM's person, a Solo chat's agent, and in Team
-  // the latest poster who isn't you.
-  const face = peer
-    ? peer
-    : solo
-      ? (others.find((key) => profiles.get(key)?.isAgent) ??
-        others[0] ??
-        (latestAuthor !== session.viewer ? latestAuthor : undefined))
-      : latestAuthor !== session.viewer
-        ? latestAuthor
-        : undefined;
-  const name = (id: string) =>
-    profiles.get(id)?.name ?? formatPublicKey(id) ?? "Someone";
+  // Who the row shows, on every surface: whoever posted last, you included.
+  // Before any message is known: a DM's person, a Solo chat's agent, or in
+  // Team the channel's icon.
+  const face =
+    latestAuthor ??
+    (peer
+      ? peer
+      : solo
+        ? (others.find((key) => profiles.get(key)?.isAgent) ?? others[0])
+        : undefined);
+  const name = nameOf;
   return (
     <li data-activity-row={channel.id}>
       <ConversationRow
@@ -775,12 +782,16 @@ function ChannelRow({
         placeIcon={privateIcon(channel)}
         place={
           dm
-            ? channel.name || (peer ? name(peer) : "")
+            ? dmLabel(
+                channel.participants,
+                profiles,
+                resolveName,
+                channel.name || "Direct message",
+              )
             : solo
               ? channel.name
               : channelText(channel)
         }
-        sender={latestAuthor === session.viewer ? "You" : undefined}
         time={at ? shortTime(at) : ""}
         preview={preview}
         state={working ? "working" : unread ? "unread" : "read"}
@@ -790,6 +801,18 @@ function ChannelRow({
       />
     </li>
   );
+}
+
+/** The newest thread you're in, in a Team channel: its latest reply. */
+function newestThread(session: RelaySession, channel: ChannelSummary) {
+  let newest:
+    | NonNullable<
+        ReturnType<RelaySession["unread"]["activity"]>["items"]
+      >[number]
+    | undefined;
+  for (const item of session.unread.activity(channel.id).items ?? [])
+    if (!newest || item.createdAt > newest.createdAt) newest = item;
+  return newest;
 }
 
 /** Only a private channel needs a glyph; its name carries no "#". */

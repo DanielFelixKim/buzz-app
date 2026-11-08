@@ -19,6 +19,7 @@ afterEach(cleanup);
 
 const viewer = "c".repeat(64);
 const alice = "a".repeat(64);
+const bob = "b".repeat(64);
 const root = "d".repeat(64);
 const reply = "e".repeat(64);
 const scope = { viewer, communityOrigin: "https://relay.test" };
@@ -51,6 +52,8 @@ function setup(
       id: "solo",
       name: "My chat",
       channelType: "solo" as const,
+      // Bob, the agent, started it; Alice joined later.
+      members: [viewer, bob, alice],
       lastActivityAt: 300,
     },
     {
@@ -112,7 +115,11 @@ function setup(
     items: inboxItems,
     freshness: "observed" as const,
   };
-  const profiles = new Map([[alice, { name: "Alice" }]]);
+  const profiles = new Map<string, { name: string; isAgent?: true }>([
+    [alice, { name: "Alice" }],
+    [bob, { name: "Bob", isAgent: true }],
+    [viewer, { name: "Zed" }],
+  ]);
   const markChannelRead = vi.fn(async () => ({}) as never);
   const session: RelaySession = {
     ...base,
@@ -357,4 +364,36 @@ test("your own last message is not Waiting", async () => {
   await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
   await userEvent.click(screen.getByRole("tab", { name: "Waiting" }));
   expect(rowNames()).toEqual([]);
+});
+
+/** The initial a row's avatar shows, standing in for the picture. */
+const faceOf = (id: string) =>
+  document
+    .querySelector(`[data-activity-row="${id}"] [data-avatar-fallback]`)
+    ?.textContent?.trim();
+
+test("a DM row is titled with its people, not DM", async () => {
+  setup();
+  await userEvent.click(screen.getByRole("tab", { name: "Direct" }));
+  const row = document.querySelector('[data-activity-row="dm"]');
+  expect(row).toHaveTextContent("Alice");
+  expect(row).not.toHaveTextContent(/^DM/);
+});
+
+test("your own latest message shows your avatar, with no You prefix", () => {
+  setup([], { new: { createdAt: 600, content: "my post", authorId: viewer } });
+  expect(faceOf("new")).toBe("Z");
+  expect(screen.queryByText(/You/)).not.toBeInTheDocument();
+});
+
+test("a Solo row shows whoever posted last, not the agent that started it", async () => {
+  setup([], { solo: { createdAt: 300, content: "joined in" } });
+  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  expect(faceOf("solo")).toBe("A");
+});
+
+test("a Solo row with no known message shows its agent", async () => {
+  setup();
+  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  expect(faceOf("solo")).toBe("B");
 });

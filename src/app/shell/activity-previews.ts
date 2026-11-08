@@ -5,9 +5,12 @@
  * Channel previews come from loaded heads, which exist only for channels this
  * device has opened, and unread evidence is the newest 500 messages across
  * many channels, so busy channels crowd quiet ones out. This asks the relay
- * for the newest few messages of each conversation that has neither, a batch
- * of per-channel filters at a time, and keeps the newest one that is not a
- * thread reply.
+ * for each listed conversation's newest top-level message, a batch of
+ * per-channel filters at a time. Each filter is a one-row channel window
+ * (`top_level`), the relay read the timeline uses, so a channel whose recent
+ * traffic is all thread replies still has its latest message found. The
+ * earlier read (the newest six kind-9 events, replies dropped) came back
+ * empty for any channel whose last six messages were all replies.
  */
 import { useEffect, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -23,6 +26,7 @@ export type LatestMessage = Readonly<{
 type Store = {
   latest: Map<string, LatestMessage | null>;
   asked: Set<string>;
+  retried: Set<string>;
   listeners: Set<() => void>;
   version: number;
   running: boolean;
@@ -31,7 +35,8 @@ type Store = {
 
 const stores = new WeakMap<RelaySession, Store>();
 const BATCH = 10;
-const PER_CHANNEL = 6;
+/** One later try for a batch that failed (offline, timeout), not a poll. */
+const RETRY_MS = 30_000;
 
 function storeOf(session: RelaySession): Store {
   let store = stores.get(session);
@@ -39,6 +44,7 @@ function storeOf(session: RelaySession): Store {
     store = {
       latest: new Map(),
       asked: new Set(),
+      retried: new Set(),
       listeners: new Set(),
       version: 0,
       running: false,
@@ -57,6 +63,7 @@ async function drain(session: RelaySession, store: Store) {
       const batch = store.queue.splice(0, BATCH);
       let events: readonly {
         id: string;
+        kind: number;
         pubkey: string;
         created_at: number;
         content: string;
@@ -67,18 +74,30 @@ async function drain(session: RelaySession, store: Store) {
           batch.map((id) => ({
             kinds: [9],
             "#h": [id],
-            limit: PER_CHANNEL,
+            limit: 1,
+            top_level: true,
           })),
           { signal: AbortSignal.timeout(10_000) },
         );
       } catch {
-        // Leave these unknown; a later mount asks again.
-        for (const id of batch) store.asked.delete(id);
+        // Leave these unknown and try once more later; after that, a later
+        // mount asks again.
+        const retry = batch.filter((id) => !store.retried.has(id));
+        for (const id of batch) if (!retry.includes(id)) store.asked.delete(id);
+        if (retry.length) {
+          for (const id of retry) store.retried.add(id);
+          setTimeout(() => {
+            store.queue.push(...retry);
+            void drain(session, store);
+          }, RETRY_MS);
+        }
         continue;
       }
       for (const id of batch) store.latest.set(id, null);
       for (const event of events) {
-        if (threadReference(event)) continue;
+        // The window also carries its bounds event; keep messages only, and
+        // never a reply, should a relay ignore `top_level`.
+        if (event.kind !== 9 || threadReference(event)) continue;
         const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
         if (!channelId || !batch.includes(channelId)) continue;
         const held = store.latest.get(channelId);
@@ -99,7 +118,7 @@ async function drain(session: RelaySession, store: Store) {
 }
 
 /** Latest top-level messages by channel id, fetched for `wanted` once each.
- * null: asked, and the newest few messages had no top-level one. */
+ * null: asked, and the conversation has no top-level message. */
 export function useLatestMessages(
   session: RelaySession,
   wanted: readonly string[],
