@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import type { Navigation } from "../navigation/controller";
 import type { RelaySession } from "../relay/session";
+import { splitPartition } from "../relay/partition";
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
 import { SafeMarkdown } from "./SafeMarkdown";
 
@@ -32,11 +33,11 @@ export function PluginMarkdown({
       session={session}
       openLink={(url) => {
         if (openLink?.(url)) return true;
-        if (!session || !navigation) return false;
-        const target = buzzLinkTarget(url, {
-          viewer: session.viewer ?? "",
-          communityOrigin: session.scope.replace(/:[0-9a-f]{64}$/, ""),
-        });
+        const scope = session?.viewer
+          ? splitPartition(session.scope)
+          : undefined;
+        if (!scope?.viewer || !navigation) return false;
+        const target = buzzLinkTarget(url, scope);
         if (!target) return false;
         void navigation.open(target);
         return true;
