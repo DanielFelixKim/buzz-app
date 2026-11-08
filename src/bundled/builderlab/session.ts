@@ -1,4 +1,8 @@
-import { createCapabilityRefresh, type Capabilities } from "./capabilities";
+import {
+  capabilitiesFrom,
+  createCapabilityRefresh,
+  type Capabilities,
+} from "./capabilities";
 import type { BuilderlabViewerSession } from "../../features/browser/api";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { HostResponse } from "../../features/host/service";
@@ -99,11 +103,7 @@ export async function federatedAccount(
     email?: unknown;
     name?: unknown;
     expires_at?: unknown;
-    capabilities?: {
-      can_use_remote_agents?: unknown;
-      can_use_builderlab_decisions?: unknown;
-      can_delete_buzz_communities?: unknown;
-    };
+    capabilities?: unknown;
   };
   if (typeof value?.subject !== "string" || !value.subject.trim())
     return undefined;
@@ -114,11 +114,7 @@ export async function federatedAccount(
     ...(typeof value.expires_at === "string"
       ? { expiresAt: value.expires_at }
       : {}),
-    canUseRemoteAgents: value.capabilities?.can_use_remote_agents === true,
-    canUseBuilderlabDecisions:
-      value.capabilities?.can_use_builderlab_decisions === true,
-    canDeleteBuzzCommunities:
-      value.capabilities?.can_delete_buzz_communities === true,
+    ...capabilitiesFrom(value.capabilities),
   });
 }
 

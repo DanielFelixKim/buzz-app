@@ -7,6 +7,25 @@ export type Capabilities = Readonly<{
   canDeleteBuzzCommunities?: boolean;
 }>;
 
+const capabilityFields = {
+  canUseRemoteAgents: "can_use_remote_agents",
+  canUseBuilderlabDecisions: "can_use_builderlab_decisions",
+  canDeleteBuzzCommunities: "can_delete_buzz_communities",
+} as const satisfies Record<keyof Capabilities, string>;
+const capabilityKeys = Object.keys(capabilityFields) as (keyof Capabilities)[];
+
+/** Only literal true grants a capability; missing flags are denied. */
+export function capabilitiesFrom(raw: unknown): Capabilities {
+  const flags = raw as Record<string, unknown> | null | undefined;
+  return Object.fromEntries(
+    capabilityKeys.map((key) => [key, flags?.[capabilityFields[key]] === true]),
+  ) as Capabilities;
+}
+
+function sameCapabilities(a: Capabilities, b: Capabilities): boolean {
+  return capabilityKeys.every((key) => a[key] === b[key]);
+}
+
 /** Refresh only permissions. Failed attempts also cool down for one minute. */
 export function createCapabilityRefresh(
   previous: Capabilities,
@@ -31,20 +50,8 @@ export function createCapabilityRefresh(
             Array.isArray(capabilities))
         )
           return;
-        const flags = capabilities as Record<string, unknown> | undefined;
-        const next: Capabilities = {
-          canUseRemoteAgents: flags?.can_use_remote_agents === true,
-          canUseBuilderlabDecisions:
-            flags?.can_use_builderlab_decisions === true,
-          canDeleteBuzzCommunities: flags?.can_delete_buzz_communities === true,
-        };
-        if (
-          next.canUseRemoteAgents === previous.canUseRemoteAgents &&
-          next.canUseBuilderlabDecisions ===
-            previous.canUseBuilderlabDecisions &&
-          next.canDeleteBuzzCommunities === previous.canDeleteBuzzCommunities
-        )
-          return;
+        const next = capabilitiesFrom(capabilities);
+        if (sameCapabilities(previous, next)) return;
         previous = next;
         update(next);
       } catch {

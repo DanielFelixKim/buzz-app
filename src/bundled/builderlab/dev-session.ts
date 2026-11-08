@@ -1,4 +1,4 @@
-import { createCapabilityRefresh } from "./capabilities";
+import { capabilitiesFrom, createCapabilityRefresh } from "./capabilities";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 // Public projection of the development server's login; the parent credential stays in Node.
 // Trusted local callers can still use its dedicated native viewer/Decisions routes.
@@ -33,11 +33,7 @@ type State = {
     email?: string;
     name?: string;
     expiresAt: string;
-    capabilities?: {
-      can_use_remote_agents?: boolean;
-      can_use_builderlab_decisions?: boolean;
-      can_delete_buzz_communities?: boolean;
-    };
+    capabilities?: unknown;
   };
 };
 
@@ -91,12 +87,7 @@ export function createDevSession() {
       email: next.auth.email ?? "",
       ...(next.auth.name ? { name: next.auth.name } : {}),
       expiresAt: next.auth.expiresAt,
-      canUseRemoteAgents:
-        next.auth.capabilities?.can_use_remote_agents === true,
-      canUseBuilderlabDecisions:
-        next.auth.capabilities?.can_use_builderlab_decisions === true,
-      canDeleteBuzzCommunities:
-        next.auth.capabilities?.can_delete_buzz_communities === true,
+      ...capabilitiesFrom(next.auth.capabilities),
     });
     const current = Object.freeze({
       get account() {
