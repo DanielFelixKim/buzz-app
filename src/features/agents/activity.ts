@@ -29,6 +29,10 @@ export type ActivityTurn = Readonly<{
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  /** Ended by the agent's final send, not yet by its harness, which may
+   * still be finishing the task. A display end: wait for the harness before
+   * acting on it, such as sending the agent more work. */
+  provisional?: true;
   /** Retained independently of the bounded raw activity buffer. */
   outcome?: ReturnType<typeof terminalOutcome>;
   triggeringEventIds?: readonly string[];
@@ -69,8 +73,6 @@ type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   requests?: ActivityTurn["requests"];
   triggeringEventIds?: readonly string[];
   ended: boolean;
-  /** Ended by a final send, until the harness confirms it or the agent works on. */
-  provisional?: true;
   epoch: number;
   unresolvedTriggers?: readonly string[];
 };
@@ -195,6 +197,7 @@ export function createAgentActivity(
           channelId: turn.channelId,
           timestamp: turn.timestamp,
           ...(turn.outcome ? { outcome: turn.outcome } : {}),
+          ...(turn.ended && turn.provisional ? { provisional: true } : {}),
           ...(turn.triggeringEventIds
             ? { triggeringEventIds: turn.triggeringEventIds }
             : {}),

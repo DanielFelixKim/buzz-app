@@ -60,7 +60,7 @@ function fixture(extra: Partial<RelaySession> = {}) {
       ];
       for (const listener of listeners) listener();
     },
-    remote(state: "working" | "unknown" | "ended") {
+    remote(state: "working" | "unknown" | "ended", provisional = false) {
       turns = [
         {
           agent: "agent",
@@ -68,6 +68,7 @@ function fixture(extra: Partial<RelaySession> = {}) {
           turnId: "turn",
           timestamp: 1,
           state,
+          ...(provisional ? { provisional: true as const } : {}),
         },
       ];
       for (const listener of listeners) listener();
@@ -136,6 +137,25 @@ it("uses explicit remote completion, never a stale unknown state", () => {
   expect(entry.publish).not.toHaveBeenCalled();
   h.remote("ended");
   expect(entry.publish).toHaveBeenCalledOnce();
+});
+
+it("waits for the harness to confirm a turn its final send ended", () => {
+  const h = fixture(),
+    waiting = h.entry("waiting"),
+    late = h.entry("late");
+  h.remote("working");
+  h.queue.submit(waiting);
+  h.remote("ended", true);
+  expect(waiting.publish).not.toHaveBeenCalled();
+  h.remote("ended");
+  expect(waiting.publish).toHaveBeenCalledOnce();
+  // A turn first seen already ended by its final send still holds new work.
+  const g = fixture();
+  g.remote("ended", true);
+  g.queue.submit(late);
+  expect(late.publish).not.toHaveBeenCalled();
+  g.remote("ended");
+  expect(late.publish).toHaveBeenCalledOnce();
 });
 
 it("retains failed sends for explicit retry without a retry loop", () => {

@@ -161,13 +161,16 @@ function createQueue(session: RelaySession) {
           turn.agent === wait.agent &&
           turn.requests?.some((request) => request.messageId === wait.message),
       );
-      return turns.length > 0 && turns.every((turn) => turn.state === "ended");
+      return (
+        turns.length > 0 &&
+        turns.every((turn) => turn.state === "ended" && !turn.provisional)
+      );
     }
     return activity.turns.some(
       (turn) =>
         turn.agent === wait.agent &&
         turn.turnId === wait.turn &&
-        (turn.state === "ended" || resumedTurn(turn)),
+        ((turn.state === "ended" && !turn.provisional) || resumedTurn(turn)),
     );
   }
   function blockers(channelId: string) {
@@ -183,9 +186,11 @@ function createQueue(session: RelaySession) {
           current.push({ agent: row.agent, message: row.messageId });
       }
       for (const turn of activity.turns) {
+        // A final send ends the turn for display; its harness may still be
+        // finishing it, so queued work waits for that.
         if (
           turn.channelId === channelId &&
-          turn.state === "working" &&
+          (turn.state === "working" || turn.provisional) &&
           !resumedTurn(turn)
         )
           current.push({ agent: turn.agent, turn: turn.turnId });

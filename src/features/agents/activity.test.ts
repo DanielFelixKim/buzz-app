@@ -594,11 +594,15 @@ it("a remote final send ends its turn provisionally: the harness confirms it, li
   expect(state()).toBe("working");
   send("one", -2000, tool("last", { status: "completed", rawInput: final }));
   expect(state()).toBe("ended");
+  const provisional = () =>
+    f.snapshot().turns.find((turn) => turn.turnId === "one")?.provisional;
+  expect(provisional()).toBe(true);
   // The harness keeps reporting liveness until it sees the task finish.
   f.send(f.item("turn_liveness", "one", { timestamp: at(-1000) }));
   expect(state()).toBe("ended");
   f.send(f.item("turn_completed", "one", { timestamp: at(0) }));
   expect(state()).toBe("ended");
+  expect(provisional()).toBeUndefined();
   send("one", 500, tool("after", { status: "in_progress" }));
   expect(state()).toBe("ended");
 
