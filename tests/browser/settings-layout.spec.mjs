@@ -433,13 +433,19 @@ fiBuild(
         for (const width of [1440, 800, 390]) {
           await page.setViewportSize({ width, height: 1000 });
           await selectSettingsSection(page, "Builderlab");
-          const card = page.locator(".buzz-empty-state").filter({
-            has: page.getByRole("heading", {
-              name: signedIn
-                ? "No hosted communities yet"
-                : "Sign in to manage hosted communities",
-            }),
-          });
+          const open = page.getByRole("button", { name: "Open Communities" });
+          if (await open.isVisible()) await open.click();
+          const card = signedIn
+            ? page.getByRole("region", { name: "Communities", exact: true })
+            : page.locator(".buzz-empty-state").filter({
+                has: page.getByRole("heading", {
+                  name: "Sign in to manage hosted communities",
+                }),
+              });
+          if (signedIn)
+            await expect(
+              card.getByRole("button", { name: "Create community" }),
+            ).toBeEnabled();
           await expect(card).toBeVisible();
           for (const scale of ["100%", "200%"]) {
             await page.evaluate((value) => {
@@ -452,6 +458,7 @@ fiBuild(
                     const box = root.getBoundingClientRect();
                     return (
                       [...root.querySelectorAll("*")].every((node) => {
+                        if (!node.getClientRects().length) return true;
                         const child = node.getBoundingClientRect();
                         return (
                           child.left >= box.left && child.right <= box.right

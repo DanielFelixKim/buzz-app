@@ -505,10 +505,12 @@ it.each([true, false])(
         screen.getByRole("button", { name: "Open Communities" }),
       );
       // Communities share the one sign-in and its identity link.
-      expect(
-        await screen.findByText("No hosted communities yet"),
-      ).toBeInTheDocument();
-      expect(screen.getByText(/Buzz identity connected/)).toBeVisible();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Create community" }),
+        ).toBeEnabled(),
+      );
+      expect(screen.getByText("Connected", { exact: true })).toBeVisible();
       expect(
         screen.getAllByRole("button", {
           name: "Identity → Organization sign-in",
@@ -618,9 +620,12 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
       screen.getByRole("button", { name: "Sign in with Builderlab" }),
     );
     expect(identity.service.signIn).toHaveBeenCalledOnce();
-    expect(
-      await screen.findByText("No hosted communities yet"),
-    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open Communities" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Create community" }),
+      ).toBeEnabled(),
+    );
     expect(identity.request).toHaveBeenCalledWith(
       expect.objectContaining({ path: "/api/goose/v1/auth/me" }),
     );
@@ -656,6 +661,9 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     ).toEqual([]);
     // The shared session ends only from Identity → Organization sign-in.
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Back to Builderlab" }),
+    );
     await user.click(
       screen.getByRole("button", { name: "Identity → Organization sign-in" }),
     );
@@ -1619,8 +1627,8 @@ it("uses one development-server login for the Settings account, hosting and remo
     await userEvent.click(
       screen.getByRole("button", { name: "Open Communities" }),
     );
-    expect(await screen.findByText("No hosted communities yet")).toBeVisible();
-    expect(screen.getByText(/Buzz identity connected/)).toBeVisible();
+    expect(await screen.findByText("0 of 1")).toBeVisible();
+    expect(screen.getByText("Connected", { exact: true })).toBeVisible();
     await userEvent.click(
       screen.getByRole("button", { name: "Back to Builderlab" }),
     );
@@ -1661,9 +1669,7 @@ it("uses one development-server login for the Settings account, hosting and remo
     expect(
       await screen.findByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
-    expect(
-      screen.queryByText("No hosted communities yet"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("0 of 1")).not.toBeInTheDocument();
     expect(screen.queryByText("No remote agents yet.")).not.toBeInTheDocument();
   } finally {
     cleanup();

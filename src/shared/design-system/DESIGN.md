@@ -753,6 +753,10 @@ has a creation sidebar. The sidebar and detail pane share one joined surface; th
 resize seam is a persistent `border-standard` hairline. Layout and overflow
 remain shell-owned.
 
+Use `Tabs variant="capsule"` for outlined filters with no filled track and a
+wrapping trailing action, as in Hosted Communities. `Header align="end"`
+bottom-aligns its title and trailing action without changing spacing.
+
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
 Segmented tracks default to `size="md"` (40px); `size="sm"` uses the 32px

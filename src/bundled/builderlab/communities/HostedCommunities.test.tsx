@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { HostedCommunities } from "./HostedCommunities";
@@ -69,6 +70,46 @@ const renderCard = () =>
     </StrictMode>,
   );
 
+function refreshCommunities() {
+  const recovery = screen.queryByRole("button", { name: "Refresh" });
+  if (recovery) fireEvent.click(recovery);
+  else fireEvent(window, new Event("focus"));
+}
+
+async function openCreate() {
+  const existing = screen.queryByPlaceholderText("north-star");
+  if (existing) return existing;
+  const trigger = await screen.findByRole("button", {
+    name: "Create community",
+  });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  fireEvent.click(trigger);
+  return screen.findByPlaceholderText("north-star");
+}
+
+async function showArchived() {
+  const tab = await screen.findByRole("tab", { name: "Archived" });
+  if (tab.getAttribute("aria-selected") !== "true") await userEvent.click(tab);
+}
+
+async function communityAction(name: string) {
+  if (name === "Delete" || name === "Unarchive") await showArchived();
+  else {
+    const tab = await screen.findByRole("tab", { name: "Active" });
+    if (tab.getAttribute("aria-selected") !== "true")
+      await userEvent.click(tab);
+  }
+  const item = screen.queryByRole("menuitem", { name });
+  if (item) return item;
+  const triggers = await screen.findAllByRole("button", {
+    name: /^More actions for /,
+  });
+  const trigger = triggers[0];
+  if (!trigger) throw new Error("Missing community action menu");
+  await userEvent.click(trigger);
+  return screen.findByRole("menuitem", { name });
+}
+
 function RerenderingParent() {
   const [, rerender] = useState(0);
   return (
@@ -117,7 +158,9 @@ it("accepts a held deletion across parent rerenders and releases the busy state"
   );
   expect(await screen.findByText("Deletion started")).toBeVisible();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
-  expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+  expect(
+    screen.getByRole("region", { name: "Communities" }),
+  ).not.toHaveAttribute("aria-busy", "true");
 });
 
 it("does not abort a held sign-in on a parent rerender", async () => {
@@ -186,7 +229,9 @@ it("pauses create and offers a warned switch when the account uses another ident
   });
   expect(region).toHaveTextContent(npubEncode(other));
   expect(region).toHaveTextContent(npubEncode(local));
-  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Create community" }),
+  ).toBeDisabled();
   routes["/api/builderlab/identity"] = () => ({
     identity: { pubkey_hex: local },
   });
@@ -225,7 +270,7 @@ it("checks availability after a pause and creates a valid community", async () =
   const writeText = vi.fn(async () => {});
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   renderCard();
-  const input = await screen.findByPlaceholderText("north-star");
+  const input = await openCreate();
   await waitFor(() => expect(input).toBeEnabled());
   vi.useFakeTimers();
   fireEvent.change(input, { target: { value: "North" } });
@@ -264,11 +309,13 @@ it("rejects invalid names and blocks create at the community limit", async () =>
     can_create: false,
   });
   renderCard();
-  expect(await screen.findByText("5 of 5 used")).toBeInTheDocument();
+  expect(await screen.findByText("5 of 5")).toBeInTheDocument();
   expect(
     screen.getByText("You've reached your limit of 5 communities."),
   ).toBeVisible();
-  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Create community" }),
+  ).toBeDisabled();
 });
 
 it("honors can_create false independently of informational quota usage", async () => {
@@ -279,11 +326,13 @@ it("honors can_create false independently of informational quota usage", async (
     can_create: false,
   });
   renderCard();
-  expect(await screen.findByText("0 of 5 used")).toBeVisible();
+  expect(await screen.findByText("0 of 5")).toBeVisible();
   expect(
     screen.getByText("You've reached your limit of 5 communities."),
   ).toBeVisible();
-  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Create community" }),
+  ).toBeDisabled();
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/create");
 });
 
@@ -305,7 +354,7 @@ it("archives and transfers after confirmation, surfacing friendly errors", async
     correlation_id: "corr-1",
   });
   renderCard();
-  fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+  fireEvent.click(await communityAction("Archive"));
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
       name: "Archive",
@@ -317,7 +366,7 @@ it("archives and transfers after confirmation, surfacing friendly errors", async
       { community_id: "c1" },
     ]),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Transfer" }));
+  fireEvent.click(await communityAction("Transfer ownership"));
   const recipient = npubEncode(other);
   fireEvent.change(screen.getByPlaceholderText("npub1…"), {
     target: { value: recipient },
@@ -349,7 +398,7 @@ it("attributes transfer limit_reached to the recipient, not this owner's quota",
   routes["/api/builderlab/transfer"] = () =>
     Response.json({ error: { code: "limit_reached" } }, { status: 409 });
   renderCard();
-  fireEvent.click(await screen.findByRole("button", { name: "Transfer" }));
+  fireEvent.click(await communityAction("Transfer ownership"));
   await waitFor(() =>
     expect(screen.getByLabelText("Recipient npub")).toHaveFocus(),
   );
@@ -371,11 +420,13 @@ it("shows the zero-limit copy without guessing a reason from usage", async () =>
     can_create: false,
   });
   renderCard();
-  expect(await screen.findByText("0 of 0 used")).toBeVisible();
+  expect(await screen.findByText("0 of 0")).toBeVisible();
   expect(
     screen.getByText("You can't create more communities right now."),
   ).toBeVisible();
-  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Create community" }),
+  ).toBeDisabled();
 });
 
 /** A route answer the test releases by hand. */
@@ -470,7 +521,9 @@ it("keeps create and copy paused until this device's key is read and matches", a
   expect(
     await screen.findByText("Checking this device’s Buzz identity…"),
   ).toBeInTheDocument();
-  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Create community" }),
+  ).toBeDisabled();
   expect(
     screen.queryByRole("button", { name: "Copy address" }),
   ).not.toBeInTheDocument();
@@ -480,7 +533,9 @@ it("keeps create and copy paused until this device's key is read and matches", a
   ).toHaveTextContent(
     "Your Builderlab account is linked to another Buzz key. Creating communities and copying addresses are paused until the identities match.",
   );
-  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Create community" }),
+  ).toBeDisabled();
 });
 
 it("pauses actions with a retry when this device's key cannot be read", async () => {
@@ -491,12 +546,16 @@ it("pauses actions with a retry when this device's key cannot be read", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not read this device’s Buzz identity",
   );
-  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Create community" }),
+  ).toBeDisabled();
   routes["/api/relay/identity"] = () => ({ viewer: local });
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByText(npubEncode(local))).toBeInTheDocument();
   await waitFor(() =>
-    expect(screen.getByPlaceholderText("north-star")).toBeEnabled(),
+    expect(
+      screen.getByRole("button", { name: "Create community" }),
+    ).toBeEnabled(),
   );
 });
 
@@ -588,7 +647,7 @@ it("never unlinks again after Switch unlinks but its bind fails", async () => {
 });
 
 async function typeName(value: string) {
-  const input = await screen.findByPlaceholderText("north-star");
+  const input = await openCreate();
   await waitFor(() => expect(input).toBeEnabled());
   fireEvent.change(input, { target: { value } });
 }
@@ -756,14 +815,13 @@ it("keeps a created community's address when the following refresh fails", async
   expect(
     screen.getByText("wss://north.communities.buzz.xyz"),
   ).toBeInTheDocument();
-  // The name is cleared, so the same create cannot be resubmitted by accident.
-  expect(screen.getByPlaceholderText("north-star")).toHaveValue("");
-  expect(
-    screen.getByRole("button", { name: "Create community" }),
-  ).toBeDisabled();
+  // Success closes the form, so the same create cannot be resubmitted.
+  await waitFor(() =>
+    expect(screen.queryByPlaceholderText("north-star")).not.toBeInTheDocument(),
+  );
   routes["/api/builderlab/list"] = () => listed;
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  expect(await screen.findByText("1 of 5 used")).toBeInTheDocument();
+  refreshCommunities();
+  expect(await screen.findByText("1 of 5")).toBeInTheDocument();
   expect(screen.queryByText(/The change was saved/)).not.toBeInTheDocument();
   expect(
     calls.filter(([url]) => url === "/api/builderlab/create"),
@@ -776,7 +834,7 @@ it("completes a transfer when the following refresh fails", async () => {
     community: { id: "c1" },
   });
   renderCard();
-  fireEvent.click(await screen.findByRole("button", { name: "Transfer" }));
+  fireEvent.click(await communityAction("Transfer ownership"));
   fireEvent.change(screen.getByPlaceholderText("npub1…"), {
     target: { value: npubEncode(other) },
   });
@@ -799,8 +857,8 @@ it("completes a transfer when the following refresh fails", async () => {
     quota_limit: 5,
     can_create: true,
   });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  expect(await screen.findByText("0 of 5 used")).toBeInTheDocument();
+  refreshCommunities();
+  expect(await screen.findByText("0 of 5")).toBeInTheDocument();
   expect(
     calls.filter(([url]) => url === "/api/builderlab/transfer"),
   ).toHaveLength(1);
@@ -820,7 +878,7 @@ it.each([
       community: { id: "c1", archived_at: after },
     });
     renderCard();
-    fireEvent.click(await screen.findByRole("button", { name: action }));
+    fireEvent.click(await communityAction(action));
     // Archive stops every connection, so Enter cancels; unarchive confirms.
     const dialog = await screen.findByRole("alertdialog");
     await waitFor(() =>
@@ -841,24 +899,29 @@ it.each([
     expect(
       await screen.findByText(/The change was saved, but the list could not/),
     ).toBeInTheDocument();
+    const restored = await communityAction(next);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: next })).toBeEnabled(),
+      expect(restored).not.toHaveAttribute("aria-disabled", "true"),
     );
     expect(
-      screen.queryByRole("button", { name: action }),
+      screen.queryByRole("menuitem", { name: action }),
     ).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
     // Copy is offered only for an active community.
     expect(
       Boolean(screen.queryByRole("button", { name: "Copy address" })),
     ).toBe(kind === "unarchive");
     routes["/api/builderlab/list"] = () => row(after);
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    refreshCommunities();
     await waitFor(() =>
       expect(
         screen.queryByText(/The change was saved/),
       ).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: next })).toBeEnabled();
+    expect(await communityAction(next)).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(
       calls.filter(([url]) => url === `/api/builderlab/${kind}`),
     ).toHaveLength(1);
@@ -892,7 +955,7 @@ it.each([
     else await waitFor(() => expect(writeText).toHaveBeenCalled());
     // Another window or device changes the account's identity.
     routes["/api/builderlab/identity"] = identity;
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    refreshCommunities();
     expect(
       await screen.findByRole("button", {
         name:
@@ -902,7 +965,9 @@ it.each([
       }),
     ).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+      expect(
+        screen.getByRole("region", { name: "Communities" }),
+      ).not.toHaveAttribute("aria-busy", "true"),
     );
     await act(async () =>
       clipboard.release(schedule === "late success" ? "resolve" : "reject"),
@@ -929,9 +994,11 @@ it("keeps a failed copy handoff across a same-identity refresh", async () => {
   renderCard();
   fireEvent.click(await screen.findByRole("button", { name: "Copy address" }));
   await screen.findByRole("button", { name: "Try copying again" });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    expect(
+      screen.getByRole("region", { name: "Communities" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
   );
   expect(
     screen.getByText("wss://north.communities.buzz.xyz"),
@@ -969,14 +1036,15 @@ it.each([
               { ...listed.communities[0], archived_at: "2026-09-24" },
             ],
           });
-    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    fireEvent.click(await communityAction("Archive"));
     fireEvent.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
         name: "Archive",
       }),
     );
+    const restoredAction1 = await communityAction("Unarchive");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Unarchive" })).toBeEnabled(),
+      expect(restoredAction1).not.toHaveAttribute("aria-disabled", "true"),
     );
     await act(async () =>
       clipboard.release(schedule === "late success" ? "resolve" : "reject"),
@@ -1022,16 +1090,15 @@ it("keeps a failed copy handoff for another address when a community is archived
   routes["/api/builderlab/list"] = () => ({
     error: { code: "relay_unavailable" },
   });
-  fireEvent.click(
-    screen.getAllByRole("button", { name: "Archive" })[0] as HTMLElement,
-  );
+  fireEvent.click(await communityAction("Archive"));
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
       name: "Archive",
     }),
   );
+  const restoredAction2 = await communityAction("Unarchive");
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Unarchive" })).toBeEnabled(),
+    expect(restoredAction2).not.toHaveAttribute("aria-disabled", "true"),
   );
   expect(
     screen.getByText("wss://south.communities.buzz.xyz"),
@@ -1041,7 +1108,7 @@ it("keeps a failed copy handoff for another address when a community is archived
   ).toBeEnabled();
 });
 
-it("only presents an empty hosted collection after a successful read", async () => {
+it("shows the empty collection in its quota after a successful read", async () => {
   let release!: (value: unknown) => void;
   const list = new Promise((resolve) => {
     release = resolve;
@@ -1052,18 +1119,25 @@ it("only presents an empty hosted collection after a successful read", async () 
     await waitFor(() =>
       expect(calls.some(([url]) => url === "/api/builderlab/list")).toBe(true),
     );
+    expect(screen.queryByText("0 of 5")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "No hosted communities yet" }),
-    ).toBeNull();
+      screen.getByRole("button", { name: "Create community" }),
+    ).toBeDisabled();
   } finally {
-    release({ communities: [] });
+    release({
+      communities: [],
+      quota_used: 0,
+      quota_limit: 5,
+      can_create: true,
+    });
   }
+  expect(await screen.findByText("0 of 5")).toBeVisible();
   expect(
-    await screen.findByRole("heading", {
-      name: "No hosted communities yet",
-      level: 4,
-    }),
-  ).toBeVisible();
+    screen.getByRole("button", { name: "Create community" }),
+  ).toBeEnabled();
+  expect(
+    screen.queryByRole("heading", { name: "No communities yet" }),
+  ).toBeNull();
 });
 
 it("keeps a failed hosted collection read separate from an empty result", async () => {
@@ -1074,8 +1148,9 @@ it("keeps a failed hosted collection read separate from an empty result", async 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "List unavailable",
   );
+  expect(screen.queryByText("0 of 5")).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("heading", { name: "No hosted communities yet" }),
+    screen.queryByRole("heading", { name: "No communities yet" }),
   ).toBeNull();
 });
 
@@ -1092,7 +1167,7 @@ const accepted = (request: Record<string, string | number>) => ({
 });
 
 async function openDeletion() {
-  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  fireEvent.click(await communityAction("Delete"));
   return screen.findByRole("dialog", { name: /Permanently delete north/ });
 }
 
@@ -1187,7 +1262,7 @@ it("hides but retains an uncertain UUID across A to B to A", async () => {
   routes["/api/builderlab/identity"] = () => ({
     identity: { pubkey_hex: other },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await screen.findByRole("region", { name: "Identity mismatch" });
   expect(screen.queryByText(saved.request.request_id)).not.toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "")).toEqual(
@@ -1197,7 +1272,7 @@ it("hides but retains an uncertain UUID across A to B to A", async () => {
   routes["/api/builderlab/identity"] = () => ({
     identity: { pubkey_hex: local },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await screen.findByText(saved.request.request_id);
   await expectSameRequestRecovery(saved);
 });
@@ -1242,7 +1317,7 @@ it.each(["setup-needed", "unauthorized"])(
     routes["/api/builderlab/list"] = () => ({
       error,
     });
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    refreshCommunities();
     if (failure === "setup-needed")
       await screen.findByRole("button", { name: "Connect Buzz identity" });
     else {
@@ -1266,7 +1341,7 @@ it.each(["setup-needed", "unauthorized"])(
       identity: { pubkey_hex: local },
     });
     routes["/api/builderlab/list"] = () => ({ communities: [archived] });
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    refreshCommunities();
     await screen.findByText(saved.request.request_id);
     await expectSameRequestRecovery(saved);
   },
@@ -1297,7 +1372,7 @@ it("does not offer Connect or stale owner actions on an initial unauthorized loa
     screen.queryByRole("button", { name: "Connect Buzz identity" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("button", { name: /^More actions for / }),
   ).not.toBeInTheDocument();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(bytes);
   expect(deletionPosts()).toHaveLength(0);
@@ -1324,10 +1399,10 @@ it("clears stale blocked-owner and deletion notices on unauthorized Refresh", as
       },
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await screen.findByText(/A deletion request from/);
   routes["/api/builderlab/list"] = () => ({ error: { code: "unauthorized" } });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "This Builderlab account can't manage Buzz identities right now. Try signing in again.",
   );
@@ -1343,7 +1418,7 @@ it("retains the uncertain UUID through Switch back to its owner", async () => {
   routes["/api/builderlab/identity"] = () => ({
     identity: { pubkey_hex: other },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await screen.findByRole("region", { name: "Identity mismatch" });
   routes["/api/builderlab/unbind"] = () => ({});
   routes["/api/builderlab/bind"] = () => ({ identity: { pubkey_hex: local } });
@@ -1373,21 +1448,24 @@ it("restores an accepted archived row only after its bound abort on Refresh", as
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
   expect(deletionPosts()).toHaveLength(1);
   routes["/api/builderlab/list"] = () => ({ communities: [] });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    expect(
+      screen.getByRole("region", { name: "Communities" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
   );
   expect(deletionPosts()).toHaveLength(1);
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   routes["/api/builderlab/delete"] = (request) =>
     Response.json({ ...request, status: "aborted" }, { status: 202 });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await waitFor(() => expect(deletionPosts()).toHaveLength(2));
   expect(deletionPosts()[1]?.[1]).toEqual(original);
-  expect(await screen.findByRole("button", { name: "Delete" })).toBeEnabled();
-  expect(
-    screen.getByText(/North\.communities\.buzz\.xyz · Archived/),
-  ).toBeVisible();
+  expect(await communityAction("Delete")).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(screen.getByText(/^Archived /)).toBeVisible();
   expect(
     screen.getByText(
       `Deletion of ${archived.normalized_host} stopped. This community is not being deleted.`,
@@ -1412,7 +1490,7 @@ it.each([
       ...projection,
     });
     renderCard();
-    const input = await screen.findByPlaceholderText("north-star");
+    const input = await openCreate();
     await waitFor(() => expect(input).toBeEnabled());
     expect(screen.queryByText(/quota unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+ of \d+ used/)).not.toBeInTheDocument();
@@ -1426,7 +1504,7 @@ it("shows the server's limit_reached message when quota is absent", async () => 
   routes["/api/builderlab/create"] = () =>
     Response.json({ error: { code: "limit_reached" } }, { status: 409 });
   renderCard();
-  const input = await screen.findByPlaceholderText("north-star");
+  const input = await openCreate();
   await waitFor(() => expect(input).toBeEnabled());
   vi.useFakeTimers();
   fireEvent.change(input, { target: { value: "north" } });
@@ -1452,7 +1530,7 @@ it("uses valid projected limit for a server limit_reached create error", async (
   routes["/api/builderlab/create"] = () =>
     Response.json({ error: { code: "limit_reached" } }, { status: 409 });
   renderCard();
-  const input = await screen.findByPlaceholderText("north-star");
+  const input = await openCreate();
   await waitFor(() => expect(input).toBeEnabled());
   vi.useFakeTimers();
   fireEvent.change(input, { target: { value: "north" } });
@@ -1517,11 +1595,9 @@ it("keeps deletion hidden when the capability is absent", async () => {
   });
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   renderCard();
+  expect(await communityAction("Unarchive")).toBeVisible();
   expect(
-    await screen.findByRole("button", { name: "Unarchive" }),
-  ).toBeVisible();
-  expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("menuitem", { name: "Delete" }),
   ).not.toBeInTheDocument();
 });
 
@@ -1570,8 +1646,9 @@ it("replays an aborted 202 with the stored UUID and restores the archived row", 
   ]);
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
   expect(screen.queryByText("Deletion started")).not.toBeInTheDocument();
+  const restoredAction3 = await communityAction("Delete");
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled(),
+    expect(restoredAction3).not.toHaveAttribute("aria-disabled", "true"),
   );
 });
 
@@ -1591,11 +1668,17 @@ it("clears a fresh must_archive rejection and restores deletion after remount", 
     "Archive the community before deleting it",
   );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
-  expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+  expect(await communityAction("Delete")).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
 
   view.unmount();
   renderCard();
-  expect(await screen.findByRole("button", { name: "Delete" })).toBeEnabled();
+  expect(await communityAction("Delete")).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(
     screen.queryByText("Deletion status is unknown"),
   ).not.toBeInTheDocument();
@@ -1703,14 +1786,19 @@ it("retains another owner's recovery envelope without showing or dispatching it"
   renderCard();
   await screen.findByText(npubEncode(local));
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    expect(
+      screen.getByRole("region", { name: "Communities" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
   );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(
     screen.queryByText("33333333-3333-4333-8333-333333333333"),
   ).not.toBeInTheDocument();
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
-  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  expect(await communityAction("Delete")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(
     screen.getByText(
       `A deletion request from ${npubEncode(other)} is still pending on this device. Switch to that Buzz identity and use Check deletion status before starting another deletion here. If you no longer have that identity, contact support.`,
@@ -1747,8 +1835,9 @@ it("does not reveal another owner's blocked notice when deletion is unavailable"
   renderCard();
   await screen.findByText(npubEncode(local));
   expect(screen.queryByText(/A deletion request from/)).not.toBeInTheDocument();
+  await communityAction("Unarchive");
   expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("menuitem", { name: "Delete" }),
   ).not.toBeInTheDocument();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(deletionPosts()).toHaveLength(0);
@@ -1905,7 +1994,10 @@ it("explains a same-owner envelope saved for another origin without asking to sw
   expect(
     screen.queryByText(/Switch to that Buzz identity/),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  expect(await communityAction("Delete")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(deletionPosts()).toHaveLength(0);
 });
@@ -2108,11 +2200,7 @@ it("disables deletion for every row when a pending slot exists in another mounte
       { status: 503 },
     );
   render(<HostedCommunities api={brokerApi} active={() => true} />);
-  fireEvent.click(
-    (
-      await screen.findAllByRole("button", { name: "Delete" })
-    )[0] as HTMLElement,
-  );
+  fireEvent.click(await communityAction("Delete"));
   const dialog = await screen.findByRole("dialog", {
     name: /Permanently delete north/,
   });
@@ -2134,10 +2222,26 @@ it("disables deletion for every row when a pending slot exists in another mounte
   });
   render(<HostedCommunities api={brokerApi} active={() => true} />);
   await waitFor(() =>
-    expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(3),
+    expect(screen.getAllByRole("tab", { name: "Archived" })).toHaveLength(2),
   );
-  for (const button of screen.getAllByRole("button", { name: "Delete" }))
-    expect(button).toBeDisabled();
+  for (const tab of await screen.findAllByRole("tab", { name: "Archived" })) {
+    if (tab.getAttribute("aria-selected") !== "true")
+      await userEvent.click(tab);
+  }
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("button", { name: /^More actions for / }),
+    ).toHaveLength(3),
+  );
+  for (const trigger of screen.getAllByRole("button", {
+    name: /^More actions for /,
+  })) {
+    await userEvent.click(trigger);
+    expect(
+      await screen.findByRole("menuitem", { name: "Delete" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await userEvent.keyboard("{Escape}");
+  }
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(
     calls.filter(([url]) => url === "/api/builderlab/delete"),
@@ -2194,6 +2298,26 @@ it("replays the same UUID when the archived owner row is no longer listed", asyn
   expect(admissions[1]?.[1]).toEqual(original.request);
 });
 
+it("focus refreshes the list without replaying an accepted deletion", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = (body) =>
+    Response.json(accepted(body), { status: 202 });
+  renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion started");
+  const section = screen.getByRole("region", { name: "Communities" });
+  await waitFor(() => expect(section).not.toHaveAttribute("aria-busy", "true"));
+  const reads = calls.filter(([url]) => url === "/api/builderlab/list").length;
+  fireEvent(window, new Event("focus"));
+  await waitFor(() =>
+    expect(
+      calls.filter(([url]) => url === "/api/builderlab/list").length,
+    ).toBeGreaterThan(reads),
+  );
+  await waitFor(() => expect(section).not.toHaveAttribute("aria-busy", "true"));
+  expect(deletionPosts()).toHaveLength(1);
+});
+
 it("rechecks capability after the fresh owner list resolves", async () => {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   routes["/api/builderlab/delete"] = () =>
@@ -2237,24 +2361,29 @@ it("keeps an accepted row hidden if a stale list returns after an omission", asy
   renderCard();
   await confirmDeletion();
   expect(await screen.findByText("Deletion started")).toBeVisible();
-  const refresh = screen.getByRole("button", { name: "Refresh" });
-  await waitFor(() => expect(refresh).toBeEnabled());
+  await waitFor(() =>
+    expect(
+      screen.getByRole("region", { name: "Communities" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
+  );
   routes["/api/builderlab/list"] = () => ({ communities: [] });
   let listCalls = calls.filter(
     ([url]) => url === "/api/builderlab/list",
   ).length;
-  fireEvent.click(refresh);
+  refreshCommunities();
   await waitFor(() =>
     expect(
       calls.filter(([url]) => url === "/api/builderlab/list").length,
     ).toBeGreaterThan(listCalls),
   );
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    expect(
+      screen.getByRole("region", { name: "Communities" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
   );
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   listCalls = calls.filter(([url]) => url === "/api/builderlab/list").length;
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await waitFor(() =>
     expect(
       calls.filter(([url]) => url === "/api/builderlab/list").length,
@@ -2292,28 +2421,30 @@ it.each([
     expect(await screen.findByText("Deletion started")).toBeVisible();
     const original = deletionPosts()[0]?.[1];
     routes["/api/builderlab/delete"] = replay;
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    refreshCommunities();
     await waitFor(() => expect(deletionPosts()).toHaveLength(2));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+      expect(
+        screen.getByRole("region", { name: "Communities" }),
+      ).not.toHaveAttribute("aria-busy", "true"),
     );
     expect(deletionPosts().map(([, body]) => body)).toEqual([
       original,
       original,
     ]);
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    refreshCommunities();
     await waitFor(() => expect(deletionPosts()).toHaveLength(3));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+      expect(
+        screen.getByRole("region", { name: "Communities" }),
+      ).not.toHaveAttribute("aria-busy", "true"),
     );
     expect(deletionPosts().map(([, body]) => body)).toEqual([
       original,
       original,
       original,
     ]);
-    expect(
-      screen.queryByText(/North\.communities\.buzz\.xyz · Archived/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Archived /)).not.toBeInTheDocument();
     expect(screen.getByText("Deletion started")).toBeVisible();
     expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
   },
@@ -2329,14 +2460,14 @@ it("does not replay an accepted row during Refresh when capability is off", asyn
   routes["/api/builderlab/auth"] = () => ({
     auth: { expiresAt: "2030", capabilities: {} },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    expect(
+      screen.getByRole("region", { name: "Communities" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
   );
   expect(deletionPosts()).toHaveLength(1);
-  expect(
-    screen.queryByText(/North\.communities\.buzz\.xyz · Archived/),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Archived /)).not.toBeInTheDocument();
 });
 
 it("stops accepted-row replay when the card retires mid-Refresh", async () => {
@@ -2354,11 +2485,13 @@ it("stops accepted-row replay when the card retires mid-Refresh", async () => {
   await confirmDeletion();
   await screen.findByText("Deletion started");
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    expect(
+      screen.getByRole("region", { name: "Communities" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
   );
   routes["/api/builderlab/list"] = () => ({ communities: [archived, second] });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  refreshCommunities();
+  fireEvent.click(await communityAction("Delete"));
   const secondDialog = await screen.findByRole("dialog", {
     name: /Permanently delete south/,
   });
@@ -2375,12 +2508,14 @@ it("stops accepted-row replay when the card retires mid-Refresh", async () => {
   );
   await waitFor(() => expect(deletionPosts()).toHaveLength(3));
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    expect(
+      screen.getByRole("region", { name: "Communities" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
   );
   const beforeReplay = deletionPosts().length;
   const firstReplay = hold();
   routes["/api/builderlab/delete"] = firstReplay.answer as Handler;
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await waitFor(() => expect(deletionPosts()).toHaveLength(beforeReplay + 1));
   live = false;
   await act(async () =>
@@ -2393,7 +2528,7 @@ it("stops accepted-row replay when the card retires mid-Refresh", async () => {
   );
   expect(deletionPosts()).toHaveLength(beforeReplay + 1);
   expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("button", { name: /^More actions for / }),
   ).not.toBeInTheDocument();
   expect(screen.getByText("Deletion started")).toBeVisible();
   expect(
@@ -2412,7 +2547,7 @@ it("shows a Refresh replay error without uncovering an accepted row", async () =
   await screen.findByText("Deletion started");
   const replay = hold();
   routes["/api/builderlab/delete"] = replay.answer as Handler;
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  refreshCommunities();
   await waitFor(() => expect(deletionPosts()).toHaveLength(2));
   await act(async () =>
     replay.release(
@@ -2424,7 +2559,7 @@ it("shows a Refresh replay error without uncovering an accepted row", async () =
   );
   expect(screen.getByText("Deletion started")).toBeVisible();
   expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("button", { name: /^More actions for / }),
   ).not.toBeInTheDocument();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
 });
@@ -2502,6 +2637,46 @@ it.each(["accepted", "bound abort", "definitive rejection"])(
     ).toEqual(next);
   },
 );
+
+it("filters communities by state and searches names and hosts without changing quota", async () => {
+  routes["/api/builderlab/list"] = () => ({
+    communities: [
+      { ...archived, archived_at: null },
+      {
+        ...archived,
+        id: "south",
+        name: "South",
+        normalized_host: "south.communities.buzz.xyz",
+      },
+    ],
+    quota_used: 2,
+    quota_limit: 5,
+    can_create: true,
+  });
+  renderCard();
+  expect(await screen.findByText("north")).toBeVisible();
+  expect(screen.queryByText("South")).not.toBeInTheDocument();
+  const search = screen.getByRole("searchbox", { name: "Search communities" });
+  await userEvent.type(search, "NORTH.COMMUNITIES");
+  expect(screen.getByText("north")).toBeVisible();
+  await userEvent.click(screen.getByRole("tab", { name: "Archived" }));
+  expect(screen.getByText("No communities match your search.")).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Clear search communities" }),
+  );
+  expect(screen.getByText("South")).toBeVisible();
+  expect(screen.queryByText("north")).not.toBeInTheDocument();
+  expect(screen.getByText("2 of 5")).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "More actions for South" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Unarchive" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("menuitem", { name: "Archive" }),
+  ).not.toBeInTheDocument();
+});
 
 it("shares owned/newer active previews and refreshes them on focus", async () => {
   const overview = vi.fn();

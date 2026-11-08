@@ -701,7 +701,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "tabs",
     name: "Tabs",
     purpose:
-      "Switch between sibling views. Choose dock for static icon-only shell destinations with a theme-accent selected fill and inactive hover feedback, chrome for grouped tabs on the app backdrop, panel for a plain surface, segmented for grouped filters on an opaque surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete or middle-click. The caller owns selection, retained content, and the next selection after closing.",
+      "Switch between sibling views. Choose dock for static icon-only shell destinations with a theme-accent selected fill and inactive hover feedback, chrome for grouped tabs on the app backdrop, panel for a plain surface, capsule for outlined filters with a trailing action, segmented for grouped filters on an opaque surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete or middle-click. The caller owns selection, retained content, and the next selection after closing.",
     behavior:
       "Base UI Tabs. Icon-only variants keep item labels accessible. Dock labels use instant tooltips to the right of vertical docks or beneath horizontal docks; segmented-icons labels remain available as titles. Items can be disabled. Navigation items accept attentionRequest to identify a repeated opening without changing focus or remounting content. Hosts may opt movable tabs into Panel Swap title-only dragging using TabDragFeedback; hosts own hit testing, cancellation and the committed order. tabMenu composes the host’s scoped Close all tabs action with Rename tab in one shared menu, without changing tab selection.",
     variants: [
@@ -710,6 +710,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "panel",
       "workspace",
       "navigation",
+      "capsule",
       "segmented",
       "segmented-icons",
       "size: sm (32px) | md (40px default), for segmented filters",
@@ -726,8 +727,9 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Header",
     purpose:
       "Introduce page content with a title and optional subtitle, eyebrow, icon, or actions. Use InlineHeader for groups within the page.",
-    behavior: "Semantic heading with caller-selected level.",
-    variants: ["header", "inline"],
+    behavior:
+      "Semantic heading with caller-selected level. Top-aligned by default; align=end bottom-aligns the title and actions.",
+    variants: ["header", "inline", "align=end"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Header.tsx",

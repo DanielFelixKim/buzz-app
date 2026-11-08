@@ -834,6 +834,14 @@ function TabsSpecimen() {
         items={DESTINATIONS}
       />
       <Tabs
+        label="Capsule filters"
+        variant="capsule"
+        value={panelDestination}
+        onValueChange={setPanelDestination}
+        items={DESTINATIONS}
+        trailingAction={<Button variant="subtle">Filter action</Button>}
+      />
+      <Tabs
         label="Small segmented filters"
         variant="segmented"
         size="sm"
@@ -2661,6 +2669,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     subtitle="Your local default for new communities."
   />
   <InlineHeader title="Preferences" subtitle="Choose what works for you." />
+  <Header title="Communities" align="end" actions={<Button>Create community</Button>} />
 </div>`}
     >
       <div>
@@ -2672,6 +2681,11 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
         <InlineHeader
           title="Preferences"
           subtitle="Choose what works for you."
+        />
+        <Header
+          title="Communities"
+          align="end"
+          actions={<Button>Create community</Button>}
         />
       </div>
     </SpecimenFrame>

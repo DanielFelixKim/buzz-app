@@ -1275,6 +1275,37 @@
     gap: var(--space-1);
   }
 
+  /* Console-style filters with an outlined selection and a trailing search. */
+  .buzz-tabs[data-variant="capsule"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .buzz-tabs[data-variant="capsule"] .buzz-tabs-list {
+    gap: var(--space-2);
+  }
+  .buzz-tabs[data-variant="capsule"] .buzz-tabs-tab {
+    min-height: var(--size-control-sm);
+    padding: var(--space-1h) var(--space-3);
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+  }
+  .buzz-tabs[data-variant="capsule"]
+    .buzz-tabs-tab:hover:not([data-selected], [data-disabled]) {
+    background: var(--interaction-hover);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="capsule"] .buzz-tabs-tab[data-selected] {
+    border-color: var(--border-standard);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="capsule"] .buzz-tabs-indicator {
+    display: none;
+  }
+
   /* Segmented filters on opaque surfaces, as used by sidebar scope. */
   .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"]) {
     display: flex;
