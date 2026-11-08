@@ -194,12 +194,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: inbox,
     enabledByDefault: true,
   },
-  // PROTOTYPE: on by default on this branch, except under unit tests, so
-  // the classic sidebar's coverage still runs.
+  // PROTOTYPE: on by default on this branch. The desktop catalog in
+  // crates/plugin-manager lists it too.
   {
     manifest: { ...activitySidebarManifest, apiVersion: 1 },
     module: activitySidebar,
-    enabledByDefault: import.meta.env.MODE !== "test",
+    enabledByDefault: true,
   },
   {
     manifest: { ...remindersManifest, apiVersion: 1 },
