@@ -6,6 +6,7 @@ import {
 } from "react";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import { QrCode, renderQrCode } from "../../shared/QrCode";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { PairingSettings } from "./PairingSettings";
 
 /** The build's mobile app listings (`BUZZ_MOBILE_APP_IOS_URL`,
@@ -25,18 +26,19 @@ export const mobileAppStores = () =>
 type Store = { name: string; url: string };
 
 /**
- * The mobile card. Signed in with Builderlab, the phone signs in with the
- * same account, so the card only says where to get the app; any other
- * identity pairs the phone with this one.
+ * The mobile card. A phone signed in with Builderlab restores the account's
+ * bound, backed-up key, so where that key is this device's the card only says
+ * where to get the app. Every other case pairs the phone with this identity.
  */
 export function MobileSettings({
   federatedIdentity,
   stores = mobileAppStores(),
   ...pairing
 }: ComponentProps<typeof PairingSettings> & {
-  /** Builderlab's sign-in session; absent in builds without one. */
+  /** Builderlab's sign-in session, called as the Builderlab plugin
+   * (`bundledFederatedIdentity`); absent in builds without one. */
   federatedIdentity?:
-    | Pick<FederatedIdentity, "snapshot" | "subscribe">
+    | Pick<FederatedIdentity, "snapshot" | "subscribe" | "request">
     | undefined;
   stores?: readonly Store[];
 }) {
@@ -44,11 +46,75 @@ export function MobileSettings({
     federatedIdentity?.subscribe ?? noSubscription,
     () => federatedIdentity?.snapshot(),
   );
-  if (session?.status !== "signed-in") return <PairingSettings {...pairing} />;
-  return <GetTheApp email={session.email} stores={stores} />;
+  const viewer = useSyncExternalStore(
+    pairing.communities.subscribe,
+    pairing.communities.snapshot,
+  ).viewer;
+  const signedIn =
+    session?.status === "signed-in" && session.authority ? session : undefined;
+  const check = signedIn && viewer ? `${signedIn.revision}:${viewer}` : "";
+  const [restores, setRestores] = useState<{ check: string; ok: boolean }>();
+  useEffect(() => {
+    if (!check || !viewer || !federatedIdentity || !signedIn?.authority) return;
+    let current = true;
+    restoresThisKey(federatedIdentity, signedIn.authority.apiBasePath, viewer)
+      .catch(() => false)
+      .then((ok) => current && setRestores({ check, ok }));
+    return () => {
+      current = false;
+    };
+  }, [check, federatedIdentity, signedIn?.authority, viewer]);
+  if (!check) return <PairingSettings {...pairing} />;
+  const answer = restores?.check === check ? restores.ok : undefined;
+  // Pairing starts a session as it mounts, so it waits for the answer.
+  if (answer === undefined)
+    return (
+      <LoadingRegion
+        pending
+        label="Checking your Builderlab account…"
+        statusVisibility="screen-reader"
+      >
+        {null}
+      </LoadingRegion>
+    );
+  return answer ? (
+    <GetTheApp email={signedIn?.email ?? null} stores={stores} />
+  ) : (
+    <PairingSettings {...pairing} />
+  );
 }
 
 const noSubscription = () => () => {};
+
+/** Whether the account's current key is `viewer` and is backed up: one
+ * `nsec-backups/status` read. Any other answer, or none in time, is no. */
+async function restoresThisKey(
+  federated: Pick<FederatedIdentity, "request">,
+  apiBasePath: string,
+  viewer: string,
+) {
+  const response = await federated.request({
+    path: `${apiBasePath}v1/buzz/nsec-backups/status`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+    timeoutMs: 10_000,
+  });
+  if (response.status < 200 || response.status >= 300) return false;
+  const reply: unknown = JSON.parse(response.body);
+  if (!reply || typeof reply !== "object") return false;
+  const { current_nostr_pubkey: current, backup_nostr_pubkeys: backups } =
+    reply as Record<string, unknown>;
+  const key = viewer.toLowerCase();
+  return (
+    typeof current === "string" &&
+    current.toLowerCase() === key &&
+    Array.isArray(backups) &&
+    backups.some(
+      (backup) => typeof backup === "string" && backup.toLowerCase() === key,
+    )
+  );
+}
 
 function GetTheApp({
   email,
@@ -68,7 +134,7 @@ function GetTheApp({
       {stores.length > 0 && (
         <ul className="m-0 flex list-none flex-wrap gap-6 p-0">
           {stores.map((store) => (
-            <StoreCode key={store.url} store={store} />
+            <StoreCode key={store.name} store={store} />
           ))}
         </ul>
       )}
