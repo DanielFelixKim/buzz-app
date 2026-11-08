@@ -736,7 +736,7 @@ it("shows the first server's failed restore as its own recovery text", async () 
     await listed.mock.results[0]?.value;
   });
   expect(screen.getByRole("alert")).toHaveTextContent(
-    /^Sign-in did not finish\. Try again\.$/,
+    "Buzz couldn’t reach the sign-in service. Check your connection, then try again.",
   );
   // Neither a sign-out retry nor a sign-in while the record is unchecked.
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();

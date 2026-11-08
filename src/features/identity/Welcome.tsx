@@ -1376,8 +1376,9 @@ export function Welcome({
           error={auth.error}
           onBack={backToLanding}
           onRetry={
-            auth.retrySignOut ? () => void login.retrySignOut() : undefined
+            auth.retrySignOut ? () => void login.retrySignOut() : resumeSignIn
           }
+          account={federatedIdentity?.snapshot().authority?.identityOrigin}
         />
       ) : finding ? (
         <FindCommunity
@@ -1481,6 +1482,7 @@ function Failure({
   onRetry,
   onContinue,
   onSwitchAccount,
+  account,
   busy,
 }: {
   title: string;
@@ -1501,6 +1503,8 @@ function Failure({
   onContinue?: (() => void) | undefined;
   /** Offers Use a different account, keeping the saved key. */
   onSwitchAccount?: (() => void) | undefined;
+  /** The sign-in server's account site, offered as where to get help. */
+  account?: string | undefined;
   /** Which action is in flight: Try again's read, or the code's claim. */
   busy?: "read" | "code" | undefined;
 }) {
@@ -1526,6 +1530,20 @@ function Failure({
         />
       )}
       {publicKey && <PublicKeyPanel publicKey={publicKey} />}
+      {account && (
+        <p className="text-body-sm text-subtle">
+          If it keeps happening, check your account at{" "}
+          <a
+            className="text-link underline"
+            href={account}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {new URL(account).host}
+          </a>
+          .
+        </p>
+      )}
       {/* Footer order: secondary first, primary last. */}
       <div data-onboarding-actions="">
         {onBack && (

@@ -184,7 +184,7 @@ it("explains a failed sign-in without exposing its code", async () => {
   h.set({ status: "signed-out" });
   h.set({ status: "signed-out", failure: "callback-refused" });
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Sign-in did not finish. Try again.",
+    "Your browser didn’t send back a complete sign-in. Try again.",
   );
   expect(h.service.signIn).toHaveBeenCalledOnce();
 });
@@ -360,7 +360,9 @@ it("reports only its own renewal's failure", async () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
   expect(
-    await screen.findByText("Sign-in did not finish. Try again."),
+    await screen.findByText(
+      "Your browser didn’t send back a complete sign-in. Try again.",
+    ),
   ).toBeInTheDocument();
   // A later session's warning doesn't carry the old attempt's failure.
   h.set({ revision: "next", failure: null });

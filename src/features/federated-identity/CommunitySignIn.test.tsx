@@ -5,7 +5,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import type { SessionSnapshot } from "./service";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
-import { CommunitySignIn } from "./CommunitySignIn";
+import { CommunitySignIn, recoveryMessage } from "./CommunitySignIn";
 import { federatedFixture } from "./testing";
 afterEach(cleanup);
 it.each(["storage-unavailable", "storage-denied"])(
@@ -294,3 +294,31 @@ it.each([
     expect(retry).toHaveBeenCalledOnce();
   },
 );
+
+it.each([
+  [
+    "email-verification-required",
+    "Verify your email with the link we sent you, then sign in again.",
+  ],
+  [
+    "login-unavailable",
+    "Sign-in is unavailable for a moment. Wait a minute, then try again.",
+  ],
+  [
+    "browser-unavailable",
+    "Buzz couldn’t open your browser. Check that you have a default browser, then try again.",
+  ],
+  [
+    "network-timeout",
+    "Buzz couldn’t reach the sign-in service. Check your connection, then try again.",
+  ],
+  [
+    "storage-denied",
+    "Sign-in could not access secure storage. Check your system’s credential permissions and try again.",
+  ],
+  // Unknown codes, and names that only look like keys, keep the generic line.
+  ["random-unavailable", "Sign-in did not finish. Try again."],
+  ["toString", "Sign-in did not finish. Try again."],
+])("explains the %s sign-in failure with its next step", (code, message) => {
+  expect(recoveryMessage(code)).toBe(message);
+});

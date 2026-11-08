@@ -10,16 +10,47 @@ import type { CommunityRefusal } from "../relay/http-admission";
 /** Native's rejection when the browser step outlasts its wait (`oauth_callback::TIMED_OUT`). */
 export const SIGN_IN_TIMED_OUT = "Sign-in timed out. Try again.";
 
+const UNREACHABLE =
+  "Buzz couldn’t reach the sign-in service. Check your connection, then try again.";
+const UNUSABLE =
+  "The sign-in service sent an answer Buzz couldn’t use. Try again in a few minutes.";
+/** What each failure code native reports for a sign-in means, with its next step. */
+const RECOVERY: Readonly<Record<string, string>> = {
+  "sign-in-timed-out": SIGN_IN_TIMED_OUT,
+  "sign-in-canceled": "Sign-in was canceled. Sign in when you’re ready.",
+  "reauthentication-required":
+    "Your sign-in has expired. Sign in again to continue.",
+  "storage-busy":
+    "Secure storage is busy. Close another Buzz instance and try again.",
+  "email-verification-required":
+    "Verify your email with the link we sent you, then sign in again.",
+  "login-unavailable":
+    "Sign-in is unavailable for a moment. Wait a minute, then try again.",
+  "login-refused":
+    "The sign-in page declined this sign-in. Try again, or sign in with a different account.",
+  "callback-refused":
+    "Your browser didn’t send back a complete sign-in. Try again.",
+  "browser-unavailable":
+    "Buzz couldn’t open your browser. Check that you have a default browser, then try again.",
+  "network-unavailable": UNREACHABLE,
+  "network-timeout": UNREACHABLE,
+  "clock-unavailable":
+    "Buzz couldn’t read your computer’s clock. Check its date and time, then try again.",
+  "session-changed":
+    "Another sign-in started before this one finished. Try again.",
+  "adapter-refused":
+    "The sign-in service turned this sign-in down. Try again in a few minutes.",
+  "invalid-response": UNUSABLE,
+  "response-too-large": UNUSABLE,
+  "invalid-expiry": UNUSABLE,
+  "expiry-mismatch": UNUSABLE,
+};
+
 export function recoveryMessage(code: string) {
-  if (code === "sign-in-timed-out") return SIGN_IN_TIMED_OUT;
-  if (code === "storage-busy")
-    return "Secure storage is busy. Close another Buzz instance and try again.";
+  const known = Object.hasOwn(RECOVERY, code) ? RECOVERY[code] : undefined;
+  if (known) return known;
   if (code.startsWith("storage-"))
     return "Sign-in could not access secure storage. Check your system’s credential permissions and try again.";
-  if (code === "sign-in-canceled")
-    return "Sign-in was canceled. Sign in when you’re ready.";
-  if (code === "reauthentication-required")
-    return "Your sign-in has expired. Sign in again to continue.";
   return "Sign-in did not finish. Try again.";
 }
 

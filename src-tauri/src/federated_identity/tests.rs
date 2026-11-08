@@ -447,6 +447,21 @@ fn a_callback_timeout_keeps_its_own_failure_code() {
 }
 
 #[test]
+fn a_callback_error_the_person_can_act_on_keeps_its_own_failure_code() {
+    assert_eq!(
+        login_refusal("email_verification_required"),
+        "email-verification-required"
+    );
+    assert_eq!(
+        login_refusal("temporarily_unavailable"),
+        "login-unavailable"
+    );
+    assert_eq!(login_refusal("server_error"), "login-unavailable");
+    assert_eq!(login_refusal("access_denied"), "login-refused");
+    assert_eq!(login_refusal(""), "login-refused");
+}
+
+#[test]
 fn the_login_start_asks_only_for_the_sign_up_screen_and_forced_login_it_was_given() {
     let config = host(Arc::new(Memory::default())).0.config.clone().unwrap();
     let start = "https://identity.example/v1/login/start?handoff_challenge=challenge&handoff_challenge_method=S256";

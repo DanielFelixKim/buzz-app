@@ -1051,8 +1051,8 @@ impl FederatedIdentity {
         };
         let result = async {
             let response = response?;
-            if response.parameters.iter().any(|(name, _)| name == "error") {
-                return Err("login-refused".into());
+            if let Some((_, error)) = response.parameters.iter().find(|(name, _)| name == "error") {
+                return Err(login_refusal(error).into());
             }
             let mut codes = response
                 .parameters
@@ -1340,6 +1340,16 @@ fn callback_failure(error: &str) -> &'static str {
         "Sign-in canceled." => "sign-in-canceled",
         crate::oauth_callback::TIMED_OUT => "sign-in-timed-out",
         _ => "callback-refused",
+    }
+}
+
+/// The failure code for a browser callback that carries an OAuth `error`. The
+/// two the person can act on keep their own codes; any other is a refusal.
+fn login_refusal(error: &str) -> &'static str {
+    match error {
+        "email_verification_required" => "email-verification-required",
+        "temporarily_unavailable" | "server_error" => "login-unavailable",
+        _ => "login-refused",
     }
 }
 

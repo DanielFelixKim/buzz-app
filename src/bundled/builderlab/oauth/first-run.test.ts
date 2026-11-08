@@ -491,7 +491,11 @@ describe("the NIP-FI sign-in", () => {
       );
       await expect(
         firstRunCredential(new AbortController().signal, fi.service),
-      ).rejects.toThrow(new Error("Sign-in did not finish. Try again."));
+      ).rejects.toThrow(
+        new Error(
+          "Buzz couldn’t reach the sign-in service. Check your connection, then try again.",
+        ),
+      );
       expect(fi.service.signIn).toHaveBeenCalledOnce();
     });
 

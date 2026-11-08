@@ -7178,6 +7178,54 @@ it("a failed or canceled sign-in returns to the first-launch screen", async () =
   identity.dispose();
 });
 
+it("a failed sign-in says what to do, offers Try again and names the account site", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(null).mockResolvedValueOnce(false);
+  const released = deferred<Credential>();
+  const connect = vi
+    .fn()
+    .mockRejectedValueOnce(
+      new Error(
+        "Verify your email with the link we sent you, then sign in again.",
+      ),
+    )
+    .mockImplementationOnce(() => released.promise);
+  const fi = federatedFixture();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinked}
+      connect={connect}
+      federatedIdentity={fi.service}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t sign in" }),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Verify your email with the link we sent you, then sign in again.",
+  );
+  expect(
+    screen.getByRole("link", { name: "builderlab.example" }),
+  ).toHaveAttribute("href", "https://builderlab.example");
+  try {
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(
+      screen.queryByRole("heading", { name: "Couldn’t sign in" }),
+    ).toBeNull();
+  } finally {
+    await act(async () => released.reject(new Error("done")));
+  }
+  identity.dispose();
+});
+
 it("restore denial does not become first run or generate a replacement", async () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   const startDragging = vi.fn().mockResolvedValue(undefined);
