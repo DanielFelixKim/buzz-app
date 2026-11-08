@@ -40,6 +40,7 @@ import {
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import type { CommunityMembership } from "../moderation/membership";
+import { useFirstChannel } from "./first-channel";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
@@ -85,6 +86,7 @@ import {
   GearIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
+import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -234,20 +236,12 @@ export function ChannelsPage({
               </p>
             </div>
           ) : session.status === "error" && session.denied ? (
-            <div role="alert" className={styles.failed}>
+            // The community refused this account. Its notice, on every page,
+            // says what fixes it and offers that; this only says why it's empty.
+            <div className={styles.failed}>
               <EmptyState
                 icon={<LockIcon />}
-                title="You don’t have access to this"
-                description="It belongs to another account or a community you haven’t joined."
-                action={
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={() => relay.retry()}
-                  >
-                    Try again
-                  </Button>
-                }
+                title={communityRefusalTitle(session.refusal)}
               />
             </div>
           ) : session.status === "error" &&
@@ -381,6 +375,7 @@ function ChannelWorkspace({
   );
   const list = useChannelRoster(queries.channels);
   const initialList = useRef(list);
+  useFirstChannel({ scope, cached, queries, list, membership });
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
     // Initial channel discovery cancels in-flight reads as it settles access.

@@ -56,7 +56,7 @@ export function apply(ctx) {
 
 | Inject | Registers | Call and required fields |
 | --- | --- | --- |
-| `pages` | A page | `ctx.pages.register({ id, title, component, primary?, placement?, icon?, badge?, sidebar?, companion?, layout? })`. `id` must match the id pattern, `title` non-empty, `component` a function. `placement`: `"sidebar"` (default), `"topbar"`, `"toolbar"` (only for `primary` pages). `icon`: `data:image/...` URL. `badge`: component shown beside the nav entry. `sidebar`: component receiving `{ target, children }` that replaces the conversation sidebar (wrap content in `className="shell-sidebar-default"`). `layout`: `"document"` or `"workspace"`. |
+| `pages` | A page | `ctx.pages.register({ id, title, component, primary?, placement?, icon?, badge?, sidebar?, companion?, layout? })`. `id` must match the id pattern, `title` non-empty, `component` a function. `placement`: `"sidebar"` (default) or `"dock"` (only for `primary` pages; `"topbar"` and `"toolbar"` are accepted aliases for `"dock"`). `icon`: `data:image/...` URL. `badge`: component shown beside the nav entry. `sidebar`: component receiving `{ target, children }` that replaces the conversation sidebar (wrap content in `className="shell-sidebar-default"`). `layout`: `"document"` or `"workspace"`. |
 | `panels` | A panel for a link/target string | `ctx.panels.register({ id, title, matches(target) => boolean, component, order?, launcher?, channelLauncher?, channelPlacement?, keepOpen? })`. `component` receives `{ target, close, context?, channelContext? }`. `launcher: { icon: string, target: string }` adds a top-bar button (use `matches: () => false` for launcher-only). `channelLauncher` is a component for the channel header (`channelPlacement`: `"bottom"` default, `"side"`, `"tab"`). |
 | `settingsCards` | A Settings destination | `ctx.settingsCards.register({ id, title, component, group?, personal? })`. `component` receives `{ active(), community? }`. Omit `icon` (it is a host icon component). The host supplies navigation and the content column, not a heading. |
 | `sidebarSections` (optional) | A section in the Team sidebar | `ctx.reflect.get("sidebarSections")?.register({ version: 1, id, title, icon, rows: { snapshot, subscribe }, select, actions? })`. `snapshot()` returns a stable array of `{ id, label, icon?, badge?, count?, status? }` until data changes, then notify subscribers. `select(row)` returns an open target such as `{ version: 1, kind: "home" }`. Actions: `{ id, label, icon: ReactElement, onSelect }`. |
@@ -66,6 +66,7 @@ export function apply(ctx) {
 | `navigation` | Open destinations | `await ctx.navigation.open(target)` returns `{ status: "opened" \| "failed" \| "superseded" \| "cancelled" }`. Targets: `{ version: 1, kind: "plugin", pluginId, pageId?, params? }`, `{ version: 1, kind: "home" }`, `{ version: 1, kind: "settings", section? }`. |
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
+| `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, timeoutMs?, community? })`. `questions` maps 1 to 32 answer names to `{ type: "yes_no", instructions }`, `{ type: "choice", instructions, options }` (value -> when to pick it) or `{ type: "score", instructions, levels }` (lowest first). `timeoutMs` is in milliseconds (1000-30000). `community` is the relay URL the text came from; Builderlab fails without it (in an agent tool: `ctx.agents.snapshot().running.find((a) => a.key === client.key)?.relay`; in a channel panel: `channelContext.relayUrl`). Resolves `{ outcome: "answered", model, answers }` (for example `answers.urgent.probability`) or `{ outcome: "failed", reason }`; never rejects. By default Builderlab or TypeSafe answers, with Jev. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
 | `pluginInstaller` (optional) | Ask the owner to install another plugin or check installation status | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. |
 
@@ -94,6 +95,8 @@ ctx.effect(() => {
   return unsubscribe;
 });
 ```
+
+The table above covers the services most plugins use. The full contract for every service, with TypeScript types and examples, is in [Plugin architecture](https://github.com/block/buzz-app/blob/main/docs/plugin-architecture.md); the types are exported from [`src/plugins/author.ts`](https://github.com/block/buzz-app/blob/main/src/plugins/author.ts). Read it before you use a service that is not in this table. It describes the latest Buzz, which can have services this app does not. If a service in `inject` is missing, `apply` never runs, so check `plugin_status` after you install.
 
 ## Host access (`manifest.host`)
 

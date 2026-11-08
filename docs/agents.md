@@ -36,8 +36,9 @@ and reported as migration errors.
 
 The shared tools offer `agent_types` to list installed local runtimes and
 `agent_create` to submit an unsaved creation draft using a listed type key and a display name,
-optionally with a picture. It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
-the usual Create agent form, may edit the name, runtime and settings, and creates
+optionally with instructions for types that take them and a picture. It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+the usual Create agent form, filled in with any requested instructions and picture, may edit
+the name, runtime and settings, and creates
 only by submitting it. Closing the form discards the request. Requests are local,
 bounded to 16 and do not survive reload or a change of signed-in owner.
 Approval binds the identity to the requesting agent's owner and community, even
@@ -78,17 +79,32 @@ servers do not support these operations.
 ## Owner tools
 
 In communities the build flag `BUZZ_OWNER_MCP_COMMUNITIES` enables, an agent's
-runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get` and
-`owner_member_list`. They read the owner's channels, one channel's details and
-the owner's rights in it, and its roster, through the owner's own signed-in
-session, including private and archived channels, DMs and Solo chats the agent
-is not in. They write nothing. The app decides the agent, owner and community;
+runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get`,
+`owner_member_list`, `owner_read`, `owner_canvas_get` and `owner_canvas_history`.
+They read the owner's channels, one channel's details and
+the owner's rights in it, its roster, its messages, whole threads and searches,
+and its Canvas and earlier revisions, through the
+owner's own signed-in session, including private and archived channels, DMs and
+Solo chats the agent is not in. Message reads and Canvas history page with a
+`next` cursor, as `read` and the app's history do. A search covers only the
+owner's channels and says `partial` while their list is incomplete. Other
+channels' matches still fill its page, so `limited` with few results means
+narrowing it by channel or time. A message shows its newest edit by its author
+or, as in the app, by the author's verified owner. One read fetches a page's edits;
+when they fill it, the answer says `edits_limited` and some messages may show earlier text. They write
+nothing: no membership, subscription, read state, post, agent start or Canvas
+change. Content comes from the relay's own answer, not the owner's open views,
+so it changes no unread counts. They do not save the owner's attachments: a
+saved file would be readable before the call's final checks. The app
+decides the agent, owner and community;
 answers name them in `executedAs`. Each call needs the agent's owner signed in
 to that community now and fails, returning nothing, when the account, community
 or connection changes during it or the turn ends or is stopped, including while
 protection reviews its result. Installed harness plugins, plugins' tools, plugin
 MCP connections and external apps never get this access, and a plugin cannot add
-a tool whose name starts with `owner_`. Protection reviews these calls and their
+a tool whose name starts with `owner_`. A [Mesh agent](../src/bundled/mesh-compute/MESH_AGENT.md)
+has these tools too; as its setup warns of all tool output, members serving its
+model can read what they return. Protection reviews these calls and their
 results as it does other Buzz tools. See
 [configuration](configuration.md#owner-mcp-community-flag).
 
@@ -194,8 +210,7 @@ secret in a link, workspace, log, or agent tool result.
 A reconnect link uses version 2 and adds `pairing_id`, `counter`, and `proof`.
 The client saves an increased counter before opening the link. Buzz accepts
 only a greater counter and saves it before it starts a fresh session. A lost
-handshake can skip a counter. A counter is a positive integer of at most
-999999999999999. The proof is unpadded base64url HMAC-SHA256 with the decoded
+handshake can skip a counter. A counter is a positive integer of at most 999999999999999. The proof is unpadded base64url HMAC-SHA256 with the decoded
 reconnect secret as its key. Its input is the UTF-8 JSON array, with no spaces:
 
 ```text
@@ -278,7 +293,7 @@ older app or remote host.
 
 ## Agent Attention
 
-Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Each Interest can be paused without changing its watches’ enabled settings. Deleting an Interest with watches asks for confirmation, then removes them together. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Each Interest can be paused without changing its watches’ enabled settings. Deleting an Interest with watches asks for confirmation, then removes them together. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents. There is no per-agent switch: while the plugin is on, Attention runs for every agent. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
@@ -332,8 +347,8 @@ Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. Plugins can add a tab to every local agent with
 `ctx.agents.registerTab`, or to some of them with its optional `when(agent)`;
-the Attention plugin's Attention tab holds the device Attention switch, and the
-Bestie plugin's Bestie tab shows only on your Bestie.
+the Attention plugin's Attention tab lists an agent's Interests and watches, and
+the Bestie plugin's Bestie tab shows only on your Bestie.
 
 Attention command processes on macOS and Linux stop when their app process exits, including an abrupt exit. A shared lease allows one running command per agent, provider, watch and declared process across Buzz builds on the same computer. A new owner waits for the previous command to stop before starting its copy. Removing a watch or turning Attention off stops its command through the existing process host.
 
@@ -852,13 +867,13 @@ Two parts of the app decide who you can mention:
 
 The composer accepts these people:
 
-| Where you write | Who you can mention |
-| --- | --- |
-| Channel or forum | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
-| DM | Anyone. People outside the DM are named but not notified. |
-| Solo chat | Chat members, plus your agents (a send adds the tagged ones). |
-| New DM, before it is created | Only the people you chose for the DM. |
-| Archived or read-only channel | Nobody. |
+| Where you write               | Who you can mention                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| Channel or forum              | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
+| DM                            | Anyone. People outside the DM are named but not notified.                                |
+| Solo chat                     | Chat members, plus your agents (a send adds the tagged ones).                            |
+| New DM, before it is created  | Only the people you chose for the DM.                                                    |
+| Archived or read-only channel | Nobody.                                                                                  |
 
 Everywhere, the composer refuses invalid keys and people known to be archived.
 You can always mention yourself. If archive state is unknown, the mention is
@@ -1142,8 +1157,23 @@ in its home record and applies everywhere.
   community takes the team's section from the home
   channel's last confirmed copy, and with none its start waits rather than use
   local fields. Changes and Delete (which archives the home channel) run online,
-  one at a time per team, and report anything left part way. Existing local
-  teams are not migrated.
+  one at a time per team, and report anything left part way.
+  A local team whose members are all the owner's agents in one community that
+  syncs teams moves there once its config channels are up and its agent
+  records are read: it is imported under an id fixed by its local id, so a
+  retry after a crash or disconnect lands in the same team, and the local copy
+  goes only once the relay copy is confirmed. Each move's community is saved
+  before its first write; a failed move is retried on the next connection. A
+  move never writes over a relay team this device didn't create: if the
+  community already has a different copy (as when another copy of the app moved
+  the team first and it was edited there), nothing is written, the team stays
+  local and its status line says "A different copy of this team is already in
+  <community>". Only once this device's own create is confirmed do its local
+  edits win over the relay copy on a retry. Likewise, Delete of a team whose move began archives the relay copy only once this device's create is confirmed; otherwise it removes the local team and leaves the relay alone. A team whose editor has unsaved
+  changes or a Save running doesn't move until they settle. Its status line
+  says why a team stays on this device: its agents are in different
+  communities, the relay doesn't sync teams, or its move failed and will be
+  retried.
 - **Hosted agents** stay in one community, as their provider holds the key.
   Only a synced team homed there can have them as members, so the team editor
   offers them only for such a team, or for a new one that will sync there. One
@@ -1163,7 +1193,6 @@ its channels on a best-effort basis.
 Protocol source: old Buzz `b9392d9` `docs/nips/NIP-IA.md`, especially relay identity,
 snapshot format and snapshot/delta consistency. Tests use the actual session and
 HTTP broker/verified transport, including corrupted signature rejection.
-
 
 ## Agent Activity plugin
 
@@ -1371,6 +1400,20 @@ pending, failed, or uncertain lifecycle evidence. Durable cross-host completion
 would require retained request/turn relationships and terminal events; the
 current live-only feed does not provide that guarantee.
 
+Outcomes use the same response frame and inline disclosure as recorded history.
+Confirmed failure shows a danger warning and “Couldn’t finish”; stopped requests
+use neutral “Stopped”. Passive uncertainty creates no outcome balloon and remains
+available internally for status recovery. A signed execution-failure message still
+proves failure when telemetry is uncertain. Confirmed outcomes remain after live
+progress retires, with no viewing timeout or replacement completion message.
+The expanded outcome sits below Collapse, above the details. Supported local Retry/Dismiss
+and Activity navigation live inside the disclosure; remote retry is not inferred.
+An unedited, attachmentless signed execution-failure reply immediately following
+its author's coordination run folds into that history only with an explicit
+reply link to the same request, channel, thread level and day. Its original
+message and anchor remain readable after reload. Otherwise it has a standalone
+outcome disclosure. Ordinary replies and partial results retain their own rows.
+
 ### Try with an existing owner account
 
 Use the [public-pin/Keychain setup](contributing.md#live-relay-development) and run
@@ -1498,8 +1541,12 @@ URLs, never file URLs or SVG data.
 The inventory joins exact public keys, not equal names; explicit profile references
 use the publisher's slug mapping only when local definitions do not collide. Local
 names and artwork win for matching keys. A failed source leaves the other source
-visible with a warning. Reads are lazy (once per demand or Refresh), with no polling
-or relay-directory startup scan.
+visible; the mention menu and agent picker report the failure with Retry, and the
+composer shows no standing notice. Reads are lazy (once per demand or Refresh), with
+no polling or relay-directory startup scan. A connection's first establishment
+rereads retained inventory that failed, wholly or partly; a read already in flight
+is reused and reread once if it fails. Each failed source's reason is logged as a
+console warning.
 Relay inventory uses foreground read capacity because Solo needs complete
 inventory to restore its recipients; it keeps the normal ten-second deadline.
 
@@ -1634,7 +1681,6 @@ without known rates or an incomplete snapshot left something out, and
 unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
-
 
 ## Attention subscriptions
 

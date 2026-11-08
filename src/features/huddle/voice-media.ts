@@ -15,6 +15,7 @@ export async function openVoiceMedia(
     ): () => void;
     start(sdp: string): Promise<unknown>;
     stop(): Promise<unknown>;
+    thinking?: ((active: boolean) => void) | undefined;
   },
 ) {
   signal.throwIfAborted();
@@ -107,7 +108,22 @@ export async function openVoiceMedia(
     };
     for (const track of destination.stream.getTracks())
       peer.addTrack(track, destination.stream);
-    peer.createDataChannel("oai-events");
+    const events = peer.createDataChannel("oai-events");
+    events.onmessage = ({ data }) => {
+      if (closed || typeof data !== "string") return;
+      try {
+        const event = JSON.parse(data);
+        if (event.type === "response.created") signaling.thinking?.(true);
+        if (
+          event.type === "response.done" ||
+          event.type === "output_audio_buffer.started" ||
+          event.type === "input_audio_buffer.speech_started"
+        )
+          signaling.thinking?.(false);
+      } catch {
+        /* Ignore non-protocol data. */
+      }
+    };
     off = signaling.subscribe((sdp) => {
       if (!closed)
         void peer.setRemoteDescription({ type: "answer", sdp }).catch(fail);
