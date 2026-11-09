@@ -99,6 +99,7 @@ export function HostedCommunities({
   sharedSignIn = false,
   onOverview,
   navigation,
+  initialCreate = false,
 }: {
   api: Api;
   active(): boolean;
@@ -109,6 +110,8 @@ export function HostedCommunities({
   sharedSignIn?: boolean;
   onOverview?: OverviewObserver;
   navigation?: ReactNode;
+  /** Picker entry opens the existing form once the account checks complete. */
+  initialCreate?: boolean;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -119,7 +122,7 @@ export function HostedCommunities({
   const [loaded, setLoaded] = useState(false);
   const [listTab, setListTab] = useState<"active" | "archived">("active");
   const [listQuery, setListQuery] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(initialCreate);
   const needle = listQuery.trim().toLowerCase();
   const [quotaState, setQuotaState] = useState<Quota | null>(null);
   // This device's key: undefined while loading, null when it could not be read.

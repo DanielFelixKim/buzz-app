@@ -1001,7 +1001,10 @@ cards such as Pair mobile that collect their own community address; it cannot be
 combined with `group` or `section`.
 Its section id is the contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
 uses the shared design-system icon gateway; the host supplies a fallback when omitted.
-Cards receive `active()` and use ordinary
+Cards receive `active()` and optional `navigation` for the current Settings visit.
+A Settings target can carry bounded `route: { version, params }` presentation
+data; the card interprets supported versions and ignores unknown routes. Opening
+a route must never submit a write. Cards use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 

@@ -61,6 +61,7 @@ export function BuilderlabSettings({
   active,
   account,
   keepAccountVisible = false,
+  initialSection,
   communities,
   agents,
   summaries,
@@ -69,11 +70,12 @@ export function BuilderlabSettings({
   account: ReactNode;
   /** Keep sign-in, cancellation and recovery reachable inside either section. */
   keepAccountVisible?: boolean;
+  initialSection?: Section | undefined;
   communities(navigation: ReactNode): ReactNode;
   agents: ReactNode;
   summaries?: Record<Section, OverviewSnapshot>;
 }) {
-  const [selected, setSelected] = useState<Section>();
+  const [selected, setSelected] = useState(initialSection);
   const triggers = useRef<Partial<Record<Section, HTMLElement | null>>>({});
   const back = useRef<HTMLButtonElement | null>(null);
   const previous = useRef(selected);

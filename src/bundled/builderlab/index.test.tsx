@@ -492,7 +492,7 @@ it.each([true, false])(
       const card = cards.snapshot()[0];
       if (!card) throw new Error("Missing Builderlab login card");
       const Card = card.component;
-      render(<Card active={() => true} />);
+      const mounted = render(<Card active={() => true} />);
       const user = userEvent.setup();
       // Both native signed-out sections must retain an actionable sign-in.
       await user.click(
@@ -561,6 +561,38 @@ it.each([true, false])(
         }),
       ).toBeEnabled();
       expect(backupCalls().at(-1)?.[1]).toMatchObject({ federated: null });
+      if (canUseRemoteAgents) {
+        mounted.rerender(
+          <Card
+            active={() => true}
+            navigation={
+              {
+                entryId: "picker-create",
+                target: {
+                  version: 1,
+                  kind: "settings",
+                  section: "block.builderlab/login",
+                  route: { version: 1, params: "create-community" },
+                },
+              } as never
+            }
+          />,
+        );
+        await user.click(
+          screen.getByRole("button", {
+            name: "Sign in with builderlab.example",
+          }),
+        );
+        await waitFor(() =>
+          expect(
+            screen.getByRole("textbox", { name: "Community address" }),
+          ).toHaveFocus(),
+        );
+        await user.click(screen.getByRole("button", { name: /^Cancel$/ }));
+        expect(
+          screen.queryByRole("dialog", { name: "Create community" }),
+        ).toBeNull();
+      }
       await runtime.dispose();
       expect(backupCalls().at(-1)?.[1]).toMatchObject({ federated: null });
     } finally {

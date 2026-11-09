@@ -74,8 +74,6 @@ test("creating a hosted community joins it and lists it in the picker", async ({
   await settleDialogMotion(picker);
   await shot("1-picker-before.png");
   await picker.getByRole("button", { name: "Create community" }).click();
-  await button(page, "Open Communities").click();
-  await button(page, "Create community").click();
 
   const address = page.getByPlaceholder("north-star");
   await expect(address).toBeEnabled();

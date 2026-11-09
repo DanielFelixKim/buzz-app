@@ -6,6 +6,7 @@ import {
 } from "react";
 import type { OverviewObserver, OverviewSnapshot } from "./overview";
 import type { PluginModule } from "../../plugins/api";
+import type { PageNavigation } from "../../features/navigation/service";
 import { handoffFederatedBackupSession } from "../../features/identity/backup";
 import { nativeIdentityEnabled } from "../../features/identity/service";
 import { Login } from "./login/Login";
@@ -196,10 +197,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     active,
     onOverview,
     navigation,
+    initialCreate,
   }: {
     active(): boolean;
     onOverview: OverviewObserver;
     navigation: ReactNode;
+    initialCreate: boolean;
   }) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
     useLayoutEffect(() => {
@@ -217,6 +220,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     if (communities === brokerApi)
       return (
         <HostedCommunities
+          initialCreate={initialCreate}
           navigation={navigation}
           api={communities}
           active={active}
@@ -228,6 +232,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       state.status === "signed-in" && dev ? session.viewerSession() : undefined;
     return state.status === "signed-in" ? (
       <HostedCommunities
+        initialCreate={initialCreate}
         navigation={navigation}
         key={
           viewer && "broker" in viewer
@@ -244,8 +249,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
       heading
     );
   };
-  const Settings = ({ active }: { active(): boolean }) => {
+  const Settings = ({
+    active,
+    navigation,
+  }: {
+    active(): boolean;
+    navigation?: PageNavigation | undefined;
+  }) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
+    const route =
+      navigation?.target.kind === "settings"
+        ? navigation.target.route
+        : undefined;
+    const createRequested =
+      route?.version === 1 && route.params === "create-community";
     const saved = useAgentsSnapshot(ctx.agents);
     const [communityOverview, setCommunityOverview] =
       useState<OverviewSnapshot>({ kind: "pending" });
@@ -254,7 +271,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
     return (
       <BuilderlabSettings
+        key={navigation?.entryId}
         active={active}
+        initialSection={createRequested ? "communities" : undefined}
         keepAccountVisible={state.status !== "signed-in"}
         summaries={{ communities: communityOverview, agents: agentOverview }}
         account={
@@ -274,6 +293,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         }
         communities={(navigation) => (
           <Communities
+            initialCreate={createRequested}
             navigation={navigation}
             active={active}
             onOverview={setCommunityOverview}
