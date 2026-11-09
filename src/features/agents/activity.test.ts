@@ -739,3 +739,66 @@ it("gives no request work to a message whose steer the lifecycle rejected", () =
   expect([...(work(id(1))[0]?.selected.turnIds ?? [])]).toEqual(["one"]);
   f.activity.dispose();
 });
+it("gives no request work to a rejected steer after its turn's raw start is evicted", () => {
+  const id = (n: number) => n.toString(16).padStart(64, "0");
+  const evicted = fixture();
+  const rejected = "2".repeat(64);
+  evicted.send(
+    evicted.item("turn_started", "one", {
+      payload: {
+        triggeringEventIds: Array.from({ length: 64 }, (_, i) => id(i + 1)),
+      },
+    }),
+  );
+  for (let i = 0; i < ACTIVITY_RECORD_LIMIT - 1; i++)
+    evicted.send(evicted.item("acp_read", "one", { seq: i + 2 }));
+  evicted.send(
+    evicted.item("turn_steered", "one", {
+      seq: ACTIVITY_RECORD_LIMIT + 2,
+      payload: { triggeringEventIds: [rejected] },
+    }),
+  );
+  expect(evicted.snapshot().trimmed).toBeGreaterThan(0);
+  expect(evicted.snapshot().turns[0]?.triggeringEventIds).toHaveLength(64);
+  expect(requestWork(evicted.snapshot(), "a", rejected)).toEqual([]);
+  expect([
+    ...(requestWork(evicted.snapshot(), "a", id(1))[0]?.selected.turnIds ?? []),
+  ]).toEqual(["one"]);
+  evicted.activity.dispose();
+});
+it("does not let a delayed start the lifecycle ignored hide an accepted steer's records", () => {
+  const id = (n: number) => n.toString(16).padStart(64, "0");
+  const delayed = fixture();
+  const first = "1".repeat(64),
+    steered = "3".repeat(64);
+  delayed.send(
+    delayed.item("turn_steered", "one", {
+      seq: 2,
+      payload: { triggeringEventIds: [first] },
+    }),
+  );
+  delayed.send(
+    delayed.item("turn_started", "one", {
+      timestamp: new Date(Date.now() - 1000).toISOString(),
+      payload: {
+        triggeringEventIds: Array.from({ length: 63 }, (_, i) => id(i + 1)),
+      },
+    }),
+  );
+  delayed.send(
+    delayed.item("turn_steered", "one", {
+      seq: 3,
+      payload: { triggeringEventIds: [steered] },
+    }),
+  );
+  delayed.send(delayed.item("acp_read", "one", { seq: 4 }));
+  expect(delayed.snapshot().turns[0]?.triggeringEventIds).toEqual([
+    first,
+    steered,
+  ]);
+  const [work] = requestWork(delayed.snapshot(), "a", steered);
+  expect(work?.state).toBe("working");
+  expect(work?.selected.records.length).toBeGreaterThan(0);
+  expect(requestWork(delayed.snapshot(), "a", id(1))).toEqual([]);
+  delayed.activity.dispose();
+});

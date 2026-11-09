@@ -111,22 +111,36 @@ export function requestActivity(
       )
       .map((turn) => turn.turnId),
   );
-  // Admit each start's and steer's messages in arrival order by the
-  // lifecycle's rules, so a list it rejected cannot associate a message here.
-  // The first anchor that admits a wanted message names its turn.
-  const known = new Map<string, string[]>();
+  // The lifecycle's membership of a turn it still holds is authoritative: a
+  // start or steer anchors the turn only for messages the lifecycle admitted.
+  // A turn it no longer holds, or holds without membership, is replayed from
+  // the raw records, admitting each start's and steer's messages in arrival
+  // order by the lifecycle's rules, so a list it rejected cannot associate a
+  // message here.
+  const retained = new Map<string, readonly string[]>();
+  for (const turn of turns)
+    if (
+      turn.agent === agent &&
+      turn.channelId === channelId &&
+      turn.triggeringEventIds
+    )
+      retained.set(turn.turnId, turn.triggeringEventIds);
+  const replayed = new Map<string, string[]>();
   const anchors: Parsed[] = [];
   for (const anchor of parsed) {
     const { kind, turnId, payload } = anchor.value;
     if (kind !== "turn_started" && kind !== "turn_steered") continue;
-    const triggers = known.get(turnId) ?? [];
-    known.set(turnId, triggers);
-    const fresh = freshTurnTriggers(
-      triggers,
-      turnTriggerIds(payload?.triggeringEventIds),
-    );
-    triggers.push(...fresh);
-    if (fresh.some((id) => triggersWanted.has(id))) anchors.push(anchor);
+    const listed = turnTriggerIds(payload?.triggeringEventIds);
+    const members = retained.get(turnId);
+    let joined: readonly string[];
+    if (members) joined = (listed ?? []).filter((id) => members.includes(id));
+    else {
+      const known = replayed.get(turnId) ?? [];
+      replayed.set(turnId, known);
+      joined = freshTurnTriggers(known, listed);
+      known.push(...joined);
+    }
+    if (joined.some((id) => triggersWanted.has(id))) anchors.push(anchor);
   }
   // A steered message joined a turn that started for another message, so it
   // shares that turn's records from its start, or from the steer when the start
