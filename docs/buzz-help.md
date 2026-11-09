@@ -98,7 +98,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   **Add people** and after `@` in a message. The **private key**, shown as an
   `nsec`, lets someone act as that identity. Never ask anyone to paste a
   private key into a conversation or send it to you.
-- In native desktop builds, **Settings → Buzz → Identity → Authorize external identity** creates an
+- In native desktop builds, **Settings → Buzz → Security → Authorize external identity** creates an
   ownership proof for an application such as Nexus that holds its own agent key.
   Enter that application's public key in hex, select **Authorize identity**,
   review the exact identity and permission in the confirmation, then select
@@ -200,11 +200,16 @@ that agent in Buzz; they do not notify the external app through this connection.
 
 ## Pair a command-line tool
 
-Run `buzz auth desktop pair` in a terminal while Buzz is open. Buzz asks
-whether to let that tool use Buzz as you; select **Allow** only when you ran the
-command. The tool can then post, read and use your sign-in through Buzz, and
-your key stays in Buzz. It can't edit your profile, delete, or manage members,
-agents or moderation: do those in Buzz.
+Run `buzz --relay <community address> auth desktop pair` in a terminal while
+Buzz is open, using the **Community address** shown in that community's
+**Settings → Local settings**. Buzz asks whether to let that tool use Buzz as
+you; select **Allow** only when you ran the command. Buzz pairs only for a
+community you've joined in Buzz, and otherwise tells the tool so without
+asking. Until you've finished signing in or setting up Buzz, it refuses
+pairing; finish, then run the command again. Once allowed, the tool can post,
+read and use your sign-in through Buzz, and your key stays in Buzz. It can't
+edit your profile, delete, or manage members, agents or moderation: do those
+in Buzz.
 **Settings → Security** lists paired tools. **Revoke** stops one. Signing out
 revokes all of them, and a pairing unused for 30 days expires.
 
@@ -238,9 +243,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
 - **Forward message** in a message's hover actions or message menu sends its link
-  to one person in the current community, with an optional note. Buzz opens or
-  creates the direct message for you. The link previews the original message;
-  the recipient still needs access to its conversation. Forwarding is unavailable
+  to one person in the current community, with an optional note. Buzz sends it
+  in your direct message with them, starting one if needed, and you stay where
+  you are; select the confirmation notice while it's showing to open the
+  forwarded message in that DM. The link previews the original message; the
+  recipient still needs access to its conversation. Forwarding is unavailable
   when the connection cannot start DMs or the message has no link yet.
 
 - Only explicit additions by another member and removals appear as centered
@@ -280,7 +287,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
-- **Activity** (the bell in the sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
+- **Activity** (the bell in the app dock) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
@@ -309,7 +316,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   reply to you that arrives after you leave lights the row again, as does any
   newer message; **Mark as unread** still shows on it. On another device, rows
   with unread mentions, DMs or replies to you light again until you read them.
-- **Communities** have their own channels, people, and agents. Switching
+- **Communities** have their own channels, people, and agents. Switch with
+  the community switcher at the bottom of the dock; in **Personal space**,
+  Messages offers **Choose a community**, which opens it. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
   the person asking may have different channel access. A link alone never
@@ -349,6 +358,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   name, or **Open in channel** in the thread tab's menu, to open the thread in
   Channels beside its original message, which the channel history shows and
   highlights.
+- **Sidebar activity**: rest the pointer on a sidebar row to list its unread
+  mentions of you and its unread threads, mentions first. Open one or mark it
+  read from the list; just looking marks nothing read.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.
@@ -404,6 +416,10 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
+- **Search while offline**: while a community is offline or still connecting,
+  search finds and opens the conversations saved on this device, and a line
+  under the results says so. Messages, people and open channels are searched
+  once it connects; while it is offline, **Retry connection** tries again.
 - **Join** in a View only chat or channel adds you as a viewer, with a sidebar
   entry and normal unread tracking. Notifications follow your existing settings
   and mention/thread rules. You appear in People as **Viewing only**; you still
