@@ -208,7 +208,7 @@ test("an image review keeps Channel settings open and hands the thread draft to 
   await expect(settingsTab).toHaveAttribute("aria-selected", "true");
   await expect(tile).toBeFocused();
 
-  // Thread tabs still leave while the viewer is up: the viewer's comment
+  // Side thread tabs leave while the viewer is up: the viewer's comment
   // composer reads the saved draft when it mounts, and the thread composer
   // reads the viewer's edits back when it returns. Reply closes settings today.
   await hoverMessage(row);
@@ -243,6 +243,32 @@ test("an image review keeps Channel settings open and hands the thread draft to 
     .click();
   await expect(viewer).toHaveCount(0);
   await expect(threadDraft).toHaveText("Handoff draft, edited in the viewer");
+  await expect(tile).toBeFocused();
+
+  // A thread in the main pane is not under the dock and keeps its place
+  // through a review: the same composer stays mounted, never leaving the DOM.
+  const main = page.locator("[data-main-workspace]");
+  const threadTabs = (host) =>
+    host.locator('[role="tab"][data-tab-value^="thread:"]');
+  await threadTabs(workspace).focus();
+  await page.keyboard.press("Alt+Shift+ArrowLeft");
+  await expect(threadTabs(main)).toHaveCount(1);
+  const mainDraft = main.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await expect(mainDraft).toHaveText("Handoff draft, edited in the viewer");
+  const mainEditor = await mainDraft.elementHandle();
+  await main.getByRole("tab", { name: "Alpha", exact: true }).click();
+  await expect(tile).toBeVisible();
+  await tile.click();
+  await expect(viewer).toBeVisible();
+  await expect(hiddenThread).toHaveCount(1);
+  expect(await mainEditor.evaluate((node) => node.isConnected)).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(viewer).toHaveCount(0);
+  expect(await mainEditor.evaluate((node) => node.isConnected)).toBe(true);
+  await expect(threadTabs(main)).toHaveCount(1);
   await expect(tile).toBeFocused();
 });
 

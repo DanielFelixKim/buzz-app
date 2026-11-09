@@ -24,7 +24,12 @@ import type {
 } from "../../features/panels/service";
 import { createAgentLibrary } from "../../features/agents/library";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
-import { channelTabs, tabPane, useChannelTabState } from "./useChannelTabState";
+import {
+  channelTabs,
+  tabPane,
+  useChannelTabState,
+  type TabPane,
+} from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 import {
   claimProfileTranscript,
@@ -1965,6 +1970,69 @@ it("mounts a hidden thread tab when first shown and keeps it for the visit", () 
   );
   act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
   expect(restored("thread:alpha:r1")).toBeUndefined();
+});
+
+it("a page withholds one pane's thread content and hosts it again afterwards", () => {
+  setThreadPlacementPreference("side");
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(
+    ({ hostPanes }: { hostPanes?: readonly TabPane[] }) => {
+      const state = useChannelTabState(session, "alpha");
+      const workspace = useConversationTabs({
+        profiles: new Map(),
+        state,
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: true,
+        mainPane: true,
+        hostPanes,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return { state, workspace };
+    },
+    { initialProps: {} },
+  );
+  const hosted = () =>
+    h.result.current.workspace.hosts.map(
+      (host) => (host as { key?: string }).key,
+    );
+  act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+  act(() =>
+    h.result.current.state.openThreadTab(
+      "alpha",
+      "r2",
+      "r2",
+      undefined,
+      "main",
+    ),
+  );
+  expect(h.result.current.state.tabs.map(tabPane)).toEqual(["side", "main"]);
+  expect(hosted()).toEqual(["thread:alpha:r1", "thread:alpha:r2"]);
+  // Only the side thread leaves; the main-pane thread keeps rendering.
+  h.rerender({ hostPanes: ["main"] });
+  expect(hosted()).toEqual(["thread:alpha:r2"]);
+  // Back in the same visit, the side thread is hosted again without being shown.
+  h.rerender({});
+  expect(hosted()).toEqual(["thread:alpha:r1", "thread:alpha:r2"]);
 });
 
 it("a hidden retained thread tab's rows re-render for new panels, not channel-list changes", () => {
