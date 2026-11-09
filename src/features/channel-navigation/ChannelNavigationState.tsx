@@ -81,6 +81,8 @@ type State = {
         callbacks?: LifecycleCallbacks | undefined;
         /** Chosen from an Undo toast: runs without confirmation. */
         confirmed?: true;
+        /** The viewer confirmed it; the relay may be applying it. */
+        submitted?: true;
       }
     | undefined;
   /** Undos chosen while another lifecycle action held the gate, oldest first. */
@@ -316,6 +318,7 @@ export function ChannelNavigationProvider({
                 lifecycleDialog: {
                   ...previous.lifecycleDialog,
                   origin: undefined,
+                  submitted: true,
                 },
               }
             : previous,
