@@ -62,6 +62,9 @@ export function createHostedAgents(deps: Deps) {
   const emitted = new Map<string, boolean>();
   /** By agent, in least recently read order. */
   const evidence = new Map<string, Evidence>();
+  /** Agents a read stopped short of when the app was hidden; the next read
+   * asks about them whatever evidence they hold. */
+  const deferred = new Set<string>();
   let runtimes: ReadonlySet<string> = new Set();
   let connected = false,
     closed = false;
@@ -98,8 +101,8 @@ export function createHostedAgents(deps: Deps) {
     }
   }
   /** Shown agents within the demand limit with an attested owner whose
-   * evidence is missing or was read for another owner; on a refresh, every
-   * such agent with an owner. */
+   * evidence is missing, was read for another owner or was deferred; on a
+   * refresh, every such agent with an owner. */
   function wanted(refreshing = false) {
     const found = new Map<string, string>();
     for (const key of listeners.keys()) {
@@ -108,7 +111,7 @@ export function createHostedAgents(deps: Deps) {
         owner &&
         owner !== key &&
         !deps.limited(key) &&
-        (refreshing || evidence.get(key)?.owner !== owner)
+        (refreshing || deferred.has(key) || evidence.get(key)?.owner !== owner)
       )
         found.set(key, owner);
     }
@@ -176,6 +179,13 @@ export function createHostedAgents(deps: Deps) {
           });
         }
       for (let at = 0; at < filters.length; at += FILTERS) {
+        // Hidden, the read stops before its next batch and keeps what it has
+        // read; the return to the foreground reads the rest.
+        if (!visible()) {
+          for (const filter of filters.slice(at))
+            for (const key of filter["#d"] ?? []) deferred.add(key);
+          break;
+        }
         const batch = filters.slice(at, at + FILTERS);
         const events = await deps.read(batch, owned.signal);
         if (owned.signal.aborted) return;
@@ -188,6 +198,7 @@ export function createHostedAgents(deps: Deps) {
         }
         for (const filter of batch)
           for (const key of filter["#d"] ?? []) {
+            deferred.delete(key);
             evidence.delete(key);
             evidence.set(key, {
               owner: filter.authors?.[0] ?? "",
@@ -269,6 +280,7 @@ export function createHostedAgents(deps: Deps) {
         // Evidence stays, so showing the agent again reads nothing.
         listeners.delete(key);
         emitted.delete(key);
+        deferred.delete(key);
         if (!listeners.size) unschedule();
       };
     },
@@ -301,6 +313,7 @@ export function createHostedAgents(deps: Deps) {
       controller?.abort();
       listeners.clear();
       emitted.clear();
+      deferred.clear();
       evidence.clear();
     },
   };

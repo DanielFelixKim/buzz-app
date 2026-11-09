@@ -376,6 +376,51 @@ it("starts no read while the app is hidden and resumes, spread, when shown", asy
   expect(t.read).toHaveBeenCalledTimes(2);
 });
 
+it("stops a read of several batches before its next batch while hidden and finishes it when shown", async () => {
+  const agents = Array.from({ length: 9 }, (_, n) => key(100 + n));
+  const owners = new Map(agents.map((agent, n) => [agent, key(200 + n)]));
+  const t = setup(
+    agents.map((agent) => record(owners.get(agent) ?? "", agent, REMOTE)),
+    owners,
+  );
+  const asked = (from: number) =>
+    t.read.mock.calls
+      .slice(from)
+      .flatMap(([filters]) => filters.flatMap((filter) => filter["#d"] ?? []));
+  // Nine owners are nine filters: three batches. The first is held.
+  const real = t.read.getMockImplementation();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.read.mockImplementationOnce(async (filters, signal) => {
+    await held;
+    return (await real?.(filters, signal)) ?? [];
+  });
+  for (const agent of agents) t.presence.subscribe(agent, () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.read).toHaveBeenCalledTimes(1);
+  t.hide();
+  release();
+  // Hidden for less than a refresh, so what is shown later reads only the
+  // rest. The held batch counts; no further batch started while hidden.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(t.read).toHaveBeenCalledTimes(1);
+  for (const agent of agents.slice(0, 4))
+    expect(t.presence.status(agent)).toBe("online");
+  for (const agent of agents.slice(4))
+    expect(t.presence.status(agent)).toBe("offline");
+  t.show();
+  await vi.advanceTimersByTimeAsync(999);
+  expect(t.read).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(4_001);
+  // The spread read asks about the five agents the hidden read left, not
+  // the four it read.
+  expect(t.read).toHaveBeenCalledTimes(3);
+  expect(asked(1).sort()).toEqual([...agents.slice(4)].sort());
+  for (const agent of agents) expect(t.presence.status(agent)).toBe("online");
+});
+
 it("reads agents of more owners than one read's filters allow", async () => {
   const agents = Array.from({ length: 9 }, (_, n) => key(100 + n));
   const owners = new Map(agents.map((agent, n) => [agent, key(200 + n)]));

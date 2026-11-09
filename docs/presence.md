@@ -41,8 +41,10 @@ past it is neither read nor marked and stays limited, and one admitted later is
 read then. A read under way is not cancelled; agents shown meanwhile are read
 next. Evidence for up to 1024 agents outlives their views, so a remount reads
 nothing. Every shown agent is read again every five to six minutes. No read
-starts while the app is hidden; evidence and badges stay, and a reconnect or a
-return to the foreground spreads the reads it wants over one to five seconds.
+starts while the app is hidden, and a read of several batches under way stops
+before its next batch, keeping what it has read; evidence and badges stay, and
+a reconnect or a return to the foreground spreads the reads it wants, the
+unfinished rest included, over one to five seconds.
 A failed read keeps the last answer. The first retry waits 60–66 seconds, each
 further failure in a row doubles the wait, to a cap of 30–33 minutes, and a
 successful read resets it; a read queued during a failing read waits for that
