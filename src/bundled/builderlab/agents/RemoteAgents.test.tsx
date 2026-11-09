@@ -135,10 +135,18 @@ it("shows a held loading state and retries a failed read", async () => {
     screen.getByRole("heading", { name: "Couldn’t load agents" }),
   ).toBeVisible();
   expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Try again" }));
-  expect(await screen.findByText("Helper")).toBeInTheDocument();
+  const automatic = deferred<HostResponse>();
+  h.request.mockReturnValueOnce(automatic.promise);
+  try {
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(screen.queryByText("Loading agents…")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Helper")).toBeInTheDocument();
+  } finally {
+    await act(async () => automatic.resolve(response([], 400)));
+  }
+  expect(screen.getByText("Helper")).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 it.each(["sign-out", "unmount"])(

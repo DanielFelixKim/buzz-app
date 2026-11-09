@@ -93,6 +93,7 @@ function AgentList({
   const [agents, setAgents] = useState<readonly RemoteAgent[]>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(false);
   const activeRef = useRef(active);
   activeRef.current = active;
   const refresh = useRef(() => {});
@@ -124,12 +125,16 @@ function AgentList({
     setAgents(undefined);
     setError(undefined);
     const load = (quiet: boolean) => {
-      if (request || !activeRef.current()) return;
+      if (!activeRef.current()) return;
+      if (request) {
+        if (quiet) return;
+        request.abort();
+      }
       const controller = new AbortController();
       request = controller;
       const current = () => !controller.signal.aborted && activeRef.current();
-      if (!quiet) setError(undefined);
-      if (!loaded) setLoading(true);
+      // A retry keeps its failure visible; only the initial read uses loading.
+      if (!quiet) setRetrying(true);
       void client
         .list(controller.signal)
         .then(
@@ -139,6 +144,7 @@ function AgentList({
               setAgents(rows);
               setError(undefined);
               setLoading(false);
+              setRetrying(false);
             }
           },
           (reason) => {
@@ -150,11 +156,12 @@ function AgentList({
                     : "Could not load agents.",
                 );
               setLoading(false);
+              setRetrying(false);
             }
           },
         )
         .finally(() => {
-          request = undefined;
+          if (request === controller) request = undefined;
         });
     };
     refresh.current = () => load(false);
@@ -187,7 +194,11 @@ function AgentList({
               title="Couldn’t load agents"
               description={error}
               action={
-                <Button variant="subtle" onClick={() => refresh.current()}>
+                <Button
+                  variant="subtle"
+                  loading={retrying}
+                  onClick={() => refresh.current()}
+                >
                   Try again
                 </Button>
               }
