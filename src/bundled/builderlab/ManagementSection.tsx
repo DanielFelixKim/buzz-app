@@ -7,7 +7,7 @@ export type ManagementFact = {
   action?: ReactNode;
 };
 
-/** Console FactList/FactRow composition; desktop has no shared fact-row owner. */
+/** Account and collection facts shared by the management sections. */
 export function ManagementFacts({
   items,
 }: {

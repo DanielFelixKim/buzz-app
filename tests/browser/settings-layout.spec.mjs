@@ -433,8 +433,13 @@ fiBuild(
         for (const width of [1440, 800, 390]) {
           await page.setViewportSize({ width, height: 1000 });
           await selectSettingsSection(page, "Builderlab");
+          await expect(
+            page.getByRole("region", { name: "Builderlab", exact: true }),
+          ).toBeVisible();
+          const back = page.getByRole("button", { name: "Back to Builderlab" });
+          if (await back.isVisible()) await back.click();
           const open = page.getByRole("button", { name: "Open Communities" });
-          if (await open.isVisible()) await open.click();
+          await open.click();
           const card = signedIn
             ? page.getByRole("region", { name: "Communities", exact: true })
             : page.locator(".buzz-empty-state").filter({
@@ -473,6 +478,33 @@ fiBuild(
                 { message: `${state}, ${mode}, ${width}px, ${scale}` },
               )
               .toBe(true);
+            if (
+              signedIn &&
+              (width === 390 || (width === 1440 && scale === "100%"))
+            ) {
+              const title = card.getByRole("heading", {
+                name: "Communities",
+                exact: true,
+              });
+              const create = card.getByRole("button", {
+                name: "Create community",
+                exact: true,
+              });
+              await expect
+                .poll(
+                  async () => {
+                    const heading = await title.boundingBox();
+                    const button = await create.boundingBox();
+                    if (!heading || !button) return false;
+                    return width === 390
+                      ? button.y >= heading.y + heading.height
+                      : button.x >= heading.x + heading.width &&
+                          button.y < heading.y + heading.height;
+                  },
+                  { message: `Create placement at ${width}px/${scale}` },
+                )
+                .toBe(true);
+            }
             if (!signedIn) {
               const action = card.getByRole("button", {
                 name: "Sign in with Builderlab",

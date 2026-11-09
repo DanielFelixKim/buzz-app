@@ -1275,7 +1275,7 @@
     gap: var(--space-1);
   }
 
-  /* Console-style filters with an outlined selection and a trailing search. */
+  /* Outlined filters with a trailing search. */
   .buzz-tabs[data-variant="capsule"] {
     display: flex;
     flex-wrap: wrap;
