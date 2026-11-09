@@ -441,7 +441,7 @@ it("restores the selected native community and recovers discovery failure withou
   await vi.advanceTimersByTimeAsync(0);
   expect(services.relay.snapshot()).toMatchObject({
     status: "error",
-    error: expect.stringContaining("Discovery offline"),
+    error: { details: expect.stringContaining("Discovery offline") },
   });
   unavailable = false;
   services.relay.retry();
@@ -503,7 +503,7 @@ it("seeds a packaged native community after onboarding and preserves the user's 
   });
   expect(services.relay.snapshot()).toMatchObject({
     status: "error",
-    error: expect.stringContaining("Discovery offline"),
+    error: { details: expect.stringContaining("Discovery offline") },
   });
   unavailable = false;
   services.relay.retry();
