@@ -448,6 +448,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   or are removed in People.
 - In a channel, typing `/leave` by itself opens the same **Leave channel**
   confirmation. The command is not posted as a message.
+- **Archived channels** show **Archived · view only** above their messages.
+  You can still read them, but they're hidden from the sidebar; find them in
+  search. If you own or administer the channel, choose **Unarchive** there to
+  restore it for everyone.
+- **Removed from a channel**: if you're removed from the channel you're
+  reading, it says **You were removed from** that channel. Choose **Back to
+  channels** to move on. A public channel stays readable below, with **Join**
+  where the channel allows it.
 - **Pasted web links** keep their labels when the clipboard's HTML and plain
   text agree, including image alt text. Use ordinary paste; plain-text paste
   uses only the clipboard's plain text.
