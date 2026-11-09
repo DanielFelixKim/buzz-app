@@ -27,6 +27,7 @@ import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Select } from "../../shared/design-system/ui/Select";
+import { readView, writeView } from "../../shared/view-state";
 import styles from "./Usage.module.css";
 import { DailyCostChart, type Series } from "./DailyCostChart";
 import { amount, cost, count, percent } from "./format";
@@ -41,12 +42,33 @@ import {
 } from "./stats";
 
 const RANGES = [7, 30];
+/** The period shown until another is chosen. */
+const DEFAULT_DAYS = 30;
 /** How long after a failed read it is tried once more, before it is reported:
  * a read can fail while the computer is busy, as when the app starts. */
 const RETRY_MS = 500;
 /** The chart's series colors. */
 const SERIES = 4;
 const ALL = "all";
+
+type Filters = { days: number; agent: string; harness: string };
+const filtersKey = "usage:filters";
+/** Saved choices are per device/viewer/community; a field that is missing or
+ * not one of its kind uses its default. Without a scope, none are kept. */
+function readFilters(scope: string | undefined): Filters {
+  const saved = scope ? readView<unknown>(scope, filtersKey, undefined) : {};
+  const field = (key: keyof Filters): unknown =>
+    saved && typeof saved === "object"
+      ? (saved as Record<string, unknown>)[key]
+      : undefined;
+  const agent = field("agent");
+  const harness = field("harness");
+  return {
+    days: RANGES.find((range) => range === field("days")) ?? DEFAULT_DAYS,
+    agent: typeof agent === "string" ? agent : ALL,
+    harness: typeof harness === "string" ? harness : ALL,
+  };
+}
 
 type Load = Readonly<{
   /** When the shown usage was read. */
@@ -200,9 +222,12 @@ function useLasted(active: boolean) {
 export function UsagePage({
   agents,
   open,
+  viewScope,
 }: {
   agents: Agents;
   open: Navigation["open"];
+  /** Where the filters are kept, per viewer and community. */
+  viewScope?: string | undefined;
 }) {
   const snapshot = useSyncExternalStore(
     agents.subscribe,
@@ -214,9 +239,15 @@ export function UsagePage({
     agents.types,
     agents.types,
   );
-  const [days, setDays] = useState(30);
-  const [chosenAgent, setAgentFilter] = useState(ALL);
-  const [chosenHarness, setHarnessFilter] = useState(ALL);
+  const [filters, setFilters] = useState(() => readFilters(viewScope));
+  const { days, agent: chosenAgent, harness: chosenHarness } = filters;
+  // Only a choice is saved. One that is gone, filtering nothing, stays saved
+  // for when it applies again.
+  function choose(patch: Partial<Filters>) {
+    const next = { ...filters, ...patch };
+    setFilters(next);
+    if (viewScope) writeView(viewScope, filtersKey, next);
+  }
   const [reload, setReload] = useState(0);
   const harnesses = types.filter((type) => type.usage);
   // Only agents here run sessions on this computer.
@@ -413,7 +444,7 @@ export function UsagePage({
                   })),
                 },
               ]}
-              onValueChange={(value) => setDays(Number(value))}
+              onValueChange={(value) => choose({ days: Number(value) })}
             />
             {targets.length > 1 && (
               <Select
@@ -432,7 +463,7 @@ export function UsagePage({
                     ],
                   },
                 ]}
-                onValueChange={setAgentFilter}
+                onValueChange={(agent) => choose({ agent })}
               />
             )}
             {usedHarnesses.length > 1 && (
@@ -452,7 +483,7 @@ export function UsagePage({
                     ],
                   },
                 ]}
-                onValueChange={setHarnessFilter}
+                onValueChange={(harness) => choose({ harness })}
               />
             )}
           </div>
