@@ -104,6 +104,8 @@ const number = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const eventId = (value: unknown) =>
   typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : undefined;
+const triggerIds = (value: unknown) =>
+  Array.isArray(value) ? value.flatMap((id) => eventId(id) ?? []) : [];
 const ELIDED = "…[elided ";
 const PROMPT_METHODS = new Set([
   "session/prompt",
@@ -459,9 +461,20 @@ function buildTranscript(
       const started = Date.parse(str(event.startedAt));
       turn.startedAt = Number.isFinite(started) ? started : at;
       if (str(payload.source)) turn.source = str(payload.source);
-      turn.triggeringEventIds = Array.isArray(payload.triggeringEventIds)
-        ? payload.triggeringEventIds.flatMap((value) => eventId(value) ?? [])
-        : [];
+      turn.triggeringEventIds = [
+        ...new Set([
+          ...triggerIds(payload.triggeringEventIds),
+          ...turn.triggeringEventIds,
+        ]),
+      ];
+    } else if (kind === "turn_steered") {
+      // A message that joined this running turn.
+      turn.triggeringEventIds = [
+        ...new Set([
+          ...turn.triggeringEventIds,
+          ...triggerIds(payload.triggeringEventIds),
+        ]),
+      ];
     } else if (kind === "session_resolved") {
       if (str(payload.sessionId)) turn.sessionId = str(payload.sessionId);
       turn.newSession = payload.isNewSession === true;

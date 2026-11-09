@@ -561,3 +561,125 @@ it("skips the snapshot comparison for channel traffic that changes no typing", (
     f.activity.dispose();
   }
 });
+it("adds a steered message to its running turn, so it works and ends with that turn", () => {
+  const f = fixture();
+  const first = "1".repeat(64),
+    steered = "2".repeat(64);
+  const state = (id: string) => requestWork(f.snapshot(), "a", id)[0]?.state;
+  f.send(
+    f.item("turn_started", "one", {
+      payload: { source: "mention", triggeringEventIds: [first] },
+    }),
+  );
+  expect(state(steered)).toBeUndefined();
+  f.send(
+    f.item("turn_steered", "one", {
+      seq: 2,
+      payload: { source: "mention", triggeringEventIds: [steered] },
+    }),
+  );
+  expect(f.snapshot().turns).toEqual([
+    expect.objectContaining({
+      turnId: "one",
+      state: "working",
+      triggeringEventIds: [first, steered],
+    }),
+  ]);
+  expect(f.snapshot().turns[0]?.ambiguous).toBeUndefined();
+  expect(state(first)).toBe("working");
+  expect(state(steered)).toBe("working");
+  // A repeated steer frame adds nothing.
+  f.send(
+    f.item("turn_steered", "one", {
+      seq: 3,
+      payload: { triggeringEventIds: [steered] },
+    }),
+  );
+  expect(f.snapshot().turns[0]?.triggeringEventIds).toEqual([first, steered]);
+  f.send(
+    f.item("turn_completed", "one", {
+      seq: 4,
+      payload: { outcome: "completed" },
+    }),
+  );
+  expect(state(first)).toBe("ended");
+  expect(state(steered)).toBe("ended");
+  f.activity.dispose();
+});
+it("keeps a steer late to its turn's end as membership, without reviving the turn", () => {
+  const f = fixture();
+  const first = "1".repeat(64),
+    steered = "2".repeat(64);
+  f.send(
+    f.item("turn_started", "one", {
+      payload: { triggeringEventIds: [first] },
+    }),
+  );
+  f.send(
+    f.item("turn_completed", "one", {
+      seq: 3,
+      payload: { outcome: "completed" },
+    }),
+  );
+  f.send(
+    f.item("turn_steered", "one", {
+      seq: 2,
+      timestamp: new Date(Date.now() - 1000).toISOString(),
+      payload: { triggeringEventIds: [steered] },
+    }),
+  );
+  expect(f.snapshot().turns[0]).toMatchObject({
+    state: "ended",
+    outcome: "ended",
+    triggeringEventIds: [first, steered],
+  });
+  expect(requestWork(f.snapshot(), "a", steered)[0]?.state).toBe("ended");
+  f.activity.dispose();
+});
+it("a steer alone owns its turn, and only a second start makes a turn ambiguous", () => {
+  const f = fixture();
+  const first = "1".repeat(64),
+    steered = "2".repeat(64),
+    again = "3".repeat(64);
+  f.send(
+    f.item("turn_steered", "lost-start", {
+      payload: { triggeringEventIds: [steered] },
+    }),
+  );
+  expect(requestWork(f.snapshot(), "a", steered)[0]?.state).toBe("working");
+  f.send(
+    f.item("turn_started", "lost-start", {
+      seq: 2,
+      payload: { triggeringEventIds: [first] },
+    }),
+  );
+  expect(f.snapshot().turns[0]).toMatchObject({
+    triggeringEventIds: [steered, first],
+  });
+  expect(f.snapshot().turns[0]?.ambiguous).toBeUndefined();
+  f.send(
+    f.item("turn_started", "lost-start", {
+      seq: 3,
+      payload: { triggeringEventIds: [again] },
+    }),
+  );
+  expect(f.snapshot().turns[0]?.ambiguous).toBe(true);
+  f.activity.dispose();
+});
+it("ignores malformed steer triggers and keeps the turn's existing ones", () => {
+  const f = fixture();
+  const first = "1".repeat(64);
+  f.send(
+    f.item("turn_started", "one", {
+      payload: { triggeringEventIds: [first] },
+    }),
+  );
+  for (const triggeringEventIds of [
+    ["not-an-id"],
+    "2".repeat(64),
+    Array.from({ length: 65 }, (_, i) => i.toString(16).padStart(64, "0")),
+  ])
+    f.send(f.item("turn_steered", "one", { payload: { triggeringEventIds } }));
+  expect(f.snapshot().turns[0]?.triggeringEventIds).toEqual([first]);
+  f.activity.dispose();
+});

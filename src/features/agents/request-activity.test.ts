@@ -51,3 +51,30 @@ it("parses only newly appended records when the records array changes", () => {
     parse.mockRestore();
   }
 });
+
+it("gives a steered message the records of the turn it joined, from that turn's start", () => {
+  const steered = "d".repeat(64);
+  const records = [
+    record(1, [
+      event("turn_started", "t", 1, { triggeringEventIds: [trigger] }),
+      event("step", "t", 2),
+    ]),
+    record(2, [
+      event("turn_steered", "t", 3, { triggeringEventIds: [steered] }),
+      event("step", "t", 4),
+      event("turn_completed", "t", 5, { outcome: "completed" }),
+    ]),
+  ];
+  const result = requestActivity(records, agent, "c", steered);
+  expect([...result.turnIds]).toEqual(["t"]);
+  expect(result.uncertain).toBe(false);
+  expect(result.records).toHaveLength(5);
+  expect(result.terminal.get("t")).toBe("ended");
+  // Both messages select the turn once.
+  const both = requestActivity(records, agent, "c", [trigger, steered]);
+  expect(both.records).toHaveLength(5);
+  // Without its start, the steer anchors the turn's records.
+  const partial = requestActivity(records.slice(1), agent, "c", steered);
+  expect(partial.records).toHaveLength(3);
+  expect(partial.terminal.get("t")).toBe("ended");
+});

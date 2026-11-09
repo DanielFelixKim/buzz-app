@@ -110,25 +110,33 @@ export function requestActivity(
       )
       .map((turn) => turn.turnId),
   );
-  for (const start of parsed.filter(
-    ({ value }) => value.kind === "turn_started",
+  // A steered message joined a turn that started for another message, so it
+  // shares that turn's records from its start, or from the steer when the start
+  // is not loaded.
+  for (const anchor of parsed.filter(
+    ({ value }) =>
+      value.kind === "turn_started" || value.kind === "turn_steered",
   )) {
-    const triggers = start.value.payload?.triggeringEventIds;
+    const triggers = anchor.value.payload?.triggeringEventIds;
     if (
       !Array.isArray(triggers) ||
-      !triggers.some((id) => triggersWanted.has(id))
+      !triggers.some((id) => triggersWanted.has(id)) ||
+      turnIds.has(anchor.value.turnId)
     )
       continue;
-    if (ambiguous.has(start.value.turnId)) {
+    if (ambiguous.has(anchor.value.turnId)) {
       uncertain = true;
       continue;
     }
     const turn = parsed.filter(
-      ({ value }) => value.turnId === start.value.turnId,
+      ({ value }) => value.turnId === anchor.value.turnId,
     );
+    const starts = turn.filter(({ value }) => value.kind === "turn_started");
+    const start =
+      anchor.value.kind === "turn_started" ? anchor : (starts[0] ?? anchor);
     // Duplicate starts/sequence resets leave identity ambiguous. Do not mix runs.
     if (
-      turn.filter(({ value }) => value.kind === "turn_started").length !== 1 ||
+      starts.length > 1 ||
       turn.some(
         ({ value }) => !Number.isSafeInteger(value.seq) || value.seq < 0,
       )

@@ -71,6 +71,8 @@ type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   ended: boolean;
   epoch: number;
   unresolvedTriggers?: readonly string[];
+  /** A turn_started frame set triggers; a second one makes the turn ambiguous. */
+  started?: boolean;
 };
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -80,12 +82,47 @@ const text = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 256;
 const starts = new Set([
   "turn_started",
+  // A message the agent's harness added to this running turn (remote steering).
+  "turn_steered",
   "turn_liveness",
   "acp_read",
   "acp_write",
   "session_resolved",
 ]);
 const ends = new Set(["turn_completed", "turn_error", "agent_panic"]);
+const TURN_TRIGGER_LIMIT = 64;
+function eventIds(value: unknown): readonly string[] | undefined {
+  return Array.isArray(value) &&
+    value.length <= TURN_TRIGGER_LIMIT &&
+    value.every((id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id))
+    ? (value as string[])
+    : undefined;
+}
+/** A start's or steer's messages join the turn's triggers; nothing removes one. */
+function triggerFields(
+  previous: Turn | undefined,
+  added: readonly string[] | undefined,
+): Required<
+  Pick<Turn, "triggeringEventIds" | "requests" | "unresolvedTriggers">
+> {
+  const known = previous?.triggeringEventIds ?? [];
+  const fresh = (added ?? []).filter(
+    (id, index, ids) => !known.includes(id) && ids.indexOf(id) === index,
+  );
+  if (known.length + fresh.length > TURN_TRIGGER_LIMIT) fresh.length = 0;
+  return {
+    triggeringEventIds: fresh.length ? [...known, ...fresh] : known,
+    requests: previous?.requests ?? [],
+    unresolvedTriggers: [...(previous?.unresolvedTriggers ?? []), ...fresh],
+  };
+}
+function withTriggers(previous: Turn, added: readonly string[]): Turn {
+  const fields = triggerFields(previous, added);
+  return fields.triggeringEventIds.length ===
+    (previous.triggeringEventIds?.length ?? 0)
+    ? previous
+    : { ...previous, ...fields };
+}
 
 /** Session-owned live evidence. Plugin activation owns demand, not sockets or keys. */
 export function createAgentActivity(
@@ -288,14 +325,26 @@ export function createAgentActivity(
     if (!Number.isFinite(timestamp) || timestamp > Date.now() + 5000) return;
     const key = `${agent}:${item.turnId}`;
     const previous = turns.get(key);
+    const payload = object(item.payload);
+    const added =
+      item.kind === "turn_started" || item.kind === "turn_steered"
+        ? eventIds(payload?.triggeringEventIds)
+        : undefined;
     // Terminal evidence wins even when a delayed earlier heartbeat arrives later.
     if (
       previous?.ended ||
       (previous && previous.timestamp > timestamp && !ends.has(item.kind))
-    )
+    ) {
+      // Joining a turn is membership, not progress: a late steer still names
+      // the turn its message ran in, without reviving or refreshing it.
+      if (item.kind !== "turn_steered" || !added || !previous) return;
+      const merged = withTriggers(previous, added);
+      if (merged === previous) return;
+      associate(merged);
+      turns.set(key, merged);
       return;
+    }
     if (!previous && timestamp <= evidenceFloor) return;
-    const payload = object(item.payload);
     const root = payload?.threadRootEventId;
     const legacyRoot =
       item.kind === "acp_write" && !previous?.threadRootId
@@ -305,32 +354,17 @@ export function createAgentActivity(
       item.kind === "session_resolved" && text(payload?.sessionId)
         ? payload.sessionId
         : item.sessionId;
-    const triggers =
-      item.kind === "turn_started"
-        ? payload?.triggeringEventIds
-        : previous?.triggeringEventIds;
-    const triggeringEventIds =
-      Array.isArray(triggers) &&
-      triggers.length <= 64 &&
-      triggers.every(
-        (id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id),
-      )
-        ? (triggers as string[])
-        : undefined;
     const turn: Turn = {
-      ...(triggeringEventIds
-        ? {
-            triggeringEventIds,
-            requests: previous?.requests ?? [],
-            unresolvedTriggers:
-              previous?.unresolvedTriggers ?? triggeringEventIds,
-          }
+      ...(previous?.triggeringEventIds || added
+        ? triggerFields(previous, added)
+        : {}),
+      ...(previous?.started || (item.kind === "turn_started" && added)
+        ? { started: true }
         : {}),
       agent,
       turnId: item.turnId,
       ...(previous?.ambiguous ||
-      (item.kind === "turn_started" &&
-        previous?.triggeringEventIds !== undefined)
+      (item.kind === "turn_started" && previous?.started)
         ? { ambiguous: true }
         : {}),
       ...(typeof root === "string" && /^[0-9a-f]{64}$/.test(root)

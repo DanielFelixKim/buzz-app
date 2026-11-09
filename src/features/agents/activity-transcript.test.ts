@@ -766,3 +766,31 @@ it("shows a Buzz message a remote tool posted as the agent's reply", () => {
     ["tool", "buzz__send"],
   ]);
 });
+
+it("adds steered messages to the turn's triggers without marking it started", () => {
+  serial = 0;
+  const steered = "f".repeat(64);
+  const records = [
+    record([
+      event("joined", "turn_steered", { triggeringEventIds: [steered] }, 1),
+      event("joined", "turn_started", { triggeringEventIds: [message] }, 2),
+      event(
+        "joined",
+        "turn_steered",
+        { triggeringEventIds: [steered, "not-an-id"] },
+        3,
+      ),
+    ]),
+    record([
+      event("partial", "turn_steered", { triggeringEventIds: [steered] }, 4),
+    ]),
+  ];
+  expect(
+    activityTranscript(records, { agent, channelId: "alpha" }).turns.map(
+      (turn) => [turn.turnId, turn.triggeringEventIds, turn.partial],
+    ),
+  ).toEqual([
+    ["joined", [message, steered], false],
+    ["partial", [steered], true],
+  ]);
+});
