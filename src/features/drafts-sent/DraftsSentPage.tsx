@@ -14,6 +14,7 @@ import type { PageNavigation } from "../navigation/service";
 import { PanelFrame } from "../panels/PanelFrame";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import { messageAuthor } from "../../features/relay/fold";
 import type { Navigation } from "../../features/navigation/controller";
@@ -469,13 +470,14 @@ function ScopedPage({
     for (const key of row.activity?.people.slice(0, 4) ??
       row.place.members.slice(0, 3))
       people.add(key);
-  // A DM thread's link sorts everyone's names before naming three, so it
-  // needs all of them, not only those its row shows.
-  const selectedChannel = selected?.entry.threadRootId
+  // A selected DM thread names its people as thread tabs do: everyone's
+  // names, sorted, then three. Read them all, not only those its row shows.
+  const threadChannel = selected?.entry.threadRootId
     ? byId.get(selected.entry.channelId)
     : undefined;
-  if (selectedChannel?.channelType === "dm")
-    for (const key of selectedChannel.participants ?? []) people.add(key);
+  const dmThread =
+    threadChannel?.channelType === "dm" ? threadChannel : undefined;
+  for (const key of dmThread?.participants ?? []) people.add(key);
   const missing = [...people]
     .sort()
     .filter((key) => !profiles.has(key))
@@ -524,12 +526,16 @@ function ScopedPage({
     }
   }
 
+  /** A DM's people as thread tabs name them. */
+  const dmNames = (channel: ChannelSummary) =>
+    dmLabel(channel.participants, profiles, resolveName, channel.name);
+
   /** Names a thread's conversation as thread tabs do; its link opens it. */
   function threadParent(channelId: string) {
     const channel = byId.get(channelId);
     if (channel?.channelType !== "dm")
       return channel ? `#${channel.name}` : place(channelId).title;
-    return `DM · ${dmLabel(channel.participants, profiles, resolveName, channel.name)}`;
+    return `DM · ${dmNames(channel)}`;
   }
 
   /** The row after this one, else the one before. */
@@ -737,7 +743,10 @@ function ScopedPage({
         key={selected.entry.id}
         entry={selected.entry}
         mode={selected.draft ? "draft" : "sent"}
-        title={place(selected.entry.channelId).title}
+        // A DM thread's header names the people its link does.
+        title={
+          dmThread ? dmNames(dmThread) : place(selected.entry.channelId).title
+        }
         parentLabel={threadParent(selected.entry.channelId)}
         channel={byId.get(selected.entry.channelId)}
         session={session}

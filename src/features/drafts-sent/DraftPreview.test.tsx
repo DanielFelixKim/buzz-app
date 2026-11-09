@@ -507,16 +507,18 @@ it("names a private channel's thread as thread tabs do", async () => {
   ).toHaveTextContent("In #Design");
 });
 
-it("names a DM's thread as thread tabs do, while the page keeps its own names", async () => {
+it("names a DM thread's people in its header and link as thread tabs do, while its row keeps the page's names", async () => {
   const h = fixture(undefined, { dm: ["Zed", "Amy", "Mia", "Bob"] });
   writeView(h.session.scope, `draft:dm:thread:${h.dmRoot.id}`, "Noon works");
   h.render();
-  fireEvent.click(
-    await screen.findByRole("button", { name: /Continue draft.*Noon works/ }),
-  );
-  const region = await screen.findByRole("region", {
-    name: "Draft for Zed, Amy, Mia +1",
+  const row = await screen.findByRole("button", {
+    name: "Continue draft in Zed, Amy, Mia +1, thread: Noon works",
   });
+  fireEvent.click(row);
+  const region = await screen.findByRole("region", {
+    name: "Draft for Amy, Bob, Mia +1",
+  });
+  expect(within(region).getByText("Amy, Bob, Mia +1 · Thread")).toBeVisible();
   const thread = await within(region).findByRole("complementary", {
     name: "Thread",
   });
@@ -524,6 +526,9 @@ it("names a DM's thread as thread tabs do, while the page keeps its own names", 
     name: "DM · Amy, Bob, Mia +1",
   });
   expect(link.closest("p")).toHaveTextContent("In DM · Amy, Bob, Mia +1");
+  expect(row).toHaveAccessibleName(
+    "Continue draft in Zed, Amy, Mia +1, thread: Noon works",
+  );
   fireEvent.click(link);
   expect(h.open).toHaveBeenLastCalledWith(
     expect.objectContaining({

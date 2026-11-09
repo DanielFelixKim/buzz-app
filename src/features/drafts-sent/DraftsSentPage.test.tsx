@@ -342,6 +342,28 @@ it("reads everyone in a selected DM thread, whose link sorts all their names", a
   );
 });
 
+it("reads only its row's people for a selected DM draft outside a thread", async () => {
+  const people = [friend, ..."1234".split("").map((digit) => digit.repeat(64))];
+  saved("draft:dm", "Group note");
+  const h = harness({ dmParticipants: people });
+  const Page = h.page.component;
+  render(<Page />);
+  const requested = () => {
+    const keys = new Set(
+      h.session.profiles.ensure.mock.calls.flatMap(([keys]) => keys),
+    );
+    return people.filter((key) => keys.has(key));
+  };
+  // Its row's activity names four people; those without a profile are read.
+  await waitFor(() => expect(requested()).toEqual(people.slice(1, 4)));
+  fireEvent.click(
+    screen.getByRole("button", { name: /Continue draft.*Group note/ }),
+  );
+  await screen.findByRole("region", { name: /^Draft for / });
+  // Only a DM thread's link sorts everyone's names: the fifth stays unread.
+  expect(requested()).toEqual(people.slice(1, 4));
+});
+
 it("clears only the chosen draft from the keyboard, without opening it", async () => {
   const user = userEvent.setup();
   saved("draft:team", "Channel note");
