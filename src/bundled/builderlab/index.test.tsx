@@ -494,9 +494,16 @@ it.each([true, false])(
       const Card = card.component;
       render(<Card active={() => true} />);
       const user = userEvent.setup();
+      // Both native signed-out sections must retain an actionable sign-in.
+      await user.click(
+        screen.getByRole("button", {
+          name: canUseRemoteAgents ? "Create a community" : "Set up an agent",
+        }),
+      );
       await user.click(
         screen.getByRole("button", { name: "Sign in with builderlab.example" }),
       );
+      await settingsOverview();
       expect(
         await screen.findByRole("button", {
           name: "Manage account",

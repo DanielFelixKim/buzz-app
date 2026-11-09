@@ -60,12 +60,15 @@ export function ManagementHeader({
 export function BuilderlabSettings({
   active,
   account,
+  keepAccountVisible = false,
   communities,
   agents,
   summaries,
 }: {
   active(): boolean;
   account: ReactNode;
+  /** Keep sign-in, cancellation and recovery reachable inside either section. */
+  keepAccountVisible?: boolean;
   communities(navigation: ReactNode): ReactNode;
   agents: ReactNode;
   summaries?: Record<Section, OverviewSnapshot>;
@@ -82,6 +85,7 @@ export function BuilderlabSettings({
     else if (origin) triggers.current[origin]?.focus({ preventScroll: true });
   }, [selected]);
   const section = sections.find(({ id }) => id === selected);
+  const hideAccount = !!selected && !keepAccountVisible;
   const agentCount =
     summaries?.agents.kind === "filled"
       ? summaries.agents.items.length
@@ -128,7 +132,7 @@ export function BuilderlabSettings({
           }
         />
       )}
-      <div className={styles.account} hidden={!!selected} inert={!!selected}>
+      <div className={styles.account} hidden={hideAccount} inert={hideAccount}>
         <SettingsGroup layout="form">{account}</SettingsGroup>
       </div>
       <div hidden={!!selected} inert={!!selected}>

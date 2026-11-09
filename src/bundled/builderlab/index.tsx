@@ -245,6 +245,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     );
   };
   const Settings = ({ active }: { active(): boolean }) => {
+    const state = useSyncExternalStore(session.subscribe, session.snapshot);
     const saved = useAgentsSnapshot(ctx.agents);
     const [communityOverview, setCommunityOverview] =
       useState<OverviewSnapshot>({ kind: "pending" });
@@ -254,6 +255,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return (
       <BuilderlabSettings
         active={active}
+        keepAccountVisible={state.status !== "signed-in"}
         summaries={{ communities: communityOverview, agents: agentOverview }}
         account={
           <Login
