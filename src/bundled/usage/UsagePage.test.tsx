@@ -807,13 +807,64 @@ it("compares nothing while an agent it shows could not be read", async () => {
   expect(hero.textContent).toContain("Partial");
 });
 
-it("explains where usage comes from when no agent reports any", () => {
+it("explains where usage comes from when no agent reports any, and opens Agents to add one", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
   render(
     <UsagePage
       agents={host([agent("Hosted", "buzz.codex/codex")], async () => [])}
-      open={vi.fn()}
+      open={open}
     />,
   );
   expect(screen.getByText("No agent usage to show")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Refresh usage" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Open Agents" }));
+  expect(open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+  });
+});
+
+it("says it runs in the desktop app where agents can't run", () => {
+  const snapshot = {
+    status: "unavailable",
+    agents: [],
+    running: [],
+  } as unknown as AgentsSnapshot;
+  render(
+    <UsagePage
+      agents={{ ...host([], async () => []), snapshot: () => snapshot }}
+      open={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Usage runs in the desktop app")).toBeTruthy();
+  expect(
+    screen.getByText("It reads the sessions your agents run on your computer."),
+  ).toBeTruthy();
+  expect(screen.queryByText(/community/)).toBeNull();
+});
+
+it("says why agents aren't available when they fail to load", () => {
+  const agents = host([], async () => []);
+  const failed = (error: string) => {
+    const snapshot = {
+      status: "error",
+      error,
+      agents: [],
+      running: [],
+    } as unknown as AgentsSnapshot;
+    return { ...agents, snapshot: () => snapshot };
+  };
+  const { rerender } = render(
+    <UsagePage
+      agents={failed("Agent keys couldn’t be read.")}
+      open={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Agents aren’t available")).toBeTruthy();
+  expect(screen.getByText("Agent keys couldn’t be read.")).toBeTruthy();
+  // An error with no message still says what to do.
+  rerender(<UsagePage agents={failed("")} open={vi.fn()} />);
+  expect(screen.getByText("Try again in a moment.")).toBeTruthy();
 });

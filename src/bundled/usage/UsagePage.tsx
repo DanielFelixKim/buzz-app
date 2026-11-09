@@ -395,14 +395,21 @@ export function UsagePage({
     ) : undefined;
 
   let body: ReactNode;
-  if (snapshot.status === "error" || snapshot.status === "unavailable")
+  // Only the desktop app runs agents, and reads their sessions.
+  if (snapshot.status === "unavailable")
+    body = (
+      <EmptyState
+        icon={<ChartBarIcon size="1.5rem" />}
+        title="Usage runs in the desktop app"
+        description="It reads the sessions your agents run on your computer."
+      />
+    );
+  else if (snapshot.status === "error")
     body = (
       <EmptyState
         icon={<ChartBarIcon size="1.5rem" />}
         title="Agents aren’t available"
-        description={
-          snapshot.error ?? "Connect to a community to see your agents’ usage."
-        }
+        description={snapshot.error || "Try again in a moment."}
       />
     );
   else if (snapshot.status !== "ready" || (targets.length && !ready))
@@ -413,6 +420,20 @@ export function UsagePage({
         icon={<ChartBarIcon size="1.5rem" />}
         title="No agent usage to show"
         description="Usage reads the sessions your Claude Code, Codex and goose agents run on this computer. Add one from Agents to see what it spends."
+        action={
+          <Button
+            onClick={() =>
+              void open({
+                version: 1,
+                kind: "page",
+                pluginId: "buzz.agents",
+                pageId: "agents",
+              })
+            }
+          >
+            Open Agents
+          </Button>
+        }
       />
     );
   else
