@@ -52,6 +52,7 @@ import styles from "./Messages.module.css";
 import { correctScrollTop } from "./scroll-correction";
 import { readingPositioned, useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
+import { useWheelSmoothing } from "./wheel-smoothing";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -687,6 +688,7 @@ function Timeline({
       : [],
   );
   const scroller = useRef<HTMLElement>(null);
+  useWheelSmoothing(scroller, intent);
   const edge = useRef<HTMLDivElement>(null);
   const activityTail = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
