@@ -13,7 +13,7 @@ use std::{fs, path::Path};
 /// The only layer-package schema the pinned runtime can serve.
 const SERVABLE_SCHEMA_VERSION: u64 = 2;
 
-/// Remove `refs/*` entries in `meshllm/*-layers` repos whose snapshot manifest
+/// Remove `refs/main` in `meshllm/*-layers` repos when its snapshot manifest
 /// declares an unservable schema. Returns the number of refs removed.
 pub fn drop_unservable_layer_package_refs(hub_cache: &Path) -> usize {
     let Ok(repos) = fs::read_dir(hub_cache) else {
@@ -27,30 +27,24 @@ pub fn drop_unservable_layer_package_refs(hub_cache: &Path) -> usize {
             continue;
         }
         let repo_dir = repo.path();
-        let Ok(refs) = fs::read_dir(repo_dir.join("refs")) else {
+        // Only the moving `main` ref goes stale; pinned branch/tag refs stay
+        // usable for other offline HF consumers.
+        let ref_path = repo_dir.join("refs").join("main");
+        let Ok(commit) = fs::read_to_string(&ref_path) else {
             continue;
         };
-        for entry in refs.flatten() {
-            let ref_path = entry.path();
-            if !ref_path.is_file() {
-                continue;
-            }
-            let Ok(commit) = fs::read_to_string(&ref_path) else {
-                continue;
-            };
-            let commit = commit.trim();
-            if commit.is_empty() || commit.contains(['/', '\\']) || commit.starts_with('.') {
-                continue;
-            }
-            let manifest = repo_dir
-                .join("snapshots")
-                .join(commit)
-                .join("model-package.json");
-            if schema_version(&manifest).is_some_and(|v| v != SERVABLE_SCHEMA_VERSION)
-                && fs::remove_file(&ref_path).is_ok()
-            {
-                removed += 1;
-            }
+        let commit = commit.trim();
+        if commit.is_empty() || commit.contains(['/', '\\']) || commit.starts_with('.') {
+            continue;
+        }
+        let manifest = repo_dir
+            .join("snapshots")
+            .join(commit)
+            .join("model-package.json");
+        if schema_version(&manifest).is_some_and(|v| v != SERVABLE_SCHEMA_VERSION)
+            && fs::remove_file(&ref_path).is_ok()
+        {
+            removed += 1;
         }
     }
     removed
@@ -91,6 +85,7 @@ mod tests {
         snapshot(hub.path(), v1, "main", "ac0a53", 1);
         snapshot(hub.path(), v2, "main", "d7a5df", 2);
         snapshot(hub.path(), other, "main", "beef", 1);
+        snapshot(hub.path(), v1, "v1-pinned", "ac0a53", 1);
 
         assert_eq!(drop_unservable_layer_package_refs(hub.path()), 1);
         assert!(!hub.path().join(v1).join("refs/main").exists());
@@ -101,6 +96,7 @@ mod tests {
             .is_file());
         assert!(hub.path().join(v2).join("refs/main").is_file());
         assert!(hub.path().join(other).join("refs/main").is_file());
+        assert!(hub.path().join(v1).join("refs/v1-pinned").is_file());
         // Idempotent once the stale ref is gone.
         assert_eq!(drop_unservable_layer_package_refs(hub.path()), 0);
     }
