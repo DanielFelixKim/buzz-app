@@ -75,10 +75,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
   without Builderlab sign-in do not upload a backup during setup. Later, while
   signed in to Builderlab on a build with backup, a key with no backup choice is
   backed up automatically if you belong to a Builderlab-hosted community;
-  otherwise Buzz asks **Sync your identity with Builderlab?**, again on the
-  next launch or sign-in if the dialog is closed. **Settings → Buzz → Identity
-  → Identity sync** shows the sync status and, while backup is off, offers
-  **Sync with Builderlab**. After signing in to the
+  otherwise Buzz asks **Back up your key?**, again on the
+  next launch or sign-in if the dialog is closed. In **Settings → Buzz → Identity**,
+  the ID card shows backup status. Open **More options** for **Retry backup** or,
+  while backup is off, **Back up key**, which opens the consent dialog. After signing in to the
   public Builderlab, **Connect to a community** also offers **Create a
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,
@@ -108,12 +108,34 @@ mention anyone. Explicit agent watches on that room can still receive them.
   This lets the key direct your Buzz coding agents to run commands as you.
   Authorize only keys you recognize: the proof has no time or event-kind limits. Your private key stays
   in Buzz. This does not join the agent to a community or sign it in to an organization.
+- The back of your Identity badge shows known backup and recovery details below
+  the private-key strip and scrolls when its details run long. Buzz starts checking
+  when the Identity page opens. The back always explains that the key is stored
+  securely on this device. It names the backup account when a configured service
+  confirms a backup and the account lookup has not failed. A failed lookup hides
+  that account sentence until recovery. Initial status loading stays quiet; a
+  failed check shows **Backup status unknown** with **Retry backup** in the
+  bottom action space on the back. This rereads local status and then starts a
+  backup attempt for the current key
+  when the read succeeds. It stays disabled and shows a spinner through both steps.
+  The private-key menu contains
+  the **Private key** heading above Copy and Reveal. If a confirmed backup’s
+  latest backup attempt fails, **Check backup** flips the card while the back
+  keeps the confirmed-backup explanation. Unconfirmed failures also show
+  **Check backup**. A spinner appears only while a backup attempt is running.
+  **Retry backup** uses that same space above **Remove from device** on the
+  back and shows a disabled loading button during an attempt. A confirmed, settled backup
+  shows **Backed up** with a destination tooltip. Only one recovery button
+  appears at a time. Initial status loading shows no pill.
+  **Remove from device** opens a confirmation before removing Buzz’s saved key
+  from this device’s secure storage and signing out. Account backups and copies
+  saved elsewhere stay. Other local data stays unless erasing is also selected.
 - **Settings → Buzz → Identity → Copy private key** lets someone make their own
   backup, for example in a password manager. They should handle it privately.
   When Builderlab backup is on, the same page shows the account's linked key
-  when it is backed up, with when it was last active in the current community;
-  until the organization is signed in, that row asks them to sign in instead.
-  Backups of other keys are not shown, and the row is read-only.
+  when it is backed up and differs from this device’s key.
+  Account lookup failures use the card’s **Backup status unknown** caption and
+  **Retry backup** action. Backups of other keys are not shown, and the row is read-only.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
@@ -126,15 +148,16 @@ mention anyone. Explicit agent watches on that room can still receive them.
   **Not now** opens Buzz anyway, but that organization's communities stay
   unavailable until you sign in. Sign-in, sign-out and when the current
   sign-in ends also live under
-  **Settings → Buzz → Identity → Organization sign-in**.
+  **Settings → Buzz → Identity → Community sign-ins**.
 - When a community requires organization sign-in, the sidebar or join dialog
   explains why and offers **Sign in with** the organization’s name or server
   address. Complete sign-in to reconnect; in the join dialog, choose **Continue**.
-- Signed in to more than one organization server? **Organization sign-in**
-  lists each one you're signed in to, with the communities it's used by, and
-  each **Sign out** ends only that server's sign-in. Your organization's own
-  server stays listed with **Sign in** until you sign in to it. **Sign out of
-  Buzz** still ends them all.
+- The **Community sign-ins** cards show each configured server, its account
+  and the saved communities it covers. Each **Sign out** asks for confirmation
+  and ends only that server’s sign-in. Signed-out servers keep **Sign in**.
+  **Renew sign-in** and the expiry date appear within seven days of expiry;
+  its caret menu offers **Sign out**. A Builderlab connection link opens its
+  existing settings. Removing the Buzz key still ends all server sign-ins.
 - Buzz apps on this computer that use the same organization server, such as
   Buzz and Buzz Staging, share its sign-in, like the private key. After you sign
   in in one, **Sign in** in the other finishes without the browser. Signing out

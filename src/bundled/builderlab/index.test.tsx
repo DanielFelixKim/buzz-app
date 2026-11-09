@@ -318,9 +318,12 @@ it.each([undefined, false, true])(
       const card = cards.snapshot()[0];
       if (!card) throw new Error("Missing Builderlab card");
       const Card = card.component;
+      const IdentityRow = card.identityRow;
+      if (!IdentityRow) throw new Error("Missing Builderlab identity row");
       render(
         <>
           <Card active={() => true} />
+          <IdentityRow active={() => true} />
           <AgentDefaults agents={agents} />
         </>,
       );

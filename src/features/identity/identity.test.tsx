@@ -1895,7 +1895,7 @@ it("Use an existing key from the choice imports the key with no sign-in, no link
   });
   expect(
     screen.queryByRole("heading", {
-      name: "Sync your identity with Builderlab?",
+      name: "Back up your key?",
     }),
   ).toBeNull();
   expect(
@@ -5962,7 +5962,7 @@ it("importing a linked key backup status already lists discloses automatic backu
   ).toBeVisible();
   expect(
     screen.queryByRole("heading", {
-      name: "Sync your identity with Builderlab?",
+      name: "Back up your key?",
     }),
   ).toBeNull();
   expect(backUp).not.toHaveBeenCalled();
@@ -7007,7 +7007,7 @@ it("a development seed's fail-once backup fails only the first backup, and Try a
   );
   await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Builderlab didn’t confirm your backup. Try again.",
+    "Builderlab couldn’t confirm your backup. Try again.",
   );
   expect(screen.getByText(keySavedNote)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -7364,7 +7364,7 @@ it.each(["Linux x86_64", "Win32"])(
   },
 );
 
-it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phrase when wiping", async () => {
+it("unlocks key removal only after a reveal or copy, the key box, and the wipe phrase when wiping", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(viewer);
   const identity = createIdentity();
   await identity.ready;
@@ -7374,7 +7374,10 @@ it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phra
   await waitFor(() =>
     expect(screen.getByLabelText("Private key (nsec)")).toHaveFocus(),
   );
-  const confirm = () => screen.getByRole("button", { name: /^Sign out/ });
+  const confirm = () =>
+    screen.getByRole("button", {
+      name: /^Remove (from device|and erase data)/,
+    });
   const haveKey = screen.getByRole("checkbox", { name: "I have my key" });
   expect(haveKey).toHaveAttribute("aria-disabled", "true");
   expect(confirm()).toBeDisabled();
@@ -7475,7 +7478,7 @@ it("keeps the dialog open and shows the error when native sign out refuses", asy
   await user.click(screen.getByRole("button", { name: "Reveal private key" }));
   await user.click(screen.getByRole("checkbox", { name: "I have my key" }));
   vi.mocked(invoke).mockRejectedValueOnce("Agents didn't stop");
-  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  await user.click(screen.getByRole("button", { name: "Remove from device" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Agents didn't stop",
   );
@@ -7499,11 +7502,13 @@ it("shows a native refusal's message and offers a retry", async () => {
   vi.mocked(invoke).mockRejectedValueOnce({
     message: "Quit every other Buzz window using this sign-in.",
   });
-  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  await user.click(screen.getByRole("button", { name: "Remove from device" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Quit every other Buzz window using this sign-in.",
   );
-  expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "Remove from device" }),
+  ).toBeEnabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   identity.dispose();
 });
@@ -7984,12 +7989,10 @@ it("once the app opens, a key with no backup choice and only independent communi
     </Welcome>,
   );
   const prompt = await screen.findByRole("alertdialog", {
-    name: "Sync your identity with Builderlab?",
+    name: "Back up your key?",
   });
   expect(screen.getByText("Signed in")).toBeInTheDocument();
-  await user.click(
-    within(prompt).getByRole("button", { name: "Sync with Builderlab" }),
-  );
+  await user.click(within(prompt).getByRole("button", { name: "Back up key" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(invoke).toHaveBeenCalledWith("nsec_backup_set_choice", {
     pubkey: viewer,

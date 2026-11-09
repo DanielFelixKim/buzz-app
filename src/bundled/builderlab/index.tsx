@@ -1,3 +1,4 @@
+import { BuilderlabIdentityRow } from "./login/IdentityRow";
 import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 import { handoffFederatedBackupSession } from "../../features/identity/backup";
@@ -216,6 +217,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Builderlab",
     icon: BuilderlabLogoIcon,
     group: "Plugins",
+    ...(nativeBuilderlab() && !unavailable
+      ? {
+          identityRow: ({ active }: { active(): boolean }) => (
+            <BuilderlabIdentityRow
+              session={session}
+              active={active}
+              openSettings={() => openSettings("block.builderlab/login")}
+            />
+          ),
+        }
+      : {}),
     component: ({ active }) => (
       <section aria-labelledby="builderlab-title">
         <Header
