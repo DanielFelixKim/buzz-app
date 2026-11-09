@@ -606,6 +606,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   approval, Buzz opens the approval page in your default browser, where you
   are signed in to Builderlab. Approve it there, return to Buzz and click
   **Reload** to open the app.
+- **Sign in again to open this app**: when a Builderlab app refuses your
+  sign-in, its panel offers **Try again** and **Open settings**, which
+  opens the settings where you sign out and back in.
 - **Drafts & sent** is an optional plugin, off by default. Turn it on in
   **Settings → Plugins**, and it appears in the Messages sidebar. Opening it keeps
   the conversation sidebar available, so you can switch straight back to a chat.
