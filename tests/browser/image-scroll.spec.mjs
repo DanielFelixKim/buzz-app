@@ -608,6 +608,11 @@ test("decoded image resizing preserves reading and bottom following across remou
 
       // A shrinking visible placeholder changes its following content, while
       // Virtua retains the first visible message rather than the next paragraph.
+      // Retaining the paragraph would move this row by most of the
+      // placeholder's height. In WebKit the shrink also measures rows above,
+      // and Virtua's compensation for them lands on whole-pixel scrollTop
+      // values, so the row can settle about a pixel away. Allow the same
+      // tolerance as expectAnchor.
       await waiting(page, visible.name);
       await releaseDecode(page, visible.name);
       await expect(
@@ -622,7 +627,7 @@ test("decoded image resizing preserves reading and bottom following across remou
             visible.top,
           ),
         )
-        .toBeLessThan(1);
+        .toBeLessThan(4);
       expect(await bottomDistance()).toBeGreaterThan(400);
 
       const completed = await page.evaluate(() =>
