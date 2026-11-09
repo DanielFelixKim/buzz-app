@@ -543,6 +543,10 @@ test("decoded image resizing preserves reading and bottom following across remou
       expect(visible.name).not.toBeNull();
       expect(visible.imageTop).toBeLessThan(visible.viewportTop);
       expect(visible.imageBottom).toBeGreaterThan(visible.viewportTop);
+      // This placeholder decodes to 10 px. Keeping the paragraph after it would
+      // move the row by the rest of its height, so that must stay well past the
+      // 4 px tolerance of the check after the decode below.
+      expect(visible.imageBottom - visible.imageTop).toBeGreaterThan(40);
       const delayed = await feed
         .locator("[data-media-preview] img")
         .evaluateAll((images) =>
