@@ -2325,7 +2325,6 @@ it.each([
     await t.user.type(screen.getByRole("searchbox"), "Morgan");
     const results = await screen.findByRole("region", {
       name: expected,
-      exact: true,
     });
     expect(within(results).getByText(expected, { exact: true })).toBeVisible();
     await t.user.click(
