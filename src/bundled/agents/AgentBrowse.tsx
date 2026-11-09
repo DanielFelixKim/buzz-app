@@ -51,6 +51,7 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
+import { SettingsSectionLink } from "../../features/navigation/SettingsSectionLink";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import hero from "../../features/profiles/ProfileHero.module.css";
@@ -67,6 +68,8 @@ type Importing = Readonly<{
   onImported(agent: Agent): void;
   /** Opens an agent of yours that an import would only copy. */
   onOpen?: ((agent: Agent) => void) | undefined;
+  /** Opens a Settings section, such as Manage plugins. */
+  openSettings?: ((section: string) => void) | undefined;
 }>;
 
 export type SharedAgentSelection = {
@@ -443,12 +446,37 @@ function copies(
   }
 }
 
+/** Why Import has no type to import as: agents run only in the desktop app,
+ * or no agent type plugin is on there. */
+export function NoImportTypes({
+  agents,
+  openSettings,
+}: Pick<Importing, "agents" | "openSettings">) {
+  const { snapshot } = useAgents(agents);
+  return (
+    <p className="m-0 text-body-sm text-secondary">
+      {snapshot.status === "unavailable" ? (
+        "Agents run in the desktop app. Open Buzz there to import one."
+      ) : (
+        <>
+          Enable an agent type plugin in{" "}
+          <SettingsSectionLink section="plugins" open={openSettings}>
+            Manage plugins
+          </SettingsSectionLink>{" "}
+          to import agents.
+        </>
+      )}
+    </p>
+  );
+}
+
 export function SharedImportDialog({
   shared,
   agents,
   types,
   onImported,
   onOpen,
+  openSettings,
   onClose,
   finalFocus,
 }: Importing & {
@@ -583,9 +611,17 @@ export function SharedImportDialog({
       {/* Laid out as the agent's Identity tab will show it once imported. */}
       <div ref={body} className="grid gap-4">
         {types.length === 0 ? (
-          <p className="m-0 text-body-sm text-secondary">
-            Enable an agent type plugin to import agents.
-          </p>
+          <NoImportTypes
+            agents={agents}
+            // Settings opens in place of the dialog, not over it.
+            openSettings={
+              openSettings &&
+              ((section) => {
+                onClose();
+                openSettings(section);
+              })
+            }
+          />
         ) : (
           <SettingsGroup>
             <PreferenceRow

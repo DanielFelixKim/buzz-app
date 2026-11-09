@@ -18,6 +18,7 @@ import type { ReadTransport } from "../../features/relay/transport";
 import type {
   Agent,
   Agents,
+  AgentsSnapshot,
   RegisteredAgentType,
 } from "../../features/agents/service";
 import type { Profile } from "../../features/relay/contracts";
@@ -32,6 +33,7 @@ function AgentBrowse(
   props: ReturnType<typeof importing> & {
     relay: RelayData;
     onOpen?: (agent: Agent) => void;
+    openSettings?: (section: string) => void;
   },
 ) {
   const [selection, setSelection] = useState<SharedAgentSelection>();
@@ -72,13 +74,14 @@ const echo = {
 } as RegisteredAgentType;
 const notes = { key: "test/notes", title: "Notes" } as RegisteredAgentType;
 const imported = { pubkey: "e".repeat(64), name: "Shared helper" } as Agent;
-/** Import's props: one type, and an `agents` holding `own` whose `port`
- * resolves. */
+/** Import's props: one type, and an `agents` in `status` holding `own` whose
+ * `port` resolves. */
 const importing = (
   types: readonly RegisteredAgentType[] = [echo],
   own: readonly Agent[] = [],
+  status: AgentsSnapshot["status"] = "ready",
 ) => {
-  const snapshot = { agents: own };
+  const snapshot = { status, agents: own };
   return {
     agents: {
       subscribe: () => () => {},
@@ -528,6 +531,67 @@ it("does not silently replace an unavailable shared runtime", async () => {
     within(dialog).getByRole("combobox", { name: "Harness" }),
   ).toBeVisible();
   expect(props.agents.port).not.toHaveBeenCalled();
+});
+
+// Desktop with no local agent type plugin on, also while Agents loads.
+it.each(["ready", "loading"] as const)(
+  "says why a shared agent can't be imported here while agents are %s, and links Manage plugins",
+  async (status) => {
+    const read = vi.fn().mockResolvedValue([shared]);
+    const openSettings = vi.fn();
+    const props = importing([], [], status);
+    render(
+      <AgentBrowse
+        relay={community(read)}
+        {...props}
+        openSettings={openSettings}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Shared helper" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    const dialog = screen.getByRole("dialog", { name: "Shared helper" });
+    expect(
+      within(dialog).getByText(/Enable an agent type plugin/),
+    ).toHaveTextContent(
+      "Enable an agent type plugin in Manage plugins to import agents.",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Import" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Manage plugins" }),
+    );
+    expect(openSettings).toHaveBeenCalledExactlyOnceWith("plugins");
+    // Settings opens in place of the dialog, not over it.
+    expect(
+      screen.queryByRole("dialog", { name: "Shared helper" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it("tells a browser that shared agents import only in the desktop app", async () => {
+  const read = vi.fn().mockResolvedValue([shared]);
+  const openSettings = vi.fn();
+  // Outside the desktop app Agents is unavailable and no type registers.
+  const props = importing([], [], "unavailable");
+  render(
+    <AgentBrowse
+      relay={community(read)}
+      {...props}
+      openSettings={openSettings}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Shared helper" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  const dialog = screen.getByRole("dialog", { name: "Shared helper" });
+  expect(
+    within(dialog).getByText(
+      "Agents run in the desktop app. Open Buzz there to import one.",
+    ),
+  ).toBeVisible();
+  expect(within(dialog).queryByText(/Manage plugins/)).not.toBeInTheDocument();
 });
 
 it("collapses long instructions and expands them on request", async () => {
