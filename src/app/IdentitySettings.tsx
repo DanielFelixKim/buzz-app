@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type RefCallback,
 } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import type { BackupStatus } from "../features/identity/backup";
@@ -40,6 +41,7 @@ import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { CopyIcon } from "../shared/design-system/icons";
 import styles from "./IdentitySettings.module.css";
+import { useLanding } from "./landing";
 import { writeClipboardText } from "../shared/clipboard";
 
 const WAITING = {
@@ -329,6 +331,7 @@ export function IdentitySettings({
   servers = signInServers,
   builderlabIdentity,
   lastActive,
+  landing,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
@@ -344,7 +347,10 @@ export function IdentitySettings({
   builderlabIdentity?: FederatedIdentity | undefined;
   /** When `pubkey` was last active in a channel on the current community's relay. */
   lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
+  /** The visit that opened Identity at Organization sign-in. */
+  landing?: string | undefined;
 }) {
+  const land = useLanding(landing, "#organization-sign-in-title");
   const [signingOut, setSigningOut] = useState(false);
   const [offered, setOffered] = useState(false);
   useEffect(() => {
@@ -454,6 +460,7 @@ export function IdentitySettings({
               identity={federatedIdentity}
               memberships={memberships}
               servers={servers}
+              land={land}
             />
           )}
           {copyStatus && (
@@ -508,10 +515,12 @@ function OrganizationSignIns({
   identity,
   memberships,
   servers,
+  land,
 }: {
   identity: FederatedIdentity;
   memberships: readonly Membership[];
   servers: () => Promise<readonly SessionSnapshot[]>;
+  land: RefCallback<HTMLElement>;
 }) {
   const [ids, setIds] = useState<readonly string[]>([]);
   useEffect(() => {
@@ -593,12 +602,16 @@ function OrganizationSignIns({
   if (signedIn.length === 0)
     return (
       <>
-        {!firstFailed && <OrganizationSignIn identity={identity} />}
+        {!firstFailed && <OrganizationSignIn identity={identity} land={land} />}
         {problems}
       </>
     );
   return (
-    <section className="mt-6" aria-labelledby="organization-sign-in-title">
+    <section
+      ref={land}
+      className="mt-6"
+      aria-labelledby="organization-sign-in-title"
+    >
       <InlineHeader
         id="organization-sign-in-title"
         title="Organization sign-in"
@@ -692,9 +705,11 @@ function serverTitle(authority: NonNullable<SessionSnapshot["authority"]>) {
 function OrganizationSignIn({
   identity,
   listed = false,
+  land,
 }: {
   identity: FederatedIdentity;
   listed?: boolean;
+  land?: RefCallback<HTMLElement>;
 }) {
   const state = useSyncExternalStore(
     identity.subscribe,
@@ -789,7 +804,11 @@ function OrganizationSignIn({
   );
   if (listed) return row;
   return (
-    <section className="mt-6" aria-labelledby="organization-sign-in-title">
+    <section
+      ref={land}
+      className="mt-6"
+      aria-labelledby="organization-sign-in-title"
+    >
       <InlineHeader
         id="organization-sign-in-title"
         title="Organization sign-in"

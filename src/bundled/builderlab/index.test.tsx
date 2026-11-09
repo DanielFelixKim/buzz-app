@@ -676,6 +676,7 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
       version: 1,
       kind: "settings",
       section: "identity",
+      part: "organization-sign-in",
     });
     // An app that refuses the sign-in sends you to the same place.
     const openSignIn = openApp();
@@ -685,6 +686,7 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
       version: 1,
       kind: "settings",
       section: "identity",
+      part: "organization-sign-in",
     });
     await act(() => identity.service.signOut());
     expect(

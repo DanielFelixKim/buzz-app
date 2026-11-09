@@ -27,6 +27,7 @@ import type { RelayData } from "../features/relay/service";
 import type { Contribution } from "../plugins/contributions";
 import { createPluginInstallRequests } from "../plugins/installer";
 import { createPluginRequests } from "../plugins/requests";
+import { federatedFixture } from "../features/federated-identity/testing";
 
 afterEach(cleanup);
 // Settings reads agent plugin requests from every plugin manager.
@@ -2714,6 +2715,75 @@ it("keeps identity independent of community profile and clears revealed keys on 
   );
   expect(exportKey).toHaveBeenCalledTimes(1);
 });
+
+it.each([true, false])(
+  "opens Identity at Organization sign-in, heading focused, only when the open asks for it (%s)",
+  async (part) => {
+    const { cards } = registry([]);
+    const organization = federatedFixture();
+    organization.publish({ status: "signed-in" });
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    try {
+      render(
+        <ToastProvider>
+          <Settings
+            {...host}
+            cards={cards}
+            identity={
+              {
+                exportKey: vi.fn(),
+                backup: {
+                  subscribe: () => () => {},
+                  snapshot: () => undefined,
+                  ready: () => new Promise(() => {}),
+                },
+              } as unknown as Parameters<typeof Settings>[0]["identity"]
+            }
+            federatedIdentity={organization.service}
+            navigation={
+              {
+                entryId: "identity-visit",
+                target: {
+                  version: 1,
+                  kind: "settings",
+                  section: "identity",
+                  ...(part && { part: "organization-sign-in" }),
+                },
+                complete: vi.fn(),
+                savePosition: vi.fn(),
+              } as unknown as Parameters<typeof Settings>[0]["navigation"]
+            }
+          />
+        </ToastProvider>,
+      );
+      const heading = await screen.findByRole("heading", {
+        name: "Organization sign-in",
+      });
+      // The section keeps its place below Sign out of Buzz (#1424).
+      expect(
+        screen.getByRole("button", { name: "Sign out of Buzz" }),
+      ).toBeVisible();
+      if (part) {
+        expect(heading).toHaveFocus();
+        expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+          block: "start",
+          behavior: "instant",
+        });
+        expect(scrollIntoView.mock.contexts[0]).toBe(heading);
+      } else {
+        expect(heading).not.toHaveFocus();
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      }
+      // Arriving never focuses the section's sign-out.
+      expect(
+        screen.getByRole("button", { name: "Sign out of organization" }),
+      ).not.toHaveFocus();
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
+  },
+);
 
 it("offers Retry beside a failed installed revision without changing saved state", () => {
   const fixture = reviewPluginFixture();
