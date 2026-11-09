@@ -1,0 +1,24 @@
+name: Larger runner trial
+on:
+  push:
+    branches: [jameskraus/larger-runner-trial]
+    paths: [.github/workflows/larger-runner-trial.yml]
+permissions:
+  contents: read
+concurrency:
+  group: larger-runner-trial
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on:
+      group: ubuntu-x86-runners
+    timeout-minutes: 5
+    steps:
+      - name: Inspect allocated hardware
+        run: |
+          uname -a
+          cat /etc/os-release
+          lscpu
+          free -h
+          df -h /
+          printf 'runner=%s os=%s arch=%s\n' "$RUNNER_NAME" "$RUNNER_OS" "$RUNNER_ARCH"
