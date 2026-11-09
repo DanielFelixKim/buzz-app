@@ -1,18 +1,52 @@
+import { useEffect, useState } from "react";
 import { communityDestination } from "../communities/destination";
 import { communityName } from "../communities/names";
 import type { Membership } from "../communities/service";
 import { coversCommunity } from "./community-hosts";
+import type { FederatedIdentity } from "./service";
 
-/** The joined communities a server's hosts cover, by name, in order. */
-export function coveredCommunities(
+/** The joined communities whose access a server's session decides, by name,
+ * in order: those its hosts cover that require NIP-FI. A community whose
+ * discovery failed counts, since it may; one still being discovered does not
+ * yet. Without discovery (outside native), every covered community counts. */
+export function useSignInCommunities(
+  identity: FederatedIdentity | undefined,
   hosts: readonly string[],
   memberships: readonly Membership[],
 ) {
-  return memberships
-    .filter((membership) =>
-      coversCommunity(hosts, communityDestination(membership.id).url),
+  const covered = memberships
+    .map((membership) => ({
+      membership,
+      url: communityDestination(membership.id).url,
+    }))
+    .filter(({ url }) => coversCommunity(hosts, url));
+  // The effect follows the covered relays, not the array built each render.
+  const key = covered.map(({ url }) => url).join("\n");
+  const [requires, setRequires] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    if (!identity?.communityRequiresSignIn || !key) return;
+    let live = true;
+    for (const url of key.split("\n"))
+      void identity
+        .communityRequiresSignIn(url)
+        .catch(() => true)
+        .then((value) => {
+          if (live)
+            setRequires((known) =>
+              known.get(url) === value ? known : new Map(known).set(url, value),
+            );
+        });
+    return () => {
+      live = false;
+    };
+  }, [identity, key]);
+  return covered
+    .filter(
+      ({ url }) => !identity?.communityRequiresSignIn || requires.get(url),
     )
-    .map(communityName);
+    .map(({ membership }) => communityName(membership));
 }
 
 /** A sign-in server as copy names it: its organization, or its host. */

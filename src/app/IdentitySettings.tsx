@@ -22,7 +22,7 @@ import {
 } from "../features/federated-identity/service";
 import type { Membership } from "../features/communities/service";
 import {
-  coveredCommunities,
+  useSignInCommunities,
   serverName,
 } from "../features/federated-identity/community-servers";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
@@ -640,12 +640,13 @@ function ServerSession({
     session.snapshot,
     session.snapshot,
   );
-  if (!state.authority) return null;
-  const host = new URL(state.authority.identityOrigin).host;
-  const usedBy = coveredCommunities(
-    state.authority.communityHosts,
+  const usedBy = useSignInCommunities(
+    session,
+    state.authority?.communityHosts ?? [],
     memberships,
   );
+  if (!state.authority) return null;
+  const host = new URL(state.authority.identityOrigin).host;
   const expires = state.expiresAt
     ? new Date(state.expiresAt).toLocaleString(undefined, {
         dateStyle: "medium",

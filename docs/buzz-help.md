@@ -131,7 +131,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   explains why and offers **Sign in with** the organization’s name or server
   address. Complete sign-in to reconnect; in the join dialog, choose **Continue**.
 - Signed in to more than one organization server? **Organization sign-in**
-  lists each one you're signed in to, with the communities it's used by, and
+  lists each one you're signed in to, with the communities that require it, and
   each **Sign out** ends only that server's sign-in. Your organization's own
   server stays listed with **Sign in** until you sign in to it. **Sign out of
   Buzz** still ends them all.
@@ -145,9 +145,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - If a community doesn't accept the account you signed in with, its prompt
   names the server and offers **Switch account**: Buzz signs out of that server
   only and opens its sign-in again, so other servers stay signed in. It also
-  lists the other communities that use the same server. If you cancel the
-  sign-in during a switch, you stay signed out of that server and the prompt
-  offers **Sign in**. **Not now** closes the prompt and changes nothing.
+  names the other communities that require that server's sign-in, whose access
+  may change with the account; ones that don't require it are unaffected. If
+  you cancel the sign-in during a switch, you stay signed out of that server and
+  the prompt offers **Sign in**. **Not now** closes the prompt and changes nothing.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community.
