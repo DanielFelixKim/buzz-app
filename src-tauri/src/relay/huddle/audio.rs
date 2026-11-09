@@ -1514,6 +1514,11 @@ mod tests {
             // offered it to the full queue; taken later, after the relay starts
             // reading, it would find a free slot.
             drop(mic.reserve().await.unwrap());
+            // The heartbeat's first tick fires about 1 ms in. Let it fire while
+            // the queue is still full: the loop polls the heartbeat before the
+            // socket, so by the roster update below its Ping has been offered
+            // to the stalled queue, and admitted or dropped.
+            tokio::time::sleep(Duration::from_millis(5)).await;
             // The socket is read in order, so the roster update proves the probe
             // was handled while the queue was still full: the explicit Pong was
             // dropped, and any probe Pong on the wire is tungstenite's own.
@@ -1554,15 +1559,9 @@ mod tests {
             .await
             .expect("outbound did not recover");
         // The stall admits six messages: the send in flight and five queued.
-        // The heartbeat's first tick is due at once, but its timer fires on a
-        // later driver turn. A Ping read among the first six was one of them,
-        // beside frames 0-4. Otherwise it was dropped from the full queue, or
-        // came after the stall, and frames 0-5 were the six.
-        let admitted: u16 = if ping.is_some_and(|read| read < 6) {
-            5
-        } else {
-            6
-        };
+        // The next heartbeat is 10 s away, so a Ping read was one of the six,
+        // beside frames 0-4. Otherwise it was dropped, and frames 0-5 were.
+        let admitted: u16 = if ping.is_some() { 5 } else { 6 };
         assert_eq!(
             seqs,
             (0..admitted).chain(10..=12).collect::<Vec<_>>(),
