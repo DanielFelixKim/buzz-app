@@ -83,8 +83,10 @@ export function createCreationFields(
     const [error, setError] = useState("");
     const [revision, setRevision] = useState(0);
     const controls = useRef<HTMLDivElement>(null);
-    // The account's own site on the Builderlab server this build signs in to.
-    const portal = new URL(oauthTarget());
+    // The account's own site: the configured Builderlab server, deployment
+    // path kept. oauthTarget validates it as the server creation signs in to.
+    oauthTarget();
+    const portal = new URL(import.meta.env.VITE_BUZZ_BUILDERLAB_URL ?? "");
     // biome-ignore lint/correctness/useExhaustiveDependencies: revision retries catalog loading without changing the draft.
     useEffect(() => {
       if (login.status !== "signed-in") return;
@@ -214,11 +216,11 @@ export function createCreationFields(
           Runs on your Builderlab account. Usage and billing are at{" "}
           <a
             className={inlineStyles.link}
-            href={portal.origin}
+            href={portal.href}
             target="_blank"
             rel="noopener noreferrer"
           >
-            {portal.host}
+            {`${portal.host}${portal.pathname.replace(/\/$/, "")}`}
           </a>
           .
         </p>
