@@ -69,7 +69,7 @@ export const useSession = (
  * where the account's key is. Not now (or OK) is remembered for this pair of
  * keys and whether Replace was offered, so it asks again only when either key
  * changes or the account's key gets a backup. While it asks, `children` (the
- * backup prompt) waits.
+ * backup prompt) stays mounted, keeping what it was told, and is told to wait.
  */
 export function LinkedKeyCheck({
   federated,
@@ -83,8 +83,10 @@ export function LinkedKeyCheck({
   identity: Identity;
   /** The key on this device. */
   viewer: string;
-  onReplace: () => void;
-  children?: ReactNode;
+  /** Replace, for the account linked to `linked`. */
+  onReplace: (linked: string) => void;
+  /** Rendered throughout, told whether this check is asking. */
+  children?: (asking: boolean) => ReactNode;
 }) {
   const session = useSession(federated);
   const revision =
@@ -140,14 +142,13 @@ export function LinkedKeyCheck({
       current = false;
     };
   }, [federated, identity, viewer, revision]);
-  if (
-    !found ||
-    found.revision !== revision ||
-    found.viewer !== viewer ||
-    launching ||
-    importing
-  )
-    return children;
+  const asking =
+    !!found &&
+    found.revision === revision &&
+    found.viewer === viewer &&
+    !launching &&
+    !importing;
+  if (!asking) return children?.(false);
   const dismiss = () => {
     const question = asked(found.linked, found.viewer, found.restorable);
     dismissed.current = question;
@@ -155,7 +156,7 @@ export function LinkedKeyCheck({
     setFound(undefined);
   };
   const account = session?.email ?? "Your Builderlab account";
-  return found.restorable ? (
+  const prompt = found.restorable ? (
     <AlertDialog
       title="Your account uses a different key"
       description={`${account} is linked to a different key than the one on this computer, and Builderlab has a backup of it. Replacing removes this computer’s key and restarts Buzz to restore your account’s key. ${
@@ -167,7 +168,7 @@ export function LinkedKeyCheck({
       actions={
         <>
           <Button onClick={dismiss}>Not now</Button>
-          <Button variant="destructive" onClick={onReplace}>
+          <Button variant="destructive" onClick={() => onReplace(found.linked)}>
             Replace
           </Button>
         </>
@@ -180,5 +181,11 @@ export function LinkedKeyCheck({
       onClose={dismiss}
       actions={<Button onClick={dismiss}>OK</Button>}
     />
+  );
+  return (
+    <>
+      {children?.(true)}
+      {prompt}
+    </>
   );
 }

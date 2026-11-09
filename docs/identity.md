@@ -72,7 +72,11 @@ device confirmed a backup of it (as **A different account is saved on this
 computer** does) or to copy its private key from Settings → Identity first.
 **Replace** runs that dialog's Replace: it signs this key out without erase
 and restarts, and the sign-in after the restart takes the lane for a device
-with no key, where Welcome back restores the account's key. With no backup of
+with no key, where Welcome back restores the account's key. The restart's note
+names that key (`buzz.sign-in-after-restart.expected.v1`): when the browser
+signs in to an account linked to another key, or to none, setup fails before it
+creates, links or restores any key, offering only **Use a different account**,
+which drops the expectation. With no backup of
 the account's key, or no backups on this build or account (`unavailable`),
 Replace is not offered, since Welcome back could not restore it: the dialog says the account's
 key lives on another device and offers only **OK**. A backup status read that
@@ -82,8 +86,9 @@ Close keep the key and are remembered for that pair of keys (the account's and
 this device's) and whether Replace was offered (`buzz.linked-key-dismissed.v1`),
 so it asks again only when either key changes or the account's key gets a
 backup. The prompt waits while the launch screen shows or old Buzz's
-communities are being offered or added, and the backup consent prompt waits
-while it shows.
+communities are being offered or added. The backup consent prompt stays
+mounted but waits while it shows, so a consent prompt closed earlier stays
+closed after it.
 
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Continue** opens the same **Finding community** page described

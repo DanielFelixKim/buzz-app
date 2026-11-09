@@ -50,10 +50,38 @@ it("a restart's note becomes one request at the next launch, unless it went stal
   expect(next.takeSignInRequest()).toBe(false);
   expect((await launch()).takeSignInRequest()).toBe(false);
 
-  first.requestSignInAfterRestart(Date.now() - 10 * 60_000);
+  first.requestSignInAfterRestart(undefined, Date.now() - 10 * 60_000);
   expect((await launch()).takeSignInRequest()).toBe(false);
 
   first.requestSignInAfterRestart();
   withdraw();
   expect((await launch()).takeSignInRequest()).toBe(false);
+});
+
+it("a restart's note names the linked key its sign-in expects, once, and only while the note is fresh", async () => {
+  const launch = async () => {
+    vi.resetModules();
+    return import("./sign-in-requests");
+  };
+  const first = await launch();
+  first.requestSignInAfterRestart("aa");
+  const next = await launch();
+  expect(next.takeSignInRequest()).toBe(true);
+  expect(next.takeExpectedKey()).toBe("aa");
+  expect(next.takeExpectedKey()).toBeUndefined();
+
+  // A stale note expects nothing, and neither does a later Open Buzz.
+  first.requestSignInAfterRestart("aa", Date.now() - 10 * 60_000);
+  const stale = await launch();
+  stale.requestSignIn();
+  expect(stale.takeSignInRequest()).toBe(true);
+  expect(stale.takeExpectedKey()).toBeUndefined();
+
+  // A withdrawn note leaves no key behind.
+  const withdraw = first.requestSignInAfterRestart("aa");
+  withdraw();
+  first.requestSignInAfterRestart();
+  const plain = await launch();
+  expect(plain.takeSignInRequest()).toBe(true);
+  expect(plain.takeExpectedKey()).toBeUndefined();
 });

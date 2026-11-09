@@ -8844,6 +8844,7 @@ it("Replace on the open app's prompt signs this key out to restart and sign in a
   );
   // The restart signs in by itself, into the account's Welcome back.
   expect(localStorage.getItem(AFTER_RESTART)).not.toBeNull();
+  expect(localStorage.getItem(EXPECTED_AFTER_RESTART)).toBe(owned.pubkey);
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
   identity.dispose();
@@ -8866,8 +8867,135 @@ it("a refused Replace from the open app fails setup, withdraws the sign-in after
     await screen.findByText("Couldn't revoke paired command-line tools"),
   ).toBeVisible();
   expect(localStorage.getItem(AFTER_RESTART)).toBeNull();
+  expect(localStorage.getItem(EXPECTED_AFTER_RESTART)).toBeNull();
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(await screen.findByText("Signed in")).toBeVisible();
+  identity.dispose();
+});
+
+const EXPECTED_AFTER_RESTART = "buzz.sign-in-after-restart.expected.v1";
+/** The launch after Replace restarted Buzz for the account linked to `owned`. */
+function launchAfterReplace(account: AccountFor) {
+  missingKey();
+  localStorage.setItem(AFTER_RESTART, String(Date.now()));
+  localStorage.setItem(EXPECTED_AFTER_RESTART, owned.pubkey);
+  const connect = vi.fn().mockResolvedValue(credential);
+  const identity = createIdentity();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={account}
+      connect={connect}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  return { identity, connect };
+}
+
+it.each<[string, (other: string, bind: FirstRunAccount["bind"]) => AccountFor]>(
+  [
+    ["has no linked key", (_other, bind) => unlinkedWith(bind)],
+    [
+      "is linked to another backed-up key",
+      (other) => linkedTo(other, [], { backupStatus: async () => [other] }),
+    ],
+  ],
+)(
+  "the sign-in after Replace's restart to an account that %s stops before making, linking or restoring a key, and offers another account",
+  async (_, accountFor) => {
+    const bind = vi.fn((_pubkey: string) => Promise.resolve());
+    const { identity, connect } = launchAfterReplace(
+      accountFor(keypair().pubkey, bind),
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You signed in to a different Builderlab account than the one whose key Buzz restarted to restore.",
+    );
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(bind).not.toHaveBeenCalled();
+    expect(commands()).not.toContain("identity_create");
+    expect(identity.snapshot()).toMatchObject({ status: "missing" });
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    // Another account starts from the landing, which no longer expects one.
+    await user.click(
+      screen.getByRole("button", { name: "Use a different account" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Create account" }),
+    ).toBeVisible();
+    identity.dispose();
+  },
+);
+
+it("the sign-in after Replace's restart to the account it replaced the key for rests on Welcome back", async () => {
+  const { identity } = launchAfterReplace(linkedTo(owned.pubkey));
+  expect(
+    await screen.findByRole("heading", {
+      name: /^(Continue with this key|Restore your key|Couldn’t restore your key)$/,
+    }),
+  ).toBeVisible();
+  expect(screen.queryByText("Couldn’t finish setup")).toBeNull();
+  identity.dispose();
+});
+
+it("a backup prompt closed while the account's key is read stays closed once the mismatch prompt that follows is dismissed", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "nsec_backup_confirmed") return false;
+    return awaitingConsent(command);
+  });
+  const fi = federatedFixture();
+  fi.publish({ status: "signed-in", email: "a@example.com" });
+  const linked = deferred<ReturnType<typeof linkedAnswer>>();
+  const answers = accountAnswers(owned.pubkey, []);
+  fi.request.mockImplementation((request: { path: string }) =>
+    request.path.endsWith("/nostr-identities/current")
+      ? linked.promise
+      : answers(request),
+  );
+  const client = {
+    status: "ready",
+    memberships: [{ id: "https://relay.example.com", name: "Relay" }],
+  } as ClientSnapshot;
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={{
+        ...noJoin,
+        snapshot: () => client,
+        subscribe: () => () => {},
+      }}
+      invites={invites}
+      federatedIdentity={fi.service}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("alertdialog", {
+    name: "Sync your identity with Builderlab?",
+  });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  // The account's key arrives after: another key, with no backup.
+  linked.resolve(linkedAnswer(owned.pubkey));
+  const prompt = await mismatchPrompt();
+  const choiceReads = () =>
+    commands().filter((command) => command === "nsec_backup_choice").length;
+  const before = choiceReads();
+  await user.click(within(prompt).getByRole("button", { name: "OK" }));
+  // The backup prompt decides again once the mismatch prompt closes, and
+  // stays closed as it was left.
+  await waitFor(() => expect(choiceReads()).toBeGreaterThan(before));
+  await act(settled);
+  await act(settled);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(commands()).not.toContain("nsec_backup_set_choice");
   identity.dispose();
 });
