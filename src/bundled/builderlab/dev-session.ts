@@ -1,4 +1,9 @@
-import { capabilitiesFrom, createCapabilityRefresh } from "./capabilities";
+import {
+  capabilitiesFrom,
+  createPermissions,
+  settledOrAborted,
+  type Permissions,
+} from "./capabilities";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 // Public projection of the development server's login; the parent credential stays in Node.
 // Trusted local callers can still use its dedicated native viewer/Decisions routes.
@@ -40,7 +45,7 @@ type State = {
 export function createDevSession() {
   let state: LoginSnapshot = { status: "pending", checking: true };
   let owner: Credential | undefined;
-  let refreshCapabilities = async () => {};
+  let permissions: Permissions | undefined;
   let viewer: BuilderlabViewerSession | undefined;
   let lifetime = new AbortController();
   let disposed = false;
@@ -55,7 +60,7 @@ export function createDevSession() {
     lifetime.abort();
     lifetime = new AbortController();
     owner = undefined;
-    refreshCapabilities = async () => {};
+    permissions = undefined;
     viewer = undefined;
   };
   const check = (expected: Credential) => {
@@ -96,9 +101,9 @@ export function createDevSession() {
       revision: next.revision,
     });
     owner = current;
-    refreshCapabilities = createCapabilityRefresh(
-      account,
-      async () => {
+    permissions = createPermissions({
+      initial: account,
+      async read() {
         const response = await fetch(
           `/api/builderlab/capabilities?revision=${encodeURIComponent(current.revision)}`,
           { signal: lifetime.signal },
@@ -109,13 +114,16 @@ export function createDevSession() {
           throw new Error("Builderlab session changed");
         return result;
       },
-      (capabilities) => {
+      changed(capabilities) {
         if (disposed || owner !== current) return;
         account = Object.freeze({ ...account, ...capabilities });
-        publish({ status: "signed-in", account });
       },
-      next.capabilitiesCheckedAt,
-    );
+      settled() {
+        if (!disposed && owner === current && state.status === "signed-in")
+          publish({ status: "signed-in", account });
+      },
+      checkedAt: next.capabilitiesCheckedAt,
+    });
     viewer = {
       broker: { origin: window.location.origin, revision: next.revision },
       storage,
@@ -175,7 +183,22 @@ export function createDevSession() {
     return result;
   }
   const session: BuilderlabSession = {
-    snapshot: () => state,
+    snapshot() {
+      if (
+        owner &&
+        state.status === "signed-in" &&
+        !state.checkingPermissions &&
+        permissions?.revalidate()
+      ) {
+        // Readers may be rendering: they see the flag now, listeners later.
+        const current = owner;
+        state = Object.freeze({ ...state, checkingPermissions: true });
+        queueMicrotask(() => {
+          if (owner === current) for (const listener of listeners) listener();
+        });
+      }
+      return state;
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -186,7 +209,13 @@ export function createDevSession() {
       if (!owner || disposed) throw new Error("Sign in to Builderlab first.");
       return owner;
     },
-    refreshCapabilities: () => refreshCapabilities(),
+    async freshCredential(signal) {
+      const expected = session.credential();
+      session.snapshot();
+      if (permissions) await settledOrAborted(permissions, signal);
+      check(expected);
+      return expected;
+    },
     async request(expected, input) {
       check(expected);
       const response = await send("request", {
@@ -286,19 +315,9 @@ export function createDevSession() {
     ...broker,
     async auth() {
       const expected = session.credential();
-      await session.refreshCapabilities();
+      const value = await broker.auth();
       check(expected);
-      return {
-        email: expected.account.email,
-        ...(expected.account.name === undefined
-          ? {}
-          : { name: expected.account.name }),
-        expiresAt: expected.account.expiresAt ?? "",
-        capabilities: {
-          can_delete_buzz_communities:
-            expected.account.canDeleteBuzzCommunities === true,
-        },
-      };
+      return value;
     },
     async send(action, body, signal) {
       const expected = session.credential();

@@ -147,13 +147,6 @@ export type DecisionProvider = Readonly<{
   order?: number;
 }>;
 
-/** A permission check that can offer a provider which is currently absent.
- * Receives no decision text; the host runs it on Settings entry and before routing. */
-export type DecisionProviderDiscovery = Readonly<{
-  id: string;
-  refresh(): Promise<void>;
-}>;
-
 /** What plugins get as `ctx.decisions`. `decide` never rejects. */
 export interface Decisions {
   decide(request: DecisionRequest): Promise<DecisionResult>;
@@ -162,17 +155,11 @@ export interface Decisions {
   backend(): string | undefined;
   /** That provider's status, or `unavailable` when there is none. */
   status(): DecisionProviderStatus | "unavailable";
-  /** Refresh availability without decision text. Routing skips discovery while
-   * the explicit choice is registered; Settings always discovers providers. */
-  refreshProviders(options?: { forRouting?: boolean }): Promise<void>;
   subscribe(listener: () => void): () => void;
   /** Offers a provider while the calling plugin runs, or until the returned
    * function removes it. `Decisions` exposes no way to choose the provider;
    * the user does in Settings. */
   registerProvider(provider: DecisionProvider): () => void;
-  /** Discover optional providers independently of their current registration.
-   * Removed with the plugin or the returned function; failures retain current providers. */
-  registerProviderDiscovery(discovery: DecisionProviderDiscovery): () => void;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -208,8 +195,8 @@ export const statusOf = (
 /** The provider that answers when no other default is registered. */
 export const DEFAULT_DECISION_PROVIDER = "buzz.typesafe/typesafe";
 /** Bundled providers that answer, in this order, while the user has not
- * chosen one or their choice is not registered. Builderlab registers only
- * for a signed-in account it allows. */
+ * chosen one or their choice is not registered. The first that does not need
+ * setup answers; when all of them do, the first. */
 export const DEFAULT_DECISION_PROVIDERS: readonly string[] = [
   "block.builderlab/builderlab",
   DEFAULT_DECISION_PROVIDER,
@@ -222,7 +209,6 @@ export const DEFAULT_DECISION_PROVIDERS: readonly string[] = [
  * than sent somewhere else. */
 export class DecisionsService extends Service implements Decisions {
   private readonly registry;
-  private readonly discoveries;
   /** The user's choice in Settings; undefined until they make one. */
   private chosen: string | undefined;
   private sorted: readonly RegisteredProvider[] = [];
@@ -243,7 +229,6 @@ export class DecisionsService extends Service implements Decisions {
   ) {
     super(ctx, "decisions");
     this.registry = createContributions<DecisionProvider>(ctx);
-    this.discoveries = createContributions<DecisionProviderDiscovery>(ctx);
     try {
       this.chosen = storage?.getItem(DECISION_BACKEND_KEY) ?? undefined;
     } catch {
@@ -277,24 +262,6 @@ export class DecisionsService extends Service implements Decisions {
     // a plugin calls through its injected `ctx.decisions`.
     return this.registry.register(this.ctx, provider);
   }
-  registerProviderDiscovery(discovery: DecisionProviderDiscovery): () => void {
-    return this.discoveries.register(this.ctx, discovery);
-  }
-  /** Refresh availability without changing the saved provider choice. */
-  refreshProviders = async (options?: {
-    forRouting?: boolean;
-  }): Promise<void> => {
-    if (
-      options?.forRouting &&
-      this.sorted.some((provider) => provider.key === this.chosen)
-    )
-      return;
-    await Promise.allSettled(
-      this.discoveries
-        .snapshot()
-        .map((entry) => Promise.resolve().then(() => entry.refresh())),
-    );
-  };
   /** Host-only: every registered provider, in Settings order. */
   providers = (): readonly RegisteredProvider[] => this.sorted;
   private current(): RegisteredProvider | undefined {
@@ -307,11 +274,27 @@ export class DecisionsService extends Service implements Decisions {
       !DEFAULT_DECISION_PROVIDERS.includes(this.chosen)
     )
       return undefined;
-    for (const key of DEFAULT_DECISION_PROVIDERS) {
-      const provider = find(key);
-      if (provider) return provider;
-    }
-    return undefined;
+    const defaults = DEFAULT_DECISION_PROVIDERS.map(find).filter(
+      (provider) => provider !== undefined,
+    );
+    return (
+      defaults.find((provider) => statusOf(provider) !== "needs-setup") ??
+      defaults[0]
+    );
+  }
+  /** Resolves once the routed provider is not `checking`, or on `signal`. */
+  private known(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      const settle = () => {
+        if (!signal.aborted && this.status() === "checking") return;
+        stop();
+        signal.removeEventListener("abort", settle);
+        resolve();
+      };
+      const stop = this.subscribe(settle);
+      signal.addEventListener("abort", settle, { once: true });
+      settle();
+    });
   }
   // Bound, so a caller can pass these on, as React's external stores do.
   backend = (): string | undefined => this.current()?.key;
@@ -343,8 +326,7 @@ export class DecisionsService extends Service implements Decisions {
     let backend = provider?.key;
     const failed = (reason: DecisionFailure): DecisionResult =>
       Object.freeze({ outcome: "failed", backend, reason });
-    if (!provider && !this.discoveries.snapshot().length)
-      return failed("unavailable");
+    if (!provider) return failed("unavailable");
     const invalid = checkRequest(request);
     if (invalid) return failed(invalid);
     const timeoutMs = Math.min(
@@ -364,16 +346,21 @@ export class DecisionsService extends Service implements Decisions {
     let reply: unknown;
     try {
       reply = await Promise.race([
-        Promise.resolve().then(async () => {
-          await this.refreshProviders({ forRouting: true });
-          if (abort.signal.aborted) return "timeout";
-          provider = this.current();
-          backend = provider?.key;
-          if (!provider) return { outcome: "failed", reason: "unavailable" };
-          return provider.decide(Object.freeze({ ...request, timeoutMs }), {
-            signal: abort.signal,
-          });
-        }),
+        // A provider still checking its setup may stop answering, or a
+        // default may start to: route once it knows, within the deadline.
+        this.known(abort.signal).then(
+          (): DecisionReply | Promise<DecisionReply> => {
+            // Past the deadline: never send the request anywhere.
+            if (abort.signal.aborted)
+              return { outcome: "failed", reason: "timeout" };
+            provider = this.current();
+            backend = provider?.key;
+            if (!provider) return { outcome: "failed", reason: "unavailable" };
+            return provider.decide(Object.freeze({ ...request, timeoutMs }), {
+              signal: abort.signal,
+            });
+          },
+        ),
         deadline,
       ]);
     } catch {

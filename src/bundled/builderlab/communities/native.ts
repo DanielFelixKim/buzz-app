@@ -117,16 +117,29 @@ export function createNativeBackend(
     // identity it then shows is settled.
     await linked();
     ensureCurrent(credential);
-    await session.refreshCapabilities();
+    const response = await http(credential, { path: "/v1/auth/me" });
     ensureCurrent(credential);
-    const { email, name, expiresAt, canDeleteBuzzCommunities } =
-      credential.account;
+    if (response.status === 401) return null;
+    if (response.status < 200 || response.status >= 300)
+      throw new Error(
+        `Builderlab session check failed with HTTP ${response.status}`,
+      );
+    const { email, name, expires_at, capabilities } = (parse(response.body) ??
+      {}) as {
+      email?: unknown;
+      name?: unknown;
+      expires_at?: unknown;
+      capabilities?: { can_delete_buzz_communities?: unknown };
+    };
+    if (typeof expires_at !== "string")
+      throw new Error("Builderlab returned an invalid response");
     return {
-      email,
-      ...(name === undefined ? {} : { name }),
-      expiresAt: expiresAt ?? "",
+      ...(typeof email === "string" ? { email } : {}),
+      ...(typeof name === "string" ? { name } : {}),
+      expiresAt: expires_at,
       capabilities: {
-        can_delete_buzz_communities: canDeleteBuzzCommunities === true,
+        can_delete_buzz_communities:
+          capabilities?.can_delete_buzz_communities === true,
       },
     };
   };

@@ -212,6 +212,61 @@ it("uses Builderlab while it is registered, unless the user chose another", asyn
   );
 });
 
+it("passes over a default that needs setup for the next default that does not", async () => {
+  const { service, plugin } = setup();
+  const builderlab = settable("needs-setup");
+  const typesafe = settable("needs-setup");
+  await plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
+  await plugin("block.builderlab", { id: "builderlab", ...builderlab });
+  // When every default needs setup, the first one answers for them all.
+  expect(service.backend()).toBe("block.builderlab/builderlab");
+  typesafe.set("ready");
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  builderlab.set("checking");
+  expect(service.backend()).toBe("block.builderlab/builderlab");
+  // A choice is kept even while it needs setup.
+  builderlab.set("needs-setup");
+  service.setBackend("block.builderlab/builderlab");
+  expect(service.backend()).toBe("block.builderlab/builderlab");
+});
+
+it("routes a request once a checking default knows whether it can answer", async () => {
+  const { service, plugin, timers } = setup();
+  const builderlab = settable("checking");
+  const fromBuilderlab = vi.fn(async () => reply);
+  const fromTypesafe = vi.fn(async () => reply);
+  await plugin("buzz.typesafe", { id: "typesafe", decide: fromTypesafe });
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    ...builderlab,
+    decide: fromBuilderlab,
+  });
+  const refused = service.decide(request);
+  await flush();
+  expect(fromBuilderlab).not.toHaveBeenCalled();
+  expect(fromTypesafe).not.toHaveBeenCalled();
+  builderlab.set("needs-setup");
+  await expect(refused).resolves.toMatchObject({
+    outcome: "answered",
+    backend: DEFAULT_DECISION_PROVIDER,
+  });
+  builderlab.set("checking");
+  const granted = service.decide(request);
+  await flush();
+  builderlab.set("ready");
+  await expect(granted).resolves.toMatchObject({
+    backend: "block.builderlab/builderlab",
+  });
+  expect(fromBuilderlab).toHaveBeenCalledOnce();
+  // The wait counts against the request's deadline.
+  builderlab.set("checking");
+  const late = service.decide(request);
+  await flush();
+  timers[0]?.run();
+  await expect(late).resolves.toMatchObject({ reason: "timeout" });
+  expect(fromBuilderlab).toHaveBeenCalledOnce();
+});
+
 it("removes a provider when the plugin asks, before its scope ends", async () => {
   const { root, service } = setup();
   let remove = () => {};
@@ -418,116 +473,3 @@ it("stops waiting at the deadline and aborts the provider", async () => {
   expect(signal?.aborted).toBe(true);
   expect(timers).toEqual([]);
 });
-
-it("keeps routing to the existing provider when discovery fails and retires discovery with its plugin", async () => {
-  const h = setup();
-  const decide = vi.fn(async () => reply);
-  await h.plugin("buzz.typesafe", { id: "typesafe", decide });
-  const refresh = vi.fn(async () => {
-    throw new Error("Offline");
-  });
-  const discovery = h.root
-    .extend({ pluginOwner: { id: "example.discovery", revision: "one" } })
-    .plugin((ctx) =>
-      ctx.decisions.registerProviderDiscovery({ id: "account", refresh }),
-    );
-  await discovery.await();
-  await flush();
-  await expect(h.service.decide(request)).resolves.toMatchObject({
-    outcome: "answered",
-    backend: "buzz.typesafe/typesafe",
-  });
-  expect(refresh).toHaveBeenCalledOnce();
-  await discovery.dispose();
-  await h.service.refreshProviders();
-  expect(refresh).toHaveBeenCalledOnce();
-  await h.root.fiber.dispose();
-});
-
-it("includes discovery in the existing deadline and never dispatches a decision after it expires", async () => {
-  const h = setup();
-  const decide = vi.fn(async () => reply);
-  await h.plugin("buzz.typesafe", { id: "typesafe", decide });
-  let release = () => {};
-  let reached = () => {};
-  const started = new Promise<void>((resolve) => {
-    reached = resolve;
-  });
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const discovery = h.root
-    .extend({ pluginOwner: { id: "example.discovery", revision: "one" } })
-    .plugin((ctx) =>
-      ctx.decisions.registerProviderDiscovery({
-        id: "account",
-        refresh: () => {
-          reached();
-          return held;
-        },
-      }),
-    );
-  await discovery.await();
-  await flush();
-  const result = h.service.decide({ ...request, timeoutMs: 1_000 });
-  try {
-    await started;
-    h.timers[0]?.run();
-    await expect(result).resolves.toMatchObject({
-      outcome: "failed",
-      reason: "timeout",
-    });
-  } finally {
-    release();
-    await result;
-  }
-  // Join a refresh behind the released gate, then drain its dispatch continuation.
-  await h.service.refreshProviders();
-  await flush();
-  expect(decide).not.toHaveBeenCalled();
-  expect(h.timers).toEqual([]);
-  await h.root.fiber.dispose();
-});
-
-it.each(["buzz.typesafe/typesafe", "example.provider/custom"])(
-  "does not wait for discovery when %s is explicitly chosen and registered",
-  async (key) => {
-    const h = setup(memory({ [DECISION_BACKEND_KEY]: key }));
-    const [plugin = "", id = ""] = key.split("/");
-    const decide = vi.fn(async () => reply);
-    await h.plugin(plugin, { id, decide });
-    let release = () => {};
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const refresh = vi.fn(() => held);
-    const discovery = h.root
-      .extend({ pluginOwner: { id: "example.discovery", revision: "one" } })
-      .plugin((ctx) =>
-        ctx.decisions.registerProviderDiscovery({ id: "account", refresh }),
-      );
-    await discovery.await();
-    await flush();
-    const result = h.service.decide({ ...request, timeoutMs: 1_000 });
-    try {
-      await flush();
-      h.timers[0]?.run();
-      await expect(result).resolves.toMatchObject({
-        outcome: "answered",
-        backend: key,
-      });
-      expect(decide).toHaveBeenCalledOnce();
-      expect(refresh).not.toHaveBeenCalled();
-      // Settings still discovers providers even with an explicit choice.
-      const settings = h.service.refreshProviders();
-      await flush();
-      expect(refresh).toHaveBeenCalledOnce();
-      release();
-      await settings;
-    } finally {
-      release();
-      await result;
-      await h.root.fiber.dispose();
-    }
-  },
-);

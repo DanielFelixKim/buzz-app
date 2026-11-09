@@ -175,8 +175,10 @@ agents are not migrated into this type.
   Its sign-out lives in Identity → Organization sign-in, which `login/` links to,
   because community sign-in shares the session. In live development it projects
   the development broker's sign-in instead, through `brokerApi`.
-- `capabilities.ts` shares a demand-driven, one-minute permission refresh across
-  capability gates. Concurrent checks join one request; failed attempts keep
+- `capabilities.ts` keeps a sign-in's permissions at most a minute old, on
+  demand: reading the session's snapshot starts a due re-read in the background,
+  and acting waits for it through `freshCredential`. Gates read the flags and
+  never refresh by hand. Concurrent reads join one request; failed attempts keep
   cached values and wait a minute before another attempt. No polling is added.
 - `oauth/` names the build's Builderlab API (`oauthTarget`). `oauth/first-run.ts`
   lets the app's first-launch welcome screen run the same native NIP-FI
@@ -240,21 +242,21 @@ The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
 `true` enables remote agents. Otherwise, Harness defaults and Builderlab Settings
 show “Unavailable for this account”; the provider dialog explains the same
 restriction. The Harness defaults row has no action. Account management stays in
-Settings → Builderlab, and no Beekeeper requests are sent. Permission checks
-refresh capabilities from `/v1/auth/me` with a one-minute cache shared by the
-plugin; failed checks retain the previous values. Only capabilities change;
+Settings → Builderlab, and no Beekeeper requests are sent. Permissions are
+re-read from `/v1/auth/me` once they are a minute old and the session is read
+again; failed reads retain the previous values. Only capabilities change;
 account identity and display details remain those read at sign-in.
 
-The plugin also offers Builderlab as a Decisions API provider. It reads
-`capabilities.can_use_builderlab_decisions` the same way, but only explicit
-`true` registers the provider, and only while the user is signed in. Otherwise
-Builderlab is not listed in Settings > Decisions API and no decision request
-goes to it. While it is registered, it answers unless the user chose another
-provider; when it goes away, TypeSafe answers. It uses the same capability refresh
-cache. Opening Decisions API settings checks for newly granted access while
-Builderlab is absent from the provider list. Requests and Attention readiness
-also discover access unless an explicitly chosen provider is still registered.
-Live development retains refreshed flags and their cache age across page reloads.
+The plugin also offers Builderlab as a Decisions API provider while the user is
+signed in. It reads `capabilities.can_use_builderlab_decisions` the same way:
+only explicit `true` makes it ready, and otherwise it needs setup, its settings
+say it is unavailable for this account, and no decision request goes to it.
+Defaults pass over a provider that needs setup, so TypeSafe answers until
+access is granted. While stale permissions refuse, its status is `checking`
+during the re-read that reading it starts; requests and Attention readiness
+already wait for `checking`, so a new grant is used by the request that
+noticed it. Live development retains refreshed flags and their cache age
+across page reloads.
 The plugin names the NIP-FI session by its revision, and
 native `decide` posts to the identity origin's API with that
 session as `Authorization: Bearer`, as for the build's other Builderlab calls;

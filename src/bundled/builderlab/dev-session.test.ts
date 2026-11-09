@@ -5,6 +5,13 @@ import { createAppsClient } from "./apps/client";
 import { applyApps } from "./apps";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { deferred } from "./test-helpers";
+import type { BuilderlabSession } from "./session";
+
+const fresh = (session: BuilderlabSession) =>
+  session.freshCredential(new AbortController().signal).then(
+    () => {},
+    () => {},
+  );
 
 class Events {
   static all: Events[] = [];
@@ -430,7 +437,7 @@ it("refreshes only capabilities through the broker while preserving its owner an
     await signedIn(h.session);
     const owner = h.session.credential();
     const viewer = h.session.viewerSession();
-    await h.session.refreshCapabilities();
+    await fresh(h.session);
     expect(h.fetch).not.toHaveBeenCalled();
     now += 60_000;
     h.fetch.mockResolvedValueOnce(
@@ -443,10 +450,7 @@ it("refreshes only capabilities through the broker while preserving its owner an
         },
       }),
     );
-    await Promise.all([
-      h.session.refreshCapabilities(),
-      h.session.refreshCapabilities(),
-    ]);
+    await Promise.all([fresh(h.session), fresh(h.session)]);
     expect(h.fetch).toHaveBeenCalledOnce();
     expect(h.session.snapshot().account).toMatchObject({
       subject: "A",
@@ -461,8 +465,8 @@ it("refreshes only capabilities through the broker while preserving its owner an
     now += 60_000;
     h.fetch.mockRejectedValueOnce(new TypeError("Offline"));
     const previous = h.session.snapshot();
-    await h.session.refreshCapabilities();
-    expect(h.session.snapshot()).toBe(previous);
+    await fresh(h.session);
+    expect(h.session.snapshot().account).toBe(previous.account);
     now += 60_000;
     h.fetch.mockResolvedValueOnce(
       Response.json({
@@ -470,8 +474,8 @@ it("refreshes only capabilities through the broker while preserving its owner an
         capabilities: { can_use_remote_agents: true },
       }),
     );
-    await h.session.refreshCapabilities();
-    expect(h.session.snapshot()).toBe(previous);
+    await fresh(h.session);
+    expect(h.session.snapshot().account).toBe(previous.account);
     expect(h.fetch).toHaveBeenLastCalledWith(
       "/api/builderlab/capabilities?revision=one",
       { signal: viewer.signal },
@@ -505,7 +509,7 @@ it("restores the broker's capability cache age instead of starting another minut
   try {
     await signedIn(h.session);
     now = checkedAt + 59_999;
-    await h.session.refreshCapabilities();
+    await fresh(h.session);
     expect(h.fetch).not.toHaveBeenCalled();
     now += 1;
     h.fetch.mockResolvedValueOnce(
@@ -514,7 +518,7 @@ it("restores the broker's capability cache age instead of starting another minut
         capabilities: { can_use_remote_agents: false },
       }),
     );
-    await h.session.refreshCapabilities();
+    await fresh(h.session);
     expect(h.fetch).toHaveBeenCalledOnce();
     expect(h.session.snapshot().account?.canUseRemoteAgents).toBe(false);
   } finally {
@@ -547,7 +551,7 @@ it.each(["sign-out", "replacement", "disposal"] as const)(
             response.promise.then(resolve, reject);
           }),
       );
-      refresh = h.session.refreshCapabilities();
+      refresh = fresh(h.session);
       await vi.waitFor(() => expect(h.fetch).toHaveBeenCalledOnce());
       const signal = h.fetch.mock.calls[0]?.[1]?.signal;
       expect(signal?.aborted).toBe(false);

@@ -1,7 +1,9 @@
 import {
   capabilitiesFrom,
-  createCapabilityRefresh,
+  createPermissions,
+  settledOrAborted,
   type Capabilities,
+  type Permissions,
 } from "./capabilities";
 import type { BuilderlabViewerSession } from "../../features/browser/api";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
@@ -29,6 +31,9 @@ export type LoginSnapshot = Readonly<{
   checking?: boolean;
   /** Signing out a rejected account failed; Try again retries it. */
   retrySignOut?: boolean;
+  /** Signed in, and re-reading the account's permissions; `account` holds
+   * the previous values until the read settles. */
+  checkingPermissions?: boolean;
 }>;
 /** A call under the Builderlab API root; `path` starts with `/`. */
 export type BuilderlabRequest = Readonly<{
@@ -44,11 +49,16 @@ export type BuilderlabRequest = Readonly<{
  * Neither hands its token to consumers.
  */
 export type BuilderlabSession = Readonly<{
+  /** Also keeps permissions fresh: reading a signed-in snapshot whose
+   * permissions are over a minute old starts re-reading them, and the
+   * snapshot says `checkingPermissions` until that settles. */
   snapshot(): LoginSnapshot;
   subscribe(listener: () => void): () => void;
   credential(): Credential;
-  /** Refresh permissions at most once per minute; failures retain cached values. */
-  refreshCapabilities(): Promise<void>;
+  /** The sign-in's credential once its permissions are at most a minute old,
+   * for acting on them. A failed re-read keeps the previous values. Rejects
+   * when `signal` aborts or the sign-in ends or changes meanwhile. */
+  freshCredential(signal: AbortSignal): Promise<Credential>;
   /** Sends `input` as `credential`'s account. */
   request(
     credential: Credential,
@@ -130,7 +140,7 @@ export function createNativeSession(
   identity: FederatedIdentity,
 ): BuilderlabSession {
   type Native = Credential & Readonly<{ storage: string }>;
-  let refreshCapabilities = async () => {};
+  let permissions: Permissions | undefined;
   let credential: Native | undefined;
   let viewer: BuilderlabViewerSession | undefined;
   let viewerLifetime: AbortController | undefined;
@@ -147,19 +157,26 @@ export function createNativeSession(
       next.status === state.status &&
       next.account === state.account &&
       next.error === state.error &&
-      next.checking === state.checking
+      next.checking === state.checking &&
+      next.checkingPermissions === state.checkingPermissions
     )
       return;
     state = Object.freeze(next);
     notify();
   };
+  const signedIn = (current: Native, checkingPermissions = false) =>
+    publish({
+      status: "signed-in",
+      account: current.account,
+      ...(checkingPermissions ? { checkingPermissions } : {}),
+    });
   const replace = (next: Native | undefined) => {
     if (next === credential) return;
     viewerLifetime?.abort();
     viewerLifetime = undefined;
     viewer = undefined;
     credential = next;
-    refreshCapabilities = async () => {};
+    permissions = undefined;
     if (!next) return;
     viewerLifetime = new AbortController();
     viewer = {
@@ -193,9 +210,9 @@ export function createNativeSession(
         },
       });
       replace(next);
-      refreshCapabilities = createCapabilityRefresh(
-        currentAccount,
-        async () => {
+      permissions = createPermissions({
+        initial: currentAccount,
+        async read() {
           const response = await session.request(next, {
             path: "/v1/auth/me",
             method: "GET",
@@ -204,15 +221,18 @@ export function createNativeSession(
             throw new Error("Account check failed");
           return JSON.parse(response.body) as unknown;
         },
-        (capabilities) => {
+        changed(capabilities) {
           if (disposed || credential !== next) return;
           currentAccount = Object.freeze({
             ...currentAccount,
             ...capabilities,
           });
-          project();
         },
-      );
+        settled() {
+          if (!disposed && credential === next && state.status === "signed-in")
+            signedIn(next);
+        },
+      });
     } else failed = revision;
     project();
   }
@@ -241,7 +261,7 @@ export function createNativeSession(
       );
     }
     if (credential?.revision === current.revision)
-      return publish({ status: "signed-in", account: credential.account });
+      return signedIn(credential, state.checkingPermissions === true);
     replace(undefined);
     if (failed === current.revision)
       return publish({ status: "signed-out", error: ACCOUNT_FAILED });
@@ -252,7 +272,22 @@ export function createNativeSession(
   const stop = identity.subscribe(project);
   project();
   const session: BuilderlabSession = {
-    snapshot: () => state,
+    snapshot() {
+      if (
+        credential &&
+        state.status === "signed-in" &&
+        !state.checkingPermissions &&
+        permissions?.revalidate()
+      ) {
+        // Readers may be rendering: they see the flag now, listeners later.
+        const current = credential;
+        state = Object.freeze({ ...state, checkingPermissions: true });
+        queueMicrotask(() => {
+          if (credential === current) notify();
+        });
+      }
+      return state;
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -264,7 +299,14 @@ export function createNativeSession(
         throw new Error("Sign in to Builderlab first.");
       return credential;
     },
-    refreshCapabilities: () => refreshCapabilities(),
+    async freshCredential(signal) {
+      const owner = session.credential();
+      session.snapshot();
+      if (permissions) await settledOrAborted(permissions, signal);
+      if (session.credential() !== owner)
+        throw new DOMException("Builderlab session changed.", "AbortError");
+      return owner;
+    },
     async request(owner, input) {
       const authority = identity.snapshot().authority;
       if (disposed || owner !== credential || !authority)

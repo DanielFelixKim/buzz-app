@@ -3380,9 +3380,8 @@ async function standalone<T>(
   }
 }
 
-/** Discovers providers before waiting for their setup status to settle. */
-async function statusKnown(decisions: Decisions): Promise<void> {
-  await decisions.refreshProviders({ forRouting: true });
+/** Resolves once the selected provider's status is not `checking`. */
+function statusKnown(decisions: Decisions): Promise<void> {
   if (decisions.status() !== "checking") return Promise.resolve();
   return new Promise((resolve) => {
     const stop = decisions.subscribe(() => {

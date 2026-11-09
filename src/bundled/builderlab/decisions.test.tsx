@@ -92,7 +92,7 @@ it("never ends an FI session for a decisions 401", async () => {
     subscribe: () => () => {},
     credential: () => fi,
     signOut,
-    refreshCapabilities: async () => {},
+    freshCredential: async () => fi,
   } as unknown as BuilderlabSession;
   const provider = builderlabProvider(session, true, async () => ({
     outcome: "failed",
@@ -169,7 +169,7 @@ it("sends nothing to Builderlab unless the account may use decisions", async () 
   expect(decide).not.toHaveBeenCalled();
 });
 
-it("offers Builderlab only while the signed-in account may use decisions", async () => {
+it("offers Builderlab while signed in, ready only while the account may use decisions", async () => {
   const root = new Context();
   root.provide("pluginStatus", {
     isActive: () => true,
@@ -196,12 +196,14 @@ it("offers Builderlab only while the signed-in account may use decisions", async
   const keys = () => decisions.providers().map((provider) => provider.key);
   expect(keys()).toEqual([]);
   await session.signIn();
-  expect(keys()).toEqual([]);
+  expect(keys()).toEqual(["block.builderlab/builderlab"]);
+  expect(decisions.status()).toBe("needs-setup");
   session.signOut();
   allowed = true;
   await session.signIn();
   expect(keys()).toEqual(["block.builderlab/builderlab"]);
   expect(decisions.backend()).toBe("block.builderlab/builderlab");
+  expect(decisions.status()).toBe("ready");
   session.signOut();
   expect(keys()).toEqual([]);
   await session.signIn();
@@ -218,7 +220,7 @@ it("offers Builderlab only while the signed-in account may use decisions", async
 });
 
 it.each(["settings", "request", "settings-with-choice"] as const)(
-  "discovers newly granted Decisions access through %s while Builderlab is absent",
+  "picks up newly granted Decisions access through %s without signing in again",
   async (entry) => {
     let now = Date.now();
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -288,11 +290,12 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
       await session.signIn();
       await expect.poll(() => session.snapshot().status).toBe("signed-in");
       await flush();
+      // Signed in without access: listed, but defaults fall through to TypeSafe.
       expect(
         decisions
           .providers()
           .some((p) => p.key === "block.builderlab/builderlab"),
-      ).toBe(false);
+      ).toBe(true);
       const beforeBackend =
         entry === "settings-with-choice"
           ? "example.provider/custom"
@@ -317,6 +320,17 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
         expect(
           await screen.findByRole("radio", { name: /Builderlab/ }),
         ).toBeVisible();
+        if (entry === "settings-with-choice") {
+          // Another provider is chosen, so nothing reads Builderlab's
+          // permissions until the user picks it.
+          expect(identity.request).toHaveBeenCalledOnce();
+          await act(async () =>
+            screen.getByRole("radio", { name: /Builderlab/ }).click(),
+          );
+        }
+        await expect
+          .poll(() => decisions.backend())
+          .toBe("block.builderlab/builderlab");
       } else {
         await expect(decisions.decide(request)).resolves.toMatchObject({
           backend: "block.builderlab/builderlab",
@@ -327,11 +341,7 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
           .providers()
           .some((p) => p.key === "block.builderlab/builderlab"),
       ).toBe(true);
-      expect(decisions.backend()).toBe(
-        entry === "settings-with-choice"
-          ? beforeBackend
-          : "block.builderlab/builderlab",
-      );
+      expect(decisions.backend()).toBe("block.builderlab/builderlab");
       expect(fallback).toHaveBeenCalledTimes(
         entry === "settings-with-choice" ? 0 : 1,
       );

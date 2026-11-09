@@ -887,7 +887,15 @@ it.for([
             .forwarded()
             .map(({ url }) => url.split("/").at(-1))
             .sort(),
-        ).toEqual(["current", "current", "list", "list", "list-agents", "me"]),
+        ).toEqual([
+          "current",
+          "current",
+          "list",
+          "list",
+          "list-agents",
+          "me",
+          "me",
+        ]),
       );
       const sync = identity
         .forwarded()

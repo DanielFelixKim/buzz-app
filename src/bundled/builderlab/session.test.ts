@@ -2,8 +2,13 @@ import { expect, it, vi } from "vitest";
 import { federatedFixture } from "../../features/federated-identity/testing";
 import { deferred } from "./test-helpers";
 import type { HostResponse } from "../../features/host/service";
-import { createNativeBackend } from "./communities/native";
-import { createNativeSession } from "./session";
+import { createNativeSession, type BuilderlabSession } from "./session";
+
+const fresh = (session: BuilderlabSession) =>
+  session.freshCredential(new AbortController().signal).then(
+    () => {},
+    () => {},
+  );
 
 const me = (subject: string) => ({
   status: 200,
@@ -127,7 +132,7 @@ it("shows a session the adapter ended as signed out, asking to sign in again", a
   session.dispose();
 });
 
-it("shares capability checks for a minute and updates only flags without retiring the sign-in", async () => {
+it("keeps permissions at most a minute old as the session is read, without retiring the sign-in", async () => {
   let now = Date.now();
   const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
   const h = federatedFixture();
@@ -145,25 +150,24 @@ it("shares capability checks for a minute and updates only flags without retirin
     await session.signIn();
     await expect.poll(() => session.snapshot().status).toBe("signed-in");
     const credential = session.credential();
-    const communities = createNativeBackend(session, async () => {});
-    await expect(communities.auth()).resolves.toMatchObject({
-      name: "Original",
-      expiresAt: "2030",
-      capabilities: { can_delete_buzz_communities: false },
-    });
     const viewer = session.viewerSession();
     const notifications = vi.fn();
     session.subscribe(notifications);
     now += 59_999;
-    await session.refreshCapabilities();
+    expect(session.snapshot().checkingPermissions).toBeUndefined();
+    await fresh(session);
     expect(h.request).toHaveBeenCalledTimes(1);
     now += 1;
     const held = deferred<HostResponse>();
     h.request.mockReturnValueOnce(held.promise);
-    const first = session.refreshCapabilities();
-    const second = session.refreshCapabilities();
+    // Reading starts the check; acting waits for it. Both share one request.
+    expect(session.snapshot()).toMatchObject({
+      checkingPermissions: true,
+      account: { canUseRemoteAgents: true },
+    });
+    const acting = session.freshCredential(new AbortController().signal);
     expect(h.request).toHaveBeenCalledTimes(2);
-    expect(session.snapshot().account?.canUseRemoteAgents).toBe(true);
+    await expect.poll(() => notifications.mock.calls.length).toBe(1);
     held.resolve({
       status: 200,
       headers: {},
@@ -179,47 +183,55 @@ it("shares capability checks for a minute and updates only flags without retirin
         },
       }),
     });
-    await Promise.all([first, second]);
-    expect(session.snapshot().account).toEqual({
-      name: "Original",
-      expiresAt: "2030",
-      subject: "user",
-      email: "user@example.com",
-      canUseRemoteAgents: false,
-      canUseBuilderlabDecisions: true,
-      canDeleteBuzzCommunities: true,
-    });
-    await expect(communities.auth()).resolves.toMatchObject({
-      name: "Original",
-      expiresAt: "2030",
-      capabilities: { can_delete_buzz_communities: true },
+    await expect(acting).resolves.toBe(credential);
+    expect(session.snapshot()).toEqual({
+      status: "signed-in",
+      account: {
+        name: "Original",
+        expiresAt: "2030",
+        subject: "user",
+        email: "user@example.com",
+        canUseRemoteAgents: false,
+        canUseBuilderlabDecisions: true,
+        canDeleteBuzzCommunities: true,
+      },
     });
     expect(h.request).toHaveBeenCalledTimes(2);
-    expect(session.credential()).toBe(credential);
     expect(credential.account).toBe(session.snapshot().account);
     expect(session.viewerSession()).toBe(viewer);
     expect(viewer.signal.aborted).toBe(false);
-    expect(notifications).toHaveBeenCalledOnce();
-    await session.refreshCapabilities();
-    expect(h.request).toHaveBeenCalledTimes(2);
-    now += 60_000;
-    h.request.mockResolvedValueOnce({
-      status: 200,
-      headers: {},
-      body: JSON.stringify({
-        capabilities: {
-          can_use_remote_agents: false,
-          can_use_builderlab_decisions: true,
-          can_delete_buzz_communities: true,
-        },
-      }),
-    });
-    await session.refreshCapabilities();
-    expect(notifications).toHaveBeenCalledOnce();
+    expect(notifications).toHaveBeenCalledTimes(2);
   } finally {
     session.dispose();
     clock.mockRestore();
     vi.unstubAllEnvs();
+  }
+});
+
+it("rejects a wait for fresh permissions when its signal aborts, leaving the check running", async () => {
+  let now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const h = federatedFixture();
+  h.request.mockResolvedValueOnce(me("user"));
+  const session = createNativeSession(h.service);
+  try {
+    await session.signIn();
+    await expect.poll(() => session.snapshot().status).toBe("signed-in");
+    now += 60_000;
+    const held = deferred<HostResponse>();
+    h.request.mockReturnValueOnce(held.promise);
+    const abort = new AbortController();
+    const waiting = session.freshCredential(abort.signal);
+    abort.abort(new DOMException("Stopped", "AbortError"));
+    await expect(waiting).rejects.toThrow("Stopped");
+    expect(session.snapshot().checkingPermissions).toBe(true);
+    held.resolve(me("user"));
+    await expect
+      .poll(() => session.snapshot().checkingPermissions)
+      .toBeUndefined();
+  } finally {
+    session.dispose();
+    clock.mockRestore();
   }
 });
 
@@ -250,10 +262,10 @@ it.each(["HTTP 401", "HTTP 503", "network", "JSON", "shape"])(
                 ? '{"capabilities":[]}'
                 : "{}",
         });
-      await session.refreshCapabilities();
-      expect(session.snapshot()).toBe(previous);
+      await fresh(session);
+      expect(session.snapshot()).toEqual(previous);
       now += 59_999;
-      await session.refreshCapabilities();
+      await fresh(session);
       expect(h.request).toHaveBeenCalledTimes(2);
       now += 1;
       h.request.mockResolvedValueOnce({
@@ -261,7 +273,7 @@ it.each(["HTTP 401", "HTTP 503", "network", "JSON", "shape"])(
         headers: {},
         body: '{"capabilities":{"can_use_remote_agents":false}}',
       });
-      await session.refreshCapabilities();
+      await fresh(session);
       expect(h.request).toHaveBeenCalledTimes(3);
       expect(session.snapshot().account?.canUseRemoteAgents).toBe(false);
     } finally {
@@ -282,7 +294,7 @@ it.each(["sign-out", "new-login", "dispose"])(
     const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     const held = deferred<HostResponse>();
     h.request.mockReturnValueOnce(held.promise);
-    const checking = session.refreshCapabilities();
+    const checking = fresh(session);
     try {
       if (action === "dispose") session.dispose();
       else session.signOut();

@@ -1,10 +1,11 @@
-import { useSessionWithCapabilityRefresh } from "./capabilities";
 // Builderlab as a decision provider: the user's Builderlab sign-in, which
 // native code sends with each call. The NIP-FI session is named by its
-// revision; its token never leaves native. It is offered only while that sign-in's account may use
-// decisions; see `offerBuilderlabDecisions`. Settings >
+// revision; its token never leaves native. It is offered while the user is
+// signed in, and ready only while that account may use decisions; see
+// `offerBuilderlabDecisions`. Settings >
 // Decisions API shows the same sign-in control as this plugin's card while it
 // is selected.
+import { useSyncExternalStore } from "react";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
@@ -31,10 +32,11 @@ export const nativeBuilderlabDecide = (): BuilderlabDecide | undefined =>
     : undefined;
 
 /** Registers Builderlab in Settings > Decisions API while the user is signed
- * in and Builderlab reports that the account may use decisions, and removes
- * it otherwise. While registered it is a default provider, so it answers
- * unless the user chose another. Builds without native calls never offer it.
- * `openIdentity` opens where an FI build's shared sign-in ends. */
+ * in, and removes it otherwise. It is ready while Builderlab reports that the
+ * account may use decisions; reading its status keeps that fresh. While it is
+ * ready it is a default provider, so it answers unless the user chose another.
+ * Builds without native calls never offer it. `openIdentity` opens where an
+ * FI build's shared sign-in ends. */
 export function offerBuilderlabDecisions(
   ctx: Context,
   session: BuilderlabSession,
@@ -43,10 +45,6 @@ export function offerBuilderlabDecisions(
   openIdentity?: () => void,
 ) {
   if (!native) return;
-  ctx.decisions.registerProviderDiscovery({
-    id: "capabilities",
-    refresh: session.refreshCapabilities,
-  });
   const provider = builderlabProvider(
     session,
     loginAvailable,
@@ -55,10 +53,7 @@ export function offerBuilderlabDecisions(
   );
   let withdraw: (() => void) | undefined;
   const update = () => {
-    const state = session.snapshot();
-    const allowed =
-      state.status === "signed-in" &&
-      state.account?.canUseBuilderlabDecisions === true;
+    const allowed = session.snapshot().status === "signed-in";
     if (allowed && !withdraw)
       withdraw = ctx.decisions.registerProvider(provider);
     else if (!allowed && withdraw) {
@@ -91,22 +86,26 @@ export function builderlabProvider(
     id: "builderlab",
     label: "Builderlab",
     description: "Use your Builderlab account.",
-    // A sign-in in progress cannot answer yet.
+    // A sign-in in progress cannot answer yet. Permissions being re-read
+    // are waited for only when the cached ones refuse: a grant may be new.
     status: (): DecisionProviderStatus => {
+      const state = session.snapshot();
       const credential = signedIn();
-      return native && credential && permitted(credential)
-        ? "ready"
-        : "needs-setup";
+      if (!native || !credential) return "needs-setup";
+      if (permitted(credential)) return "ready";
+      return state.checkingPermissions ? "checking" : "needs-setup";
     },
     subscribe: session.subscribe,
-    decide: async (request) => {
+    decide: async (request, { signal }) => {
       if (!native) return { outcome: "failed", reason: "unavailable" };
-      const credential = signedIn();
-      if (!credential)
+      if (!signedIn())
         return { outcome: "failed", reason: "missing_credentials" };
-      await session.refreshCapabilities();
-      if (signedIn() !== credential)
+      let credential: Credential;
+      try {
+        credential = await session.freshCredential(signal);
+      } catch {
         return { outcome: "failed", reason: "missing_credentials" };
+      }
       if (!permitted(credential))
         return { outcome: "failed", reason: "unauthorized" };
       let reply: unknown;
@@ -144,15 +143,24 @@ export function builderlabProvider(
       ) as DecisionReply;
     },
     Settings: ({ active }) => {
-      useSessionWithCapabilityRefresh(session);
+      const state = useSyncExternalStore(session.subscribe, session.snapshot);
       return (
-        <Login
-          session={session}
-          available={loginAvailable}
-          active={active}
-          showHeading={false}
-          openIdentity={openIdentity}
-        />
+        <>
+          <Login
+            session={session}
+            available={loginAvailable}
+            active={active}
+            showHeading={false}
+            openIdentity={openIdentity}
+          />
+          {state.status === "signed-in" &&
+            !state.checkingPermissions &&
+            !state.account?.canUseBuilderlabDecisions && (
+              <p role="status" className="text-body-sm text-secondary">
+                Builderlab decisions are unavailable for this account.
+              </p>
+            )}
+        </>
       );
     },
   };

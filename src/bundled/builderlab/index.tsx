@@ -1,4 +1,3 @@
-import { useSessionWithCapabilityRefresh } from "./capabilities";
 import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 import { handoffFederatedBackupSession } from "../../features/identity/backup";
@@ -99,7 +98,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const providerListeners = new Set<() => void>();
     const updateProvider = () => {
       const state = session.snapshot();
-      if (state.status === "signed-in") void session.refreshCapabilities();
       providerState = Object.freeze(
         state.status === "signed-in"
           ? state.account?.canUseRemoteAgents
@@ -120,7 +118,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     };
     const stopProvider = session.subscribe(updateProvider);
     const ProviderDialogBody = () => {
-      const state = useSessionWithCapabilityRefresh(session);
+      const state = useSyncExternalStore(session.subscribe, session.snapshot);
       return (
         <div className="grid gap-3">
           <InlineHeader level={3} title="Connection" />
@@ -148,10 +146,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           providerListeners.add(listener);
           return () => providerListeners.delete(listener);
         },
-        check: async () => {
-          await session.refreshCapabilities();
-          updateProvider();
-        },
+        check: updateProvider,
         DialogBody: ProviderDialogBody,
       },
     });
@@ -205,7 +200,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
         api={communities}
         active={active}
         sharedSignIn
-        session={session}
       />
     ) : null;
   };

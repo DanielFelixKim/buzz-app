@@ -131,8 +131,12 @@ export function createAgentClient(
   // dev broker, which has no binding signer, so linking is skipped.
   owner: OwnerIdentity | null = nativeIdentityEnabled() ? nativeOwner : null,
 ) {
-  function remoteCredential() {
-    const credential = session.credential();
+  /** The sign-in's credential, once its permissions are fresh and allow
+   * remote agents. Stop is urgent: it acts on the permissions already known. */
+  async function remoteCredential(signal: AbortSignal, urgent = false) {
+    const credential = urgent
+      ? session.credential()
+      : await session.freshCredential(signal);
     if (!credential.account.canUseRemoteAgents)
       throw new Error(
         "Builderlab remote agents are unavailable for this account.",
@@ -160,12 +164,10 @@ export function createAgentClient(
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
-    const credential = session.credential();
-    const refresh = session.refreshCapabilities();
-    // Stop is urgent; refresh its cache without delaying cancellation.
-    if (path !== "cancel-agent-turn") await refresh;
-    check(credential, signal);
-    remoteCredential();
+    const credential = await remoteCredential(
+      signal,
+      path === "cancel-agent-turn",
+    );
     let response: HostResponse;
     try {
       response = await session.request(credential, {
@@ -589,10 +591,7 @@ export function createAgentClient(
       signal.throwIfAborted();
       const agentName = name.trim();
       if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
-      const credential = session.credential();
-      await session.refreshCapabilities();
-      check(credential, signal);
-      remoteCredential();
+      const credential = await remoteCredential(signal);
       const { account } = credential;
       const intent = registrationIntent(
         oauthTarget(),
