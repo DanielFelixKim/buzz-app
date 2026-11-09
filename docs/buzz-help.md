@@ -31,8 +31,10 @@ and speaks to everyone. The current audio protocol can briefly misattribute dela
 audio when a connection slot is reused; this is not a strict privacy guarantee.
 Other people or speakers near your microphones can also be heard. Simultaneous
 audio from your devices is mixed together.
-Voice work uses the same permissions as your text requests. Joining on another
-device does not seat an agent running here. Leaving closes its voice connection.
+Voice work uses the same permissions as your text requests. Joining your Codex agent’s DM huddle from mobile can activate that agent on
+this desktop. Keep Buzz and the Codex agent running here; the desktop microphone
+does not turn on. Other calls on another device do not seat an agent here.
+Leaving on every connected owner device closes the remote voice connection.
 If agent voice stops, the compact player and Huddle window show the reason;
 leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
