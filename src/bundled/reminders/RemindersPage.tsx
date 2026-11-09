@@ -73,6 +73,7 @@ import {
   presetHint,
 } from "./model";
 import { scopeOf, useReminders } from "./react";
+import { SnoozeDialog } from "./RemindDialog";
 import styles from "./Reminders.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 import { channelText } from "../../features/channels/channel-icon";
@@ -293,6 +294,9 @@ function ReminderSections({
   const { channels } = useChannelList(session.channels);
   const profiles = useProfiles(session, authorIds);
   const name = useIdentityNames(session.names);
+  // Custom… outlives its row: a save, the clock or another device can move
+  // the reminder to another group, which mounts a new row.
+  const [snoozing, setSnoozing] = useState<Reminder>();
   const row = (reminder: Reminder) => {
     const target = reminder.target;
     const channel = target?.channelId
@@ -346,6 +350,7 @@ function ReminderSections({
         openConversation={
           open && target?.channelId ? () => open(reminder, true) : undefined
         }
+        chooseTime={() => setSnoozing(reminder)}
         run={run}
       />
     );
@@ -448,6 +453,29 @@ function ReminderSections({
           </AnimatePresence>
         </LayoutGroup>
       </motion.div>
+      {snoozing && (
+        <SnoozeDialog
+          title={
+            snoozing.status === "pending"
+              ? "Snooze reminder"
+              : "Remind me again"
+          }
+          due={snoozing.notBefore}
+          save={(notBefore) => reminders.snooze(snoozing.id, notBefore)}
+          close={() => setSnoozing(undefined)}
+          // The reminder's trigger in whichever row shows it now, not one
+          // leaving its old group. If the reminder left the page meanwhile,
+          // the list, whose first tabbable control Base UI focuses.
+          finalFocus={() =>
+            Array.from(
+              sections.current?.querySelectorAll<HTMLElement>(
+                "li:not([inert]) [data-snooze]",
+              ) ?? [],
+            ).find((trigger) => trigger.dataset.snooze === snoozing.id) ??
+            sections.current
+          }
+        />
+      )}
     </MotionConfig>
   );
 }
@@ -481,6 +509,7 @@ function ReminderRow({
   avatar,
   open,
   openConversation,
+  chooseTime,
   run,
 }: {
   ref?: Ref<HTMLLIElement>;
@@ -492,6 +521,7 @@ function ReminderRow({
   avatar: ReactElement;
   open: (() => void) | undefined;
   openConversation: (() => void) | undefined;
+  chooseTime(): void;
   run(action: Promise<unknown>): void;
 }) {
   const id = useId();
@@ -627,6 +657,7 @@ function ReminderRow({
             <MenuTrigger
               render={
                 <Button
+                  data-snooze={reminder.id}
                   size="sm"
                   variant={overdue ? "attention" : "ghost"}
                   disabled={busy}
@@ -644,6 +675,9 @@ function ReminderRow({
                   <MenuNote>{dueDateLabel(reminder.notBefore, now)}</MenuNote>
                 )}
               {snoozeItems}
+              <MenuItem disabled={busy} onClick={chooseTime}>
+                Custom…
+              </MenuItem>
             </MenuPopup>
           </MenuRoot>
           {openConversation ? (

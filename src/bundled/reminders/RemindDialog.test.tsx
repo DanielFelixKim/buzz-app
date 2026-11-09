@@ -16,8 +16,8 @@ import type { RelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { formatDue } from "./model";
-import { RemindDialog } from "./RemindDialog";
+import { formatDue, nowSeconds } from "./model";
+import { RemindDialog, SnoozeDialog } from "./RemindDialog";
 
 afterEach(() => {
   cleanup();
@@ -351,6 +351,45 @@ it("confirms a saved reminder with its due time", async () => {
   await waitFor(() =>
     expect(screen.getByText(`Reminder set for ${formatDue(at)}`)).toBeVisible(),
   );
+});
+
+it("starts a custom snooze at the reminder's due time while it is ahead, else the next 9am", () => {
+  const snooze = (due: number | undefined) =>
+    render(
+      <SnoozeDialog
+        title="Snooze reminder"
+        due={due}
+        save={vi.fn()}
+        close={vi.fn()}
+        finalFocus={() => null}
+      />,
+    );
+  snooze(new Date("2099-06-20T16:15").getTime() / 1000);
+  expect(screen.getByLabelText("Reminder date")).toHaveValue("2099-06-20");
+  expect(screen.getByLabelText("Reminder time")).toHaveValue("16:15");
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  // A past or undisplayable due time starts from the next 9am: today's until
+  // it passes, then tomorrow's, so Custom… never opens on a past time.
+  for (const [clock, date] of [
+    ["2026-11-04T08:30", "2026-11-04"],
+    ["2026-11-04T09:00", "2026-11-05"],
+    ["2026-11-04T17:45", "2026-11-05"],
+  ] as const) {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date(clock) });
+    try {
+      for (const due of [nowSeconds() - 60, 8_640_000_000_001, undefined]) {
+        cleanup();
+        snooze(due);
+        expect(screen.getByLabelText("Reminder date")).toHaveValue(date);
+        expect(screen.getByLabelText("Reminder time")).toHaveValue("09:00");
+        expect(screen.queryByRole("status")).toBeNull();
+        expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  }
 });
 
 it("stays open after a stray outside click", async () => {
