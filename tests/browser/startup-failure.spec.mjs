@@ -3,7 +3,8 @@ import { test, expect } from "./fixture.mjs";
 // A startup that can't finish shows "Buzz couldn’t open" from launch-init.js,
 // which needs nothing from the app bundle; a slow one offers Reload; an app
 // that stops after it opened shows "Buzz stopped working". Each journey
-// injects one failure, named by `expectedStartupFailure`.
+// injects one failure, named by `expectedStartupFailure` (an exception) or
+// `expectedStartupLoadFailure` (a resource that doesn't load).
 // The build throws only where a journey's `failAt` says.
 test.use({ launchAnimation: true, startupFailureFixture: true });
 
@@ -34,7 +35,7 @@ async function expectFailure(page, detail) {
 }
 
 test.describe("when the app bundle doesn’t load", () => {
-  test.use({ expectedStartupFailure: "/assets/index-" });
+  test.use({ expectedStartupLoadFailure: "/assets/index-" });
 
   test("says Buzz couldn’t open, and Reload opens it", async ({
     page,

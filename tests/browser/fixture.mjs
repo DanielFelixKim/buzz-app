@@ -73,9 +73,13 @@ export const test = base.extend({
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
-  // Startup failure journeys inject one failure; its console and page errors
-  // contain this text, or come from a URL that does.
+  // Startup failure journeys inject one failure. An injected exception's
+  // console and page errors contain this text.
   expectedStartupFailure: [false, { option: true }],
+  // A resource whose URL contains this text fails to load. Only each failed
+  // response's own "Failed to load resource" error passes; errors the app
+  // logs from that same chunk after Reload still fail.
+  expectedStartupLoadFailure: [false, { option: true }],
   expectedSidebarIconFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
@@ -160,6 +164,7 @@ export const test = base.extend({
       channelNames,
       expectedPageFailure,
       expectedStartupFailure,
+      expectedStartupLoadFailure,
       expectedSidebarIconFailure,
       largeSidebar,
       iconCongestion,
@@ -2516,7 +2521,17 @@ export const test = base.extend({
           report.consoleErrors.push(message.text());
         }
       });
+      const startupLoadFailures = [];
       page.on("response", (response) => {
+        if (
+          expectedStartupLoadFailure &&
+          response.status() >= 400 &&
+          response.url().includes(expectedStartupLoadFailure)
+        )
+          startupLoadFailures.push({
+            url: response.url(),
+            status: String(response.status()),
+          });
         if (
           response.url().endsWith("/stream-observer") &&
           response.status() === 404
@@ -3012,10 +3027,30 @@ export const test = base.extend({
         githubFailures.splice(match, 1);
         return true;
       };
+      // Bundle-load journeys fail the app's entry. Match each failed response
+      // once, by exact URL and status, so an error the recovered app logs
+      // from that chunk still fails.
+      report.startupLoadFailures = [...startupLoadFailures];
+      const injectedStartupLoadFailure = (message, index) => {
+        const status =
+          /^Failed to load resource: the server responded with a status of (\d+)/.exec(
+            message,
+          )?.[1];
+        if (!status) return false;
+        const match = startupLoadFailures.findIndex(
+          (failure) =>
+            failure.url === consoleLocations.get(index) &&
+            failure.status === status,
+        );
+        if (match < 0) return false;
+        startupLoadFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
+            !injectedStartupLoadFailure(message, index) &&
             !injectedSidebarFailure(message, index) &&
             !injectedGitHubFailure(message, index) &&
             !(
@@ -3027,9 +3062,7 @@ export const test = base.extend({
               message.includes("Fixture page render failure")
             ) &&
             !(
-              expectedStartupFailure &&
-              (message.includes(expectedStartupFailure) ||
-                consoleLocations.get(index)?.includes(expectedStartupFailure))
+              expectedStartupFailure && message.includes(expectedStartupFailure)
             ) &&
             !(
               relay?.expectedHttpErrors() &&
