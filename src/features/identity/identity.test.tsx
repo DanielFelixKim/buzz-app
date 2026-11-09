@@ -8933,6 +8933,44 @@ it.each<[string, (other: string, bind: FirstRunAccount["bind"]) => AccountFor]>(
   },
 );
 
+it.each<[string, (other: string, bind: FirstRunAccount["bind"]) => AccountFor]>(
+  [
+    ["has no linked key", (_other, bind) => unlinkedWith(bind)],
+    [
+      "is linked to another backed-up key",
+      (other) => linkedTo(other, [], { backupStatus: async () => [other] }),
+    ],
+  ],
+)(
+  "Open Buzz resuming the sign-in after Replace's restart still stops when the account %s",
+  async (_, accountFor) => {
+    const bind = vi.fn((_pubkey: string) => Promise.resolve());
+    const connect = vi
+      .fn<
+        (signal: AbortSignal, options: SignInOptions) => Promise<Credential>
+      >()
+      // The automatic sign-in waits in the browser; Open Buzz resumes it.
+      .mockReturnValueOnce(new Promise<Credential>(() => {}))
+      .mockResolvedValue(credential);
+    const { identity } = launchAfterReplace(
+      accountFor(keypair().pubkey, bind),
+      connect,
+    );
+    await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+    act(() => requestSignIn());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You signed in to a different Builderlab account than the one whose key Buzz restarted to restore.",
+    );
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect.mock.calls[1]?.[1]).toEqual(plainSignIn);
+    expect(bind).not.toHaveBeenCalled();
+    expect(commands()).not.toContain("identity_create");
+    expect(commands()).not.toContain("nsec_restore_begin");
+    expect(identity.snapshot()).toMatchObject({ status: "missing" });
+    identity.dispose();
+  },
+);
+
 it("Create account in place of the sign-in after Replace's restart sets up the new account, without the wrong-account stop", async () => {
   const bind = vi.fn((_pubkey: string) => Promise.resolve());
   const connect = vi

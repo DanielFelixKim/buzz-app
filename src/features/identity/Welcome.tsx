@@ -323,14 +323,17 @@ export function Welcome({
   const requestedSignIn = useRef<(() => void) | undefined>(undefined);
   // The linked key a restart for Replace promised to restore: a sign-in to an
   // account linked to any other key, or to none, stops before setup acts on
-  // it. Cleared on the landing.
+  // it. Cleared on the landing and by Create account.
   const expectedKey = useRef<string | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the landing appearing lets a queued request act.
   useEffect(() => {
     const handle = () => {
       const run = requestedSignIn.current;
       if (!run || !takeSignInRequest()) return;
-      expectedKey.current = takeExpectedKey();
+      // A plain Open Buzz names no key: resuming the restart's sign-in keeps
+      // the one it expects.
+      const key = takeExpectedKey();
+      if (key) expectedKey.current = key;
       run();
     };
     handle();
