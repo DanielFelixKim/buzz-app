@@ -17,7 +17,7 @@ import {
   OutputTooLarge,
   type GitHubCli,
 } from "./gh";
-import { GitHubPanel, REFRESH_MS } from "./index";
+import { GitHubPanel, REFRESH_MS, type PanelMemory } from "./index";
 import { createPullStates } from "./pull-states";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
@@ -1239,6 +1239,111 @@ it("shows a pull request's changes under Changes, with its line counts", async (
   await user.click(changes);
   expect(screen.getByRole("region", { name: "src/app.ts" })).toBeVisible();
   expect(diff).toHaveBeenCalledTimes(1);
+});
+
+it("opens a pull request again on the view and unsent review it was left with", async () => {
+  const user = userEvent.setup();
+  const gh = vi.fn(async (query: string, _variables?: unknown) =>
+    query.startsWith("mutation") ? {} : pullData(),
+  );
+  const diff = vi.fn(async () => patch);
+  // The plugin's, so it outlives a panel the channel unmounts on leaving.
+  const memory: PanelMemory = new Map();
+  const panel = () => (
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+      diff={diff}
+      memory={memory}
+    />
+  );
+  const first = render(panel(), { wrapper: ToastProvider });
+  await screen.findByRole("heading", { name: "Private change #9" });
+  await user.click(screen.getByRole("button", { name: "Submit review" }));
+  let popup = await screen.findByRole("dialog", { name: "Submit review" });
+  await user.click(within(popup).getByRole("radio", { name: /^Request/ }));
+  await user.type(within(popup).getByRole("textbox"), "Needs a test");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(popup).not.toBeInTheDocument());
+  await user.click(screen.getByRole("tab", { name: /^Changes/ }));
+  await screen.findByRole("region", { name: "src/app.ts" });
+  first.unmount();
+
+  render(panel(), { wrapper: ToastProvider });
+  expect(await screen.findByRole("tab", { name: /^Changes/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  // The diff is read again, as the pull request is on every open.
+  expect(
+    await screen.findByRole("region", { name: "src/app.ts" }),
+  ).toBeVisible();
+  expect(diff).toHaveBeenCalledTimes(2);
+  expect(
+    screen.queryByRole("heading", { name: "Private change #9" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Submit review" }));
+  popup = await screen.findByRole("dialog", { name: "Submit review" });
+  expect(within(popup).getByRole("radio", { name: /^Request/ })).toBeChecked();
+  expect(within(popup).getByRole("textbox")).toHaveValue("Needs a test");
+  await user.click(
+    within(popup).getByRole("button", { name: "Submit review" }),
+  );
+  await waitFor(() => expect(popup).not.toBeInTheDocument());
+  expect(
+    gh.mock.calls.find(([query]) => query.startsWith("mutation"))?.[1],
+  ).toEqual({
+    input: {
+      pullRequestId: "PR_9",
+      commitOID: "abc123",
+      event: "REQUEST_CHANGES",
+      body: "Needs a test",
+    },
+  });
+  // Once it is in, the next panel on it starts a fresh review.
+  expect(memory.get(pull)?.review).toBeUndefined();
+});
+
+it("forgets a review that goes in after its panel unmounted", async () => {
+  const user = userEvent.setup();
+  let release!: () => void;
+  const gh = vi.fn(async (query: string, _variables?: unknown) => {
+    if (!query.startsWith("mutation")) return pullData();
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return {};
+  });
+  const memory: PanelMemory = new Map();
+  const panel = () => (
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+      memory={memory}
+    />
+  );
+  const first = render(panel(), { wrapper: ToastProvider });
+  await screen.findByRole("heading", { name: "Private change #9" });
+  await user.click(screen.getByRole("button", { name: "Submit review" }));
+  let popup = await screen.findByRole("dialog", { name: "Submit review" });
+  await user.type(within(popup).getByRole("textbox"), "Looks right");
+  await user.click(
+    within(popup).getByRole("button", { name: "Submit review" }),
+  );
+  await waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
+  // Leaving the channel mid-submit doesn't stop the review going in.
+  first.unmount();
+  release();
+  await waitFor(() => expect(memory.get(pull)?.review).toBeUndefined());
+
+  render(panel(), { wrapper: ToastProvider });
+  await screen.findByRole("heading", { name: "Private change #9" });
+  await user.click(screen.getByRole("button", { name: "Submit review" }));
+  popup = await screen.findByRole("dialog", { name: "Submit review" });
+  expect(within(popup).getByRole("radio", { name: /^Comment/ })).toBeChecked();
+  expect(within(popup).getByRole("textbox")).toHaveValue("");
 });
 
 it("reads a merged pull request's changes by its number", async () => {

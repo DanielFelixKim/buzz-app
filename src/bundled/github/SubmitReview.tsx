@@ -21,23 +21,41 @@ const decisions: readonly (readonly [ReviewEvent, string, string])[] = [
   ["REQUEST_CHANGES", "Request changes", "Ask for changes before merging"],
 ];
 
+/** A review not yet submitted, and the head it was written against. */
+export type ReviewDraft = Readonly<{
+  event: ReviewEvent;
+  body: string;
+  head: string;
+}>;
+
 /** Reviews someone else's pull request. The draft outlasts dismissing the
  * popover, as GitHub's does, and clears once the review is in. */
 export function SubmitReview({
   pull,
   gh,
   refresh,
+  remembered,
 }: {
   pull: PullChecklist;
   gh: GitHubCli;
   refresh(): Promise<void>;
+  /** Where the plugin keeps the draft, so it outlasts this panel too. */
+  remembered?: { review?: ReviewDraft | undefined } | undefined;
 }) {
   const [open, setOpen] = useState(false);
   // The head the draft is written against. As with the merge confirmation, a
   // newer push needs the person's say-so before the review goes in.
-  const [head, setHead] = useState(pull.head);
-  const [event, setEvent] = useState<ReviewEvent>("COMMENT");
-  const [body, setBody] = useState("");
+  const [head, setHead] = useState(remembered?.review?.head ?? pull.head);
+  const [event, setEvent] = useState<ReviewEvent>(
+    remembered?.review?.event ?? "COMMENT",
+  );
+  const [body, setBody] = useState(remembered?.review?.body ?? "");
+  // An empty Comment, which a submitted review leaves too, is no draft.
+  useEffect(() => {
+    if (!remembered) return;
+    remembered.review =
+      event === "COMMENT" && !body ? undefined : { event, body, head };
+  }, [remembered, event, body, head]);
   const notify = useToastNotification();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -62,6 +80,8 @@ export function SubmitReview({
         { id: pull.id, head },
         { type: "review", event, body },
       );
+      // In, even if this panel closed meanwhile: the next one starts afresh.
+      if (remembered) remembered.review = undefined;
       if (alive.current) await refresh();
       if (alive.current) {
         setOpen(false);

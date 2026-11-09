@@ -56,13 +56,22 @@ import {
 } from "./SoloPull";
 import { watchPulls } from "./watcher";
 import { presentPull } from "./attention";
-import { SubmitReview } from "./SubmitReview";
+import { SubmitReview, type ReviewDraft } from "./SubmitReview";
 import { PullFiles } from "./PullFiles";
 import { GitHubSettings } from "./GitHubSettings";
 import { openGitHubLinksInBuzz } from "./link-preference";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = PANEL_REFRESH_MS;
+
+/** What each pull request's panel was left showing, by URL, for the app
+ * session. A channel unmounts its panels when you leave it, so the next panel
+ * on that pull request, from any channel, starts on the same view and unsent
+ * review: one per pull request, as GitHub keeps one pending review. */
+export type PanelMemory = Map<
+  string,
+  { view?: "summary" | "changes"; review?: ReviewDraft | undefined }
+>;
 
 export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -72,6 +81,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // session's sidebar, every link in messages, the panel and agents, so one
   // shown in several places costs one read.
   const states = createPullStates(gh);
+  const memory: PanelMemory = new Map();
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);
@@ -98,6 +108,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           gh={gh}
           diff={diff}
           states={states}
+          memory={memory}
           {...(channelId && {
             resolveActions: (
               url: string,
@@ -323,6 +334,7 @@ export function GitHubPanel({
   gh,
   diff,
   states: shared,
+  memory: sharedMemory,
   chatLink,
   resolveActions,
 }: PanelProps & {
@@ -338,6 +350,8 @@ export function GitHubPanel({
   diff?: GitHubDiff | undefined;
   /** The plugin's pull request store; a panel alone keeps its own. */
   states?: PullStates | undefined;
+  /** The plugin's panel memory; a panel alone keeps its own. */
+  memory?: PanelMemory | undefined;
   /** Links a pull request to the chat the panel was opened from. */
   chatLink?: ((url: string) => ReactNode) | undefined;
 }) {
@@ -348,6 +362,8 @@ export function GitHubPanel({
     [shared, gh],
   );
   const states = shared ?? own;
+  const [ownMemory] = useState<PanelMemory>(() => new Map());
+  const memory = sharedMemory ?? ownMemory;
   return reference && states ? (
     <ObjectPanel
       key={`${reference.url}:${attempt}`}
@@ -355,6 +371,7 @@ export function GitHubPanel({
       gh={gh}
       diff={diff}
       states={states}
+      memory={memory}
       chatLink={chatLink}
       resolveActions={resolveActions}
       retry={() => retry(attempt + 1)}
@@ -369,6 +386,7 @@ function ObjectPanel({
   gh,
   diff,
   states,
+  memory,
   chatLink,
   resolveActions,
   retry,
@@ -377,6 +395,7 @@ function ObjectPanel({
   gh: GitHubCli | undefined;
   diff: GitHubDiff | undefined;
   states: PullStates;
+  memory: PanelMemory;
   chatLink: ((url: string) => ReactNode) | undefined;
   resolveActions:
     | ((
@@ -389,10 +408,16 @@ function ObjectPanel({
 }) {
   const isPull = reference.kind === "pull";
   const pull = usePullPanel(states, reference.url, isPull);
-  const [view, setView] = useState<"summary" | "changes">("summary");
+  // Shared with the panels opened on this pull request before and after.
+  const [remembered] = useState(() => {
+    const found = memory.get(reference.url) ?? {};
+    memory.set(reference.url, found);
+    return found;
+  });
+  const [view, setView] = useState(remembered.view ?? "summary");
   // Files changed stays mounted once shown, so going back to it doesn't read
   // the diff again.
-  const [changesShown, setChangesShown] = useState(false);
+  const [changesShown, setChangesShown] = useState(view === "changes");
   const other = useGitHubObject(reference, gh, !isPull);
   const loaded = isPull ? pull.loaded : other.loaded;
   const load = isPull ? pull.load : other.load;
@@ -490,7 +515,12 @@ function ObjectPanel({
           loaded.checklist &&
           !loaded.checklist.authored && (
             <span className={styles.identityAction}>
-              <SubmitReview pull={loaded.checklist} gh={gh} refresh={load} />
+              <SubmitReview
+                pull={loaded.checklist}
+                gh={gh}
+                refresh={load}
+                remembered={remembered}
+              />
             </span>
           )}
       </div>
@@ -519,6 +549,7 @@ function ObjectPanel({
               },
             ]}
             onValueChange={(next) => {
+              remembered.view = next;
               setView(next);
               if (next === "changes") setChangesShown(true);
             }}

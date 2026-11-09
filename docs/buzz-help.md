@@ -992,6 +992,8 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.
+  Opened again from any channel, a pull request keeps its **Summary** or
+  **Changes** view, and any review you haven’t submitted, until Buzz restarts.
 - Some desktop plugins can upload images you provide to services they declare.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
