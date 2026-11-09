@@ -275,6 +275,9 @@ export function ManagedPluginReview({
   const [attempt, setAttempt] = useState(0);
   const [review, setReview] = useState<Review>({ status: "loading" });
   const [installing, setInstalling] = useState(false);
+  // Open plugin shows the named plugin at once and lets this dialog finish
+  // closing before it unmounts, so focus returns to the details it opened.
+  const [opened, setOpened] = useState(false);
   const [enable, setEnable] = useState(true);
   // Installing refreshes the catalog before enabling; the dialog keeps what it started with.
   const [frozen, setFrozen] = useState<PluginInfo | null>();
@@ -454,12 +457,15 @@ export function ManagedPluginReview({
 
   const busy = installing || managing || !ready;
   const name = candidate?.manifest.name ?? entry?.id ?? "plugin";
-  if (refusal && !installing)
+  if ((refusal || opened) && !installing)
     return (
       <Dialog
-        open
+        open={!opened}
         onOpenChange={(next) => {
           if (!next) onClose();
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open && opened) onClose();
         }}
         initialFocus={cancel}
         title="Already installed"
@@ -473,7 +479,13 @@ export function ManagedPluginReview({
               Close
             </Button>
             {onOpen && (
-              <Button variant="prominent" onClick={onOpen}>
+              <Button
+                variant="prominent"
+                onClick={() => {
+                  setOpened(true);
+                  onOpen();
+                }}
+              >
                 Open plugin
               </Button>
             )}
@@ -696,13 +708,7 @@ export function UrlPluginInstallReview({
       confirm={request && (() => request.confirm(request.id))}
       returnFocus={returnFocus}
       onInstalled={(outcome) => request?.settle(request.id, outcome)}
-      onOpen={
-        onOpenInstalled &&
-        (() => {
-          close();
-          onOpenInstalled(source.id);
-        })
-      }
+      onOpen={onOpenInstalled && (() => onOpenInstalled(source.id))}
       onClose={close}
     />
   );

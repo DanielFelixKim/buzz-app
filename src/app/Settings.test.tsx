@@ -1785,6 +1785,11 @@ it("keeps the plugin a URL link's Open plugin shows when its dismissal lands lat
   fireEvent.click(await screen.findByRole("button", { name: "Open plugin" }));
   await waitFor(() => expect(entry()).toBe("p1"));
   expect(shown()).toBe("Artifact");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Close plugin details" }),
+    ).toHaveFocus(),
+  );
   expect(stored("p1")).toBe("example.artifact");
   expect(url).not.toHaveBeenCalled();
 });
