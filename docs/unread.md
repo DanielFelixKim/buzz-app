@@ -104,6 +104,27 @@ viewport):
   reader's entry evidence outlives them. A channel read covers the channel
   mark and reading a message covers its receipt; retention keeps row marks
   last and never treats them as override ancestry.
+- The channel snapshot's `oldestUnreadId` names the oldest unread message its
+  timeline shows (a top-level post or broadcast reply), from the same bounded
+  evidence as `observedCount`: missing history can make a later message the
+  oldest one known. Every relay read feeds that evidence, a channel window's
+  page included, so `sampled` says a repair has read every channel in unread
+  scope since evidence was last emptied (a cache clear or capacity overflow) or
+  a channel entered that scope: evidence then reaches past what windows loaded,
+  up to each batch's 500-row limit. A cache clear or newly accessible channel
+  starts that repair at once; an overflow waits for the next recovery tick.
+  Later repairs, refreshes included, leave `sampled` set. When entry did not
+  capture a verified, idle window with all of its history (rows sit above it, or
+  it was cached, refreshing or still paging), the **New messages** divider waits
+  for `sampled`, then appears only at `oldestUnreadId` among the rows loaded on
+  entry and only below a read one. A batch that filled its limit can still stop
+  short of the true oldest unread message, and the read-row condition covers
+  only ordinary rows: catch-up's `activity:` mark reads all of them up to a
+  timestamp, but never mentions, broadcasts, broadcast replies or messages
+  marked unread, which only their own `msg:` or `thread:` marks read. A short
+  sample can hide an unread one of those above the window, and the divider then
+  lands below it. A row above read only by its own mark says nothing about older
+  rows either.
 - Both keys use verified event timestamps, never wall time. Neither enters generic
   channel/thread inheritance or remote override baselines. Channel catch-up ends
   a local manual unread on the channel itself; message and thread manual-unread

@@ -467,6 +467,189 @@ it("promotes mentions, broadcasts and participating-thread replies without promo
   ).toMatchObject({ status: "unknown", unread: true });
 });
 
+it("the channel snapshot names the oldest unread message its timeline shows", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.viewer, "room", "own root", 10);
+  const quiet = message(h.alice, "room", "agent coordination", 11, [
+    ["audience", "agents"],
+  ]);
+  // Unread in the viewer's thread, but only the thread shows it.
+  const reply = message(h.alice, "room", "thread reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const own = message(h.viewer, "room", "own later", 13);
+  h.emit([root, quiet, reply, own]);
+  expect(h.snapshot()).toMatchObject({ observedCount: 1 });
+  expect(h.snapshot().oldestUnreadId).toBeUndefined();
+
+  const broadcast = message(h.alice, "room", "broadcast reply", 14, [
+    ["e", root.id, "", "reply"],
+    ["broadcast", "1"],
+  ]);
+  const first = message(h.alice, "room", "first top-level", 15);
+  const second = message(h.alice, "room", "second top-level", 16);
+  h.emit([second, first, broadcast]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 4,
+    oldestUnreadId: broadcast.id,
+  });
+
+  await h.session.unread.markThrough(h.target, broadcast.id);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 2,
+    oldestUnreadId: first.id,
+  });
+  await h.session.unread.markThrough(h.target, second.id);
+  expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+  expect(h.snapshot().oldestUnreadId).toBeUndefined();
+});
+
+it("the channel snapshot says sampled once a repair finishes, keeps it through later repairs and regains it after a cache clear", async () => {
+  const h = setup();
+  const rows = Array.from({ length: 30 }, (_, i) =>
+    message(h.alice, "room", `history ${i}`, i + 11),
+  );
+  const cursor = rows[10];
+  assert(cursor);
+  const elsewhere = message(h.alice, "other", "elsewhere", 50);
+  let hold: Promise<void> | undefined;
+  let repairs = 0;
+  h.query.mockImplementation(async (filters) => {
+    const filter = filters[0];
+    if (!filter?.kinds?.includes(9)) return [];
+    if (filter.limit === 500) {
+      repairs++;
+      await hold;
+      return rows;
+    }
+    if (filter["#h"]?.includes("other"))
+      return [
+        elsewhere,
+        bounds(h.relay, "other", "head", {
+          has_more: false,
+          next_cursor: null,
+        }),
+      ];
+    return [
+      ...rows.slice(10),
+      bounds(h.relay, "room", "head", {
+        has_more: true,
+        next_cursor: { created_at: cursor.created_at, id: cursor.id },
+      }),
+    ];
+  });
+  const repairing = () => {
+    let release = () => {};
+    hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  };
+  h.grant("room");
+  h.session.channels.ensure("room");
+  await vi.waitFor(() =>
+    expect(h.session.channels.window("room").rows).toHaveLength(20),
+  );
+  // The window's own rows are observed evidence, but not a sample of history.
+  expect(h.snapshot()).toMatchObject({
+    coverage: "observed",
+    freshness: "observed",
+    observedCount: 20,
+    oldestUnreadId: cursor.id,
+  });
+  expect(h.snapshot().sampled).toBeUndefined();
+
+  let release = repairing();
+  let repair = h.session.unread.ensure();
+  await flush();
+  expect(h.snapshot().sampled).toBeUndefined();
+  release();
+  await repair;
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 30,
+    oldestUnreadId: rows[0]?.id,
+    sampled: true,
+  });
+
+  // A later repair only adds evidence: the sample stands while it runs, and
+  // subscribers see no change.
+  const sampledSnapshot = h.snapshot();
+  const changed = vi.fn();
+  const stop = h.session.unread.subscribe(h.target, changed);
+  release = repairing();
+  let started = repairs;
+  repair = h.session.unread.refresh();
+  await vi.waitFor(() => expect(repairs).toBe(started + 1));
+  expect(h.snapshot().sampled).toBe(true);
+  release();
+  await repair;
+  expect(h.snapshot()).toBe(sampledSnapshot);
+  expect(changed).not.toHaveBeenCalled();
+  stop();
+
+  // A cleared cache forgets the sample and starts a repair at once. Until it
+  // returns, the reloaded window alone is not a sample.
+  release = repairing();
+  started = repairs;
+  await h.clearCache();
+  h.session.channels.ensure("room");
+  await vi.waitFor(() =>
+    expect(h.snapshot()).toMatchObject({
+      observedCount: 20,
+      oldestUnreadId: cursor.id,
+    }),
+  );
+  expect(repairs).toBe(started + 1);
+  expect(h.snapshot().sampled).toBeUndefined();
+  release();
+  await vi.waitFor(() =>
+    expect(h.snapshot()).toMatchObject({
+      observedCount: 30,
+      oldestUnreadId: rows[0]?.id,
+      sampled: true,
+    }),
+  );
+
+  // A channel entering unread scope has only its window until a repair reads it.
+  const other = { kind: "channel" as const, channelId: "other" };
+  release = repairing();
+  started = repairs;
+  h.grant("other");
+  h.session.channels.ensure("other");
+  await vi.waitFor(() =>
+    expect(h.session.unread.snapshot(other)).toMatchObject({
+      coverage: "observed",
+      observedCount: 1,
+      oldestUnreadId: elsewhere.id,
+    }),
+  );
+  expect(repairs).toBe(started + 1);
+  expect(h.session.unread.snapshot(other).sampled).toBeUndefined();
+  release();
+  await vi.waitFor(() =>
+    expect(h.session.unread.snapshot(other).sampled).toBe(true),
+  );
+
+  // Access gained while a repair is out: subscribers see the reset at once,
+  // and the sample returns only when the repair restarted after it finishes.
+  const stopRoom = h.session.unread.subscribe(h.target, () => {});
+  release = repairing();
+  started = repairs;
+  void h.session.unread.refresh();
+  await vi.waitFor(() => expect(repairs).toBe(started + 1));
+  expect(h.snapshot().sampled).toBe(true);
+  h.grant("third");
+  expect(h.snapshot().sampled).toBeUndefined();
+  release();
+  release = repairing();
+  await vi.waitFor(() => expect(repairs).toBe(started + 2));
+  expect(h.snapshot().sampled).toBeUndefined();
+  release();
+  await vi.waitFor(() => expect(h.snapshot().sampled).toBe(true));
+  stopRoom();
+});
+
 it("counts replies only in the viewer's conversations and threads; others stay quiet until joined or mentioned", async () => {
   const h = setup();
   h.grant("room");

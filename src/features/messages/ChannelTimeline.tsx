@@ -421,6 +421,9 @@ function Timeline({
       ? chronologicalRows
           .filter(
             (row) =>
+              // Backdated live arrivals and older pages must neither define
+              // nor erase the entry boundary, so only entry rows are classified.
+              baseline.messageIds.has(row.id) &&
               !row.membership &&
               !row.huddle &&
               row.audience !== "agents" &&
@@ -437,8 +440,6 @@ function Timeline({
   const boundaryCandidate = (() => {
     if (!boundaryPending || !ownsMessageVisit || messageVisit?.active !== true)
       return { ready: false };
-    // Later paging cannot recover entry-time read evidence for unloaded rows.
-    if (!messageVisit.entryHistoryComplete) return { ready: true };
     if (
       baseline.revision !== undefined &&
       queries.unread.revision() !== baseline.revision
@@ -449,8 +450,6 @@ function Timeline({
       window.freshness !== "verified" ||
       window.refreshing ||
       window.loadingOlder ||
-      window.hasMore ||
-      window.historyLimited ||
       unreadSync.completeness !== "snapshot"
     )
       return { ready: false };
@@ -459,10 +458,31 @@ function Timeline({
       unreadSnapshot?.freshness !== "observed"
     )
       return { ready: false };
+    // Entry history is complete only when the visit captured a ready, verified,
+    // idle window with no more history. Otherwise (history above the entry
+    // rows, or a cached, refreshing or still-paging window, so a short channel
+    // entered from cache lands here too) the boundary is the store's oldest
+    // unread message, and only when it is an entry row. Later paging cannot
+    // recover entry-time read evidence for rows that were not loaded.
+    if (!messageVisit.entryHistoryComplete) {
+      // Every relay read feeds the store, so until its repair has sampled
+      // history it may know only the loaded rows, and its oldest unread one
+      // can sit in the window below any read row while older ones are unread.
+      if (!unreadSnapshot.sampled) return { ready: false };
+      const oldest = unreadSnapshot.oldestUnreadId;
+      if (!oldest || !baseline.messageIds.has(oldest)) return { ready: true };
+    }
     if (!chronologicalRows.length) return { ready: noUnreadEvidence };
+    // A repair batch that fills its limit can stop inside the window, leaving
+    // the first loaded row the oldest unread message the store knows. Requiring
+    // a read entry row first covers only ordinary rows: catch-up's activity:
+    // mark reads all of them up to a timestamp. It never reads mentions,
+    // broadcasts, broadcast replies or messages marked unread; only their own
+    // msg: or thread: marks do, so a short sample can still hide an unread one
+    // above the window. A row read by its own mark says nothing about the rows
+    // above it either.
+    let afterRead = messageVisit.entryHistoryComplete;
     for (const { row, attention } of entryAttention) {
-      // Backdated live arrivals must neither define nor erase the entry boundary.
-      if (!baseline.messageIds.has(row.id)) continue;
       if (attention.status === "unknown" || attention.pending)
         return { ready: false };
       // Remote merges do not advance the local revision. Only this prefix can
@@ -478,7 +498,8 @@ function Timeline({
         return { ready: true };
       // Ineligible means no attention category, not that an incoming row is read.
       if (attention.forced || attention.unread)
-        return { ready: true, messageId: row.id };
+        return afterRead ? { ready: true, messageId: row.id } : { ready: true };
+      afterRead = true;
     }
     return { ready: true };
   })();
@@ -513,7 +534,7 @@ function Timeline({
     if (!ownsMessageVisit || !boundaryMatchesVisit || !messageVisit?.active)
       return;
     for (const { row, attention } of entryAttention) {
-      if (baseline.messageIds.has(row.id) && !baseline.attention.has(row.id))
+      if (!baseline.attention.has(row.id))
         baseline.attention.set(
           row.id,
           attention.status === "unknown" || attention.pending

@@ -321,11 +321,13 @@ revokes all of them, and a pairing unused for 30 days expires.
   Further reactions during that hold do not change the icon; history loading does not trigger it.
 - **New messages** marks the first known unread incoming channel message when
   you enter. Once established, the divider stays in place for that visit as you
-  read, reveal another message, or receive new messages. It is absent for a visit
-  that starts with incomplete or unverified history, even if older rows load
-  later. It may also be absent when unread evidence is incomplete, or when read
-  intent or the read evidence needed to locate the boundary changes before it is
-  established.
+  read, reveal another message, or receive new messages. In a channel with more
+  history than loads on entry, it appears when the oldest unread message is
+  among the rows loaded on entry, below a message you have read; when the unread
+  messages start at the first loaded row or further up, there is no divider for
+  that visit, even if older rows load later. It may also be absent when unread
+  evidence is incomplete, or when read intent or the read evidence needed to
+  locate the boundary changes before it is established.
 - **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention
   dot and the thread dot. Switching away from Buzz pauses this: new messages
   can light the row even while that conversation stays selected. The macOS Dock dot follows the rows. Nothing is marked
