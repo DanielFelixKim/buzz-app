@@ -8,7 +8,8 @@ import type { FederatedIdentity } from "./service";
 /** The joined communities whose access a server's session decides, by name,
  * in order: those its hosts cover that require NIP-FI. A community whose
  * discovery failed counts, since it may; one still being discovered does not
- * yet. Without discovery (outside native), every covered community counts. */
+ * yet. Outside native, discovery rejects, so every covered community counts;
+ * a session without discovery at all (a test fixture) counts them at once. */
 export function useSignInCommunities(
   identity: FederatedIdentity | undefined,
   hosts: readonly string[],
