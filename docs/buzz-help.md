@@ -42,7 +42,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
 
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
   **Create account** and **Sign in**, which open the Builderlab account page;
-  once this computer was set up through Builderlab, **Sign in** comes first.
+  when this computer already has a Builderlab sign-in saved, **Sign in** comes first.
   **Other options** reveals a **Community URL** field
   for an address or invite link; desktop does not offer QR scanning.
   With no communities yet, **Join** advances through full-page access and profile
@@ -59,9 +59,11 @@ mention anyone. Explicit agent watches on that room can still receive them.
   or hide it.
   After Builderlab sign-in, an account with no linked key is set up
   automatically: Buzz creates a key (or uses the one already on this device)
-  and links it to the signed-in account. A device set up through Builderlab asks
-  you to sign in again on relaunch; **Continue without signing in** opens Buzz
-  without it. An existing private key can be entered from **Welcome back**.
+  and links it to the signed-in account. Once a key is on this computer, Buzz
+  opens straight to the app and reuses the saved Builderlab sign-in. If that
+  account turns out to be linked to a different key, Buzz asks over the open app:
+  **Replace** restarts Buzz to restore the account's key, and **Not now** keeps
+  this one. An existing private key can be entered from **Welcome back**.
   Its **Use a different account** signs Buzz out of that account; the next
   sign-in asks the browser to sign in again rather than reuse the account it
   remembers. Signing in to a different account than the one saved on this

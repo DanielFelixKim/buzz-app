@@ -56,6 +56,23 @@ installation's grant, so this works whether or not the plugin has started.
 Welcome back offers a restore where the portal accepts the session there. The
 session outlives first run: sign-in at launch finds it signed in.
 
+A launch with a key on the device opens the app and never signs in again for
+it, however the device was set up. The welcome screen leads with **Sign in**
+rather than **Create account** when the Builderlab session is signed in or
+needs reauthentication. With the app open, once that session is signed in
+(restored at launch, or signed in later), `LinkedKeyCheck` reads the account's
+linked key with the same call Settings → Identity makes, one read per session
+revision. A matching key, an account with no key, a refused or absent session
+and a failed read change nothing. Another key opens **Your account uses a
+different key** over the app, which says whether this device confirmed a
+backup of its own key (as **A different account is saved on this computer**
+does). **Replace** runs that dialog's Replace: it signs this key out without
+erase and restarts, and the sign-in after the restart takes the lane for a
+device with no key, where Welcome back restores the account's key. **Not now**
+and Close keep the key and read nothing more until the next launch. The
+prompt waits while the launch screen shows or old Buzz's communities are being
+offered or added, and the backup consent prompt waits while it shows.
+
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Continue** opens the same **Finding community** page described
 below, which sends only the two unauthenticated GETs, so a typo, an unreachable
@@ -159,8 +176,8 @@ discards the draft. A successful account-backed import links the key and automat
 unless that key already has a backup. An import without Builderlab
 sign-in skips linking and backup. Importing without a Builderlab account never uploads the key.
 
-**Another account's key on this device** (a relaunch sign-in as someone else)
-is never replaced without asking: **A different account is saved on this
+**Another account's key on this device** (a sign-in as someone else with a key
+already here) is never replaced without asking: **A different account is saved on this
 computer** asks first. **Replace** signs it out, as **Sign out of Buzz** does
 without erase; Buzz restarts and signs in again by itself (a one-time note
 honoured for two minutes), now on the lane for a device with no key. **Cancel**
@@ -275,14 +292,14 @@ account, **Continue without backup** skips only that backup step and runs the
 remaining community setup. It retains the saved linked key and does not persist
 a backup opt-out. Transient backup failures remain retry-only; linking cannot
 be bypassed.
-After a Builderlab sign-in, including the one a relaunch waits on, the page
-offers **Use a different account** in place of Back: it signs out of the
-account and returns to the welcome screen, keeping any key here, as a relaunch
-shows it. Back alone would sign in to the same account again from the
-browser's session. That screen's **Sign in** asks for credentials and checks
-the key with the next account, and **Continue without signing in** opens the
-app with a key already here, as on any relaunch; the account is checked at the
-next launch. A link kgoose refuses because the key or the account is already
+After a Builderlab sign-in, the page offers **Use a different account** in
+place of Back: it signs out of the account and returns to the welcome screen,
+keeping any key here. Back alone would sign in to the same account again from
+the browser's session. With a key here, that screen offers **Sign in**, which
+asks for credentials and checks the key with the next account, and **Continue
+without signing in**, which opens the app with that key. This is the only way a
+key on the device reaches the welcome screen, and nothing about it is saved:
+the next launch opens the app. A link kgoose refuses because the key or the account is already
 bound elsewhere (`pubkey_already_bound`, `identity_already_bound`) is not
 offered Try again, which would get the same answer; Use a different account is
 the only way on. Failures before any sign-in keep **Back**.

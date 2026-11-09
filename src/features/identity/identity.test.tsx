@@ -1050,29 +1050,34 @@ it("Back from Finish in your browser returns to the landing", async () => {
   identity.dispose();
 });
 
-it("with a Builderlab note and no key, the landing leads with Sign in, then Create account", async () => {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
-  missingKey();
-  const identity = createIdentity();
-  render(
-    <Welcome
-      identity={identity}
-      communities={noJoin}
-      invites={invites}
-      account={unlinked}
-      connect={vi.fn()}
-    >
-      <p>Signed in</p>
-    </Welcome>,
-  );
-  await screen.findByRole("button", { name: SIGN_IN });
-  expect(landingButtons()).toEqual([
-    SIGN_IN,
-    "Create account",
-    "Other options",
-  ]);
-  identity.dispose();
-});
+it.each(["signed-in", "reauthentication-required"] as const)(
+  "with a Builderlab session %s and no key, the landing leads with Sign in, then Create account",
+  async (status) => {
+    missingKey();
+    const fi = federatedFixture();
+    fi.publish({ status });
+    const identity = createIdentity();
+    render(
+      <Welcome
+        identity={identity}
+        communities={noJoin}
+        invites={invites}
+        account={unlinked}
+        connect={vi.fn()}
+        federatedIdentity={fi.service}
+      >
+        <p>Signed in</p>
+      </Welcome>,
+    );
+    await screen.findByRole("button", { name: SIGN_IN });
+    expect(landingButtons()).toEqual([
+      SIGN_IN,
+      "Create account",
+      "Other options",
+    ]);
+    identity.dispose();
+  },
+);
 
 /**
  * The uploader the opened app watches, idle so no backup choice is decided;
@@ -7998,22 +8003,109 @@ it("once the app opens, a key with no backup choice and only independent communi
   identity.dispose();
 });
 
-/** The note a Builderlab sign-in leaves, so a relaunch signs in again before the app opens. */
-const ROUTE_NOTE = "buzz.setup-route.v1";
-/** A device that already holds `pubkey`, as after a relaunch. */
-const keyOnDevice = (pubkey = viewer) =>
+/**
+ * This device's key, `pubkey`: restored at launch, or else made by the first
+ * sign-in, as before `leaveWithKey`.
+ */
+const keyOnDevice = (pubkey = viewer, atLaunch = true) =>
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "nsec_backup_choice")
       return { available: false, pubkey, automatic: null };
-    if (command === "identity_restore") return pubkey;
+    if (command === "identity_restore") return atLaunch ? pubkey : null;
     if (command === "identity_legacy_available") return false;
+    if (command === "identity_create" && !atLaunch) return pubkey;
     throw new Error(`Unexpected command ${command}`);
   });
 const continueWithoutSigningIn = () =>
   screen.getByRole("button", { name: "Continue without signing in" });
+type AccountFor = NonNullable<ComponentProps<typeof Welcome>["account"]>;
+/**
+ * The first sign-in's account has no key and kgoose refuses to link the one
+ * setup makes for it, so `leaveWithKey` can keep that key; every later
+ * sign-in gets `next`.
+ */
+const afterRefusedLink = (next: AccountFor): AccountFor => {
+  let first = true;
+  return (...args) => {
+    if (!first) return next(...args);
+    first = false;
+    return unlinkedWith(() =>
+      Promise.reject(new ApiFailure("identity_already_bound", "Refused.")),
+    )(...args);
+  };
+};
+/**
+ * The landing with a key on this device: the only way back to it is a failed
+ * setup's Use a different account, which keeps the key setup made.
+ */
+async function leaveWithKey(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await screen.findByRole("heading", { name: "Couldn’t finish setup" });
+  await user.click(
+    screen.getByRole("button", { name: "Use a different account" }),
+  );
+  await screen.findByRole("button", { name: "Continue without signing in" });
+}
+/** kgoose's answer to the account check, with `pubkey` linked or none. */
+const linkedAnswer = (pubkey: string | null) => ({
+  status: 200,
+  headers: {},
+  body: JSON.stringify({
+    identity: pubkey === null ? null : { pubkey_hex: pubkey },
+  }),
+});
+/** Every microtask queued so far, chained ones included, has run. */
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-it("a relaunch with a key and no Builderlab note opens straight to the app", async () => {
+it("a relaunch with a key opens straight to the app, without waiting on the account check of a signed-in Builderlab session", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   keyOnDevice();
+  const fi = federatedFixture();
+  fi.publish({ status: "signed-in", email: "a@example.com" });
+  const answer = deferred<ReturnType<typeof linkedAnswer>>();
+  fi.request.mockReturnValue(answer.promise);
+  const connect = vi.fn().mockResolvedValue(credential);
+  const identity = createIdentity();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinked}
+      connect={connect}
+      federatedIdentity={fi.service}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  // The check is under way, and the app is already open.
+  await waitFor(() =>
+    expect(fi.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "/api/goose/v1/buzz/nostr-identities/current",
+      }),
+    ),
+  );
+  expect(screen.queryByRole("button", { name: SIGN_IN })).toBeNull();
+  // The account holds this key: nothing to ask, and no sign-in.
+  answer.resolve(linkedAnswer(viewer));
+  await act(settled);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(connect).not.toHaveBeenCalled();
+  expect(fi.service.signIn).not.toHaveBeenCalled();
+  expect(fi.request).toHaveBeenCalledTimes(1);
+  identity.dispose();
+});
+
+const mismatchPrompt = () =>
+  screen.findByRole("alertdialog", {
+    name: "Your account uses a different key",
+  });
+/** The app open with this device's key, and `fi` signed in to an account. */
+function openWithSession(fi: ReturnType<typeof federatedFixture>) {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  fi.publish({ status: "signed-in", email: "a@example.com" });
   const identity = createIdentity();
   render(
     <Welcome
@@ -8022,66 +8114,68 @@ it("a relaunch with a key and no Builderlab note opens straight to the app", asy
       invites={invites}
       account={unlinked}
       connect={vi.fn().mockResolvedValue(credential)}
+      federatedIdentity={fi.service}
     >
       <p>Signed in</p>
     </Welcome>,
   );
+  return identity;
+}
+
+it.each<[string, () => Promise<ReturnType<typeof linkedAnswer>>]>([
+  ["has no linked key", async () => linkedAnswer(null)],
+  ["can't be read", async () => ({ status: 503, headers: {}, body: "{}" })],
+  [
+    "can't be reached",
+    async () => {
+      throw new Error("offline");
+    },
+  ],
+])("an account that %s asks nothing over the open app", async (_, reply) => {
+  keyOnDevice();
+  const fi = federatedFixture();
+  fi.request.mockImplementation(reply);
+  const identity = openWithSession(fi);
   expect(await screen.findByText("Signed in")).toBeVisible();
-  expect(screen.queryByRole("button", { name: SIGN_IN })).toBeNull();
+  await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(1));
+  await act(settled);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByText("Signed in")).toBeVisible();
   identity.dispose();
 });
 
-it("a relaunch with a key and the Builderlab note shows the landing with Continue without signing in, which opens the app", async () => {
-  // The launch mark covers the window, as it does at a real launch.
-  const mark = document.createElement("div");
-  mark.id = "buzz-launch";
-  document.body.append(mark);
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
+it("a key with no Builderlab session signed in is never checked", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   keyOnDevice();
-  const connect = vi.fn().mockResolvedValue(credential);
+  const fi = federatedFixture();
+  fi.request.mockResolvedValue(linkedAnswer(owned.pubkey));
   const identity = createIdentity();
-  const user = userEvent.setup();
   render(
     <Welcome
       identity={identity}
       communities={noJoin}
       invites={invites}
       account={unlinked}
-      connect={connect}
+      connect={vi.fn().mockResolvedValue(credential)}
+      federatedIdentity={fi.service}
     >
       <p>Signed in</p>
     </Welcome>,
   );
-  expect(await screen.findByRole("button", { name: SIGN_IN })).toBeEnabled();
-  expect(continueWithoutSigningIn()).toBeEnabled();
-  // Nothing in the app loads behind this landing, so Welcome clears the mark.
-  expect(launchReady).toHaveBeenCalledWith(true);
-  mark.remove();
-  expect(screen.queryByRole("button", { name: "Other options" })).toBeNull();
-  expect(screen.queryByText("Signed in")).toBeNull();
-  expect(connect).not.toHaveBeenCalled();
-  await user.click(continueWithoutSigningIn());
   expect(await screen.findByText("Signed in")).toBeVisible();
-  expect(connect).not.toHaveBeenCalled();
-  // The note stays: the next launch asks again.
-  expect(localStorage.getItem(ROUTE_NOTE)).toBe("builderlab");
+  await act(settled);
+  expect(fi.request).not.toHaveBeenCalled();
+  // Signing in later, from Settings or a community, checks it then.
+  fi.publish({ status: "signed-in", email: "a@example.com" });
+  expect(await mismatchPrompt()).toBeVisible();
   identity.dispose();
 });
 
-it("a relaunch sign-in whose account is linked to the device key restores the saved communities and enters the app", async () => {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
+it("a sign-in from the landing a failed setup left, whose account is linked to the key kept here, restores the saved communities and enters the app", async () => {
   const member = keypair();
   const relay = nativeRelay(member, {
     [relayA]: { admitted: true, profile: profile(member, { name: "Ada" }) },
   });
-  const nativeAnswers = vi.mocked(invoke).getMockImplementation();
-  if (!nativeAnswers) throw new Error("nativeRelay installed no answers");
-  // The key is already on this device.
-  vi.mocked(invoke).mockImplementation((command, args) =>
-    command === "identity_restore"
-      ? Promise.resolve(member.pubkey)
-      : nativeAnswers(command, args),
-  );
   const bind = vi.fn(() => Promise.resolve());
   const backUp = vi.fn(() => Promise.resolve());
   const identity = createIdentity();
@@ -8092,7 +8186,7 @@ it("a relaunch sign-in whose account is linked to the device key restores the sa
       identity={identity}
       communities={communities}
       invites={invites}
-      account={() => ({
+      account={afterRefusedLink(() => ({
         linkedKey: () => Promise.resolve(member.pubkey),
         communityList: owning(),
         knownCommunities: () => Promise.resolve(["wss://relay-a.example"]),
@@ -8103,13 +8197,14 @@ it("a relaunch sign-in whose account is linked to the device key restores the sa
         ...backupAnswers,
         backUp,
         ...noCreation,
-      })}
+      }))}
       connect={vi.fn().mockResolvedValue(credential)}
     >
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await leaveWithKey(user);
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
   expect(await screen.findByText("Signed in")).toBeVisible();
   expect(communities.snapshot()).toMatchObject({
     memberships: [{ id: relayA }],
@@ -8119,24 +8214,16 @@ it("a relaunch sign-in whose account is linked to the device key restores the sa
     restoreRead(relayA, member),
   );
   // The key was already the account's: nothing is linked or backed up again,
-  // and no new key is made.
+  // and no other key is made.
   expect(bind).not.toHaveBeenCalled();
   expect(backUp).not.toHaveBeenCalled();
-  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  expect(commands().filter((c) => c === "identity_create")).toHaveLength(1);
   identity.dispose();
 });
 
-it("a relaunch sign-in whose account is linked to the device key, with no communities anywhere, never asks which key to use", async () => {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
+it("a sign-in from the landing a failed setup left, whose account is linked to the key kept here, with no communities anywhere, never asks which key to use", async () => {
   const member = keypair();
   nativeRelay(member, {});
-  const nativeAnswers = vi.mocked(invoke).getMockImplementation();
-  if (!nativeAnswers) throw new Error("nativeRelay installed no answers");
-  vi.mocked(invoke).mockImplementation((command, args) =>
-    command === "identity_restore"
-      ? Promise.resolve(member.pubkey)
-      : nativeAnswers(command, args),
-  );
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -8144,7 +8231,7 @@ it("a relaunch sign-in whose account is linked to the device key, with no commun
       identity={identity}
       communities={communitiesFor(identity)}
       invites={invites}
-      account={() => ({
+      account={afterRefusedLink(() => ({
         linkedKey: () => Promise.resolve(member.pubkey),
         communityList: owning(),
         knownCommunities: () => Promise.resolve([]),
@@ -8155,13 +8242,14 @@ it("a relaunch sign-in whose account is linked to the device key, with no commun
         ...backupAnswers,
         backUp: vi.fn(() => Promise.resolve()),
         ...noCreation,
-      })}
+      }))}
       connect={vi.fn().mockResolvedValue(credential)}
     >
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await leaveWithKey(user);
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
   expect(
     await screen.findByRole("heading", { name: "Connect to a community" }),
   ).toBeVisible();
@@ -8169,9 +8257,8 @@ it("a relaunch sign-in whose account is linked to the device key, with no commun
   identity.dispose();
 });
 
-it("a relaunch sign-in on a device that keeps communities opens Buzz after the account is checked", async () => {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
-  keyOnDevice();
+it("a sign-in from the landing a failed setup left, on a device that keeps communities, opens Buzz after the account is checked", async () => {
+  keyOnDevice(viewer, false);
   const identity = createIdentity();
   const kept: ComponentProps<typeof Welcome>["communities"] = {
     ...noJoin,
@@ -8189,54 +8276,61 @@ it("a relaunch sign-in on a device that keeps communities opens Buzz after the a
       identity={identity}
       communities={kept}
       invites={invites}
-      account={linkedTo(viewer)}
+      account={afterRefusedLink(linkedTo(viewer))}
       connect={vi.fn().mockResolvedValue(credential)}
     >
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await leaveWithKey(user);
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
   expect(await screen.findByText("Signed in")).toBeVisible();
   identity.dispose();
 });
 
 /**
  * A key on this device that the account doesn't hold, with whether this device
- * confirmed its backup; `sign_out` restarts Buzz, as `signedOut` reports.
+ * confirmed its backup; `sign_out` restarts Buzz, as `signedOut` reports. It
+ * is restored `atLaunch`, or else made by the first sign-in (`leaveWithKey`).
  */
 const anotherKeyOnDevice = (
   confirmed: boolean,
   signedOut: () => Promise<void> = () => Promise.resolve(),
+  atLaunch = false,
 ) =>
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "nsec_backup_choice")
       return { available: false, pubkey: viewer, automatic: null };
-    if (command === "identity_restore") return viewer;
+    if (command === "identity_restore") return atLaunch ? viewer : null;
+    if (command === "identity_create" && !atLaunch) return viewer;
     if (command === "identity_legacy_available") return false;
     if (command === "nsec_backup_confirmed") return confirmed;
     if (command === "sign_out") return signedOut();
     throw new Error(`Unexpected command ${command}`);
   });
 const AFTER_RESTART = "buzz.sign-in-after-restart.v1";
-/** Relaunch sign-in to an account whose key isn't this device's. */
+/** A sign-in, with a key kept here, to an account whose key isn't this device's. */
 async function relaunchToAnotherAccount(
   user: ReturnType<typeof userEvent.setup>,
   identity: Identity,
   unbind: FirstRunAccount["unbind"] = noUnlink,
 ) {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
   render(
     <Welcome
       identity={identity}
       communities={communitiesFor(identity)}
       invites={invites}
-      account={(...args) => ({ ...linkedTo(owned.pubkey)(...args), unbind })}
+      account={afterRefusedLink((...args) => ({
+        ...linkedTo(owned.pubkey)(...args),
+        unbind,
+      }))}
       connect={vi.fn().mockResolvedValue(credential)}
     >
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await leaveWithKey(user);
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
 }
 const replaceDialog = () =>
   screen.findByRole("alertdialog", {
@@ -8249,7 +8343,7 @@ const BACKED_UP =
   "Its key was backed up in Builderlab: sign in to that account again to restore it.";
 const MAYBE_NOT_BACKED_UP = "It may not be backed up.";
 
-it("a relaunch sign-in to another account asks even for a backed-up device key, saying it is backed up, and Replace restarts to sign in again", async () => {
+it("a sign-in to another account with a key kept here asks even for a backed-up device key, saying it is backed up, and Replace restarts to sign in again", async () => {
   anotherKeyOnDevice(true);
   const unbind = vi.fn(noUnlink);
   const identity = createIdentity();
@@ -8272,12 +8366,13 @@ it("a relaunch sign-in to another account asks even for a backed-up device key, 
   expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(unbind).not.toHaveBeenCalled();
-  for (const command of ["identity_create", "identity_import"])
-    expect(invoke).not.toHaveBeenCalledWith(command, expect.anything());
+  // Only the key setup made before it left.
+  expect(commands().filter((c) => c === "identity_create")).toHaveLength(1);
+  expect(invoke).not.toHaveBeenCalledWith("identity_import", expect.anything());
   identity.dispose();
 });
 
-it("a relaunch sign-in to another account asks before replacing a device key with no backup, and Cancel leaves it in place", async () => {
+it("a sign-in to another account with a key kept here asks before replacing a device key with no backup, and Cancel leaves it in place", async () => {
   anotherKeyOnDevice(false);
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -8368,15 +8463,15 @@ it("a refused replacement fails setup and withdraws the sign-in after restart", 
 });
 
 /**
- * Relaunch sign-in to an account with no key, where kgoose refuses this
- * device's key as another account's: the account check can't tell, the link can.
+ * A sign-in, with a key kept here, to an account with no key, where kgoose
+ * refuses this device's key as another account's: the account check can't
+ * tell, the link can.
  */
 async function relaunchToUnlinkedAccount(
   user: ReturnType<typeof userEvent.setup>,
   identity: Identity,
   code = "pubkey_already_bound",
 ) {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
   const bind = vi.fn((_pubkey: string) =>
     Promise.reject(new ApiFailure(code, "Refused.")),
   );
@@ -8385,13 +8480,14 @@ async function relaunchToUnlinkedAccount(
       identity={identity}
       communities={communitiesFor(identity)}
       invites={invites}
-      account={unlinkedWith(bind)}
+      account={afterRefusedLink(unlinkedWith(bind))}
       connect={vi.fn().mockResolvedValue(credential)}
     >
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await leaveWithKey(user);
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
   await waitFor(() => expect(bind).toHaveBeenCalledWith(viewer));
 }
 
@@ -8433,9 +8529,8 @@ it("a backed-up device key kgoose refuses as another account's still asks, sayin
   identity.dispose();
 });
 
-it("a relaunch sign-in whose account has no key links and backs up the device key instead of making a new one", async () => {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
-  keyOnDevice();
+it("a sign-in from the landing a failed setup left, whose account has no key, links and backs up the key kept here instead of making a new one", async () => {
+  keyOnDevice(viewer, false);
   const bind = vi.fn((_pubkey: string) => Promise.resolve());
   const backUp = vi.fn((_pubkey: string) => Promise.resolve());
   const identity = createIdentity();
@@ -8445,25 +8540,25 @@ it("a relaunch sign-in whose account has no key links and backs up the device ke
       identity={identity}
       communities={communitiesFor(identity)}
       invites={invites}
-      account={unlinkedWith(bind, { backUp })}
+      account={afterRefusedLink(unlinkedWith(bind, { backUp }))}
       connect={vi.fn().mockResolvedValue(credential)}
     >
       <p>Signed in</p>
     </Welcome>,
   );
-  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await leaveWithKey(user);
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
   expect(
     await screen.findByRole("heading", { name: "Connect to a community" }),
   ).toBeVisible();
   expect(bind.mock.calls).toEqual([[viewer]]);
   expect(backUp.mock.calls).toEqual([[viewer]]);
-  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  expect(commands().filter((c) => c === "identity_create")).toHaveLength(1);
   identity.dispose();
 });
 
-it("a failed relaunch sign-in leaves through Use a different account to the landing, which still continues without signing in", async () => {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
-  keyOnDevice();
+it("a failed setup with a key leaves through Use a different account to the landing, which continues without signing in, and the next launch opens the app", async () => {
+  keyOnDevice(viewer, false);
   const bind = vi.fn((_pubkey: string) =>
     Promise.reject(new Error("The account could not be linked.")),
   );
@@ -8491,49 +8586,15 @@ it("a failed relaunch sign-in leaves through Use a different account to the land
   await user.click(continueWithoutSigningIn());
   expect(await screen.findByText("Signed in")).toBeVisible();
   identity.dispose();
-});
-
-it("a Builderlab sign-in writes the setup-route note, and a key imported without an account clears it", async () => {
-  // Signing in writes it, even when setup then goes on to make the key.
-  vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command === "nsec_backup_choice")
-      return { available: false, pubkey: viewer, automatic: null };
-    if (command === "identity_restore") return null;
-    if (command === "identity_legacy_available") return false;
-    if (command === "identity_create") return viewer;
-    throw new Error(`Unexpected command ${command}`);
-  });
-  const first = createIdentity();
-  const user = userEvent.setup();
-  expect(localStorage.getItem(ROUTE_NOTE)).toBeNull();
-  render(
-    <Welcome
-      identity={first}
-      communities={communitiesFor(first)}
-      invites={invites}
-      account={unlinked}
-      connect={vi.fn().mockResolvedValue(credential)}
-    >
-      <p>Signed in</p>
-    </Welcome>,
-  );
-  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-  expect(
-    await screen.findByRole("heading", { name: "Connect to a community" }),
-  ).toBeVisible();
-  expect(localStorage.getItem(ROUTE_NOTE)).toBe("builderlab");
-  first.dispose();
   cleanup();
 
-  // A key imported from the connect choice, with no account, is the
-  // self-hosted route: the note is forgotten.
-  const relay = landingRelay("https://relay.example.com");
-  relay.info.resolve();
-  const identity = createIdentity();
+  // Nothing saved makes the next launch ask: the key opens the app.
+  keyOnDevice();
+  const relaunched = createIdentity();
   render(
     <Welcome
-      identity={identity}
-      communities={communitiesFor(identity)}
+      identity={relaunched}
+      communities={noJoin}
       invites={invites}
       account={unlinked}
       connect={vi.fn().mockResolvedValue(credential)}
@@ -8541,16 +8602,81 @@ it("a Builderlab sign-in writes the setup-route note, and a key imported without
       <p>Signed in</p>
     </Welcome>,
   );
-  await screen.findByRole("button", { name: SIGN_IN });
-  await user.type(urlField(), "relay.example.com{Enter}");
-  await screen.findByRole("heading", { name: "Connect to your community" });
-  await user.click(screen.getByRole("button", { name: "Use an existing key" }));
-  await user.click(keyField());
-  await user.paste(ownedNsec);
-  await user.click(continueWithKey());
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(screen.queryByRole("button", { name: SIGN_IN })).toBeNull();
+  relaunched.dispose();
+});
+
+it("an account linked to another key asks over the open app, and Not now keeps this key and asks nothing more this run", async () => {
+  anotherKeyOnDevice(false, undefined, true);
+  const fi = federatedFixture();
+  fi.request.mockResolvedValue(linkedAnswer(owned.pubkey));
+  const identity = openWithSession(fi);
+  const user = userEvent.setup();
+  const prompt = await mismatchPrompt();
+  // The app is already open behind it.
+  expect(screen.getByText("Signed in")).toBeInTheDocument();
+  expect(prompt).toHaveTextContent("a@example.com");
+  expect(prompt).toHaveTextContent("This key may not be backed up.");
+  expect(invoke).toHaveBeenCalledWith("nsec_backup_confirmed", {
+    pubkey: viewer,
+  });
+  await user.click(within(prompt).getByRole("button", { name: "Not now" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.getByText("Signed in")).toBeVisible();
+  // A renewal reads nothing again until the next launch.
+  fi.publish({ revision: "user:renewed" });
+  await act(settled);
+  expect(fi.request).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(signOuts()).toEqual([]);
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  identity.dispose();
+});
+
+it("Replace on the open app's prompt signs this key out to restart and sign in again, saying a backed-up key can be restored", async () => {
+  anotherKeyOnDevice(true, undefined, true);
+  const fi = federatedFixture();
+  fi.request.mockResolvedValue(linkedAnswer(owned.pubkey));
+  const identity = openWithSession(fi);
+  const user = userEvent.setup();
+  const prompt = await mismatchPrompt();
+  expect(prompt).toHaveTextContent(
+    "This key was backed up in Builderlab: sign in to its account to restore it.",
+  );
+  expect(signOuts()).toEqual([]);
+  await user.click(within(prompt).getByRole("button", { name: "Replace" }));
+  await waitFor(() =>
+    expect(signOuts()).toEqual([
+      ["sign_out", { wipe: false, removeAgents: false }],
+    ]),
+  );
+  // The restart signs in by itself, into the account's Welcome back.
+  expect(localStorage.getItem(AFTER_RESTART)).not.toBeNull();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
+  identity.dispose();
+});
+
+it("a refused Replace from the open app fails setup, withdraws the sign-in after restart, and Back returns to the app", async () => {
+  anotherKeyOnDevice(
+    false,
+    () =>
+      Promise.reject({ message: "Couldn't revoke paired command-line tools" }),
+    true,
+  );
+  const fi = federatedFixture();
+  fi.request.mockResolvedValue(linkedAnswer(owned.pubkey));
+  const identity = openWithSession(fi);
+  const user = userEvent.setup();
+  const prompt = await mismatchPrompt();
+  await user.click(within(prompt).getByRole("button", { name: "Replace" }));
   expect(
-    await screen.findByRole("heading", { name: "Join Community" }),
+    await screen.findByText("Couldn't revoke paired command-line tools"),
   ).toBeVisible();
-  expect(localStorage.getItem(ROUTE_NOTE)).toBeNull();
+  expect(localStorage.getItem(AFTER_RESTART)).toBeNull();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
   identity.dispose();
 });
