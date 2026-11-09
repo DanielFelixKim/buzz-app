@@ -117,14 +117,17 @@ viewport):
   capture a verified, idle window with all of its history (rows sit above it, or
   it was cached, refreshing or still paging), the **New messages** divider waits
   for `sampled`, then appears only at `oldestUnreadId` among the rows loaded on
-  entry and only below a read one. A batch that filled its limit can still stop
-  short of the true oldest unread message, and the read-row condition covers
-  only ordinary rows: catch-up's `activity:` mark reads all of them up to a
-  timestamp, but never mentions, broadcasts, broadcast replies or messages
-  marked unread, which only their own `msg:` or `thread:` marks read. A short
-  sample can hide an unread one of those above the window, and the divider then
-  lands below it. A row above read only by its own mark says nothing about older
-  rows either.
+  entry and only below a read one. While it waits, the timeline holds its own
+  reading (dwell and bottom catch-up), which would otherwise read the loaded
+  rows and erase the evidence it waits for; the hold ends when the repair
+  finishes or fails, and reading then starts at once. A batch that filled its
+  limit can still stop short of the true oldest unread message, and the
+  read-row condition covers only ordinary rows: catch-up's `activity:` mark
+  reads all of them up to a timestamp, but never mentions, broadcasts,
+  broadcast replies or messages marked unread, which only their own `msg:` or
+  `thread:` marks read. A short sample can hide an unread one of those above
+  the window, and the divider then lands below it. A row above read only by
+  its own mark says nothing about older rows either.
 - Both keys use verified event timestamps, never wall time. Neither enters generic
   channel/thread inheritance or remote override baselines. Channel catch-up ends
   a local manual unread on the channel itself; message and thread manual-unread

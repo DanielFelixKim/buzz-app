@@ -257,7 +257,8 @@ function mount(bottom = false, revealOnMount = false, anchorLoaded = true) {
   };
 }
 
-function boundaryFixture() {
+/** `reading`: this list's own dwell can mark rows read, as the real store would. */
+function boundaryFixture({ reading = false } = {}) {
   const viewer = keypair(),
     peer = keypair(),
     relay = keypair();
@@ -273,7 +274,9 @@ function boundaryFixture() {
     listeners = new Set<() => void>();
   const syncListeners = new Set<() => void>();
   let readRevision = owner.session.unread.revision();
-  let syncSnapshot = owner.session.unread.sync();
+  let syncSnapshot = reading
+    ? { ...owner.session.unread.sync(), capability: "frontier-sync" as const }
+    : owner.session.unread.sync();
   const entries: {
     promise: Promise<void>;
     resolve: () => void;
@@ -310,6 +313,8 @@ function boundaryFixture() {
   const built: ChannelMessage[] = [];
   // The store's repair has finished, so that evidence reaches past the window.
   let sampled = true;
+  let freshness: "observed" | "stale" = "observed";
+  let error: string | undefined;
   const snapshot = (channelId: string) => {
     const oldest = built
       .filter(
@@ -329,10 +334,25 @@ function boundaryFixture() {
       observedCount: unreadIds.size,
       attentionCount: 0,
       coverage: "observed" as const,
-      freshness: "observed" as const,
+      freshness,
       manual: "none" as const,
+      ...(error ? { error } : {}),
     };
   };
+  // A repair the timeline asks for; the real one reads the relay.
+  const ensure = vi.fn(() => Promise.resolve());
+  // Catch-up reads every loaded row, which advances read intent and leaves
+  // nothing unread in the channel; observe reads the rows it is given.
+  const catchUp = vi.fn(async () => {
+    unreadIds.clear();
+    readRevision++;
+    publish();
+  });
+  const observe = vi.fn(async (ids: readonly string[]) => {
+    for (const id of ids) unreadIds.delete(id);
+    readRevision++;
+    publish();
+  });
   const snapshots = new Map([
     ["c", snapshot("c")],
     ["other", snapshot("other")],
@@ -366,6 +386,17 @@ function boundaryFixture() {
       };
     },
     revision: () => readRevision,
+    ensure,
+    ...(reading
+      ? {
+          reading: () => ({
+            view: () => {},
+            dispose: () => {},
+            observe,
+            catchUp,
+          }),
+        }
+      : {}),
   };
   const session = { ...owner.session, channels, unread };
   function row(
@@ -488,6 +519,41 @@ function boundaryFixture() {
     },
     setSampled(value: boolean) {
       sampled = value;
+    },
+    setFreshness(value: "observed" | "stale", cause?: string) {
+      freshness = value;
+      error = cause;
+    },
+    ensure,
+    catchUp,
+    observe,
+    /** A focused reader at the bottom, with the dwell clock under test control. */
+    async focusReader() {
+      vi.spyOn(document, "hasFocus").mockReturnValue(true);
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+        600,
+      );
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+        new DOMRect(0, 0, 800, 500),
+      );
+      vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+        new DOMRect(0, 0, 800, 500),
+      ] as unknown as DOMRectList);
+      await frame();
+      await frame();
+      const history = screen.getByRole("region", {
+        name: "Channel message history",
+      });
+      await act(async () => {
+        history.focus();
+        await Promise.resolve();
+      });
+    },
+    async dwell() {
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
     },
     publish,
   };
@@ -686,6 +752,97 @@ it.each([{ olderUnread: false }, { olderUnread: true }])(
     mounted.unmount();
   },
 );
+
+/** Rows above the window, the store's repair unfinished: the oldest unread
+ * row it knows sits below a receipt-read row, and the reader is at the bottom. */
+async function heldReader() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const h = boundaryFixture({ reading: true });
+  h.setSampled(false);
+  const read = h.row(message(h.peer, "c", "Read by its own receipt", 2));
+  const first = h.row(message(h.peer, "c", "First loaded unread", 3));
+  const later = h.row(message(h.peer, "c", "Later loaded unread", 4));
+  h.unreadIds.add(first.id);
+  h.unreadIds.add(later.id);
+  h.completeReadStateSnapshot();
+  h.publish();
+  const mounted = render(h.tree("c", [read, first, later], true));
+  await h.completeEntry();
+  await h.focusReader();
+  await h.dwell();
+  return { h, mounted, read, first, later };
+}
+
+it("holds this list's reading while the boundary waits for the unread repair, then reads once it is placed", async () => {
+  const { h, mounted, later } = await heldReader();
+  try {
+    // Without the hold, catch-up's read would advance read intent and erase
+    // the oldest unread row before the repair could vouch for it: no line.
+    expect(h.catchUp).not.toHaveBeenCalled();
+    expect(h.observe).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+    expect(h.ensure).toHaveBeenCalledTimes(1);
+
+    h.setSampled(true);
+    h.publish();
+    expect(precedes(divider(), screen.getByText("First loaded unread"))).toBe(
+      true,
+    );
+    expect(
+      precedes(screen.getByText("Read by its own receipt"), divider()),
+    ).toBe(true);
+    expect(h.catchUp).not.toHaveBeenCalled();
+
+    // The hold lifting starts dwell on its own.
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+    expect(h.ensure).toHaveBeenCalledTimes(1);
+    expect(precedes(divider(), screen.getByText("First loaded unread"))).toBe(
+      true,
+    );
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("resumes this list's reading with no boundary when the unread repair fails", async () => {
+  const { h, mounted, later } = await heldReader();
+  try {
+    expect(h.catchUp).not.toHaveBeenCalled();
+    h.setFreshness("stale", "Unread observation failed");
+    h.publish();
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("a read-intent change from elsewhere during the held wait still settles with no boundary and releases reading", async () => {
+  const { h, mounted, later } = await heldReader();
+  try {
+    expect(h.catchUp).not.toHaveBeenCalled();
+    h.advanceReadRevision();
+    h.publish("other");
+    h.setSampled(true);
+    h.publish();
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
 
 it.each([{ remoteRead: false }, { remoteRead: true }])(
   "does not infer an entry boundary when the oldest unread message is outside the entry window: %j",

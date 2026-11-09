@@ -325,9 +325,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   history than loads on entry, it appears when the oldest unread message is
   among the rows loaded on entry, below a message you have read; when the unread
   messages start at the first loaded row or further up, there is no divider for
-  that visit, even if older rows load later. It may also be absent when unread
-  evidence is incomplete, or when read intent or the read evidence needed to
-  locate the boundary changes before it is established.
+  that visit, even if older rows load later. The divider is settled before the
+  channel marks anything read, so opening a channel does not hide its own
+  divider. It may also be absent when unread evidence is incomplete, or when
+  read intent or the read evidence needed to locate the boundary changes
+  elsewhere before it is established.
 - **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention
   dot and the thread dot. Switching away from Buzz pauses this: new messages
   can light the row even while that conversation stays selected. The macOS Dock dot follows the rows. Nothing is marked

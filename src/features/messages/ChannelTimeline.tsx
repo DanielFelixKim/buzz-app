@@ -24,6 +24,7 @@ import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -468,7 +469,10 @@ function Timeline({
       // Every relay read feeds the store, so until its repair has sampled
       // history it may know only the loaded rows, and its oldest unread one
       // can sit in the window below any read row while older ones are unread.
-      if (!unreadSnapshot.sampled) return { ready: false };
+      // This is the only gate that holds this list's own reading: every
+      // earlier one has passed, so the repair alone is awaited.
+      if (!unreadSnapshot.sampled)
+        return { ready: false, awaitingRepair: true };
       const oldest = unreadSnapshot.oldestUnreadId;
       if (!oldest || !baseline.messageIds.has(oldest)) return { ready: true };
     }
@@ -503,6 +507,12 @@ function Timeline({
     }
     return { ready: true };
   })();
+  // The store repairs only once something has asked it to. The desktop shell
+  // asks on startup; a host that mounts a timeline alone must not hold reading
+  // forever. A finished repair answers at once, so this adds no relay reads.
+  useEffect(() => {
+    if (boundaryCandidate.awaitingRepair) void queries.unread.ensure();
+  }, [boundaryCandidate.awaitingRepair, queries.unread]);
   if (!boundaryMatchesVisit)
     setNewMessageBoundary(
       retainedVisit?.boundary ?? {
@@ -1103,7 +1113,13 @@ function Timeline({
     latestMessageId: window.rows
       .filter((row) => !row.membership && !row.huddle)
       .at(-1)?.id,
-    enabled: marksRead,
+    // Reading before the entry boundary settles would erase the evidence it
+    // waits for: catch-up reads every loaded row and observe the unread ones,
+    // and either advances the read revision that settles it with no line.
+    // Hold reading while the boundary waits for the repair; re-enabling
+    // schedules dwell at once. A failed repair marks freshness stale, which
+    // an earlier gate catches, so the hold ends with the repair either way.
+    enabled: marksRead && !boundaryCandidate.awaitingRepair,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
