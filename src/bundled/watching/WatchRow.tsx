@@ -85,11 +85,17 @@ export function createWatchComponents({
     const action = useAction();
     const trigger = React.useRef<HTMLButtonElement>(null);
     const cancel = React.useRef<HTMLButtonElement>(null);
-    const [confirming, setConfirming] = React.useState(false);
-    const remove = () =>
+    // The watch as the open dialog reviewed it; a watch changed meanwhile
+    // is refused rather than deleted unseen.
+    const [confirming, setConfirming] =
+      React.useState<Agent["attention"][string]>();
+    const remove = (expected: Agent["attention"][string]) =>
       action.run(async () => {
-        await agents.save(agent.key, { attention: { [slug]: null } });
-        setConfirming(false);
+        await agents.save(agent.key, {
+          attentionExpected: { [slug]: expected },
+          attention: { [slug]: null },
+        });
+        setConfirming(undefined);
       });
     const detailsId = React.useId();
     const history = agent.attentionHistory?.[slug];
@@ -410,7 +416,7 @@ export function createWatchComponents({
                       // Pause/Resume share this action; a refused Pause's
                       // error must not open inside the dialog.
                       action.reset();
-                      setConfirming(true);
+                      setConfirming(agent.attention[slug]);
                     }}
                   >
                     {"Delete"}
@@ -449,20 +455,20 @@ export function createWatchComponents({
                 ? trigger.current
                 : (returnFocus.current ?? false)
             }
-            onClose={() => setConfirming(false)}
+            onClose={() => setConfirming(undefined)}
             actions={
               <>
                 <Button
                   ref={cancel}
                   disabled={action.pending}
-                  onClick={() => setConfirming(false)}
+                  onClick={() => setConfirming(undefined)}
                 >
                   Cancel
                 </Button>
                 <Button
                   variant="destructive"
                   loading={action.pending}
-                  onClick={() => void remove()}
+                  onClick={() => void remove(confirming)}
                 >
                   Delete
                 </Button>
