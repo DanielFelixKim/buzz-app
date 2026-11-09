@@ -1160,11 +1160,13 @@ export function Welcome({
       </OnboardingScreen>
     );
   // A device with a Builderlab session saved leads with Sign in; a new one
-  // with Create account, which opens the account page's sign-up form.
+  // with Create account, which opens the account page's sign-up form. Until
+  // the saved session is restored neither is known, so neither can start.
   const returning =
     keyLanding ||
     session?.status === "signed-in" ||
     session?.status === "reauthentication-required";
+  const restoring = session?.status === "restoring";
   if (progress.status === "idle" && !auth.error && !discovering)
     return (
       <OnboardingScreen
@@ -1186,6 +1188,7 @@ export function Welcome({
           <Button
             variant="prominent"
             size="lg"
+            disabled={restoring}
             onClick={() => start(!returning)}
           >
             {returning ? "Sign in" : "Create account"}
@@ -1211,6 +1214,7 @@ export function Welcome({
               <Button
                 size="lg"
                 variant="glass-clear"
+                disabled={restoring}
                 onClick={() => start(returning)}
               >
                 {returning ? "Create account" : "Sign in"}

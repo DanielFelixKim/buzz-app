@@ -59,7 +59,8 @@ session outlives first run: sign-in at launch finds it signed in.
 A launch with a key on the device opens the app and never signs in again for
 it, however the device was set up. The welcome screen leads with **Sign in**
 rather than **Create account** when the Builderlab session is signed in or
-needs reauthentication. With the app open, once that session is signed in
+needs reauthentication; while the saved session is still restoring, both are
+disabled, so a returning user's click never starts a sign-up. With the app open, once that session is signed in
 (restored at launch, or signed in later), `LinkedKeyCheck` reads the account's
 linked key with the same call Settings → Identity makes, one read per session
 revision. A matching key, an account with no key, a refused or absent session

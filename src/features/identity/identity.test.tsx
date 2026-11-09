@@ -1079,6 +1079,43 @@ it.each(["signed-in", "reauthentication-required"] as const)(
   },
 );
 
+it("while the saved Builderlab session restores, the landing offers neither Sign in nor Create account until it knows which leads", async () => {
+  missingKey();
+  const fi = federatedFixture();
+  fi.publish({ status: "restoring" });
+  const connect = vi.fn().mockResolvedValue(credential);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinked}
+      connect={connect}
+      federatedIdentity={fi.service}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  const create = await screen.findByRole("button", { name: "Create account" });
+  expect(create).toBeDisabled();
+  expect(landingSignIn()).toBeDisabled();
+  await user.click(create);
+  expect(connect).not.toHaveBeenCalled();
+  // A saved session restored: this is a returning user.
+  act(() => {
+    fi.publish({ status: "signed-in" });
+  });
+  expect(landingButtons()).toEqual([
+    SIGN_IN,
+    "Create account",
+    "Other options",
+  ]);
+  expect(landingSignIn()).toBeEnabled();
+  identity.dispose();
+});
+
 /**
  * The uploader the opened app watches, idle so no backup choice is decided;
  * any other command throws.
