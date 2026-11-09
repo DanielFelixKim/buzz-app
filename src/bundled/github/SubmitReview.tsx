@@ -51,14 +51,16 @@ export function SubmitReview({
     remembered?.event ?? "COMMENT",
   );
   const [body, setBody] = useState(remembered?.body ?? "");
+  const notify = useToastNotification();
+  const [busy, setBusy] = useState(false);
+  // Not while it goes in: submit keeps it out of memory until GitHub answers.
   useEffect(() => {
+    if (busy) return;
     memory.setReview(
       url,
       isEmptyDraft(body) ? undefined : { event, body, head },
     );
-  }, [memory, url, event, body, head]);
-  const notify = useToastNotification();
-  const [busy, setBusy] = useState(false);
+  }, [memory, url, event, body, head, busy]);
   const [error, setError] = useState<string>();
   const comment = useRef<HTMLTextAreaElement>(null);
   const alive = useRef(true);
@@ -113,13 +115,18 @@ export function SubmitReview({
         if (next) {
           setError(undefined);
           // Closed, the draft is memory's: another panel on this pull request
-          // may have changed it, or sent it. A decision without text stays.
+          // may have changed it, or sent it. A decision without text stays,
+          // and only an empty Comment follows a newer push unasked.
           const saved = memory.get(url).review;
-          if (saved || !isEmptyDraft(body)) {
-            setEvent(saved?.event ?? "COMMENT");
-            setBody(saved?.body ?? "");
-          }
-          setHead(saved?.head ?? pull.head);
+          if (saved) {
+            setEvent(saved.event);
+            setBody(saved.body);
+            setHead(saved.head);
+          } else if (!isEmptyDraft(body)) {
+            setEvent("COMMENT");
+            setBody("");
+            setHead(pull.head);
+          } else if (event === "COMMENT") setHead(pull.head);
         }
       }}
     >
@@ -182,7 +189,11 @@ export function SubmitReview({
               <p role="status">
                 New commits were pushed after you started this review.
               </p>
-              <Button size="sm" onClick={() => setHead(pull.head)}>
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => setHead(pull.head)}
+              >
                 Use latest commit
               </Button>
             </div>

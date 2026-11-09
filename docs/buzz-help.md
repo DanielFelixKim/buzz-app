@@ -996,10 +996,11 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   session. Opened again in the same channel, it shows the **Summary** or
   **Changes** view you left there; elsewhere it starts on **Summary**. A review
   with text that you haven’t submitted waits in **Submit review** wherever that
-  pull request opens, from any channel, until you submit it. **Changes** and
-  **Submit review** need the desktop app with `gh` signed in. Scroll position
-  isn’t kept, and reloading the window or turning the GitHub plugin off and on
-  forgets all of this.
+  pull request opens, from any channel. Submitting clears it. If the pull
+  request merges or closes first, **Submit review** goes away once you close
+  it, and the draft with it. **Changes** and **Submit review** need the desktop
+  app with `gh` signed in. Scroll position isn’t kept, and reloading the window
+  or turning the GitHub plugin off and on forgets all of this.
 - Some desktop plugins can upload images you provide to services they declare.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them

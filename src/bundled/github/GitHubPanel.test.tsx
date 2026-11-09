@@ -1409,6 +1409,48 @@ it.each([
   },
 );
 
+it("drops a review another panel on the pull request sent", async () => {
+  const user = userEvent.setup();
+  const gh = vi.fn(async (query: string, _variables?: unknown) =>
+    query.startsWith("mutation") ? {} : pullData(),
+  );
+  const memory = createPanelMemory();
+  const panel = () => (
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+      memory={memory}
+    />
+  );
+  // Two tabs on one pull request, as /pull/9 and /pull/9/ would be.
+  const first = within(render(panel(), { wrapper: ToastProvider }).container);
+  const second = within(render(panel(), { wrapper: ToastProvider }).container);
+  const review = async (view: typeof first) => {
+    await view.findByRole("heading", { name: "Private change #9" });
+    await user.click(view.getByRole("button", { name: "Submit review" }));
+    return screen.findByRole("dialog", { name: "Submit review" });
+  };
+  const dismiss = async (popup: HTMLElement) => {
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(popup).not.toBeInTheDocument());
+  };
+  let popup = await review(first);
+  await user.type(within(popup).getByRole("textbox"), "Looks right");
+  await dismiss(popup);
+  popup = await review(second);
+  expect(within(popup).getByRole("textbox")).toHaveValue("Looks right");
+  await dismiss(popup);
+  popup = await review(first);
+  await user.click(
+    within(popup).getByRole("button", { name: "Submit review" }),
+  );
+  await waitFor(() => expect(popup).not.toBeInTheDocument());
+  popup = await review(second);
+  expect(within(popup).getByRole("radio", { name: /^Comment/ })).toBeChecked();
+  expect(within(popup).getByRole("textbox")).toHaveValue("");
+});
+
 it("asks about a newer push only for a remembered review with text", async () => {
   const user = userEvent.setup();
   let head = "abc123";
@@ -1672,6 +1714,51 @@ it("asks before a review goes in against a push that arrived mid-draft", async (
     expect(
       screen.queryByRole("button", { name: "Submit review" }),
     ).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("asks before an approval without text goes in against a push since it was chosen", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let pushed = false;
+    const gh = vi.fn(async (query: string, _variables?: unknown) =>
+      query.startsWith("mutation")
+        ? {}
+        : pullData(
+            pushed ? { headRefOid: "def456", title: "Pushed again" } : {},
+          ),
+    );
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Private change #9" });
+    const trigger = screen.getByRole("button", { name: "Submit review" });
+    await user.click(trigger);
+    let popup = await screen.findByRole("dialog", { name: "Submit review" });
+    await user.click(within(popup).getByRole("radio", { name: /^Approve/ }));
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(popup).not.toBeInTheDocument());
+    pushed = true;
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await screen.findByRole("heading", { name: "Pushed again #9" });
+    await user.click(trigger);
+    popup = await screen.findByRole("dialog", { name: "Submit review" });
+    expect(
+      within(popup).getByRole("radio", { name: /^Approve/ }),
+    ).toBeChecked();
+    expect(within(popup).getByRole("status")).toHaveTextContent(
+      "New commits were pushed after you started this review.",
+    );
+    expect(
+      within(popup).getByRole("button", { name: "Submit review" }),
+    ).toHaveAttribute("aria-disabled", "true");
   } finally {
     vi.useRealTimers();
   }
