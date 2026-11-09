@@ -714,7 +714,12 @@ it.each<
     string | undefined,
   ]
 >([
-  ["fails", (h) => h.read().fail(new Error("offline")), () => {}, "offline"],
+  [
+    "fails",
+    (h) => h.read().fail(new Error("offline")),
+    () => {},
+    expect.objectContaining({ message: "offline" }),
+  ],
   [
     "is cancelled by the stream dropping",
     (h) => {
@@ -861,7 +866,7 @@ it("an interrupted fill drops the rows kept across the drop and retains the repl
       status: "ready",
       freshness: "cached",
       hasMore: true,
-      error: "offline",
+      error: expect.objectContaining({ message: "offline" }),
     });
   } finally {
     h.owner.dispose();
@@ -1869,7 +1874,7 @@ describe("a reconnect whose replay was continuous", () => {
       h.owner.session.channels.loadOlder("c");
       h.read().fail(new Error("Relay request failed"));
       await flush();
-      expect(h.window().error).toBe("Relay request failed");
+      expect(h.window().error).toEqual(new Error("Relay request failed"));
       h.queries.length = 0;
       await resume(h, [], true);
       expect(channelReads(h)).toEqual([]);

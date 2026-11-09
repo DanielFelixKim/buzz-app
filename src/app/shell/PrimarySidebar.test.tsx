@@ -1022,7 +1022,10 @@ it("moves a refusal's recovery from the sidebar to its one notice", async () => 
   );
   const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
   // A connection failure with native's sign-in error asks for sign-in here.
-  f.connection({ status: "error", error: "Federated sign-in is required" });
+  f.connection({
+    status: "error",
+    error: { kind: "refused", details: "Federated sign-in is required" },
+  });
   expect(
     within(sidebar()).getByRole("button", {
       name: "Sign in with builderlab.example",
@@ -1050,7 +1053,10 @@ it("shows Try again beside a settled failure, and Connecting while the connectio
   const f = fixture(true);
   const retry = vi.spyOn(f.relay, "retry");
   const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
-  const error = "ReadError: Relay read failed (502)";
+  const error = {
+    kind: "connection",
+    details: "ReadError: Relay read failed (502)",
+  } as const;
   f.connection({ status: "error", error });
   expect(within(sidebar()).getByText("Couldn’t load channels.")).toBeVisible();
   expect(within(sidebar()).queryByText(/ReadError/)).toBeNull();
@@ -1062,7 +1068,10 @@ it("shows Try again beside a settled failure, and Connecting while the connectio
   // every page; the sidebar neither repeats it nor offers Try again.
   f.connection({
     status: "error",
-    error: "ReadError: Relay read failed (403)",
+    error: {
+      kind: "refused",
+      details: "ReadError: Relay read failed (403)",
+    },
     denied: true,
   });
   const notice = await screen.findByRole("dialog", {
