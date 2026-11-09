@@ -1,5 +1,9 @@
 import type { LocalAgentSource, LocalWork } from "./local-activity";
-import { activityFinalSend, activityPromptThread } from "./activity-transcript";
+import {
+  activityFinalSend,
+  activityPromptThread,
+  activityWork,
+} from "./activity-transcript";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
@@ -14,6 +18,10 @@ export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
 export const ACTIVITY_TURN_LIMIT = 512;
 export const ACTIVITY_FRESH_MS = 30_000;
+/** How long a final send's end holds queued work without word from its
+ * harness. Status recovery, where available, settles it sooner; without it,
+ * the end stands once the harness has been silent this long. */
+export const ACTIVITY_PROVISIONAL_MS = 120_000;
 type RawRecord = ObserverFrame &
   Readonly<{
     receivedAt: number;
@@ -186,6 +194,12 @@ export function createAgentActivity(
         ({ agent, channelId, threadRootId, startedAt, working }): TypingEntry =>
           Object.freeze({ agent, channelId, threadRootId, startedAt, working }),
       );
+    // An unconfirmed final send's end stops holding work once its harness
+    // has been silent too long, whether or not status recovery can read it.
+    const held = (turn: Turn) =>
+      turn.ended &&
+      !!turn.provisional &&
+      now - turn.timestamp <= ACTIVITY_PROVISIONAL_MS;
     const visible = [...turns.values()].map(
       (turn): ActivityTurn =>
         Object.freeze({
@@ -197,7 +211,7 @@ export function createAgentActivity(
           channelId: turn.channelId,
           timestamp: turn.timestamp,
           ...(turn.outcome ? { outcome: turn.outcome } : {}),
-          ...(turn.ended && turn.provisional ? { provisional: true } : {}),
+          ...(held(turn) ? { provisional: true } : {}),
           ...(turn.triggeringEventIds
             ? { triggeringEventIds: turn.triggeringEventIds }
             : {}),
@@ -210,8 +224,7 @@ export function createAgentActivity(
               turn.timestamp <= now + 5000;
             // A final send's end the harness never confirms goes unknown, like
             // a silent working turn, so status recovery can read it back.
-            if (turn.ended)
-              return turn.provisional && !fresh ? "unknown" : "ended";
+            if (turn.ended) return held(turn) && !fresh ? "unknown" : "ended";
             return fresh ? "working" : "unknown";
           })(),
         }),
@@ -297,21 +310,23 @@ export function createAgentActivity(
     if (!Number.isFinite(timestamp) || timestamp > Date.now() + 5000) return;
     const key = `${agent}:${item.turnId}`;
     const previous = turns.get(key);
+    const payload = object(item.payload);
     // Terminal evidence wins even when a delayed earlier heartbeat arrives later.
     // A final send's end is provisional: the harness's end confirms it, and
-    // later agent work (a tool that shared its round) reopens the turn.
-    // Liveness alone doesn't, since the harness reports it until the task ends.
+    // later agent work (a tool that shared its round) reopens the turn. The
+    // harness reports liveness until the task ends, which keeps the end
+    // provisional without reopening it; closing bookkeeping changes nothing.
+    const keeps = !!previous?.provisional && item.kind === "turn_liveness";
     if (
       (previous?.ended &&
         !(
           previous.provisional &&
-          (ends.has(item.kind) || item.kind.startsWith("acp_"))
+          (keeps || ends.has(item.kind) || activityWork(item.kind, payload))
         )) ||
       (previous && previous.timestamp > timestamp && !ends.has(item.kind))
     )
       return;
     if (!previous && timestamp <= evidenceFloor) return;
-    const payload = object(item.payload);
     // A remote turn's posted final message ends it before the harness reports
     // the task done, as a local agent's does.
     const finalSend = item.kind === "acp_read" && activityFinalSend(payload);
@@ -368,11 +383,14 @@ export function createAgentActivity(
       // Completion may precede liveness on a rolled-back producer clock. Keep
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
-      ended: ends.has(item.kind) || finalSend,
-      ...(finalSend && !ends.has(item.kind) ? { provisional: true } : {}),
-      outcome: finalSend
-        ? "ended"
-        : terminalOutcome(item.kind, payload?.outcome),
+      ended: ends.has(item.kind) || finalSend || keeps,
+      ...((finalSend && !ends.has(item.kind)) || keeps
+        ? { provisional: true }
+        : {}),
+      outcome:
+        finalSend || keeps
+          ? "ended"
+          : terminalOutcome(item.kind, payload?.outcome),
       epoch,
     };
     associate(turn);

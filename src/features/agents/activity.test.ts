@@ -654,3 +654,63 @@ it("a remote final send ends its turn provisionally: the harness confirms it, li
   expect(four()?.provisional).toBeUndefined();
   f.activity.dispose();
 });
+
+it("a remote final send's end ignores closing bookkeeping, holds while the harness is live, and stops holding once it goes silent", () => {
+  const f = fixture();
+  const at = (offset: number) => new Date(Date.now() + offset).toISOString();
+  const update = (sessionUpdate: string, extra: object = {}) => ({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: { sessionId: "S", update: { sessionUpdate, ...extra } },
+  });
+  const final = update("tool_call_update", {
+    toolCallId: "last",
+    title: "buzz__send",
+    kind: "other",
+    status: "completed",
+    rawInput: { text: "Done", final: true },
+  });
+  const turn = () => f.snapshot().turns.find((entry) => entry.turnId === "one");
+  const read = (offset: number, payload: object) =>
+    f.send(f.item("acp_read", "one", { timestamp: at(offset), payload }));
+
+  f.send(f.item("turn_started", "one", { timestamp: at(-4000) }));
+  read(-3000, final);
+  expect(turn()).toMatchObject({ state: "ended", provisional: true });
+  // The prompt's response and the usage and command updates close the turn.
+  read(-2000, { jsonrpc: "2.0", id: 7, result: { stopReason: "end_turn" } });
+  read(-1500, update("usage_update", { used: 10, size: 100 }));
+  read(-1000, update("available_commands_update", { availableCommands: [] }));
+  f.send(f.item("acp_write", "one", { timestamp: at(-500), payload: {} }));
+  expect(turn()).toMatchObject({ state: "ended", provisional: true });
+
+  // Liveness keeps the end fresh and provisional while the harness finishes.
+  for (let second = 0; second < 60; second += 20) {
+    vi.advanceTimersByTime(20000);
+    f.send(f.item("turn_liveness", "one", { timestamp: at(0) }));
+  }
+  expect(turn()).toMatchObject({ state: "ended", provisional: true });
+
+  // Silent, it goes unknown for status recovery, then stops holding work.
+  vi.advanceTimersByTime(31000);
+  expect(turn()).toMatchObject({ state: "unknown", provisional: true });
+  vi.advanceTimersByTime(90000);
+  expect(turn()).toMatchObject({ state: "ended", outcome: "ended" });
+  expect(turn()?.provisional).toBeUndefined();
+
+  // A message or thought is more work, so it reopens the turn.
+  f.send(f.item("turn_started", "two", { timestamp: at(-4000) }));
+  f.send(f.item("acp_read", "two", { timestamp: at(-3000), payload: final }));
+  f.send(
+    f.item("acp_read", "two", {
+      timestamp: at(-2000),
+      payload: update("agent_thought_chunk", {
+        content: { type: "text", text: "One more thing" },
+      }),
+    }),
+  );
+  expect(
+    f.snapshot().turns.find((entry) => entry.turnId === "two")?.state,
+  ).toBe("working");
+  f.activity.dispose();
+});

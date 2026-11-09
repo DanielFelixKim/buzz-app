@@ -112,6 +112,28 @@ export function activityFinalSend(payload: unknown) {
     object(update.rawOutput)?.isError !== true
   );
 }
+const WORK_UPDATES = new Set([
+  "agent_message_chunk",
+  "agent_thought_chunk",
+  "plan",
+  "tool_call",
+  "tool_call_update",
+]);
+/** Whether an observer record is more of the agent's work in its turn: a
+ * prompt or steer, a permission request, or a message, thought, plan or tool
+ * update. The bookkeeping that closes a turn (the prompt's response, usage
+ * and command updates) is not. */
+export function activityWork(kind: string, payload: unknown) {
+  const message = object(payload);
+  const method = str(message?.method);
+  if (kind === "acp_write") return PROMPT_METHODS.has(method);
+  if (kind !== "acp_read") return false;
+  if (method === "session/request_permission") return true;
+  const update = object(object(message?.params)?.update);
+  return (
+    method === "session/update" && WORK_UPDATES.has(str(update?.sessionUpdate))
+  );
+}
 const number = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const eventId = (value: unknown) =>

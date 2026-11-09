@@ -156,6 +156,16 @@ it("waits for the harness to confirm a turn its final send ended", () => {
   expect(late.publish).not.toHaveBeenCalled();
   g.remote("ended");
   expect(late.publish).toHaveBeenCalledOnce();
+  // Stale, it still holds new work while status recovery may settle it.
+  // Activity drops the hold once its harness has been silent too long, so a
+  // turn nothing can recover still releases the queue.
+  const s = fixture(),
+    stale = s.entry("stale");
+  s.remote("unknown", true);
+  s.queue.submit(stale);
+  expect(stale.publish).not.toHaveBeenCalled();
+  s.remote("ended");
+  expect(stale.publish).toHaveBeenCalledOnce();
 });
 
 it("retains failed sends for explicit retry without a retry loop", () => {
