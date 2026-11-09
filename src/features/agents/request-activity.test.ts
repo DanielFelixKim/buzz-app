@@ -78,3 +78,45 @@ it("gives a steered message the records of the turn it joined, from that turn's 
   expect(partial.records).toHaveLength(3);
   expect(partial.terminal.get("t")).toBe("ended");
 });
+
+it("selects no turn for a message in a start or steer list the lifecycle rejects", () => {
+  const id = (n: number) => n.toString(16).padStart(64, "0");
+  const malformed = "d".repeat(64),
+    oversized = "e".repeat(64),
+    overflow = "f".repeat(64);
+  const records = [
+    record(1, [
+      event("turn_started", "t", 1, {
+        triggeringEventIds: [
+          trigger,
+          ...Array.from({ length: 60 }, (_, i) => id(i + 1)),
+        ],
+      }),
+      event("turn_steered", "t", 2, {
+        triggeringEventIds: [malformed, "not-an-id"],
+      }),
+      event("turn_steered", "t", 3, {
+        triggeringEventIds: [
+          oversized,
+          ...Array.from({ length: 64 }, (_, i) => id(i + 100)),
+        ],
+      }),
+      event("turn_steered", "t", 4, {
+        triggeringEventIds: [
+          overflow,
+          ...Array.from({ length: 4 }, (_, i) => id(i + 200)),
+        ],
+      }),
+    ]),
+    record(2, [
+      event("turn_started", "bad", 1, {
+        triggeringEventIds: [malformed, 7],
+      }),
+    ]),
+  ];
+  for (const message of [malformed, oversized, overflow])
+    expect(requestActivity(records, agent, "c", message).turnIds.size).toBe(0);
+  expect([...requestActivity(records, agent, "c", trigger).turnIds]).toEqual([
+    "t",
+  ]);
+});

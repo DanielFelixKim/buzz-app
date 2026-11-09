@@ -683,3 +683,59 @@ it("ignores malformed steer triggers and keeps the turn's existing ones", () => 
   expect(f.snapshot().turns[0]?.triggeringEventIds).toEqual([first]);
   f.activity.dispose();
 });
+it("gives no request work to a message whose steer the lifecycle rejected", () => {
+  const f = fixture();
+  const id = (n: number) => n.toString(16).padStart(64, "0");
+  const first = "1".repeat(64),
+    malformed = "2".repeat(64),
+    oversized = "3".repeat(64),
+    overflow = "4".repeat(64);
+  const work = (message: string) => requestWork(f.snapshot(), "a", message);
+  f.send(
+    f.item("turn_started", "one", {
+      payload: {
+        triggeringEventIds: [
+          first,
+          ...Array.from({ length: 60 }, (_, i) => id(i + 1)),
+        ],
+      },
+    }),
+  );
+  // A list with one bad entry, a list over the limit, and a list that would
+  // take the turn past the limit are each rejected whole.
+  f.send(
+    f.item("turn_steered", "one", {
+      seq: 2,
+      payload: { triggeringEventIds: [malformed, "not-an-id"] },
+    }),
+  );
+  f.send(
+    f.item("turn_steered", "one", {
+      seq: 3,
+      payload: {
+        triggeringEventIds: [
+          oversized,
+          ...Array.from({ length: 64 }, (_, i) => id(i + 100)),
+        ],
+      },
+    }),
+  );
+  f.send(
+    f.item("turn_steered", "one", {
+      seq: 4,
+      payload: {
+        triggeringEventIds: [
+          overflow,
+          ...Array.from({ length: 4 }, (_, i) => id(i + 200)),
+        ],
+      },
+    }),
+  );
+  expect(f.snapshot().turns[0]?.triggeringEventIds).toHaveLength(61);
+  expect(work(first)[0]?.state).toBe("working");
+  for (const message of [malformed, oversized, overflow])
+    expect(work(message)).toEqual([]);
+  // The raw records still select the turn for an admitted message.
+  expect([...(work(id(1))[0]?.selected.turnIds ?? [])]).toEqual(["one"]);
+  f.activity.dispose();
+});

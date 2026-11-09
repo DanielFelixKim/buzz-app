@@ -3,6 +3,7 @@ import { activityPromptThread } from "./activity-transcript";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
+import { freshTurnTriggers, turnTriggerIds } from "./turn-triggers";
 import {
   ACTIVITY_HISTORY_AGE_MS,
   observerFrame,
@@ -90,14 +91,6 @@ const starts = new Set([
   "session_resolved",
 ]);
 const ends = new Set(["turn_completed", "turn_error", "agent_panic"]);
-const TURN_TRIGGER_LIMIT = 64;
-function eventIds(value: unknown): readonly string[] | undefined {
-  return Array.isArray(value) &&
-    value.length <= TURN_TRIGGER_LIMIT &&
-    value.every((id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id))
-    ? (value as string[])
-    : undefined;
-}
 /** A start's or steer's messages join the turn's triggers; nothing removes one. */
 function triggerFields(
   previous: Turn | undefined,
@@ -106,10 +99,7 @@ function triggerFields(
   Pick<Turn, "triggeringEventIds" | "requests" | "unresolvedTriggers">
 > {
   const known = previous?.triggeringEventIds ?? [];
-  const fresh = (added ?? []).filter(
-    (id, index, ids) => !known.includes(id) && ids.indexOf(id) === index,
-  );
-  if (known.length + fresh.length > TURN_TRIGGER_LIMIT) fresh.length = 0;
+  const fresh = freshTurnTriggers(known, added);
   return {
     triggeringEventIds: fresh.length ? [...known, ...fresh] : known,
     requests: previous?.requests ?? [],
@@ -328,7 +318,7 @@ export function createAgentActivity(
     const payload = object(item.payload);
     const added =
       item.kind === "turn_started" || item.kind === "turn_steered"
-        ? eventIds(payload?.triggeringEventIds)
+        ? turnTriggerIds(payload?.triggeringEventIds)
         : undefined;
     // Terminal evidence wins even when a delayed earlier heartbeat arrives later.
     if (

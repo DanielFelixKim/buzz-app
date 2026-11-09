@@ -1,6 +1,7 @@
 import type { ActivityTurn } from "./activity";
 import { activityRecords, type ActivityRecord } from "./activity-records";
 import { terminalOutcome } from "./observer";
+import { freshTurnTriggers, turnTriggerIds } from "./turn-triggers";
 
 type Parsed = Readonly<{
   record: ActivityRecord;
@@ -110,20 +111,28 @@ export function requestActivity(
       )
       .map((turn) => turn.turnId),
   );
+  // Admit each start's and steer's messages in arrival order by the
+  // lifecycle's rules, so a list it rejected cannot associate a message here.
+  // The first anchor that admits a wanted message names its turn.
+  const known = new Map<string, string[]>();
+  const anchors: Parsed[] = [];
+  for (const anchor of parsed) {
+    const { kind, turnId, payload } = anchor.value;
+    if (kind !== "turn_started" && kind !== "turn_steered") continue;
+    const triggers = known.get(turnId) ?? [];
+    known.set(turnId, triggers);
+    const fresh = freshTurnTriggers(
+      triggers,
+      turnTriggerIds(payload?.triggeringEventIds),
+    );
+    triggers.push(...fresh);
+    if (fresh.some((id) => triggersWanted.has(id))) anchors.push(anchor);
+  }
   // A steered message joined a turn that started for another message, so it
   // shares that turn's records from its start, or from the steer when the start
   // is not loaded.
-  for (const anchor of parsed.filter(
-    ({ value }) =>
-      value.kind === "turn_started" || value.kind === "turn_steered",
-  )) {
-    const triggers = anchor.value.payload?.triggeringEventIds;
-    if (
-      !Array.isArray(triggers) ||
-      !triggers.some((id) => triggersWanted.has(id)) ||
-      turnIds.has(anchor.value.turnId)
-    )
-      continue;
+  for (const anchor of anchors) {
+    if (turnIds.has(anchor.value.turnId)) continue;
     if (ambiguous.has(anchor.value.turnId)) {
       uncertain = true;
       continue;

@@ -111,7 +111,7 @@ it("projects one thread turn into prompt, thought, tool, permission and reply", 
         "turn_started",
         {
           source: "channel",
-          triggeringEventIds: [message, "not-an-id"],
+          triggeringEventIds: [message],
           threadRootEventId: root,
         },
         0,
@@ -790,7 +790,58 @@ it("adds steered messages to the turn's triggers without marking it started", ()
       (turn) => [turn.turnId, turn.triggeringEventIds, turn.partial],
     ),
   ).toEqual([
-    ["joined", [message, steered], false],
+    ["joined", [steered, message], false],
     ["partial", [steered], true],
   ]);
+});
+
+it("drops a steer's whole list when one entry is bad or it passes the turn's limit", () => {
+  serial = 0;
+  const id = (n: number) => n.toString(16).padStart(64, "0");
+  const records = [
+    record([
+      event(
+        "one",
+        "turn_started",
+        {
+          triggeringEventIds: [
+            message,
+            ...Array.from({ length: 59 }, (_, i) => id(i + 1)),
+          ],
+        },
+        1,
+      ),
+      event("one", "turn_steered", { triggeringEventIds: [id(500), "x"] }, 2),
+      event(
+        "one",
+        "turn_steered",
+        {
+          triggeringEventIds: Array.from({ length: 4 }, (_, i) => id(i + 600)),
+        },
+        3,
+      ),
+      event(
+        "one",
+        "turn_steered",
+        {
+          triggeringEventIds: Array.from({ length: 5 }, (_, i) => id(i + 700)),
+        },
+        4,
+      ),
+    ]),
+  ];
+  records.push(
+    record([
+      event("two", "turn_started", { triggeringEventIds: [root, "x"] }, 5),
+    ]),
+  );
+  const [turn, two] = activityTranscript(records, {
+    agent,
+    channelId: "alpha",
+  }).turns;
+  expect(two?.triggeringEventIds).toEqual([]);
+  expect(turn?.triggeringEventIds).toHaveLength(64);
+  expect(turn?.triggeringEventIds).not.toContain(id(500));
+  expect(turn?.triggeringEventIds).toContain(id(603));
+  expect(turn?.triggeringEventIds).not.toContain(id(700));
 });
