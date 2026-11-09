@@ -13,7 +13,7 @@ import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import type { GitHubCli } from "./gh";
 import { readable } from "./object";
 import { changePull, type PullChecklist, type ReviewEvent } from "./pull";
-import type { PanelMemory } from "./panel-memory";
+import type { PanelMemory, ReviewDraft } from "./panel-memory";
 import styles from "./GitHub.module.css";
 
 const decisions: readonly (readonly [ReviewEvent, string, string])[] = [
@@ -53,14 +53,16 @@ export function SubmitReview({
   const [body, setBody] = useState(remembered?.body ?? "");
   const notify = useToastNotification();
   const [busy, setBusy] = useState(false);
-  // Not while it goes in: submit keeps it out of memory until GitHub answers.
-  useEffect(() => {
-    if (busy) return;
-    memory.setReview(
-      url,
-      isEmptyDraft(body) ? undefined : { event, body, head },
-    );
-  }, [memory, url, event, body, head, busy]);
+  // Memory follows the person's edits only. Submit takes the draft out while
+  // it goes in, and its reset or recovery writes nothing back: another panel
+  // on this pull request may have written a newer draft meanwhile.
+  function edit(change: Partial<ReviewDraft>) {
+    const draft = { event, body, head, ...change };
+    setEvent(draft.event);
+    setBody(draft.body);
+    setHead(draft.head);
+    memory.setReview(url, isEmptyDraft(draft.body) ? undefined : draft);
+  }
   const [error, setError] = useState<string>();
   const comment = useRef<HTMLTextAreaElement>(null);
   const alive = useRef(true);
@@ -96,8 +98,7 @@ export function SubmitReview({
       }
     } catch (failure) {
       // Back for the next panel, unless another panel has started a draft
-      // since. That check only matters once this panel has unmounted: while
-      // mounted, its write effect saves this draft again when busy ends.
+      // since; this panel keeps showing it either way.
       if (!isEmptyDraft(body) && !memory.get(url).review)
         memory.setReview(url, draft);
       if (alive.current) setError(readable(failure).message);
@@ -158,7 +159,7 @@ export function SubmitReview({
               name="review-decision"
               value={event}
               disabled={busy}
-              onValueChange={setEvent}
+              onValueChange={(next) => edit({ event: next })}
             >
               {decisions.map(([value, label, description]) => (
                 <Radio
@@ -183,7 +184,7 @@ export function SubmitReview({
               aria-required={event !== "APPROVE"}
               value={body}
               disabled={busy}
-              onChange={(change) => setBody(change.target.value)}
+              onChange={(change) => edit({ body: change.target.value })}
             />
           </Field>
           {pushed ? (
@@ -194,7 +195,7 @@ export function SubmitReview({
               <Button
                 size="sm"
                 disabled={busy}
-                onClick={() => setHead(pull.head)}
+                onClick={() => edit({ head: pull.head })}
               >
                 Use latest commit
               </Button>
