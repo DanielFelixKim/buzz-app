@@ -110,6 +110,7 @@ import {
 import { accessOnce, eventVisibility } from "./event-access";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
+  PublishBlocked,
   PublishRejected,
   browserOutboxStorage,
   createOutbox,
@@ -1621,7 +1622,8 @@ export function createRelaySession(
       })
     )
       return;
-    throw new Error("You have read-only access to this channel.");
+    // Sending it again is refused the same way until the role changes.
+    throw new PublishBlocked("You have read-only access to this channel.");
   }
   function validateMentionEvent(event: Pick<EventData, "kind" | "tags">) {
     if (event.kind !== 9) return;
