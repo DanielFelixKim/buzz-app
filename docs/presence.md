@@ -32,16 +32,24 @@ record, and the next read drops the badge. This is display only: Online here
 means the owner set the agent up to run remotely, not that the runtime is up,
 and it grants nothing.
 
-`features/presence/hosted.ts` reads only shown agents whose evidence is
-missing or was read for another owner: one filter per owner, at most 100
-agents each and four filters per read, coalesced for 100ms. A read under way is
-not cancelled; agents shown meanwhile are read next. Evidence for up to 1024
-agents outlives their views, so a remount reads nothing. Every shown agent is
-read again every five to six minutes; a reconnect keeps evidence and spreads its
-reads over one to five seconds. A failed read keeps the last answer and waits
-60–65 seconds before any retry. Disconnect hides the badge until reconnection.
-A hosted agent is never marked past the demand limit. Viewers without a remote
-agent type installed see relay presence only.
+`features/presence/hosted.ts` reads only shown agents within the observed
+directory's demand limit whose evidence is missing or was read for another
+owner: one filter per owner, at most 100 agents each and four filters per read,
+coalesced for 100ms. The observed directory tells it when demand moves subjects
+within or past its 256-subject limit, so the same window bounds both: an agent
+past it is neither read nor marked and stays limited, and one admitted later is
+read then. A read under way is not cancelled; agents shown meanwhile are read
+next. Evidence for up to 1024 agents outlives their views, so a remount reads
+nothing. Every shown agent is read again every five to six minutes. No read
+starts while the app is hidden; evidence and badges stay, and a reconnect or a
+return to the foreground spreads the reads it wants over one to five seconds.
+A failed read keeps the last answer. The first retry waits 60–66 seconds, each
+further failure in a row doubles the wait, to a cap of 30–33 minutes, and a
+successful read resets it; a read queued during a failing read waits for that
+deadline too. Disconnect hides the badge until reconnection. Subscribers are
+told whenever an agent's badge changes, whichever input changed it: a record,
+its attested owner, the demand limit, the connection or the known runtimes.
+Viewers without a remote agent type installed see relay presence only.
 
 ## Your status
 

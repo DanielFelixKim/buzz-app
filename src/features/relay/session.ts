@@ -1003,6 +1003,9 @@ export function createRelaySession(
     createHostedAgents({
       owner: (pubkey) => profiles.queries.owner?.(pubkey),
       subscribeOwners: profiles.queries.subscribe,
+      limited: observedPresence.limited,
+      subscribeSelection: observedPresence.subscribeSelection,
+      activity: options.presenceActivity,
       read: (filters, signal) => readVerified(filters, { signal }, false),
       notify,
     }),
