@@ -8,6 +8,7 @@ import type {
   NipOaAuthorization,
 } from "../../../features/host/service";
 import { oauthTarget } from "../oauth/browser";
+import { managementTimestamp } from "../management-date";
 import type { BuilderlabSession, Credential } from "../session";
 import {
   clearRegistration,
@@ -691,29 +692,30 @@ export function createAgentClient(
         )
       )
         throw new Error("Builderlab returned an invalid agent list.");
-      return agents.map((row) => ({
-        id: row.agent_id,
-        name: row.agent_name,
-        pubkey: row.agent_pubkey,
-        status: agentStatus(row.status),
-        ...(row.created_at !== undefined &&
-        Number.isFinite(Number(row.created_at)) &&
-        Number.isFinite(new Date(Number(row.created_at)).getTime())
-          ? { createdAt: Number(row.created_at) }
-          : {}),
-        instructions: row.agent_instructions ?? "",
-        ...(typeof row.model_id === "string" ? { modelId: row.model_id } : {}),
-        ...(typeof row.reasoning_effort === "string"
-          ? { reasoningEffort: row.reasoning_effort }
-          : {}),
-        ...(row.model_selection_status !== undefined
-          ? {
-              modelSelectionStatus: modelSelectionStatus(
-                row.model_selection_status,
-              ),
-            }
-          : {}),
-      }));
+      return agents.map((row) => {
+        const createdAt = managementTimestamp(row.created_at);
+        return {
+          id: row.agent_id,
+          name: row.agent_name,
+          pubkey: row.agent_pubkey,
+          status: agentStatus(row.status),
+          ...(createdAt === undefined ? {} : { createdAt }),
+          instructions: row.agent_instructions ?? "",
+          ...(typeof row.model_id === "string"
+            ? { modelId: row.model_id }
+            : {}),
+          ...(typeof row.reasoning_effort === "string"
+            ? { reasoningEffort: row.reasoning_effort }
+            : {}),
+          ...(row.model_selection_status !== undefined
+            ? {
+                modelSelectionStatus: modelSelectionStatus(
+                  row.model_selection_status,
+                ),
+              }
+            : {}),
+        };
+      });
     },
   };
 }
