@@ -86,12 +86,11 @@ describe("huddleFailure", () => {
     });
   });
 
-  it("never appends to unmapped native text and keeps it behind Details", () => {
+  it("never shows or appends to unmapped native text", () => {
     expect(huddleFailure("Invalid Huddle update", true)).toEqual({
       title: "Huddle disconnected",
       description: "Something went wrong with the Huddle connection.",
       rejoin: true,
-      details: "Invalid Huddle update",
     });
     expect(huddleFailure(undefined, false)).toEqual({
       title: "Couldn’t join the Huddle",

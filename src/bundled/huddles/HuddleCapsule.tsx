@@ -1,7 +1,7 @@
 import { useHuddleRequestFocus } from "./useHuddleRequestFocus";
 import { HuddleAudioSettings } from "./HuddleAudioSettings";
 import { LayoutGroup } from "motion/react";
-import { useId } from "react";
+import { useEffect, useId } from "react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { useState, useSyncExternalStore } from "react";
 import type { RelayData } from "../../features/relay/service";
@@ -125,6 +125,11 @@ function HuddleCapsuleContent({
   );
   const [error, setError] = useState<string>();
   const focus = useHuddleRequestFocus(call.phase === "connected", call.error);
+  // The notice shows one mapped sentence; keep the native text for support.
+  const failed = call.phase === "error" ? call : undefined;
+  useEffect(() => {
+    if (failed?.error) console.warn("Huddle failed:", failed.error);
+  }, [failed]);
   if (call.phase === "error") {
     const failure = huddleFailure(call.error, !!call.dropped);
     const { destination } = call;
@@ -157,12 +162,6 @@ function HuddleCapsuleContent({
             >
               Join again
             </Button>
-          )}
-          {failure.details && (
-            <details>
-              <summary>Details</summary>
-              {failure.details}
-            </details>
           )}
         </ToastNotice>
         {confirming === call && destination && (

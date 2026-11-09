@@ -252,22 +252,25 @@ test("connected Huddles keep compact controls beside the default window", async 
   await expect(notifications.getByRole("dialog")).toHaveCount(0);
   await page.evaluate(() => window.huddleFixture.connect());
   await expect(capsule).toBeVisible();
+  const logged = page.waitForEvent("console", (message) =>
+    message.text().includes("Invalid Huddle update"),
+  );
   await page.evaluate(() =>
     window.huddleFixture.disconnect("Invalid Huddle update"),
   );
-  // A connected call that drops says so, and unmapped text stays in Details.
+  // A connected call that drops says so; unmapped text goes to the console.
   const failure = notifications.getByRole("dialog", {
     name: "Huddle disconnected",
   });
   await expect(failure).toContainText(
     "Something went wrong with the Huddle connection.",
   );
-  const details = failure.locator("details");
-  await expect(details).not.toHaveAttribute("open");
-  await expect(failure.locator("p")).not.toContainText("Invalid Huddle update");
-  await details.getByText("Details", { exact: true }).click();
-  await expect(details).toHaveAttribute("open", "");
-  await expect(details).toContainText("Invalid Huddle update");
+  expect((await logged).type()).toBe("warning");
+  await expect(failure).not.toContainText("Invalid Huddle update");
+  await expect(failure.getByText("Details")).toHaveCount(0);
+  await expect(
+    failure.getByRole("button", { name: "Join again" }),
+  ).toBeVisible();
   await notifications
     .getByRole("button", { name: "Dismiss Huddle error" })
     .click();
@@ -1965,7 +1968,7 @@ test("an inactive call error does not suppress the next incoming call", async ({
   );
   await expect(
     page.getByRole("region", { name: "App notifications" }),
-  ).toContainText("Previous call failed");
+  ).toContainText("Something went wrong with the Huddle connection.");
   // The real clip may finish while WebKit renders the request. Freeze the
   // repeat timer so the first-play assertion cannot race the next ring.
   await pauseClock(page, 1000);

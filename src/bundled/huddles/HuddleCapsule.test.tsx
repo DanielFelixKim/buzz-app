@@ -190,3 +190,27 @@ it("names the voice agent a new call in its DM would invite", async () => {
   );
   expect(huddles.start).not.toHaveBeenCalled();
 });
+
+it("logs unmapped native text instead of showing it", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    mount({ call: { ...dropped, error: "Invalid Huddle update" } });
+    const notice = await screen.findByRole("dialog", {
+      name: "Huddle disconnected",
+    });
+    expect(notice).toHaveTextContent(
+      "Something went wrong with the Huddle connection.",
+    );
+    expect(notice).not.toHaveTextContent("Invalid Huddle update");
+    expect(within(notice).queryByText("Details")).toBeNull();
+    expect(
+      within(notice).getByRole("button", { name: "Join again" }),
+    ).toBeVisible();
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "Huddle failed:",
+      "Invalid Huddle update",
+    );
+  } finally {
+    warn.mockRestore();
+  }
+});

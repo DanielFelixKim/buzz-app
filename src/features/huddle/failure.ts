@@ -3,8 +3,6 @@ export type HuddleFailure = Readonly<{
   description: string;
   /** Joining again can work, so the notice offers Join again. */
   rejoin: boolean;
-  /** Unmapped native text, shown only behind Details. */
-  details?: string;
 }>;
 
 type Cause = Readonly<{
@@ -63,7 +61,7 @@ const causes: readonly Cause[] = [
   },
 ];
 
-/** One sentence for a failed or dropped Huddle; raw text stays in Details. */
+/** One sentence for a failed or dropped Huddle; never the raw native text. */
 export function huddleFailure(
   error: string | undefined,
   dropped: boolean,
@@ -75,7 +73,6 @@ export function huddleFailure(
       title: phase,
       description: "Something went wrong with the Huddle connection.",
       rejoin: true,
-      ...(error?.trim() ? { details: error.trim() } : {}),
     };
   return {
     title: cause.title ?? (dropped ? cause.ended : undefined) ?? phase,
