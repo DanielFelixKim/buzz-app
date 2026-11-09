@@ -209,7 +209,8 @@ export async function prepareFixtureDependencies() {
 // Playwright's globalSetup.
 export default prepareFixtureDependencies;
 
-const moduleScript = /<script\b[^>]*\btype="module"[^>]*\bsrc="([^"]+)"/g;
+// A module script's `src`, with `type="module"` before or after it.
+const moduleScript = /<script\b(?=[^>]*\btype="module")[^>]*\bsrc="([^"]+)"/g;
 
 // A fixture page that reaches the whole app has over a thousand modules to
 // transform on its first load. Transform the static import graph of each entry
@@ -232,8 +233,14 @@ export async function warmUp(server, ...entries) {
     entries.flat().map(async (entry) => {
       if (!entry.endsWith(".html")) return visit(entry);
       const html = await readFile(join(server.config.root, entry), "utf8");
+      const sources = Array.from(html.matchAll(moduleScript), ([, src]) => src);
+      // A page warmed through nothing would load cold again, and silently.
+      if (!sources.length)
+        throw new Error(
+          `${entry} has no <script type="module" src> to warm up`,
+        );
       await Promise.all(
-        Array.from(html.matchAll(moduleScript), ([, src]) =>
+        sources.map((src) =>
           visit(new URL(src, `http://fixture${entry}`).pathname),
         ),
       );
