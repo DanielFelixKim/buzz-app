@@ -176,6 +176,11 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community.
+- Community owners and admins invite people with **Invite members** in the
+  community's **Membership** settings (also reached from **Invite to community**
+  in the community picker's right-click menu). The dialog creates an invite
+  link with an expiry and use limit to copy, or adds someone directly by npub.
+  The desktop app also shows that link as a QR code to scan with a phone.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
@@ -781,7 +786,9 @@ available rather than silently discarding it.
   where it runs; received tool details take precedence.
   Available model, effort and session controls keep their gauge beside Send.
   Activity keeps its transcript and feed guidance without a separate workspace
-  note.
+  note. Opened from a conversation, it shows that conversation's turns;
+  **Show all conversations** lists the agent's other turns too. It shows only
+  turns captured while Buzz has been open.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you
@@ -830,6 +837,9 @@ available rather than silently discarding it.
   depend on the type. Do not assume a provider is configured or signed in.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
+  Builderlab permissions are re-read at most once a minute while the app uses
+  them, so a newly granted or removed permission applies without signing in
+  again; a failed check keeps the previous permissions.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
   there, once for every Claude agent. When creating a Claude agent or editing
   one that runs on this computer, click **Add key** beside **Harness** to open
