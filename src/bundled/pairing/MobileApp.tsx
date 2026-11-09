@@ -5,7 +5,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
-import { QrCode, renderQrCode } from "../../shared/QrCode";
+import { QrCode, renderQrCode, useQrVariant } from "../../shared/QrCode";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { PairingSettings } from "./PairingSettings";
 
@@ -119,23 +119,25 @@ function GetTheApp({
   );
 }
 
-/** A store's QR code to scan with the phone, and its link, drawn light on
- * black as invite codes are. A same-size placeholder holds the code's place
+/** A store's QR code to scan with the phone, and its link, in the color
+ * mode's variant as invite codes are. A same-size placeholder holds the code's place
  * while it renders. Without the native renderer (the browser host) only the
  * link shows. */
 function StoreCode({ store }: { store: Store }) {
-  const [drawn, setDrawn] = useState<{ url: string; svg?: string }>();
+  const variant = useQrVariant();
+  const key = `${variant}:${store.url}`;
+  const [drawn, setDrawn] = useState<{ key: string; svg?: string }>();
   useEffect(() => {
     let current = true;
-    renderQrCode(store.url, "dark").then(
-      (svg) => current && setDrawn({ url: store.url, svg }),
-      () => current && setDrawn({ url: store.url }),
+    renderQrCode(store.url, variant).then(
+      (svg) => current && setDrawn({ key, svg }),
+      () => current && setDrawn({ key }),
     );
     return () => {
       current = false;
     };
-  }, [store.url]);
-  const code = drawn?.url === store.url ? drawn : undefined;
+  }, [key, store.url, variant]);
+  const code = drawn?.key === key ? drawn : undefined;
   return (
     <li className="flex w-60 max-w-full flex-col items-center gap-3">
       {code?.svg ? (

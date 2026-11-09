@@ -203,7 +203,7 @@ it("keeps a store's link when its QR code can't be drawn", async () => {
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("qr_code", {
       value: "https://apps.example.com/ios",
-      variant: "dark",
+      variant: "light",
     }),
   );
   await waitFor(() =>
@@ -237,4 +237,26 @@ it("lists only the store links the build sets", () => {
   expect(mobileAppStores()).toEqual([
     { name: "Google Play", url: "https://apps.example.com/a" },
   ]);
+});
+
+it("draws store codes in the color mode's variant and redraws them when it changes", async () => {
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command !== "qr_code") throw new Error(`Unexpected ${command}`);
+    return `<svg data-variant="${(args as { variant: string }).variant}"/>`;
+  });
+  document.documentElement.dataset.colorMode = "dark";
+  try {
+    renderCard(session("signed-in"), stores.slice(0, 1));
+    const alt = "Scan with your phone to get Buzz from the App Store";
+    const variant = () =>
+      decodeURIComponent(screen.getByAltText(alt).getAttribute("src") ?? "");
+    await screen.findByAltText(alt);
+    expect(variant()).toContain('data-variant="dark"');
+    act(() => {
+      document.documentElement.dataset.colorMode = "light";
+    });
+    await waitFor(() => expect(variant()).toContain('data-variant="light"'));
+  } finally {
+    delete document.documentElement.dataset.colorMode;
+  }
 });
