@@ -26,6 +26,9 @@ const decisions: readonly (readonly [ReviewEvent, string, string])[] = [
  * away, and a submitted review leaves none. */
 const isEmptyDraft = (body: string) => !body.trim();
 
+const sameDraft = (a: ReviewDraft, b: ReviewDraft) =>
+  a.event === b.event && a.body === b.body && a.head === b.head;
+
 /** Reviews someone else's pull request. The draft outlasts dismissing the
  * popover, as GitHub's does, and the panel, in the plugin's memory; it clears
  * once the review is in. */
@@ -80,9 +83,12 @@ export function SubmitReview({
     setBusy(true);
     setError(undefined);
     // Out of memory while it goes in, so no other panel on this pull request
-    // offers it again, even one opened before GitHub answers.
+    // offers it again, even one opened before GitHub answers. A different
+    // draft there is another panel's, written since this one was, as when a
+    // refused review is retried unedited; it stays.
     const draft = { event, body, head };
-    memory.setReview(url, undefined);
+    const saved = memory.get(url).review;
+    if (!saved || sameDraft(saved, draft)) memory.setReview(url, undefined);
     try {
       await changePull(
         gh,

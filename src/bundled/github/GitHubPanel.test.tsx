@@ -1452,19 +1452,21 @@ it("drops a review another panel on the pull request sent", async () => {
 });
 
 it.each([
-  ["sent", false],
-  ["refused", true],
+  ["sent", false, undefined],
+  ["refused, then sent on an unedited retry", true, false],
+  ["refused, then refused again on an unedited retry", true, true],
 ])(
   "keeps a draft written in another tab while a review was %s from this one",
-  async (_outcome, refuse) => {
+  async (_outcome, refuse, retryRefused) => {
     const user = userEvent.setup();
     let release!: () => void;
+    let refuseNext = refuse;
     const gh = vi.fn(async (query: string, _variables?: unknown) => {
       if (!query.startsWith("mutation")) return pullData();
       await new Promise<void>((resolve) => {
         release = resolve;
       });
-      if (refuse) throw new GitHubError("Pull request is locked");
+      if (refuseNext) throw new GitHubError("Pull request is locked");
       return {};
     });
     const memory = createPanelMemory();
@@ -1513,11 +1515,31 @@ it.each([
       expect(within(sending).getByRole("textbox")).toHaveValue("Looks right");
     } else await waitFor(() => expect(sending).not.toBeInTheDocument());
     // However the first ends, the second's draft is the one remembered.
-    expect(memory.get(pull).review).toEqual({
+    const drafted = {
       event: "REQUEST_CHANGES",
       body: "Needs a test",
       head: "abc123",
-    });
+    };
+    expect(memory.get(pull).review).toEqual(drafted);
+    if (retryRefused !== undefined) {
+      // The first tab still shows its refused review. Retrying it as it
+      // stands sends only it; the second tab's newer draft is not its to
+      // clear, however the retry ends.
+      refuseNext = retryRefused;
+      await user.click(
+        within(sending).getByRole("button", { name: "Submit review" }),
+      );
+      await waitFor(() =>
+        expect(within(sending).getByRole("textbox")).toBeDisabled(),
+      );
+      release();
+      if (retryRefused) {
+        expect(await within(sending).findByRole("alert")).toHaveTextContent(
+          "Pull request is locked",
+        );
+      } else await waitFor(() => expect(sending).not.toBeInTheDocument());
+      expect(memory.get(pull).review).toEqual(drafted);
+    }
     await user.click(second.getByRole("button", { name: "Submit review" }));
     const popup = (
       await screen.findAllByRole("dialog", { name: "Submit review" })
