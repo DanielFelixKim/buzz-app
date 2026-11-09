@@ -836,7 +836,7 @@ it("keeps a created community's address when the following refresh fails", async
     expect(screen.queryByPlaceholderText("north-star")).not.toBeInTheDocument(),
   );
   routes["/api/builderlab/list"] = () => listed;
-  refreshCommunities();
+  fireEvent.focus(window);
   expect(await screen.findByText("1 of 5")).toBeInTheDocument();
   expect(screen.queryByText(/The change was saved/)).not.toBeInTheDocument();
   expect(

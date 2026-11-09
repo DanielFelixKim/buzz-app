@@ -72,6 +72,8 @@ import { CommunityAddressField, useCommunityAddress } from "./CommunityAddress";
 
 const card = "mt-6 rounded-xl border border-default p-5";
 const sectionClassName = "mt-section-gap";
+const refreshFailure =
+  "The change was saved, but the list could not be refreshed.";
 const npub = (hex?: string | null) => (hex ? npubEncode(hex) : "Unavailable");
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
@@ -328,7 +330,7 @@ export function HostedCommunities({
       (reason) =>
         at === generation.current &&
         setError(
-          `The change was saved, but the list could not be refreshed. ${message(reason)} Use Refresh to try again.`,
+          `${refreshFailure} ${message(reason)} Use Refresh to try again.`,
         ),
     );
   };
@@ -420,7 +422,10 @@ export function HostedCommunities({
     void load()
       .then(
         (snapshot) => {
-          if (snapshot && at === generation.current && !loaded) setError("");
+          if (snapshot && at === generation.current)
+            setError((current) =>
+              !loaded || current.startsWith(refreshFailure) ? "" : current,
+            );
         },
         (reason) => {
           if (
