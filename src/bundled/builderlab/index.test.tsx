@@ -59,6 +59,7 @@ function provideKnownCommunities(root: Context, viewer: string) {
     apply: vi.fn(async () => {}),
   };
   root.provide("knownCommunities", knownCommunities);
+  root.provide("communityJoin", { open: vi.fn(() => true) });
   return knownCommunities;
 }
 beforeEach(() => {

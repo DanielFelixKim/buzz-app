@@ -39,6 +39,7 @@ export const inject = [
   "panels",
   "browser",
   "knownCommunities",
+  "communityJoin",
   "decisions",
   "navigation",
   ...(nativeBuilderlab() ? ["federatedIdentity"] : []),
@@ -220,6 +221,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           api={communities}
           active={active}
           onOverview={onOverview}
+          join={ctx.communityJoin?.open}
         />
       );
     const viewer =
@@ -235,6 +237,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         api={communities}
         active={active}
         onOverview={onOverview}
+        join={ctx.communityJoin?.open}
         sharedSignIn
       />
     ) : (
