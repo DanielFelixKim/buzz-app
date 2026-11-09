@@ -534,10 +534,11 @@ and their retry controls remain visible.
 The composer preserves the session's text sending and keyboard behavior. Its
 rounded input and lavender send arrow follow the reference; unsupported upload,
 mention, and rich-formatting actions are not presented as working controls.
-Delivery renders like an ordinary message immediately. After ten seconds from the
-message timestamp, unsuccessful/unconfirmed sends show a small notice. Confirmed
-messages never show a success label. Retry remains available for failed/unknown
-operations. `delivery.test.ts` covers the timing boundary and terminal states.
+Delivery renders like an ordinary message immediately. A failed send shows a
+small notice as soon as it fails; an unconfirmed send shows one only after ten
+seconds from the message timestamp. Confirmed messages never show a success
+label. Retry remains available for failed/unknown operations. `delivery.test.ts`
+covers the timing boundary and terminal states.
 
 The shared conversation layer now supplies bounded thread reading/replies and
 [session-owned unread indicators](unread.md). These are separate from this styling
