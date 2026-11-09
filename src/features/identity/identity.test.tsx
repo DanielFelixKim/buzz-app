@@ -8876,11 +8876,13 @@ it("a refused Replace from the open app fails setup, withdraws the sign-in after
 
 const EXPECTED_AFTER_RESTART = "buzz.sign-in-after-restart.expected.v1";
 /** The launch after Replace restarted Buzz for the account linked to `owned`. */
-function launchAfterReplace(account: AccountFor) {
+function launchAfterReplace(
+  account: AccountFor,
+  connect = vi.fn().mockResolvedValue(credential),
+) {
   missingKey();
   localStorage.setItem(AFTER_RESTART, String(Date.now()));
   localStorage.setItem(EXPECTED_AFTER_RESTART, owned.pubkey);
-  const connect = vi.fn().mockResolvedValue(credential);
   const identity = createIdentity();
   render(
     <Welcome
@@ -8930,6 +8932,30 @@ it.each<[string, (other: string, bind: FirstRunAccount["bind"]) => AccountFor]>(
     identity.dispose();
   },
 );
+
+it("Create account in place of the sign-in after Replace's restart sets up the new account, without the wrong-account stop", async () => {
+  const bind = vi.fn((_pubkey: string) => Promise.resolve());
+  const connect = vi
+    .fn<(signal: AbortSignal, options: SignInOptions) => Promise<Credential>>()
+    // The automatic sign-in waits in the browser and is abandoned.
+    .mockReturnValueOnce(new Promise<Credential>(() => {}))
+    .mockResolvedValue(credential);
+  const { identity } = launchAfterReplace(unlinkedWith(bind), connect);
+  keyOnDevice(viewer, false);
+  const user = userEvent.setup();
+  await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  await user.click(
+    await screen.findByRole("button", { name: "Create account" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(connect).toHaveBeenCalledTimes(2);
+  expect(connect.mock.calls[1]?.[1]).toEqual(createAccount);
+  expect(bind.mock.calls).toEqual([[viewer]]);
+  expect(screen.queryByText("Couldn’t finish setup")).toBeNull();
+  identity.dispose();
+});
 
 it("the sign-in after Replace's restart to the account it replaced the key for rests on Welcome back", async () => {
   const { identity } = launchAfterReplace(linkedTo(owned.pubkey));

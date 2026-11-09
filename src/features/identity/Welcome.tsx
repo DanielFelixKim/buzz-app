@@ -468,6 +468,8 @@ export function Welcome({
    */
   const signIn = async (create = false) => {
     signup.current = create;
+    // A new account can't be the one Replace restarted for.
+    if (create) expectedKey.current = undefined;
     const attempt = cancels.current;
     // A canceled attempt still settles here, possibly after a later sign-in
     // succeeded; it must not read that one's credential.

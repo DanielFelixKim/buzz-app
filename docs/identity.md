@@ -76,7 +76,8 @@ with no key, where Welcome back restores the account's key. The restart's note
 names that key (`buzz.sign-in-after-restart.expected.v1`): when the browser
 signs in to an account linked to another key, or to none, setup fails before it
 creates, links or restores any key, offering only **Use a different account**,
-which drops the expectation. With no backup of
+which drops the expectation, as **Create account** does: a new account can't
+be the one Replace restarted for. With no backup of
 the account's key, or no backups on this build or account (`unavailable`),
 Replace is not offered, since Welcome back could not restore it: the dialog says the account's
 key lives on another device and offers only **OK**. A backup status read that
