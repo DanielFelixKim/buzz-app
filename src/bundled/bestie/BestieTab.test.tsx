@@ -389,9 +389,11 @@ it("says why a hosted Bestie's instructions can't be read or saved, and lets eit
   await act(async () => {
     render(<Tab agent={remote} />);
   });
-  expect(await screen.findByText("Builderlab is down.")).toBeVisible();
+  expect((await screen.findAllByText("Builderlab is down."))[0]).toBeVisible();
   expect(screen.queryByRole("switch")).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Retry" }));
+  const retry = screen.getAllByRole("button", { name: "Retry" })[0];
+  if (!retry) throw new Error("Expected a memory retry button");
+  await user.click(retry);
   const remembers = await screen.findByRole("switch", {
     name: "Remembers you",
   });
@@ -1265,7 +1267,9 @@ it("keeps a hosted former Bestie's tab after a failed read, until a read shows n
   get.mockRejectedValueOnce(new Error("Builderlab is down."));
   const Tab = tab.component;
   render(<Tab agent={remote} />);
-  await user.click(await screen.findByRole("button", { name: "Retry" }));
+  const retry = (await screen.findAllByRole("button", { name: "Retry" }))[0];
+  if (!retry) throw new Error("Expected a memory retry button");
+  await user.click(retry);
   expect(
     await screen.findByRole("switch", { name: "Remembers you" }),
   ).not.toBeChecked();
@@ -1293,10 +1297,12 @@ it("keeps a hosted former Bestie's tab when memory saved on but reading it back 
   get.mockRejectedValueOnce(new Error("Builderlab is down."));
   await user.click(remembers);
   await vi.waitFor(() => expect(set).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText("Builderlab is down.")).toBeVisible();
+  expect((await screen.findAllByText("Builderlab is down."))[0]).toBeVisible();
   // The earlier off may be out of date, so the tab stays to read again.
   expect(tab.when?.(remote)).toBe(true);
-  await user.click(screen.getByRole("button", { name: "Retry" }));
+  const retry = screen.getAllByRole("button", { name: "Retry" })[0];
+  if (!retry) throw new Error("Expected a memory retry button");
+  await user.click(retry);
   expect(
     await screen.findByRole("switch", { name: "Remembers you" }),
   ).toBeChecked();
