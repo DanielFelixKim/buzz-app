@@ -22,12 +22,9 @@ import {
   channelForLink,
   channelLinkLabel,
   emptyReferenceDirectory,
+  MentionLabel,
 } from "./ReferenceText";
-import {
-  AtIcon,
-  CopyIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons/index";
+import { CopyIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
@@ -696,7 +693,6 @@ function PreparedMessageMarkdown({
       interactive && typeof target === "string" && !!canOpenLink?.(target);
     if (typeof text === "string" && typeof target === "string") {
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
-      const Icon = agent ? RobotIcon : AtIcon;
       const Mention = clickable ? "button" : "span";
       // Selection copy reads the identity and the whole label (selection-copy.ts).
       return (
@@ -717,34 +713,20 @@ function PreparedMessageMarkdown({
               : undefined
           }
         >
-          <Icon aria-hidden="true" className={referenceStyles.icon} />
-          {label}
+          <MentionLabel agent={!!agent} label={label} />
         </Mention>
       );
     }
     return undefined;
   };
   const components: MessageComponents = {
-    p: ({ node, ...props }) => {
-      const first = node?.children[0];
-      const element = first?.type === "element" ? first : undefined;
-      const href = element?.properties.href;
-      const leadingMention =
-        typeof element?.properties["data-profile-target"] === "string" ||
-        (element?.tagName === "a" &&
-          typeof href === "string" &&
-          !!profileKey(href) &&
-          interactive &&
-          !!canOpenLink?.(href));
-      return (
-        <p
-          {...props}
-          className={largeEmoji ? styles.text : undefined}
-          data-single-emoji={largeEmoji || undefined}
-          data-leading-mention={leadingMention || undefined}
-        />
-      );
-    },
+    p: ({ node: _node, ...props }) => (
+      <p
+        {...props}
+        className={largeEmoji ? styles.text : undefined}
+        data-single-emoji={largeEmoji || undefined}
+      />
+    ),
     a: ({ href: target, children }) => {
       const href =
         target &&
@@ -757,13 +739,6 @@ function PreparedMessageMarkdown({
           : safeLinkUrl(target));
       if (href && profileKey(href)) {
         const label = labelText(children);
-        // A compact preview names the profile, inert, as it does a bound mention.
-        if (!compact && (!interactive || !canOpenLink?.(href)))
-          return (
-            <span>
-              {children} ({href})
-            </span>
-          );
         return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
       }
       return href ? (

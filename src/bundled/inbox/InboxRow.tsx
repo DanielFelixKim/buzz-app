@@ -39,7 +39,19 @@ type ResolveName = (
 export const hasUnread = (item: InboxItem) =>
   item.unreadCount > 0 || item.manual;
 
-/** Who sent a row and where, as the Inbox page and its sidebar preview name it. */
+/** What a preview shows instead of a body whose stored edits or deletions are
+ * not settled yet, or undefined when none of `ids` is incomplete. */
+export const incompletePreview = (
+  feed: InboxFeedSnapshot,
+  ids: readonly (string | undefined)[],
+) =>
+  ids.some((id) => id !== undefined && feed.incomplete.includes(id))
+    ? feed.status === "error"
+      ? "Preview unavailable. Retry activity."
+      : "Preview updating…"
+    : undefined;
+
+/** Who sent a row and where, as the Inbox page and its dock preview name it. */
 export function rowIdentity(
   item: InboxItem,
   channel: ChannelSummary | undefined,
@@ -105,13 +117,10 @@ export function InboxRowButton({
   "icon" | "label" | "trailing" | "aria-label"
 >) {
   const unread = hasUnread(item);
-  const status = [item.previewMessageId, ...item.messageIds].some(
-    (id) => id !== undefined && feed.incomplete.includes(id),
-  )
-    ? feed.status === "error"
-      ? "Preview unavailable. Retry activity."
-      : "Preview updating…"
-    : undefined;
+  const status = incompletePreview(feed, [
+    item.previewMessageId,
+    ...item.messageIds,
+  ]);
   const row = useMemo(() => previewRow(item), [item]);
   // The clamp is visual: a long body describes the row by its bounded text.
   const bounded = useMemo(

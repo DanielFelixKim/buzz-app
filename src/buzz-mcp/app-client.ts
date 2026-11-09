@@ -96,6 +96,12 @@ export function appClient(
         channel: (id) => owned((signal) => ownerAccess.channel(id, signal)),
         members: (id, page) =>
           owned((signal) => ownerAccess.members(id, page, signal)),
+        messages: (request) =>
+          owned((signal) => ownerAccess.messages(request, signal)),
+        canvas: (channel, revision) =>
+          owned((signal) => ownerAccess.canvas(channel, revision, signal)),
+        canvasHistory: (channel, cursor) =>
+          owned((signal) => ownerAccess.canvasHistory(channel, cursor, signal)),
         held: (execution) => {
           check();
           ownerAccess.held(execution);
@@ -217,6 +223,24 @@ export function appClient(
       if (!agent.updateAgent)
         throw new Error("Agent changes are unavailable on this host");
       return agent.updateAgent(input);
+    },
+    readAgents: async (target) => {
+      check();
+      if (!agent.readAgents)
+        throw new Error("Agent reads are unavailable on this host");
+      return agent.readAgents(target);
+    },
+    readTeams: async (target) => {
+      check();
+      if (!agent.readTeams)
+        throw new Error("Team reads are unavailable on this host");
+      return agent.readTeams(target);
+    },
+    updateTeam: async (input) => {
+      check();
+      if (!agent.updateTeam)
+        throw new Error("Team changes are unavailable on this host");
+      return agent.updateTeam(input);
     },
     ...(plugins && {
       plugins: {
