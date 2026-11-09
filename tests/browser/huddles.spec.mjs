@@ -232,8 +232,37 @@ test("connected Huddles keep compact controls beside the default window", async 
   await page.getByRole("button", { name: "Start huddle" }).click();
   await page.evaluate(() => window.huddleFixture.disconnect());
   const notifications = page.getByRole("region", { name: "App notifications" });
-  await expect(notifications).toContainText("Huddle disconnected");
+  // The call never connected, so the title says joining failed.
+  const joinFailure = notifications.getByRole("dialog", {
+    name: "Couldn’t join the Huddle",
+  });
+  await expect(joinFailure).toContainText("The connection dropped.");
+  await expect(joinFailure).not.toContainText("You can join again");
+  await expect(joinFailure.getByText("Details")).toHaveCount(0);
   await expect(capsule).toHaveCount(0);
+  await joinFailure.getByRole("button", { name: "Join again" }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
+    .toBe(3);
+  await expect(notifications.getByRole("dialog")).toHaveCount(0);
+  await page.evaluate(() => window.huddleFixture.connect());
+  await expect(capsule).toBeVisible();
+  await page.evaluate(() =>
+    window.huddleFixture.disconnect("Invalid Huddle update"),
+  );
+  // A connected call that drops says so, and unmapped text stays in Details.
+  const failure = notifications.getByRole("dialog", {
+    name: "Huddle disconnected",
+  });
+  await expect(failure).toContainText(
+    "Something went wrong with the Huddle connection.",
+  );
+  const details = failure.locator("details");
+  await expect(details).not.toHaveAttribute("open");
+  await expect(failure.locator("p")).not.toContainText("Invalid Huddle update");
+  await details.getByText("Details", { exact: true }).click();
+  await expect(details).toHaveAttribute("open", "");
+  await expect(details).toContainText("Invalid Huddle update");
   await notifications
     .getByRole("button", { name: "Dismiss Huddle error" })
     .click();
@@ -242,7 +271,7 @@ test("connected Huddles keep compact controls beside the default window", async 
   await page.getByRole("button", { name: "Start huddle" }).click();
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
-    .toBe(3);
+    .toBe(4);
   await page.evaluate(() =>
     window.huddleFixture.disconnect(
       "huddle audio unavailable in this deployment",
@@ -251,9 +280,9 @@ test("connected Huddles keep compact controls beside the default window", async 
   await expect(notifications).toContainText(
     "A relay administrator needs to check its configuration.",
   );
-  await expect(notifications).not.toContainText(
-    "Try the headphone button again",
-  );
+  await expect(
+    notifications.getByRole("button", { name: "Join again" }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("group", { name: "Huddle error", exact: true }),
   ).toHaveCount(0);
@@ -1490,11 +1519,12 @@ test("window Join and compact Decline operate on the same incoming request", asy
           page.getByRole("button", { name: "Search Buzz", exact: true }),
         ).toBeFocused();
       } else {
+        // Both surfaces show the mapped cause, never the native text.
         await expect(request.getByRole("alert")).toHaveText(
-          "Microphone disconnected",
+          "Your microphone disconnected. Check it, then join again.",
         );
         await expect(capsule.getByRole("alert")).toHaveText(
-          "Microphone disconnected",
+          "Your microphone disconnected. Check it, then join again.",
         );
         // Both views remain retryable; the companion owns focus after reopening.
         await expect(
@@ -1526,7 +1556,7 @@ test("window Join and compact Decline operate on the same incoming request", asy
     window.huddleFixture.disconnect("Microphone disconnected"),
   );
   await expect(capsule.getByRole("alert")).toHaveText(
-    "Microphone disconnected",
+    "Your microphone disconnected. Check it, then join again.",
   );
   await expect(elsewhere).toBeFocused();
   await expect(request).toHaveCount(0);

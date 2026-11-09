@@ -6,6 +6,7 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 import { useState, useSyncExternalStore } from "react";
 import type { RelayData } from "../../features/relay/service";
 import { HuddleAvatarStack } from "./HuddleAvatarStack";
+import { huddleFailure } from "../../features/huddle/failure";
 import type { HuddleWindow } from "../../features/huddle/window";
 import type { Huddles } from "../../features/huddle/service";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -69,26 +70,33 @@ function HuddleCapsuleContent({
   );
   const [error, setError] = useState<string>();
   const focus = useHuddleRequestFocus(call.phase === "connected", call.error);
-  const audioUnavailable = call.error
-    ?.toLowerCase()
-    .includes("huddle audio unavailable in this deployment");
-  if (call.phase === "error")
+  if (call.phase === "error") {
+    const failure = huddleFailure(call.error, !!call.dropped);
+    const { destination } = call;
     return (
       <ToastNotice
-        title={
-          audioUnavailable
-            ? "Huddle audio unavailable"
-            : "Couldn’t connect to Huddle"
-        }
-        description={
-          audioUnavailable
-            ? "Huddle audio isn’t available on this server. A relay administrator needs to check its configuration."
-            : `${call.error || "The connection failed."} Try the headphone button again.`
-        }
+        title={failure.title}
+        description={failure.description}
         closeLabel="Dismiss Huddle error"
         onDismiss={() => void huddles.leave()}
-      />
+      >
+        {failure.rejoin && destination && (
+          <Button
+            size="compact"
+            onClick={() => void huddles.start(destination)}
+          >
+            Join again
+          </Button>
+        )}
+        {failure.details && (
+          <details>
+            <summary>Details</summary>
+            {failure.details}
+          </details>
+        )}
+      </ToastNotice>
     );
+  }
   if (
     (call.phase === "incoming" ||
       (call.phase === "connecting" && call.requester)) &&
@@ -132,7 +140,7 @@ function HuddleCapsuleContent({
         </Button>
         {call.error && (
           <span role="alert" className="text-caption text-danger">
-            {call.error}
+            {huddleFailure(call.error, false).description}
           </span>
         )}
         <span className={styles.requestCompactActions}>

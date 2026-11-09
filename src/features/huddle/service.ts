@@ -23,6 +23,8 @@ export type HuddleSnapshot = Readonly<{
   listening?: readonly string[];
   thinking?: readonly string[];
   error?: string;
+  /** Set on an error that ended a call after it had connected. */
+  dropped?: true;
 }>;
 type Attempt = {
   id: string;
@@ -133,7 +135,16 @@ export function createHuddles(
     }
     if (!error && snapshot.phase === "connecting" && snapshot.room)
       requests?.dismiss(snapshot.room);
-    const failedRoom = snapshot.room;
+    // Keep the destination and phase with the error so its notice can offer
+    // Join again and say whether the call failed to join or dropped.
+    const failed = (reason: string): HuddleSnapshot => ({
+      ...idle,
+      phase: "error",
+      error: reason,
+      ...(snapshot.room ? { room: snapshot.room } : {}),
+      ...(snapshot.destination ? { destination: snapshot.destination } : {}),
+      ...(snapshot.phase === "connected" ? { dropped: true } : {}),
+    });
     const previous = current;
     current = undefined;
     resetActivity();
@@ -143,18 +154,10 @@ export function createHuddles(
     clearInterval(previous?.heartbeat);
     previous?.stopAccess?.();
     if (!previous) {
-      update(
-        error
-          ? {
-              ...idle,
-              phase: "error",
-              error,
-              ...(failedRoom ? { room: failedRoom } : {}),
-            }
-          : idle,
-      );
+      update(error ? failed(error) : idle);
       return;
     }
+    const failure = failed(error ?? "");
     update({
       ...snapshot,
       ...activitySnapshot(),
@@ -168,18 +171,9 @@ export function createHuddles(
           await previous.opening.catch(() => {});
           await bridge.close(previous.id);
         }
-        update(
-          error
-            ? {
-                ...idle,
-                phase: "error",
-                error,
-                ...(failedRoom ? { room: failedRoom } : {}),
-              }
-            : idle,
-        );
-      } catch (failure) {
-        update({ ...idle, phase: "error", error: message(failure) });
+        update(error ? failure : idle);
+      } catch (closeError) {
+        update({ ...failure, error: message(closeError) });
       } finally {
         closing = undefined;
         requests?.refresh();
