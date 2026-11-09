@@ -118,7 +118,7 @@ export function CommunityAddressField({
           </div>
           <span
             id={suffixId}
-            className="min-w-0 wrap-anywhere text-body-sm text-muted"
+            className="min-w-0 wrap-anywhere text-body-lg text-primary"
           >
             .{HOST_SUFFIX}
           </span>
@@ -138,7 +138,11 @@ export function CommunityAddressField({
       ) : (
         <p
           role="status"
-          className={`flex items-center gap-1.5 text-body-sm ${valid && enabled && available ? "text-success" : "text-muted"}`}
+          className={
+            valid && enabled && available !== false
+              ? `m-0 flex items-center gap-1.5 text-body-sm ${available ? "text-success" : "text-muted"}`
+              : "sr-only"
+          }
         >
           {valid && enabled ? (
             available === null ? (

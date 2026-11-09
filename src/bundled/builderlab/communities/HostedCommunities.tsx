@@ -6,6 +6,7 @@ import communitiesHero from "../assets/communities-hero.png";
 import { Tabs } from "../../../shared/design-system/ui/Tabs";
 import { SearchField } from "../../../shared/design-system/ui/SearchField";
 import { IconButton } from "../../../shared/design-system/ui/IconButton";
+import { Tooltip } from "../../../shared/design-system/ui/Tooltip";
 import {
   PopoverRoot,
   PopoverPopup,
@@ -44,6 +45,7 @@ import {
   ArrowsLeftRightIcon,
   BoxArrowUpIcon,
   CheckCircleIcon,
+  CheckIcon,
   CircleNotchIcon,
   GlobeIcon,
   DotsThreeIcon,
@@ -470,6 +472,20 @@ export function HostedCommunities({
     Boolean(identity) && (!bound || (Boolean(local) && bound !== local));
   // Acting requires this device's key to be known and to match the account's.
   const ready = bound !== null && bound === local;
+  const connected = Boolean(auth) && ready && !identityLoadFailed;
+  const connectedMark = connected ? (
+    <Tooltip content="This Builderlab account is connected to this device’s Buzz identity.">
+      <span
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need the connection description too.
+        tabIndex={0}
+        role="img"
+        aria-label="Buzz identity connected"
+        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-affordance-success"
+      >
+        <CheckIcon size={16} aria-hidden="true" color="var(--icon-success)" />
+      </span>
+    </Tooltip>
+  ) : null;
   const deletionEnabled =
     auth?.capabilities?.can_delete_buzz_communities === true;
   // A handoff belongs to the bound identity: whenever it changes, by a local
@@ -711,37 +727,40 @@ export function HostedCommunities({
       <ManagementSection
         hero={communitiesHero}
         facts={[
-          {
-            label: "Buzz identity",
-            value:
-              auth === undefined || (auth && local === undefined)
-                ? "…"
-                : error || mismatch || identityLoadFailed
-                  ? "Needs attention"
-                  : ready
-                    ? "Connected"
-                    : "Not connected",
-          },
-          {
-            label: "Communities",
-            value: quotaState
-              ? `${quotaState.used} of ${quotaState.limit}`
-              : "—",
-          },
+          ...(connected
+            ? []
+            : [
+                {
+                  label: "Buzz identity",
+                  value:
+                    auth === undefined || (auth && local === undefined)
+                      ? "…"
+                      : error || mismatch || identityLoadFailed
+                        ? "Needs attention"
+                        : ready
+                          ? "Connected"
+                          : "Not connected",
+                },
+              ]),
         ]}
         aside={
-          <>
-            {(!sharedSignIn || !ready) && identityControls}
-            {quotaState?.canCreate === false && (
-              <p className="text-body-sm text-subtle">
-                {quotaLimitMessage(quotaState.limit)}
-              </p>
-            )}
-          </>
+          (!sharedSignIn || !ready || quotaState?.canCreate === false) && (
+            <>
+              {(!sharedSignIn || !ready) && identityControls}
+              {quotaState?.canCreate === false && (
+                <p className="text-body-sm text-subtle">
+                  {quotaLimitMessage(quotaState.limit)}
+                </p>
+              )}
+            </>
+          )
         }
       >
         {auth && communities.length === 0 && (
-          <div className="flex justify-end">{refreshAction}</div>
+          <div className="flex items-center justify-end gap-2">
+            {refreshAction}
+            {connectedMark}
+          </div>
         )}
         {!createOpen && failure}
         {unsupported ? (
@@ -873,6 +892,7 @@ export function HostedCommunities({
                   trailingAction={
                     <div className="flex w-full min-w-0 items-center gap-2 self-end sm:w-auto">
                       {refreshAction}
+                      {connectedMark}
                       <div className="min-w-0 flex-1 sm:w-60">
                         <SearchField
                           variant="capsule"
@@ -1147,6 +1167,11 @@ export function HostedCommunities({
             <CreateCommunity
               open={createOpen}
               close={() => setCreateOpen(false)}
+              quotaLabel={
+                quotaState
+                  ? `${quotaState.used} of ${quotaState.limit} communities used`
+                  : null
+              }
               failure={failure}
               api={api}
               enabled={ready && quotaState?.canCreate !== false}
@@ -1374,6 +1399,7 @@ function DeleteCommunityDialog({
 function CreateCommunity({
   open,
   close,
+  quotaLabel,
   failure,
   api,
   enabled,
@@ -1384,6 +1410,7 @@ function CreateCommunity({
 }: {
   open: boolean;
   close(): void;
+  quotaLabel: string | null;
   failure: ReactNode;
   api: Api;
   enabled: boolean;
@@ -1445,6 +1472,7 @@ function CreateCommunity({
       {failure}
       <form
         id={formId}
+        className="flex flex-col gap-3"
         onSubmit={(event) => {
           event.preventDefault();
           if (address.ready)
@@ -1456,10 +1484,11 @@ function CreateCommunity({
             });
         }}
       >
-        <SettingsGroup layout="form">
-          {atLimit && <p className="text-body-sm text-muted">{atLimit}</p>}
-          <CommunityAddressField address={address} busy={busy} />
-        </SettingsGroup>
+        {atLimit && <p className="m-0 text-body-sm text-muted">{atLimit}</p>}
+        <CommunityAddressField address={address} busy={busy} />
+        {quotaLabel && (
+          <p className="m-0 text-body-sm text-muted">{quotaLabel}</p>
+        )}
       </form>
     </Dialog>
   );

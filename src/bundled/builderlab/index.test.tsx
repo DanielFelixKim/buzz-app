@@ -532,7 +532,9 @@ it.each([true, false])(
           screen.getByRole("button", { name: "Create community" }),
         ).toBeEnabled(),
       );
-      expect(screen.getByText("Connected", { exact: true })).toBeVisible();
+      expect(
+        screen.getByRole("img", { name: "Buzz identity connected" }),
+      ).toBeVisible();
       expect(
         screen.getAllByRole("button", {
           name: "Manage account",
@@ -1718,8 +1720,14 @@ it("uses one development-server login for the Settings account, hosting and remo
         { name: /^Open / },
       ),
     );
-    expect(await screen.findByText("0 of 1")).toBeVisible();
-    expect(screen.getByText("Connected", { exact: true })).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create community" }),
+    );
+    expect(await screen.findByText("0 of 1 communities used")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByRole("img", { name: "Buzz identity connected" }),
+    ).toBeVisible();
     await userEvent.click(
       screen.getByRole("button", { name: "Back to Builderlab" }),
     );
@@ -1761,7 +1769,9 @@ it("uses one development-server login for the Settings account, hosting and remo
     expect(
       await screen.findByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
-    expect(screen.queryByText("0 of 1")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("0 of 1 communities used"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("No agents yet")).not.toBeInTheDocument();
   } finally {
     cleanup();

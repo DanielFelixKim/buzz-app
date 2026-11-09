@@ -208,9 +208,13 @@ it("connects the Buzz identity when the account has none", async () => {
   });
   routes["/api/builderlab/bind"] = () => ({ identity: { pubkey_hex: local } });
   renderCard();
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Connect Buzz identity" }),
-  );
+  const connect = await screen.findByRole("button", {
+    name: "Connect Buzz identity",
+  });
+  expect(
+    screen.queryByRole("img", { name: "Buzz identity connected" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(connect);
   routes["/api/builderlab/identity"] = () => ({
     identity: { pubkey_hex: local },
   });
@@ -230,6 +234,9 @@ it("pauses create and offers a warned switch when the account uses another ident
   });
   expect(region).toHaveTextContent(npubEncode(other));
   expect(region).toHaveTextContent(npubEncode(local));
+  expect(
+    screen.queryByRole("img", { name: "Buzz identity connected" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Create community" }),
   ).toBeDisabled();
@@ -313,9 +320,8 @@ it("rejects invalid names and blocks create at the community limit", async () =>
     can_create: false,
   });
   renderCard();
-  expect(await screen.findByText("5 of 5")).toBeInTheDocument();
   expect(
-    screen.getByText("You've reached your limit of 5 communities."),
+    await screen.findByText("You've reached your limit of 5 communities."),
   ).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Create community" }),
@@ -330,9 +336,8 @@ it("honors can_create false independently of informational quota usage", async (
     can_create: false,
   });
   renderCard();
-  expect(await screen.findByText("0 of 5")).toBeVisible();
   expect(
-    screen.getByText("You've reached your limit of 5 communities."),
+    await screen.findByText("You've reached your limit of 5 communities."),
   ).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Create community" }),
@@ -436,9 +441,8 @@ it("shows the zero-limit copy without guessing a reason from usage", async () =>
     can_create: false,
   });
   renderCard();
-  expect(await screen.findByText("0 of 0")).toBeVisible();
   expect(
-    screen.getByText("You can't create more communities right now."),
+    await screen.findByText("You can't create more communities right now."),
   ).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Create community" }),
@@ -759,6 +763,26 @@ const listed = {
   can_create: true,
 };
 
+it("describes the confirmed identity connection on keyboard focus", async () => {
+  routes["/api/builderlab/list"] = () => listed;
+  const user = userEvent.setup();
+  render(
+    <HostedCommunities api={brokerApi} active={() => true} sharedSignIn />,
+  );
+  const mark = await screen.findByRole("img", {
+    name: "Buzz identity connected",
+  });
+  expect(
+    screen.queryByText("Connected", { exact: true }),
+  ).not.toBeInTheDocument();
+  screen.getByRole("button", { name: "Refresh" }).focus();
+  await user.keyboard("{Tab}");
+  expect(mark).toHaveFocus();
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "This Builderlab account is connected to this device’s Buzz identity.",
+  );
+});
+
 it("does not carry a failed copy handoff into the next sign-in", async () => {
   routes["/api/builderlab/list"] = () => listed;
   routes["/api/builderlab/sign-out"] = () => ({});
@@ -842,7 +866,10 @@ it("keeps a created community's address when the following refresh fails", async
   );
   routes["/api/builderlab/list"] = () => listed;
   fireEvent.focus(window);
-  expect(await screen.findByText("1 of 5")).toBeInTheDocument();
+  await openCreate();
+  expect(
+    await screen.findByText("1 of 5 communities used"),
+  ).toBeInTheDocument();
   expect(screen.queryByText(/The change was saved/)).not.toBeInTheDocument();
   expect(
     calls.filter(([url]) => url === "/api/builderlab/create"),
@@ -879,7 +906,10 @@ it("completes a transfer when the following refresh fails", async () => {
     can_create: true,
   });
   refreshCommunities();
-  expect(await screen.findByText("0 of 5")).toBeInTheDocument();
+  await openCreate();
+  expect(
+    await screen.findByText("0 of 5 communities used"),
+  ).toBeInTheDocument();
   expect(
     calls.filter(([url]) => url === "/api/builderlab/transfer"),
   ).toHaveLength(1);
@@ -1152,7 +1182,7 @@ it("dismisses another address's copy hint when opening community actions", async
   ).not.toBeInTheDocument();
 });
 
-it("shows the empty collection in its quota after a successful read", async () => {
+it("shows the empty collection quota in Create after a successful read", async () => {
   let release!: (value: unknown) => void;
   const list = new Promise((resolve) => {
     release = resolve;
@@ -1163,7 +1193,9 @@ it("shows the empty collection in its quota after a successful read", async () =
     await waitFor(() =>
       expect(calls.some(([url]) => url === "/api/builderlab/list")).toBe(true),
     );
-    expect(screen.queryByText("0 of 5")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("0 of 5 communities used"),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Create community" }),
     ).toBeDisabled();
@@ -1175,9 +1207,10 @@ it("shows the empty collection in its quota after a successful read", async () =
       can_create: true,
     });
   }
-  expect(await screen.findByText("0 of 5")).toBeVisible();
+  await openCreate();
+  expect(await screen.findByText("0 of 5 communities used")).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Create community" }),
+    screen.getByRole("textbox", { name: "Community address" }),
   ).toBeEnabled();
 });
 
@@ -1226,7 +1259,7 @@ it("keeps a failed hosted collection read separate from an empty result", async 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "List unavailable",
   );
-  expect(screen.queryByText("0 of 5")).not.toBeInTheDocument();
+  expect(screen.queryByText("0 of 5 communities used")).not.toBeInTheDocument();
   routes["/api/builderlab/list"] = () => ({
     communities: [],
     quota_used: 0,
@@ -1234,7 +1267,8 @@ it("keeps a failed hosted collection read separate from an empty result", async 
     can_create: true,
   });
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  expect(await screen.findByText("0 of 5")).toBeVisible();
+  await openCreate();
+  expect(await screen.findByText("0 of 5 communities used")).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
@@ -2752,7 +2786,9 @@ it("filters communities by state and searches names and hosts without changing q
   );
   expect(screen.getByText("South")).toBeVisible();
   expect(screen.queryByText("north")).not.toBeInTheDocument();
-  expect(screen.getByText("2 of 5")).toBeVisible();
+  await openCreate();
+  expect(screen.getByText("2 of 5 communities used")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await userEvent.click(
     screen.getByRole("button", { name: "More actions for South" }),
   );
