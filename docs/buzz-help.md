@@ -971,6 +971,8 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.
 - Some desktop plugins can upload images you provide to services they declare.
+- Plugin sharing search groups people who have not been added under **Not yet
+  added**, or a heading chosen by the plugin.
 - In plugins that use Buzz's sharing controls, switching a record to **Private**
   keeps existing members' access. The confirmation warns about people who joined
   while it was open; remove them in **People** to end their access.
