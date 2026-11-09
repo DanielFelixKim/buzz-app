@@ -381,6 +381,8 @@ if (channels) {
       sync: emptySync(),
     }),
   });
+  // Channels hands community membership to its page for the first-channel setup.
+  context.provide("adminAccess", { membership: undefined });
   // Only the composer is mounted; the Channels page never consumes this service.
   context.provide("relay", {
     snapshot: () => ({ session: namedSession }),
