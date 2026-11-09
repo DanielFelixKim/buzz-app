@@ -1688,7 +1688,6 @@ function ChannelWorkspace({
     ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
-      setSettings(undefined);
       mediaReviewTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -1704,7 +1703,7 @@ function ChannelWorkspace({
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
-    [setSettings],
+    [],
   );
   // Availability follows active contributions; dispatch still re-resolves at click time.
   const canOpenLink = useCallback(
@@ -2487,19 +2486,24 @@ function ChannelWorkspace({
           />
         )}
       {secondary.drag.feedback}
-      {secondary.hosts}
+      {/* Thread tabs leave during a review: the viewer's comment composer reads
+          the thread draft when it mounts, and the thread reads the viewer's
+          edits back when it returns. */}
+      {!showingMediaReview && secondary.hosts}
       <p role="status" className="sr-only">
         {secondary.announcement}
       </p>
       <PanelDock
         open={!!showingPanel && !showingMediaReview}
         keepMounted={
-          tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
+          tabState.entries.length > 0 ||
+          (!!hasPanel && !tabState.paneOpen) ||
+          !!showingMediaReview
         }
         className={styles.panelStack}
         resizeHandle={split.handle}
       >
-        {hasPanel && !showingMediaReview && (
+        {hasPanel && (
           <>
             {hasChannelPanel && (settings || secondary.items.length > 0) && (
               <div
