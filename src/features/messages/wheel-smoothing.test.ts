@@ -57,8 +57,8 @@ let uninstall: (() => void) | undefined;
 
 /**
  * A channel timeline with the scroll geometry jsdom doesn't lay out. Like a
- * browser, scrollTop clamps to the scroll range. Its bubbling wheel handler
- * stands in for ChannelTimeline's onWheel gesture.
+ * browser, scrollTop clamps to the scroll range. Its app root's bubbling wheel
+ * handler stands in for React's, which runs ChannelTimeline's onWheel gesture.
  */
 function fakeTimeline({
   scrollTop = 1000,
@@ -82,8 +82,10 @@ function fakeTimeline({
       },
     },
   });
-  timeline.addEventListener("wheel", () => intent++);
-  document.body.append(timeline);
+  const root = document.createElement("div");
+  root.addEventListener("wheel", () => intent++);
+  root.append(timeline);
+  document.body.append(root);
   return { timeline, row, text };
 }
 
@@ -278,6 +280,35 @@ describe("ending a glide", () => {
     wheel(text, { deltaY: 100.25 });
     frames.settle();
     expect(timeline.scrollTop).toBeCloseTo(1300.75);
+  });
+
+  it("stops on reader intent newer than its notch, even before the first frame", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    wheel(text, { deltaY: -200.5 });
+    intent++;
+    frames.tick();
+    expect(frames.pending()).toBe(0);
+    expect(timeline.scrollTop).toBe(1000);
+  });
+
+  it("drops motion a newer intent ended when another notch follows before a frame", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    wheel(text, { deltaY: -200.5 });
+    intent++;
+    wheel(text, { deltaY: -100.25 });
+    frames.settle();
+    expect(timeline.scrollTop).toBeCloseTo(899.75);
+  });
+
+  it("still glides a notch whose propagation stopped short of the app root", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    timeline.addEventListener("wheel", (event) => event.stopPropagation());
+    wheel(text, { deltaY: 100.25 });
+    frames.settle();
+    expect(timeline.scrollTop).toBeCloseTo(1100.25);
   });
 
   it("stops when Reduce motion comes on", () => {
