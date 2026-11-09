@@ -37,20 +37,8 @@ const stores = [
 ];
 
 const viewer = "a".repeat(64);
-type Reply = { status: number; body: string } | Promise<never>;
-const status = (current: string | null, backups: string[]): Reply => ({
-  status: 200,
-  body: JSON.stringify({
-    current_nostr_pubkey: current,
-    backup_nostr_pubkeys: backups,
-  }),
-});
-const restorable = () => status(viewer, [viewer]);
 
-function session(
-  state: SessionSnapshot["status"],
-  reply: () => Reply | Promise<Reply> = restorable,
-) {
+function session(state: SessionSnapshot["status"]) {
   let snapshot = {
     status: state,
     email: "you@example.com",
@@ -64,13 +52,16 @@ function session(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    request: vi.fn(async () => (await reply()) as never),
     publish(next: Partial<SessionSnapshot>) {
       snapshot = { ...snapshot, ...next };
       for (const listener of listeners) listener();
     },
   };
 }
+
+/** The app-owned account check, answering `ok` (or rejecting). */
+const restores = (answer: () => Promise<boolean> = async () => true) =>
+  vi.fn(async (_viewer: string) => answer());
 
 function pairing() {
   const native = {
@@ -105,6 +96,7 @@ const PAIR = { name: "Pair mobile" };
 function renderCard(
   federatedIdentity: ReturnType<typeof session> | undefined,
   cardStores: readonly { name: string; url: string }[] = stores,
+  restoresOnPhone: ReturnType<typeof restores> | undefined = restores(),
 ) {
   const { native, props } = pairing();
   render(
@@ -113,6 +105,7 @@ function renderCard(
       native={native}
       available={false}
       federatedIdentity={federatedIdentity}
+      restoresOnPhone={federatedIdentity ? restoresOnPhone : undefined}
       stores={cardStores}
     />,
   );
@@ -124,16 +117,10 @@ it("when this key is the account's backed-up key, says to get the app and sign i
     if (command !== "qr_code") throw new Error(`Unexpected ${command}`);
     return `<svg data-value="${(args as { value: string }).value}"/>`;
   });
-  const federated = session("signed-in");
-  const native = renderCard(federated);
+  const check = restores();
+  const native = renderCard(session("signed-in"), stores, check);
   expect(await screen.findByRole("heading", GET_THE_APP)).toBeTruthy();
-  expect(federated.request).toHaveBeenCalledExactlyOnceWith({
-    path: "/api/goose/v1/buzz/nsec-backups/status",
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-    timeoutMs: 10_000,
-  });
+  expect(check).toHaveBeenCalledExactlyOnceWith(viewer);
   expect(
     screen.getByText(
       "Install Buzz on your phone, then sign in with Builderlab as you@example.com.",
@@ -166,39 +153,35 @@ it("when this key is the account's backed-up key, says to get the app and sign i
 });
 
 it("while the account is read, shows neither view, so pairing never mounts", async () => {
-  let answer!: (reply: Reply) => void;
-  const federated = session(
-    "signed-in",
-    () => new Promise<Reply>((resolve) => (answer = resolve)),
+  let answer!: (ok: boolean) => void;
+  const check = restores(
+    () => new Promise<boolean>((resolve) => (answer = resolve)),
   );
-  renderCard(federated);
-  await waitFor(() => expect(federated.request).toHaveBeenCalledOnce());
+  renderCard(session("signed-in"), stores, check);
+  await waitFor(() => expect(check).toHaveBeenCalledOnce());
   expect(screen.queryByRole("heading", PAIR)).toBeNull();
   expect(screen.queryByRole("heading", GET_THE_APP)).toBeNull();
-  await act(async () => answer(restorable()));
+  await act(async () => answer(true));
   expect(screen.getByRole("heading", GET_THE_APP)).toBeTruthy();
   expect(screen.queryByRole("heading", PAIR)).toBeNull();
 });
 
 it.each([
-  ["no backup", () => status(viewer, [])],
-  ["no key linked", () => status(null, [viewer])],
-  [
-    "a different key linked",
-    () => status("b".repeat(64), [viewer, "b".repeat(64)]),
-  ],
-  [
-    "this key backed up but another linked",
-    () => status("b".repeat(64), [viewer]),
-  ],
-  ["a refused read", () => ({ status: 403, body: "{}" })],
-  ["an unreadable reply", () => ({ status: 200, body: "not json" })],
-  ["a failed read", () => Promise.reject(new Error("timed out"))],
-])("pairs the phone with %s", async (_, reply) => {
-  const federated = session("signed-in", reply as () => Reply);
-  renderCard(federated);
+  ["the account check answers no", async () => false],
+  ["the account check fails", () => Promise.reject(new Error("timed out"))],
+])("pairs the phone when %s", async (_, answer) => {
+  renderCard(session("signed-in"), stores, restores(answer));
   expect(await screen.findByRole("heading", PAIR)).toBeTruthy();
   expect(screen.queryByRole("heading", GET_THE_APP)).toBeNull();
+});
+
+it("reads the account again for a new Builderlab session", async () => {
+  const federated = session("signed-in");
+  const check = restores();
+  renderCard(federated, [], check);
+  expect(await screen.findByRole("heading", GET_THE_APP)).toBeTruthy();
+  await act(async () => federated.publish({ revision: "r2" }));
+  await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
 });
 
 it("without store links, gives the same instructions without links", async () => {
@@ -229,11 +212,11 @@ it.each([
   ["signed out of Builderlab", () => session("signed-out")],
   ["in a build without Builderlab", () => undefined],
 ])("pairs the phone without reading the account when %s", (_, make) => {
-  const federated = make();
-  renderCard(federated);
+  const check = restores();
+  renderCard(make(), stores, check);
   expect(screen.getByRole("heading", PAIR)).toBeTruthy();
   expect(screen.queryByRole("link")).toBeNull();
-  if (federated) expect(federated.request).not.toHaveBeenCalled();
+  expect(check).not.toHaveBeenCalled();
 });
 
 it("switches to pairing when the Builderlab session ends", async () => {

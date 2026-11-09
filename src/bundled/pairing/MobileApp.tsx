@@ -32,14 +32,18 @@ type Store = { name: string; url: string };
  */
 export function MobileSettings({
   federatedIdentity,
+  restoresOnPhone,
   stores = mobileAppStores(),
   ...pairing
 }: ComponentProps<typeof PairingSettings> & {
-  /** Builderlab's sign-in session, called as the Builderlab plugin
-   * (`bundledFederatedIdentity`); absent in builds without one. */
+  /** Builderlab's sign-in session, watched for who is signed in; absent in
+   * builds without one. */
   federatedIdentity?:
-    | Pick<FederatedIdentity, "snapshot" | "subscribe" | "request">
+    | Pick<FederatedIdentity, "snapshot" | "subscribe">
     | undefined;
+  /** The app-owned account check (`BuilderlabPhone`): whether a phone signed
+   * in with Builderlab restores `viewer`. */
+  restoresOnPhone?: ((viewer: string) => Promise<boolean>) | undefined;
   stores?: readonly Store[];
 }) {
   const session = useSyncExternalStore(
@@ -52,18 +56,21 @@ export function MobileSettings({
   ).viewer;
   const signedIn =
     session?.status === "signed-in" && session.authority ? session : undefined;
-  const check = signedIn && viewer ? `${signedIn.revision}:${viewer}` : "";
+  const check =
+    signedIn && viewer && restoresOnPhone
+      ? `${signedIn.revision}:${viewer}`
+      : "";
   const [restores, setRestores] = useState<{ check: string; ok: boolean }>();
   useEffect(() => {
-    if (!check || !viewer || !federatedIdentity || !signedIn?.authority) return;
+    if (!check || !viewer || !restoresOnPhone) return;
     let current = true;
-    restoresThisKey(federatedIdentity, signedIn.authority.apiBasePath, viewer)
+    restoresOnPhone(viewer)
       .catch(() => false)
       .then((ok) => current && setRestores({ check, ok }));
     return () => {
       current = false;
     };
-  }, [check, federatedIdentity, signedIn?.authority, viewer]);
+  }, [check, restoresOnPhone, viewer]);
   if (!check) return <PairingSettings {...pairing} />;
   const answer = restores?.check === check ? restores.ok : undefined;
   // Pairing starts a session as it mounts, so it waits for the answer.
@@ -85,36 +92,6 @@ export function MobileSettings({
 }
 
 const noSubscription = () => () => {};
-
-/** Whether the account's current key is `viewer` and is backed up: one
- * `nsec-backups/status` read. Any other answer, or none in time, is no. */
-async function restoresThisKey(
-  federated: Pick<FederatedIdentity, "request">,
-  apiBasePath: string,
-  viewer: string,
-) {
-  const response = await federated.request({
-    path: `${apiBasePath}v1/buzz/nsec-backups/status`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-    timeoutMs: 10_000,
-  });
-  if (response.status < 200 || response.status >= 300) return false;
-  const reply: unknown = JSON.parse(response.body);
-  if (!reply || typeof reply !== "object") return false;
-  const { current_nostr_pubkey: current, backup_nostr_pubkeys: backups } =
-    reply as Record<string, unknown>;
-  const key = viewer.toLowerCase();
-  return (
-    typeof current === "string" &&
-    current.toLowerCase() === key &&
-    Array.isArray(backups) &&
-    backups.some(
-      (backup) => typeof backup === "string" && backup.toLowerCase() === key,
-    )
-  );
-}
 
 function GetTheApp({
   email,

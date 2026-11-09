@@ -1,21 +1,22 @@
 import type { PluginModule } from "../../plugins/api";
 import { nativeBuilderlab } from "../builderlab/session";
-import { bundledFederatedIdentity } from "../builderlab/oauth/first-run";
 import { MobileSettings } from "./MobileApp";
 import { DeviceMobileIcon } from "../../shared/design-system/icons";
-// A Builderlab build also offers the mobile app's own sign-in. It reads that
-// session and the account's backup status as the Builderlab plugin's bundled
-// installation, as Settings' Identity page does; see MobileSettings.
+// A Builderlab build also offers the mobile app's own sign-in. It watches that
+// session through its own installation and asks the app-owned
+// `builderlabPhone` whether the phone would restore this key; see
+// MobileSettings.
 const builderlab = nativeBuilderlab();
 export const inject = [
   "settingsCards",
   "communityReader",
-  ...(builderlab ? ["federatedIdentity"] : []),
+  ...(builderlab ? ["federatedIdentity", "builderlabPhone"] : []),
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   const communities = ctx.communityReader;
-  const federatedIdentity = builderlab
-    ? bundledFederatedIdentity(ctx)
+  const federatedIdentity = builderlab ? ctx.federatedIdentity : undefined;
+  const restoresOnPhone = builderlab
+    ? ctx.builderlabPhone.restoresOnPhone
     : undefined;
   ctx.settingsCards.register({
     id: "mobile",
@@ -28,6 +29,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         communities={communities}
         active={active}
         federatedIdentity={federatedIdentity}
+        restoresOnPhone={restoresOnPhone}
       />
     ),
   });

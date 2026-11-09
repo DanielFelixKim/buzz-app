@@ -11,6 +11,7 @@ import type { BackupStatus } from "../features/identity/backup";
 import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { BackupPrompt } from "../features/identity/BackupConsent";
 import {
+  backedUpLinkedKey,
   backupOfferedFor,
   federatedBuilderlabAccount,
 } from "../features/identity/builderlab-account";
@@ -231,14 +232,9 @@ function BackedUpKey({
       federated,
       identity,
     );
-    Promise.all([account.linkedKey(), account.backupStatus()]).then(
-      ([linked, backups]) => {
-        if (!current) return;
-        const key =
-          linked && backups !== "unavailable" && backups.includes(linked)
-            ? linked
-            : null;
-        setRead({ revision, key });
+    backedUpLinkedKey(account).then(
+      (key) => {
+        if (current) setRead({ revision, key });
       },
       (error: unknown) => {
         if (current)
