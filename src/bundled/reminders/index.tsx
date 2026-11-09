@@ -158,7 +158,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 ].find(Boolean) || "A reminder is waiting",
             });
           // Access refuses the message when the viewer isn't in its channel, so
-          // that reminder opens Reminders instead of never alerting.
+          // that reminder opens Reminders instead of never alerting. The retry
+          // follows any refusal, so it relies on every other one refusing the
+          // page too: a closed service, a missing or different viewer, a stale
+          // category, the `seen` key (it ignores the target kind), the pending
+          // cap, the development pause, alerts or this category off, and the
+          // Focus gate; denied permission drops both at delivery. So a page
+          // alert appears only when access refused the message. A future gate
+          // that allows pages but blocks conversations would be routed around.
           void alert(target)
             .then((admitted) => admitted || !message || alert(home))
             .catch(() => {});

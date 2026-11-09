@@ -5,6 +5,7 @@ import { createReminders } from "../../features/relay/reminders";
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginModule } from "../../plugins/api";
+import type { PluginInfo } from "../../plugins/types";
 import { provideNavigation } from "../../features/navigation/service";
 import { NotificationsService } from "../../features/notifications/service";
 import { createNotificationPreferences } from "../../features/notifications/preferences";
@@ -495,7 +496,12 @@ type Launch = Readonly<{
   roster?: keyof typeof ROSTERS;
   permission?: "granted" | "denied";
   member?: boolean;
+  /** The list shows the channel anyway, without the viewer in its members.
+   * Discovery lists no such channel today; this pins the access check. */
+  listed?: boolean;
   category?: boolean;
+  /** Focus is on: its real gate admits only Solo conversations. */
+  focus?: boolean;
   /** A live roster for a first-page channel arrives before any page. */
   early?: boolean;
   /** That channel is revoked between pages, so discovery restarts. */
@@ -517,6 +523,7 @@ async function launch(options: Launch) {
   const { notificationAuthorized } = await import(
     "../../features/notifications/messages"
   );
+  const { soloConversation } = await import("../focus/status");
   const key = options.key ?? keypair();
   const relayKey = keypair();
   const origin = "https://restart.example";
@@ -602,16 +609,48 @@ async function launch(options: Launch) {
   }
   await vi.advanceTimersByTimeAsync(0);
   const ctx = new Context();
-  const runtime = new PluginRuntime(ctx, async () => ({
-    inject: ["notifications", "relay", "navigation", "pages", "conversation"],
-    apply,
-  }));
+  // Focus while it is on: a plugin holding Focus's own gate.
+  const focus: PluginModule = {
+    inject: ["notifications", "relay"],
+    apply: (scope) =>
+      void scope.notifications.gate({
+        id: "solo",
+        allows: (to) => soloConversation(scope.relay, to),
+      }),
+  };
+  const runtime = new PluginRuntime(ctx, async (plugin) =>
+    plugin.manifest.id === "buzz.focus"
+      ? focus
+      : {
+          inject: [
+            "notifications",
+            "relay",
+            "navigation",
+            "pages",
+            "conversation",
+          ],
+          apply,
+        },
+  );
   const connectionListeners = new Set<() => void>();
+  const channels = owner.session.channels;
   let snapshot = {
     status: "ready",
     viewer: key.pubkey,
     scope,
-    session: owner.session,
+    session: options.listed
+      ? {
+          ...owner.session,
+          channels: {
+            ...channels,
+            list: () => {
+              const list = channels.list();
+              const room = { id: "room", name: "Room", members: [] };
+              return { ...list, channels: [...list.channels, room] };
+            },
+          },
+        }
+      : owner.session,
     generation: 1,
   };
   const connection = {
@@ -756,16 +795,18 @@ async function launch(options: Launch) {
     },
     async start() {
       if (!options.offline) live?.state({ status: "connected", routes: [] });
+      const plugin = (id: string, name: string): PluginInfo => ({
+        manifest: { id, name, apiVersion: 1 },
+        enabled: true,
+        source: "bundled",
+        revision: "v1",
+        previous: null,
+        reloadable: true,
+        error: null,
+      });
       runtime.reconcile([
-        {
-          manifest: { id: "buzz.reminders", name: "Reminders", apiVersion: 1 },
-          enabled: true,
-          source: "bundled",
-          revision: "v1",
-          previous: null,
-          reloadable: true,
-          error: null,
-        },
+        plugin("buzz.reminders", "Reminders"),
+        ...(options.focus ? [plugin("buzz.focus", "Focus")] : []),
       ]);
       if (options.first === "list") {
         await flush();
@@ -818,6 +859,13 @@ it.each<[string, Launch["first"], Launch["banners"], Partial<Launch>]>([
     "list",
     0,
     { member: false, permission: "denied" },
+  ],
+  ["missing membership, Focus on", "list", 0, { member: false, focus: true }],
+  [
+    "a listed channel without membership",
+    "list",
+    1,
+    { member: false, listed: true },
   ],
 ])(
   "catches up a reminder missed while closed: %s",
