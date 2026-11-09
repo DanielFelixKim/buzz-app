@@ -13,7 +13,7 @@ import { DotsThreeIcon, RobotIcon } from "../../src/shared/design-system/icons/i
 import "../../src/shared/styles/globals.css";
 createRoot(document.getElementById("root")).render(
   h(ManagementSection, { hero, facts: [] }, h(ManagementRow, {
-    icon: h(Avatar, {src: location.search ? "/fixture-avatar.png" : undefined, alt: "", fallback: "R", fallbackContent: h(RobotIcon), size: "fill", shape: "squircle"}), title: "Researcher", detail: "A model with a deliberately long name for narrow columns · Active", status: "In Agents",
+    icon: h(Avatar, {src: location.search ? "/fixture-avatar.png" : undefined, alt: "", fallback: "R", fallbackContent: h(RobotIcon), size: "fill", shape: "squircle"}), title: "Researcher", detail: "A model with a deliberately long name for narrow columns · Configured", status: "In Agents",
     onOpen: () => document.documentElement.dataset.opened = "yes",
     actions: h(MenuRoot, null,
       h(MenuTrigger, {render: h(IconButton, {variant:"bare", size:"sm", shape:"row-end", "aria-label":"More actions for Researcher", icon:h(DotsThreeIcon, {size:18})})}),

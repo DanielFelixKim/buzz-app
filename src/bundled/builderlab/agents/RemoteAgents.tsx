@@ -362,6 +362,6 @@ function agentState(agent: RemoteAgent) {
     : agent.status === "Unknown"
       ? "Unknown"
       : agent.status === "Active" && agent.modelSelectionStatus === "valid"
-        ? "Active"
+        ? "Configured"
         : "Needs setup";
 }

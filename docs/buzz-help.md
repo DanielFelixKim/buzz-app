@@ -127,7 +127,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   The title includes the count. Each row’s **…** menu offers **Copy key**.
   Saved agents show their community avatar and open their **Agents** pane when
   clicked, with **View Agent** also available in the menu. **In Agents** marks
-  these available panes. **Active** means Builderlab reports Active with a valid
+  these available panes. **Configured** means Builderlab reports Active with a valid
   model selection; it does not indicate live presence.
   Creation dates and full keys are not displayed in this compact list.
   Load errors include **Try again**.

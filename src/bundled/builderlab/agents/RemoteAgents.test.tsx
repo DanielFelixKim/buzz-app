@@ -94,7 +94,7 @@ it("loads automatically, refreshes and hides account data on sign-out", async ()
     items: [{ key: "one", label: "Helper" }],
   });
   expect(h.request).toHaveBeenCalledTimes(1);
-  expect(screen.getByText(/Active$/)).toBeInTheDocument();
+  expect(screen.getByText(/Configured$/)).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "More actions for Helper" }),
   ).toBeEnabled();
@@ -210,7 +210,7 @@ it("copies the agent key and exposes a recoverable clipboard failure", async () 
 });
 
 it.each([
-  [2, 1, "Active"],
+  [2, 1, "Configured"],
   [2, 2, "Needs setup"],
   [2, undefined, "Needs setup"],
   [1, 1, "Needs setup"],
@@ -252,7 +252,7 @@ it("uses saved avatars and opens saved rows independently of their action menus"
     name: "View Helper",
   });
   const image = screen.getByText("Helper").closest("li")?.querySelector("img");
-  expect(open).toHaveAccessibleDescription(/Active/);
+  expect(open).toHaveAccessibleDescription(/Configured/);
   expect(screen.getByText("In Agents")).toBeVisible();
   expect(image).toHaveAttribute("src", picture);
   const user = userEvent.setup();
