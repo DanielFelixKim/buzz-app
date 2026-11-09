@@ -743,7 +743,7 @@ function showRequest(
   const requests = createPluginInstallRequests();
   const outcome = requests.request(artifact, market);
   const id = requests.snapshot()?.id ?? 0;
-  render(
+  const ui = (plugins: Catalog["plugins"]) => (
     <StrictMode>
       <UrlPluginInstallReview
         plugins={manager as PluginManager}
@@ -756,10 +756,25 @@ function showRequest(
         returnFocus={() => null}
         onOpenInstalled={onOpenInstalled}
       />
-    </StrictMode>,
+    </StrictMode>
   );
-  return { requests, outcome };
+  const { rerender } = render(ui(plugins));
+  return {
+    requests,
+    outcome,
+    /** Re-renders with a changed catalog, as the manager's next snapshot would. */
+    rerender: (plugins: Catalog["plugins"]) => rerender(ui(plugins)),
+  };
 }
+/** `installed`, recorded as installed from a Git repository. */
+const fromGit = {
+  ...installed,
+  updateSource: {
+    repository: "https://example.com/plugins",
+    reference: "v1",
+    path: "dist",
+  },
+};
 
 it("reviews a plugin's URL install request and reports the install", async () => {
   const { manager, git } = harness();
@@ -821,25 +836,12 @@ it("refuses a URL install request over a plugin installed from Git before downlo
   );
   Object.assign(manager.imports, { url });
   const onOpenInstalled = vi.fn();
-  const { outcome } = showRequest(
-    manager,
-    [
-      {
-        ...installed,
-        updateSource: {
-          repository: "https://example.com/plugins",
-          reference: "v1",
-          path: "dist",
-        },
-      },
-    ],
-    onOpenInstalled,
-  );
+  const { outcome } = showRequest(manager, [fromGit], onOpenInstalled);
   const dialog = await screen.findByRole("dialog", {
     name: "Already installed",
   });
   expect(dialog).toHaveAccessibleDescription(
-    `Installed example is already installed from https://example.com/plugins; remove it first to install it from ${artifact.url}.`,
+    `Requested by Market. Installed example is already installed from https://example.com/plugins; remove it first to install it from ${artifact.url}.`,
   );
   expect(within(dialog).queryByRole("button", { name: "Update" })).toBeNull();
   expect(
@@ -851,4 +853,51 @@ it("refuses a URL install request over a plugin installed from Git before downlo
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(url).not.toHaveBeenCalled();
   expect(manager.installImport).not.toHaveBeenCalled();
+});
+
+it("refuses a link's URL install over a plugin installed from Git without naming a requester", async () => {
+  const { manager } = harness();
+  const url = vi.fn();
+  Object.assign(manager.imports, { url });
+  render(
+    <UrlPluginInstallReview
+      plugins={manager as unknown as PluginManager}
+      catalog={catalog([fromGit])}
+      busy={false}
+      source={artifact}
+      requester="A link"
+      returnFocus={() => null}
+    />,
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Already installed" }),
+  ).toHaveAccessibleDescription(
+    `Installed example is already installed from https://example.com/plugins; remove it first to install it from ${artifact.url}.`,
+  );
+  expect(url).not.toHaveBeenCalled();
+});
+
+it("installs, rather than updates, once the conflicting plugin is removed while its refusal is open", async () => {
+  const { manager } = harness();
+  const url = vi.fn(async () =>
+    preview({
+      commit: null,
+      candidates: [{ path: ".", revision: artifact.sha256, manifest }],
+    }),
+  );
+  Object.assign(manager.imports, { url });
+  const { outcome, rerender } = showRequest(manager, [fromGit]);
+  await screen.findByRole("dialog", { name: "Already installed" });
+  expect(url).not.toHaveBeenCalled();
+  rerender([]);
+  const dialog = await screen.findByRole("dialog", {
+    name: "Review Managed example Plugin access",
+  });
+  expect(url).toHaveBeenCalledExactlyOnceWith(artifact.url, artifact.sha256);
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Install plugin" }),
+  );
+  await expect(outcome).resolves.toBe("installed");
+  expect(manager.installImport).toHaveBeenCalledExactlyOnceWith("preview", ".");
+  expect(manager.change).toHaveBeenCalledExactlyOnceWith("enable", manifest.id);
 });

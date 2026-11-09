@@ -1006,6 +1006,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   change waits until the person reviews and confirms it there (or under **Requested
   by agents** in **Settings → Plugins → Manage plugins**). A restart discards it. An agent cannot
   install plugin code by itself.
+- A `buzz://plugin-install` link, or a plugin's request to install another
+  plugin from a URL, is refused before anything downloads when that plugin is
+  already installed from Git or a folder; **Open plugin** shows it in Manage
+  plugins, where you can delete it first.
 - **Focus**, when its optional plugin is on, is in the profile menu. For a
   chosen time it shows only Solo chats in the sidebar and lets only Solo chats
   in the selected community show banners, play sounds or light the Dock dot. Links and search still open

@@ -262,7 +262,8 @@ export function ManagedPluginReview({
   /** Marks the install as confirmed until the returned function runs. */
   confirm?: (() => () => void) | undefined;
   returnFocus: () => HTMLElement | null;
-  onInstalled?: () => void;
+  /** Reports whether the install added the plugin or replaced one present as it started. */
+  onInstalled?: (outcome: "installed" | "updated") => void;
   /** Shows the installed plugin a refusal names. */
   onOpen?: (() => void) | undefined;
   onClose: () => void;
@@ -442,7 +443,7 @@ export function ManagedPluginReview({
       await imports?.discard(value).catch(() => {});
       if (!alreadyInstalled && enable)
         await plugins.change("enable", wanted.id);
-      onInstalled?.();
+      onInstalled?.(alreadyInstalled ? "updated" : "installed");
       onClose();
     } finally {
       unconfirm?.();
@@ -642,9 +643,6 @@ export function UrlPluginInstallReview({
 }) {
   const [claimed, setClaimed] = useState(!request);
   const [closed, setClosed] = useState(false);
-  const [updating] = useState(() =>
-    catalog.plugins.some((plugin) => plugin.manifest.id === source.id),
-  );
   const mounted = useRef(false);
   const claimOnce = useEffectEvent(() => {
     if (request && !claimed && request.claim(request.id)) setClaimed(true);
@@ -665,6 +663,16 @@ export function UrlPluginInstallReview({
     (plugin) => plugin.manifest.id === source.id,
   );
   const saved = current?.updateSource;
+  const conflict =
+    current?.source !== "external" || (saved && "url" in saved)
+      ? undefined
+      : `${current.manifest.name} is already installed from ${
+          saved && "repository" in saved
+            ? saved.repository
+            : saved
+              ? saved.root
+              : "an unknown source"
+        }; remove it first to install it from ${source.url}.`;
   const close = () => {
     setClosed(true);
     if (request) request.end(request.id);
@@ -676,25 +684,18 @@ export function UrlPluginInstallReview({
       catalog={catalog}
       busy={busy}
       source={requester}
-      entry={{ ...source, state: updating ? "outdated" : "missing" }}
+      entry={{ ...source, state: current ? "outdated" : "missing" }}
       holdReview={holdReview}
       requestedBy={{ name: requester, reason: "" }}
+      // A link's refusal stands alone; a plugin's request says who asked.
       refusal={
-        current?.source !== "external" || (saved && "url" in saved)
-          ? undefined
-          : `${current.manifest.name} is already installed from ${
-              saved && "repository" in saved
-                ? saved.repository
-                : saved
-                  ? saved.root
-                  : "an unknown source"
-            }; remove it first to install it from ${source.url}.`
+        conflict && request
+          ? `Requested by ${requester}. ${conflict}`
+          : conflict
       }
       confirm={request && (() => request.confirm(request.id))}
       returnFocus={returnFocus}
-      onInstalled={() =>
-        request?.settle(request.id, updating ? "updated" : "installed")
-      }
+      onInstalled={(outcome) => request?.settle(request.id, outcome)}
       onOpen={
         onOpenInstalled &&
         (() => {
