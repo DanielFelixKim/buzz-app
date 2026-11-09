@@ -28,6 +28,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Select } from "../../shared/design-system/ui/Select";
 import { readView, writeView } from "../../shared/view-state";
+import { agentTarget } from "../agents/routes";
 import styles from "./Usage.module.css";
 import { DailyCostChart, type Series } from "./DailyCostChart";
 import { amount, cost, count, percent } from "./format";
@@ -88,6 +89,12 @@ const keyOf = (agent: Agent) => `${agent.key}:${agent.type}`;
 /** The agent as a read sees it: a rename or new configuration reads again. */
 const readKey = (agent: Agent) =>
   JSON.stringify([keyOf(agent), agent.name, agent.config]);
+
+/** Where an agent's own things open: as its owner, in its community. */
+const scopeOf = (agent: Agent) => ({
+  viewer: agent.owner,
+  communityOrigin: relayOrigin(agent.relay),
+});
 
 /** Reads each agent's sessions from its type, `READ_DAYS` back for every
  * period, again when the agents or `reload` change; earlier results stay shown
@@ -728,34 +735,49 @@ function Dashboard({
               <InlineHeader title="By agent" />
               <ul className={styles.list}>
                 {result.agents.map((entry) => (
-                  <li key={entry.agent.pubkey} className={styles.agentRow}>
-                    <Avatar
-                      src={entry.agent.picture}
-                      alt=""
-                      fallback={entry.agent.name}
-                      size="small"
-                    />
-                    <div className={styles.agentText}>
-                      <span className={styles.name}>{entry.agent.name}</span>
-                      <span className={styles.label}>
-                        {[
-                          titleOf(entry.harness),
-                          entry.model && modelName(entry.model),
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
-                      <span className={styles.track} aria-hidden="true">
-                        <span
-                          className={styles.bar}
-                          style={{
-                            inlineSize: `${maxAgent ? ((entry.cost.value ?? 0) / maxAgent) * 100 : 0}%`,
-                            background: colorOf(entry.harness),
-                          }}
+                  <li key={entry.agent.pubkey}>
+                    <NavigationItem
+                      icon={
+                        <Avatar
+                          src={entry.agent.picture}
+                          alt=""
+                          fallback={entry.agent.name}
+                          size="small"
                         />
-                      </span>
-                    </div>
-                    <Amount total={entry.cost} />
+                      }
+                      label={
+                        <span className={styles.agentText}>
+                          <span className={styles.name}>
+                            {entry.agent.name}
+                          </span>
+                          <span className={styles.label}>
+                            {[
+                              titleOf(entry.harness),
+                              entry.model && modelName(entry.model),
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                          <span className={styles.track} aria-hidden="true">
+                            <span
+                              className={styles.bar}
+                              style={{
+                                inlineSize: `${maxAgent ? ((entry.cost.value ?? 0) / maxAgent) * 100 : 0}%`,
+                                background: colorOf(entry.harness),
+                              }}
+                            />
+                          </span>
+                        </span>
+                      }
+                      trailing={<Amount total={entry.cost} />}
+                      aria-label={`${entry.agent.name}, ${titleOf(entry.harness)}, ${costLabel(entry.cost)}. Open in Agents`}
+                      onClick={() =>
+                        void open({
+                          ...agentTarget(entry.agent.pubkey),
+                          scope: scopeOf(entry.agent),
+                        })
+                      }
+                    />
                   </li>
                 ))}
                 {waiting.map((agent) => (
@@ -816,10 +838,7 @@ function Dashboard({
                               void open({
                                 version: 1,
                                 kind: "conversation",
-                                scope: {
-                                  viewer: agent.owner,
-                                  communityOrigin: relayOrigin(agent.relay),
-                                },
+                                scope: scopeOf(agent),
                                 channelId,
                                 ...(session.root
                                   ? {

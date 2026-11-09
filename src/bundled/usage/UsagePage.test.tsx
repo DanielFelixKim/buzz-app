@@ -244,6 +244,32 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
   });
 });
 
+it("opens an agent from By agent in Agents", async () => {
+  const relay = agent("Relay");
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  render(
+    <UsagePage
+      agents={host([agent("Pixel"), relay], async (target) => [
+        target === relay ? session("b", 250_000) : session("a", 750_000),
+      ])}
+      open={open}
+    />,
+  );
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "Relay, Claude, $1.00. Open in Agents",
+    }),
+  );
+  expect(open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    route: { version: 1, params: { agent: relay.pubkey } },
+    scope: { viewer: owner, communityOrigin: "https://relay.example.com" },
+  });
+});
+
 it("waits for every agent before its totals, and shows each agent read meanwhile", async () => {
   const pixel = agent("Pixel");
   let finish = () => {};
