@@ -72,7 +72,9 @@ export function DraftPreview({
   const [sent, setSent] = useState<string>();
   const sending = useRef<string | undefined>(undefined);
   const [received, setReceived] = useState<string>();
-  const [cleaned, setCleaned] = useState(0);
+  // The composer's latest draft cleanup, and the send it followed if that
+  // send was published by then.
+  const [cleaned, setCleaned] = useState<{ sent: string | undefined }>();
   // Receipts include fast echoes already retired from the pending outbox.
   // Observe delivery only; the composer still owns saving and recovery.
   useEffect(() => {
@@ -87,16 +89,23 @@ export function DraftPreview({
   }, [session]);
   // The relay has this draft's latest send. The preview stays open on its
   // conversation, which now shows it, and leaves focus alone; a newer send
-  // waits for its own receipt. The composer's draft cleanup usually precedes
-  // the receipt, but a failed save is retried by hand, possibly after it.
+  // waits for its own receipt.
   const delivered =
     mode === "draft" && sent && received === sent ? sent : undefined;
   const reportSent = useEffectEvent(onSent);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a cleanup landing after the receipt asks again.
   useEffect(() => {
     if (delivered) reportSent(delivered);
-  }, [delivered, cleaned]);
-  const draftCleaned = () => setCleaned((count) => count + 1);
+  }, [delivered]);
+  // The composer's draft cleanup usually precedes the receipt, but a failed
+  // save is retried by hand, possibly after it, and then asks again. Only the
+  // delivered send's own cleanup does: a background send clears its draft
+  // before it is published, and that must not retire the draft written since
+  // on an earlier send's receipt.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a cleanup asks again.
+  useEffect(() => {
+    if (delivered && cleaned?.sent === delivered) reportSent(delivered);
+  }, [cleaned]);
+  const draftCleaned = (sent: string | undefined) => setCleaned({ sent });
   const sentMessage = (id: string) => {
     sending.current = id;
     setSent(id);
@@ -282,7 +291,7 @@ function DraftChannel({
   writable: boolean;
   autoFocus: boolean;
   onSend(id: string): void;
-  onDraftSaved(): void;
+  onDraftSaved(sent: string | undefined): void;
 }) {
   const { session, channelId } = useConversation();
   const channelWindow = useChannelWindow(session.channels, channelId);

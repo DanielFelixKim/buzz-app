@@ -11599,7 +11599,10 @@ it.each([undefined, "root"])(
     await h.user.click(
       screen.getByRole("button", { name: "Retry draft cleanup" }),
     );
-    expect(retired).toHaveBeenCalledExactlyOnceWith();
+    // The retried cleanup still names the send it followed.
+    expect(retired).toHaveBeenCalledExactlyOnceWith(
+      threadRootId ? "reply-id" : "channel-id",
+    );
     expect(h.onSend).toHaveBeenCalledOnce();
     expect(readView("scope", key, "")).toMatchObject({ text: "" });
   },
@@ -11688,7 +11691,7 @@ it.each([false, true])(
         text: "",
       });
       expect(h.input()).toHaveValue(remembered ? "@Honey " : "");
-      expect(retired).toHaveBeenCalledExactlyOnceWith();
+      expect(retired).toHaveBeenCalledExactlyOnceWith("accepted");
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
       fail.mockRestore();

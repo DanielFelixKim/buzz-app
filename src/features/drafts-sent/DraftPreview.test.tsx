@@ -714,6 +714,160 @@ it("keeps the row of a draft written again whose background send is cleaned up b
   ).toBeNull();
 });
 
+it("keeps the row of a draft written before the last receipt whose background send is cleaned up before it lands", async () => {
+  let release!: (value: UploadedAttachment) => void;
+  const gate = new Promise<UploadedAttachment>((resolve) => {
+    release = resolve;
+  });
+  const upload = vi.fn(() => gate);
+  const h = fixture(upload);
+  const deliver = h.hold();
+  writeView(h.session.scope, "draft:room", "First");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() => expect(h.publish).toHaveBeenCalled());
+    // Written while the first send is still out, the new draft owns the row
+    // when that send's receipt lands.
+    act(() => {
+      editor.value = "Again, with a file";
+      fireEvent.input(editor);
+    });
+  } finally {
+    await act(async () => deliver());
+  }
+  await within(region).findByText("Sent to #Design.");
+  expect(draftButton("Again, with a file")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await act(async () => h.session.channels.refreshList?.());
+  const store = attachmentDraft(
+    h.session,
+    `${h.session.scope}:draft:room`,
+    "room",
+  );
+  act(() => {
+    store.add([new File(["checklist"], "notes.txt", { type: "text/plain" })]);
+  });
+  await waitFor(() => expect(upload).toHaveBeenCalled());
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() =>
+      expect(
+        mentionDraft(readView(h.session.scope, "draft:room", "")).text,
+      ).toBe(""),
+    );
+    // Its cleanup precedes its own publication. The earlier receipt, never
+    // recorded while this draft was listed, does not retire it now.
+    expect(draftButton("Empty draft")).toHaveAttribute("aria-current", "true");
+    expect(h.published).toHaveLength(1);
+  } finally {
+    await act(async () =>
+      release({
+        name: "notes.txt",
+        url: `https://relay.test/media/${"a".repeat(64)}.txt`,
+        type: "text/plain",
+        size: 9,
+        sha256: "a".repeat(64),
+      }),
+    );
+  }
+  await waitFor(() => expect(h.published).toHaveLength(2));
+  await waitFor(() => expect(screen.queryByText("Empty draft")).toBeNull());
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Other draft")).toHaveFocus();
+});
+
+it("retires a background attachment send whose failed cleanup is retried after it lands", async () => {
+  let release!: (value: UploadedAttachment) => void;
+  const gate = new Promise<UploadedAttachment>((resolve) => {
+    release = resolve;
+  });
+  const upload = vi.fn(() => gate);
+  const h = fixture(upload);
+  writeView(h.session.scope, "draft:room", "Attached later");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /Continue draft.*Attached later/,
+    }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = await within(region).findByRole("textbox");
+  await act(async () => h.session.channels.refreshList?.());
+  const store = attachmentDraft(
+    h.session,
+    `${h.session.scope}:draft:room`,
+    "room",
+  );
+  act(() => {
+    store.add([new File(["checklist"], "notes.txt", { type: "text/plain" })]);
+  });
+  await waitFor(() => expect(upload).toHaveBeenCalled());
+  const stored = `buzz-view.v1:${JSON.stringify([h.session.scope, "draft:room"])}`;
+  const setItem = Storage.prototype.setItem;
+  const fail = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name === stored) throw Error("no space");
+      setItem.call(this, name, value);
+    });
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    // Cleaned up before publication, and that cleanup failed.
+    await within(region).findByRole("button", { name: "Retry draft cleanup" });
+    expect(h.published).toHaveLength(0);
+    await act(async () =>
+      release({
+        name: "notes.txt",
+        url: `https://relay.test/media/${"a".repeat(64)}.txt`,
+        type: "text/plain",
+        size: 9,
+        sha256: "a".repeat(64),
+      }),
+    );
+    await within(region).findByText("Sent to #Design.");
+    // Delivered, but still saved: the draft keeps its row until cleanup.
+    expect(draftButton("Attached later")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  } finally {
+    fail.mockRestore();
+  }
+  fireEvent.click(
+    within(region).getByRole("button", { name: "Retry draft cleanup" }),
+  );
+  expect(mentionDraft(readView(h.session.scope, "draft:room", "")).text).toBe(
+    "",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Continue draft.*Attached later/ }),
+  ).toBeNull();
+  expect(screen.queryByText("Empty draft")).toBeNull();
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Other draft")).toHaveFocus();
+});
+
 it("does not let a late send report into a newer selected draft", async () => {
   const h = fixture();
   const release = h.hold();
