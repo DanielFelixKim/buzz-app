@@ -194,13 +194,15 @@ function ScopedPage({
     draft: boolean;
     trigger: HTMLButtonElement;
     autoFocus: boolean;
+    /** Sent, the draft left the list; nothing holds its place there. */
+    sent?: true;
   };
   const [selected, setSelected] = useState<Visit>();
   const visit = useRef<Visit | undefined>(undefined);
   const focusAfterClose = useRef<HTMLElement | null>(null);
   const selectedIndex = useRef(0);
   const neighborAfterClose = useRef<HTMLElement | null>(null);
-  const [announcement, setAnnouncement] = useState("");
+  const selectedRow = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
     if (!selected && focusAfterClose.current) {
       const target = focusAfterClose.current;
@@ -299,15 +301,25 @@ function ScopedPage({
     };
   }
 
-  // Keep an emptied editor in its last list position until it is closed.
+  // Keep an emptied editor in its last list position until it is closed. A
+  // sent draft leaves the list; its preview still shows where it went.
   const currentIndex = selected?.draft
     ? drafts.entries.findIndex((entry) => entry.id === selected.entry.id)
     : -1;
   useLayoutEffect(() => {
-    if (currentIndex >= 0) selectedIndex.current = currentIndex;
+    if (currentIndex < 0) return;
+    selectedIndex.current = currentIndex;
+    // Writing again after a send makes a new draft: like any other, it holds
+    // its place when emptied, and closing returns to its row.
+    const current = visit.current;
+    if (current?.sent) {
+      const { sent: _, ...rest } = current;
+      visit.current = { ...rest, trigger: selectedRow.current ?? rest.trigger };
+      setSelected(visit.current);
+    }
   }, [currentIndex]);
   const entries: (Entry & { placeholder?: boolean })[] = [...drafts.entries];
-  if (selected?.draft && currentIndex < 0)
+  if (selected?.draft && !selected.sent && currentIndex < 0)
     entries.splice(selectedIndex.current, 0, {
       ...selected.entry,
       text: "Empty draft",
@@ -478,7 +490,8 @@ function ScopedPage({
     (sent.status === "loading" || sent.status === "idle") &&
     !sent.events.length;
 
-  async function open(entry: Entry, draft: boolean) {
+  /** In channel, a thread opens beside its root there, as other threads' links do. */
+  async function open(entry: Entry, draft: boolean, inChannel = false) {
     setNotice(undefined);
     try {
       const result = await navigator.open({
@@ -487,6 +500,7 @@ function ScopedPage({
         scope: { viewer, communityOrigin: origin },
         channelId: entry.channelId,
         ...(entry.threadRootId ? { threadRootId: entry.threadRootId } : {}),
+        ...(inChannel && entry.threadRootId ? { context: "channel" } : {}),
         ...(draft
           ? entry.threadRootId
             ? { messageId: entry.threadRootId }
@@ -502,22 +516,42 @@ function ScopedPage({
     }
   }
 
-  function closePreview(current: Visit, sent = false, restoreFocus = true) {
-    if (visit.current !== current) return;
-    const row = current.trigger.closest("li");
-    const neighbor = (
+  /** The row after this one, else the one before. */
+  function neighborOf(trigger: HTMLElement) {
+    const row = trigger.closest("li");
+    return (
       row?.nextElementSibling ?? row?.previousElementSibling
-    )?.querySelector<HTMLElement>("[data-preview-row]");
-    neighborAfterClose.current = restoreFocus ? (neighbor ?? null) : null;
-    focusAfterClose.current = !restoreFocus
-      ? null
-      : !sent && current.trigger.isConnected
-        ? current.trigger
-        : (neighbor ?? searchInput.current);
+    )?.querySelector<HTMLButtonElement>("[data-preview-row]");
+  }
+
+  function closePreview(current: Visit) {
+    if (visit.current !== current) return;
+    const neighbor = neighborOf(current.trigger);
+    neighborAfterClose.current = neighbor ?? null;
+    focusAfterClose.current = current.trigger.isConnected
+      ? current.trigger
+      : (neighbor ?? searchInput.current);
     visit.current = undefined;
     setSelected(undefined);
-    if (sent)
-      setAnnouncement(`Sent to ${place(current.entry.channelId).title}.`);
+  }
+
+  /** A sent draft's preview stays open on its conversation, and focus stays
+   * where the person left it: usually the emptied composer. Its row leaves the
+   * list, so closing returns to the row that takes its place. A draft still
+   * listed (written again, or not cleared) keeps its row. */
+  function sentFrom(current: Visit) {
+    if (
+      visit.current !== current ||
+      current.sent ||
+      drafts.entries.some((entry) => entry.id === current.entry.id)
+    )
+      return;
+    visit.current = {
+      ...current,
+      sent: true,
+      trigger: neighborOf(current.trigger) ?? current.trigger,
+    };
+    setSelected(visit.current);
   }
 
   /** Clears one draft and keeps keyboard focus in the list: the next row's clear
@@ -568,6 +602,7 @@ function ScopedPage({
         disabled={!draft && !place.available}
         selected={selected?.entry.id === entry.id}
         aria-current={selected?.entry.id === entry.id ? "true" : undefined}
+        ref={selected?.entry.id === entry.id ? selectedRow : undefined}
         data-preview-row=""
         title={
           draft || place.available
@@ -588,7 +623,6 @@ function ScopedPage({
           );
           visit.current = next;
           setSelected(next);
-          setAnnouncement("");
           setNotice(undefined);
         }}
         avatar={
@@ -691,11 +725,12 @@ function ScopedPage({
         autoFocus={selected.autoFocus}
         onClose={() => closePreview(selected)}
         onOpen={() => void open(selected.entry, selected.draft)}
+        onOpenChannel={() => void open(selected.entry, selected.draft, true)}
         loading={
           !byId.get(selected.entry.channelId) &&
           (channelListStatus === "idle" || channelListStatus === "loading")
         }
-        onSaved={(restoreFocus) => closePreview(selected, true, restoreFocus)}
+        onSent={() => sentFrom(selected)}
       />
     ) : null;
 
@@ -759,9 +794,6 @@ function ScopedPage({
           {notice}
         </p>
       )}
-      <p role="status" className="sr-only">
-        {announcement}
-      </p>
       <div className={styles.sections}>
         <section
           role="tabpanel"

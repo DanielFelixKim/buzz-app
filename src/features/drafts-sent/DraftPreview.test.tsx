@@ -71,7 +71,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function fixture(upload?: () => Promise<UploadedAttachment>) {
+function fixture(
+  upload?: () => Promise<UploadedAttachment>,
+  { privateRoom = false } = {},
+) {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   vi.stubGlobal(
@@ -88,7 +91,10 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
     relayKey = keypair();
   const root = message(other, "room", "Discuss launch", 20);
   const events: RelayEvent[] = [
-    metadata(relayKey, "room", "Design", 10, [["t", "stream"]]),
+    metadata(relayKey, "room", "Design", 10, [
+      ["t", "stream"],
+      ...(privateRoom ? [["private"]] : []),
+    ]),
     roster(relayKey, "room", [viewer.pubkey, other.pubkey], 10),
     metadata(relayKey, "other", "Planning", 10, [["t", "stream"]]),
     roster(relayKey, "other", [viewer.pubkey, other.pubkey], 10),
@@ -354,7 +360,7 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
 const draftButton = (text: string) =>
   screen.getByRole("button", { name: new RegExp(`Continue draft.*${text}`) });
 
-it("edits and sends from the real channel composer, then focuses a surviving row without opening it", async () => {
+it("sends from the real channel composer and stays on the conversation, then closes to a surviving row", async () => {
   const h = fixture();
   writeView(h.session.scope, "draft:room", "Ready for launch");
   writeView(h.session.scope, "draft:other", "Next draft");
@@ -373,22 +379,36 @@ it("edits and sends from the real channel composer, then focuses a surviving row
   fireEvent.click(
     within(preview).getByRole("button", { name: "Send message" }),
   );
+  await within(preview).findByText("Sent to #Design.");
+  const sent = h.published.find(
+    (event) => event.content === "Ready for launch",
+  );
   await waitFor(() =>
     expect(
-      screen.queryByRole("region", { name: "Draft for #Design" }),
-    ).toBeNull(),
+      preview.querySelector(`[data-message-id="${sent?.id}"]`),
+    ).toBeInTheDocument(),
   );
-  expect(
-    h.published.some((event) => event.content === "Ready for launch"),
-  ).toBe(true);
   expect(mentionDraft(readView(h.session.scope, "draft:room", "")).text).toBe(
     "",
   );
+  expect(editor).toHaveTextContent("");
+  expect(editor).toHaveFocus();
+  // The sent draft leaves the list; it does not linger as an empty one.
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /Continue draft.*Next draft/ }),
+  ).not.toHaveAttribute("aria-current");
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(
+    screen.queryByRole("region", { name: "Draft for #Design" }),
+  ).toBeNull();
   expect(draftButton("Next draft")).toHaveFocus();
-  expect(screen.getByRole("status")).toHaveTextContent("Sent to #Design");
 });
 
-it("opens a verified thread draft with the real reply composer and origin action", async () => {
+it("opens a verified thread draft with the real reply composer, its channel link and origin action, and shows the sent reply", async () => {
   const h = fixture();
   const key = `draft:room:thread:${h.root.id}`;
   writeView(h.session.scope, key, "Thread draft");
@@ -409,19 +429,60 @@ it("opens a verified thread draft with the real reply composer and origin action
       messageId: h.root.id,
     }),
   );
+  expect(h.open.mock.lastCall?.[0]).not.toHaveProperty("context");
+  // Like other threads, it names its conversation; the name opens it there.
+  const thread = within(region).getByRole("complementary", { name: "Thread" });
+  const channel = within(thread).getByRole("button", { name: "#Design" });
+  expect(channel.closest("p")).toHaveTextContent("In #Design");
   fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  const reply = h.published.find((event) => event.content === "Thread draft");
+  expect(reply?.tags).toContainEqual(["e", h.root.id, "", "reply"]);
   await waitFor(() =>
-    expect(h.published.some((event) => event.content === "Thread draft")).toBe(
-      true,
-    ),
+    expect(
+      thread.querySelector(`[data-message-id="${reply?.id}"]`),
+    ).toBeInTheDocument(),
   );
+  expect(editor).toHaveTextContent("");
+  expect(editor).toHaveFocus();
+  h.open.mockClear();
+  fireEvent.click(within(thread).getByRole("button", { name: "#Design" }));
+  expect(h.open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "conversation",
+      channelId: "room",
+      threadRootId: h.root.id,
+      messageId: h.root.id,
+      context: "channel",
+    }),
+  );
+  expect(region).toBeInTheDocument();
+  // No row is left to return to.
+  fireEvent.keyDown(editor, { key: "Escape" });
   expect(
-    h.published.find((event) => event.content === "Thread draft")?.tags,
-  ).toContainEqual(["e", h.root.id, "", "reply"]);
+    screen.queryByRole("region", { name: "Draft for #Design" }),
+  ).toBeNull();
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+});
+
+it("names a private channel's thread as thread tabs do", async () => {
+  const h = fixture(undefined, { privateRoom: true });
+  writeView(h.session.scope, `draft:room:thread:${h.root.id}`, "Quiet reply");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*Quiet reply/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for Design" });
+  const thread = await within(region).findByRole("complementary", {
+    name: "Thread",
+  });
+  expect(
+    within(thread).getByRole("button", { name: "#Design" }).closest("p"),
+  ).toHaveTextContent("In #Design");
 });
 
 it.each([false, true])(
-  "keeps a rejected send with Retry and closes after retry succeeds (thread=%s)",
+  "keeps a rejected send with Retry and stays open once retry succeeds (thread=%s)",
   async (thread) => {
     const h = fixture();
     h.reject();
@@ -453,6 +514,7 @@ it.each([false, true])(
     const retry = await within(region).findByRole("button", { name: "Retry" });
     expect(region).toBeInTheDocument();
     expect(region).toHaveTextContent("Keep this draft");
+    expect(within(region).queryByText("Sent to #Design.")).toBeNull();
     expect(
       within(region).getByRole("button", { name: "Close draft preview" }),
     ).toBeEnabled();
@@ -461,16 +523,13 @@ it.each([false, true])(
     ).toBeEnabled();
     h.accept();
     fireEvent.click(retry);
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("region", { name: "Draft for #Design" }),
-      ).toBeNull(),
-    );
+    await within(region).findByText("Sent to #Design.");
+    expect(region).toBeInTheDocument();
     expect(h.published).toHaveLength(1);
   },
 );
 
-it("does not let a late send close a newer selected draft", async () => {
+it("does not let a late send report into a newer selected draft", async () => {
   const h = fixture();
   const release = h.hold();
   writeView(h.session.scope, "draft:room", "First draft");
@@ -490,10 +549,13 @@ it("does not let a late send close a newer selected draft", async () => {
     await act(async () => release());
   }
   await waitFor(() => expect(h.published).toHaveLength(1));
-  expect(
-    screen.getByRole("region", { name: "Draft for #Planning" }),
-  ).toBeInTheDocument();
-  expect(await screen.findByRole("textbox")).toHaveTextContent("Second draft");
+  const region = screen.getByRole("region", { name: "Draft for #Planning" });
+  const editor = await within(region).findByRole("textbox");
+  expect(editor).toHaveTextContent("Second draft");
+  expect(screen.queryByText(/Sent to/)).toBeNull();
+  expect(draftButton("Second draft")).toHaveAttribute("aria-current", "true");
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Second draft")).toHaveFocus();
 });
 
 it("keeps an emptied editor and filtered selection open, then closes on Escape with focus restored", async () => {
@@ -611,10 +673,11 @@ it("respects a consumed Escape and closes the preview when switching to Sent", a
   expect(draftButton("Keyboard draft")).toBeInTheDocument();
 });
 
-it("does not close on delivery if the person has started a new draft in the same composer", async () => {
+it("keeps the row of a new draft written before the last send is delivered", async () => {
   const h = fixture();
   const release = h.hold();
   writeView(h.session.scope, "draft:room", "First message");
+  writeView(h.session.scope, "draft:other", "Other draft");
   h.render();
   try {
     fireEvent.click(
@@ -636,13 +699,19 @@ it("does not close on delivery if the person has started a new draft in the same
     await act(async () => release());
   }
   await waitFor(() => expect(h.published).toHaveLength(1));
-  expect(
-    screen.getByRole("region", { name: "Draft for #Design" }),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("textbox")).toHaveTextContent("New unsent thought");
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  await within(region).findByText("Sent to #Design.");
+  const editor = within(region).getByRole("textbox");
+  expect(editor).toHaveTextContent("New unsent thought");
+  expect(draftButton("New unsent thought")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("New unsent thought")).toHaveFocus();
 });
 
-it("waits for a background attachment send whose draft cleanup happens before delivery", async () => {
+it("confirms a background attachment send whose draft cleanup happens before delivery only once it lands", async () => {
   let release!: (value: UploadedAttachment) => void;
   const gate = new Promise<UploadedAttachment>((resolve) => {
     release = resolve;
@@ -677,6 +746,7 @@ it("waits for a background attachment send whose draft cleanup happens before de
     expect(
       screen.getByRole("region", { name: "Draft for #Design" }),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Sent to #Design.")).toBeNull();
   } finally {
     await act(async () =>
       release({
@@ -688,16 +758,15 @@ it("waits for a background attachment send whose draft cleanup happens before de
       }),
     );
   }
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("region", { name: "Draft for #Design" }),
-    ).toBeNull(),
-  );
+  await screen.findByText("Sent to #Design.");
+  expect(
+    screen.getByRole("region", { name: "Draft for #Design" }),
+  ).toBeInTheDocument();
   expect(h.published).toHaveLength(1);
   expect(h.published[0]?.tags.some(([tag]) => tag === "imeta")).toBe(true);
 });
 
-it("does not steal search focus when delayed delivery closes the preview", async () => {
+it("does not steal search focus when a delayed delivery lands", async () => {
   const h = fixture();
   const release = h.hold();
   writeView(h.session.scope, "draft:room", "Delayed");
@@ -714,11 +783,10 @@ it("does not steal search focus when delayed delivery closes the preview", async
   } finally {
     await act(async () => release());
   }
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("region", { name: "Draft for #Design" }),
-    ).toBeNull(),
-  );
+  await screen.findByText("Sent to #Design.");
+  expect(
+    screen.getByRole("region", { name: "Draft for #Design" }),
+  ).toBeInTheDocument();
   expect(search).toHaveFocus();
 });
 
@@ -803,7 +871,8 @@ it.each([
       autoFocus: false,
       onClose: vi.fn(),
       onOpen: vi.fn(),
-      onSaved: vi.fn(),
+      onOpenChannel: vi.fn(),
+      onSent: vi.fn(),
     };
     const view = render(
       <DraftPreview {...props} channel={channel} loading={!channel} />,
@@ -823,22 +892,112 @@ it.each([
   },
 );
 
-it("clears the live announcement between two sends to the same conversation", async () => {
+it("clears the live announcement between two sends from the same open preview", async () => {
   const h = fixture();
+  writeView(h.session.scope, "draft:room", "First");
   h.render();
-  for (const text of ["First", "Second"]) {
-    act(() => writeView(h.session.scope, "draft:room", text));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  expect(within(region).queryByText("Sent to #Design.")).toBeNull();
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  // Writing again brings the conversation's row back, still selected.
+  act(() => {
+    editor.value = "Second";
+    fireEvent.input(editor);
+  });
+  expect(draftButton("Second")).toHaveAttribute("aria-current", "true");
+  const release = h.hold();
+  try {
     fireEvent.click(
-      await screen.findByRole("button", {
-        name: new RegExp(`Continue draft.*${text}`),
-      }),
+      within(region).getByRole("button", { name: "Send message" }),
     );
-    expect(screen.queryByText("Sent to #Design.")).toBeNull();
-    await screen.findByRole("textbox");
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await screen.findByText("Sent to #Design.");
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+    expect(within(region).queryByText("Sent to #Design.")).toBeNull();
+  } finally {
+    await act(async () => release());
   }
-  expect(h.published).toHaveLength(2);
+  await within(region).findByText("Sent to #Design.");
+  expect(h.published.map((event) => event.content)).toEqual([
+    "First",
+    "Second",
+  ]);
+});
+
+it("closes to a draft written again after a send", async () => {
+  const h = fixture();
+  writeView(h.session.scope, "draft:room", "First");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  act(() => {
+    editor.value = "Again";
+    fireEvent.input(editor);
+  });
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Again")).toHaveFocus();
+});
+
+it("holds a draft written after a send in place when emptied or its send is rejected", async () => {
+  const h = fixture();
+  writeView(h.session.scope, "draft:room", "First");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+  act(() => {
+    editor.value = "Second";
+    fireEvent.input(editor);
+  });
+  expect(draftButton("Second")).toHaveAttribute("aria-current", "true");
+  act(() => {
+    editor.value = "";
+    fireEvent.input(editor);
+  });
+  // Emptied, it is any draft being edited: its row stays put.
+  expect(draftButton("Empty draft")).toHaveAttribute("aria-current", "true");
+  act(() => {
+    editor.value = "Third";
+    fireEvent.input(editor);
+  });
+  h.reject();
+  vi.useFakeTimers();
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_001);
+  });
+  vi.useRealTimers();
+  await within(region).findByRole("button", { name: "Retry" });
+  expect(within(region).queryByText("Sent to #Design.")).toBeNull();
+  expect(draftButton("Empty draft")).toHaveAttribute("aria-current", "true");
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(
+    screen.queryByRole("region", { name: "Draft for #Design" }),
+  ).toBeNull();
+  expect(draftButton("Other draft")).toHaveFocus();
 });
 
 it.each([false, true])(
@@ -889,6 +1048,20 @@ it.each([false, true])(
     expect(h.open).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: sent.id }),
     );
+    // A thread names its conversation; the name opens it there at the reply.
+    const link = within(region).queryByRole("button", { name: "#Design" });
+    expect(!!link).toBe(thread);
+    if (link) {
+      fireEvent.click(link);
+      expect(h.open).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          channelId: "room",
+          threadRootId: h.root.id,
+          messageId: sent.id,
+          context: "channel",
+        }),
+      );
+    }
     fireEvent.click(
       within(region).getByRole("button", { name: "Send message" }),
     );
@@ -899,6 +1072,8 @@ it.each([false, true])(
     );
     await waitFor(() => expect(screen.queryByLabelText("1 draft")).toBeNull());
     expect(region).toBeInTheDocument();
+    // A reply from Sent was never a listed draft: nothing to announce.
+    expect(within(region).queryByText(/Sent to/)).toBeNull();
     fireEvent.keyDown(editor, { key: "Escape" });
     expect(
       screen.queryByRole("region", { name: "Sent message in #Design" }),
@@ -1133,7 +1308,8 @@ it.each([false, true])(
         autoFocus={false}
         onClose={() => {}}
         onOpen={() => {}}
-        onSaved={() => {}}
+        onOpenChannel={() => {}}
+        onSent={() => {}}
       />,
     );
     try {
@@ -1247,7 +1423,7 @@ it.each([
   },
 );
 
-it("keeps a new attachment-only draft open when the previous text send is delivered", async () => {
+it("keeps a new upload in the composer when the previous text send is delivered", async () => {
   let finishUpload!: (value: UploadedAttachment) => void;
   const upload = vi.fn(
     () =>
@@ -1279,9 +1455,9 @@ it("keeps a new attachment-only draft open when the previous text send is delive
     await waitFor(() => expect(upload).toHaveBeenCalled());
     await act(async () => deliver());
     await waitFor(() => expect(h.published).toHaveLength(1));
-    expect(
-      screen.getByRole("region", { name: "Draft for #Design" }),
-    ).toBeInTheDocument();
+    const region = screen.getByRole("region", { name: "Draft for #Design" });
+    await within(region).findByText("Sent to #Design.");
+    expect(within(region).getByText("next.txt")).toBeInTheDocument();
     expect(store.snapshot()[0]?.status).toBe("uploading");
     expect(screen.getByRole("textbox")).toHaveTextContent("");
   } finally {
