@@ -1,4 +1,5 @@
 import { ManagementRow } from "../ManagementRow";
+import { ManagementHeader } from "../BuilderlabSettings";
 import type { OverviewObserver } from "../overview";
 import { managementDate } from "../management-date";
 import { ManagementSection } from "../ManagementSection";
@@ -30,7 +31,7 @@ import { Button } from "../../../shared/design-system/ui/Button";
 import { Checkbox } from "../../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
-import { Header, InlineHeader } from "../../../shared/design-system/ui/Header";
+import { InlineHeader } from "../../../shared/design-system/ui/Header";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { Input } from "../../../shared/design-system/ui/Input";
 import {
@@ -91,12 +92,14 @@ export function HostedCommunities({
   active,
   sharedSignIn = false,
   onOverview,
+  navigation,
 }: {
   api: Api;
   active(): boolean;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
   onOverview?: OverviewObserver;
+  navigation?: ReactNode;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -667,7 +670,8 @@ export function HostedCommunities({
 
   return (
     <section aria-busy={busy} aria-labelledby="hosted-communities-title">
-      <Header
+      <ManagementHeader
+        navigation={navigation}
         id="hosted-communities-title"
         title="Communities"
         align="end"

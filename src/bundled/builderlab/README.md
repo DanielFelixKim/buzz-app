@@ -201,7 +201,11 @@ agents are not migrated into this type.
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with
   refresh and retry. Settings directs people to the **Agents** tab to create,
-  edit instructions and delete agents. Listing does not activate agents or
+  edit instructions and delete agents. A left caret beside each management title
+  returns to the overview. Remote agents show their count beside the title and
+  reuse saved community avatars; clicking a saved agent opens its Agents pane.
+  Agents outside the current community keep the fallback icon and are not links.
+  Listing does not activate agents or
   publish community registrations. Requests go through `session.request`;
   sign-out and navigation discard late results.
   The client also supplies the hosted adapter's Beekeeper operations. Pending

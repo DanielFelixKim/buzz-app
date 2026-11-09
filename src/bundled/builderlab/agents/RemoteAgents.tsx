@@ -7,6 +7,8 @@ import {
   type ReactNode,
 } from "react";
 import { RobotIcon } from "../../../shared/design-system/icons";
+import { Avatar } from "../../../shared/design-system/ui/Avatar";
+import type { Agent } from "../../../features/agents/service";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
 import { InlineHeader } from "../../../shared/design-system/ui/Header";
@@ -26,6 +28,8 @@ export function RemoteAgents({
   onOverview,
   showHeading = true,
   openAgents,
+  savedAgents = [],
+  openAgent,
 }: {
   client: AgentClient;
   session: BuilderlabSession;
@@ -33,6 +37,8 @@ export function RemoteAgents({
   onOverview?: OverviewObserver | undefined;
   showHeading?: boolean;
   openAgents?: (() => void) | undefined;
+  savedAgents?: readonly Pick<Agent, "pubkey" | "picture">[];
+  openAgent?: ((pubkey: string) => void) | undefined;
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
   useLayoutEffect(() => {
@@ -67,9 +73,11 @@ export function RemoteAgents({
       onOverview={onOverview}
       showHeading={showHeading}
       openAgents={openAgents}
+      savedAgents={savedAgents}
+      openAgent={openAgent}
     />
   ) : (
-    <AgentSection count="—">
+    <AgentSection>
       <p className="text-body-sm text-secondary">
         Sign in to view your remote agents.
       </p>
@@ -83,12 +91,16 @@ function AgentList({
   onOverview,
   showHeading,
   openAgents,
+  savedAgents,
+  openAgent,
 }: {
   client: AgentClient;
   active(): boolean;
   onOverview?: OverviewObserver | undefined;
   showHeading: boolean;
   openAgents?: (() => void) | undefined;
+  savedAgents: readonly Pick<Agent, "pubkey" | "picture">[];
+  openAgent?: ((pubkey: string) => void) | undefined;
 }) {
   const [agents, setAgents] = useState<readonly RemoteAgent[]>();
   const [error, setError] = useState<string>();
@@ -181,7 +193,7 @@ function AgentList({
       aria-label="Remote agents"
     >
       {showHeading && <InlineHeader title="Remote agents" />}
-      <AgentSection count={loading ? "…" : (agents?.length ?? "—")}>
+      <AgentSection>
         {loading && (
           <p role="status" className="text-body-sm text-secondary">
             Loading agents…
@@ -228,7 +240,15 @@ function AgentList({
         {agents && agents.length > 0 && (
           <ul className="m-0 list-none p-0" aria-label="Your remote agents">
             {agents.map((agent) => (
-              <AgentRow key={agent.id} agent={agent} active={active} />
+              <AgentRow
+                key={agent.id}
+                agent={agent}
+                active={active}
+                saved={savedAgents.find(
+                  ({ pubkey }) => pubkey === agent.pubkey,
+                )}
+                openAgent={openAgent}
+              />
             ))}
           </ul>
         )}
@@ -237,18 +257,9 @@ function AgentList({
   );
 }
 
-function AgentSection({
-  count,
-  children,
-}: {
-  count?: ReactNode;
-  children: ReactNode;
-}) {
+function AgentSection({ children }: { children: ReactNode }) {
   return (
-    <ManagementSection
-      hero={agentsHero}
-      facts={count === undefined ? [] : [{ label: "Agents", value: count }]}
-    >
+    <ManagementSection hero={agentsHero} facts={[]}>
       {children}
     </ManagementSection>
   );
@@ -257,9 +268,13 @@ function AgentSection({
 function AgentRow({
   agent,
   active,
+  saved,
+  openAgent,
 }: {
   agent: RemoteAgent;
   active(): boolean;
+  saved?: Pick<Agent, "pubkey" | "picture"> | undefined;
+  openAgent?: ((pubkey: string) => void) | undefined;
 }) {
   const [copied, setCopied] = useState<"copied" | "failed">();
   const state = agentState(agent);
@@ -276,14 +291,35 @@ function AgentRow({
   return (
     <li>
       <ManagementRow
-        icon={<RobotIcon size={20} />}
+        alignIcon="start"
+        icon={
+          <Avatar
+            src={saved?.picture}
+            alt=""
+            fallback={agent.name}
+            fallbackContent={<RobotIcon size={20} />}
+            size="fill"
+            shape="squircle"
+          />
+        }
+        onOpen={
+          saved && openAgent
+            ? () => {
+                if (active()) openAgent(agent.pubkey);
+              }
+            : undefined
+        }
+        openLabel={`Open ${agent.name} in Agents`}
         title={agent.name}
         detail={
           <>
             {[agent.modelId, state, created ? `Created ${created}` : undefined]
               .filter(Boolean)
               .join(" · ")}
-            <span className="block select-all break-all text-mono">
+            <span
+              data-agent-key=""
+              className="block select-all break-all text-mono"
+            >
               {agent.pubkey}
             </span>
           </>

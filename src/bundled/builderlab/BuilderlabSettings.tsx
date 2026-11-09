@@ -1,6 +1,12 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowLeftIcon,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
+import {
+  CaretLeftIcon,
   ArrowRightIcon,
   ArrowUpRightIcon,
   GlobeIcon,
@@ -31,6 +37,21 @@ const sections = [
 ] as const;
 type Section = (typeof sections)[number]["id"];
 
+/** A section keeps navigation beside its heading and outside the heading name. */
+export function ManagementHeader({
+  navigation,
+  ...props
+}: ComponentProps<typeof Header> & { navigation?: ReactNode }) {
+  return (
+    <div className={styles.managementHeader}>
+      {navigation}
+      <div className={styles.heading}>
+        <Header {...props} />
+      </div>
+    </div>
+  );
+}
+
 /** Local management views share the Settings contribution's account and lifetime. */
 export function BuilderlabSettings({
   active,
@@ -41,7 +62,7 @@ export function BuilderlabSettings({
 }: {
   active(): boolean;
   account: ReactNode;
-  communities: ReactNode;
+  communities(navigation: ReactNode): ReactNode;
   agents: ReactNode;
   summaries?: Record<Section, OverviewSnapshot>;
 }) {
@@ -57,9 +78,25 @@ export function BuilderlabSettings({
     else if (origin) triggers.current[origin]?.focus({ preventScroll: true });
   }, [selected]);
   const section = sections.find(({ id }) => id === selected);
+  const agentCount =
+    summaries?.agents.kind === "filled"
+      ? summaries.agents.items.length
+      : undefined;
   const open = (id: Section) => {
     if (active()) setSelected(id);
   };
+  const navigation = (
+    <IconButton
+      ref={back}
+      aria-label="Back to Builderlab"
+      title="Back to Builderlab"
+      hint="familiar"
+      icon={<CaretLeftIcon />}
+      onClick={() => {
+        if (active()) setSelected(undefined);
+      }}
+    />
+  );
   const ordered = [...sections].sort((a, b) => {
     const aEmpty = ["empty", "unavailable"].includes(
       summaries?.[a.id].kind ?? "empty",
@@ -76,22 +113,16 @@ export function BuilderlabSettings({
   });
   return (
     <section aria-label="Builderlab">
-      {section && (
-        <div className={styles.back}>
-          <Button
-            ref={back}
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              if (active()) setSelected(undefined);
-            }}
-          >
-            <ArrowLeftIcon aria-hidden="true" /> Back to Builderlab
-          </Button>
-        </div>
-      )}
       {selected !== "communities" && (
-        <Header id="builderlab-title" title={section?.title ?? "Builderlab"} />
+        <ManagementHeader
+          navigation={section && navigation}
+          id="builderlab-title"
+          title={
+            selected === "agents"
+              ? `Remote agents${agentCount === undefined ? "" : ` (${agentCount})`}`
+              : "Builderlab"
+          }
+        />
       )}
       <div className={styles.account} hidden={!!selected} inert={!!selected}>
         <SettingsGroup layout="form">{account}</SettingsGroup>
@@ -180,7 +211,9 @@ export function BuilderlabSettings({
       {sections.map(({ id }) => (
         // Mount once on entry: the overview and section share the same reads.
         <div key={id} hidden={selected !== id} inert={selected !== id}>
-          {id === "communities" ? communities : agents}
+          {id === "communities"
+            ? communities(selected === id ? navigation : undefined)
+            : agents}
         </div>
       ))}
     </section>

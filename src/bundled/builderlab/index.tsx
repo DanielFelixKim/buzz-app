@@ -1,4 +1,9 @@
-import { useLayoutEffect, useState, useSyncExternalStore } from "react";
+import {
+  useLayoutEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { OverviewObserver, OverviewSnapshot } from "./overview";
 import type { PluginModule } from "../../plugins/api";
 import { handoffFederatedBackupSession } from "../../features/identity/backup";
@@ -15,8 +20,10 @@ import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
 import { offerBuilderlabDecisions } from "./decisions";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
-import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
-import { BuilderlabSettings } from "./BuilderlabSettings";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { useAgentsSnapshot } from "../../features/agents/react";
+import { agentTarget } from "../agents/routes";
+import { BuilderlabSettings, ManagementHeader } from "./BuilderlabSettings";
 import { BuilderlabLogoIcon } from "../../shared/design-system/icons";
 import { HostedCommunities } from "./communities/HostedCommunities";
 import { brokerApi, createApi } from "./communities/api";
@@ -187,9 +194,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const Communities = ({
     active,
     onOverview,
+    navigation,
   }: {
     active(): boolean;
     onOverview: OverviewObserver;
+    navigation: ReactNode;
   }) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
     useLayoutEffect(() => {
@@ -200,11 +209,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       )
         onOverview({ kind: "empty" });
     }, [active, onOverview, state.status]);
-    const heading = <Header title="Communities" />;
+    const heading = (
+      <ManagementHeader navigation={navigation} title="Communities" />
+    );
     if (!communities) return heading;
     if (communities === brokerApi)
       return (
         <HostedCommunities
+          navigation={navigation}
           api={communities}
           active={active}
           onOverview={onOverview}
@@ -214,6 +226,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       state.status === "signed-in" && dev ? session.viewerSession() : undefined;
     return state.status === "signed-in" ? (
       <HostedCommunities
+        navigation={navigation}
         key={
           viewer && "broker" in viewer
             ? viewer.broker.revision
@@ -229,6 +242,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     );
   };
   const Settings = ({ active }: { active(): boolean }) => {
+    const saved = useAgentsSnapshot(ctx.agents);
     const [communityOverview, setCommunityOverview] =
       useState<OverviewSnapshot>({ kind: "pending" });
     const [agentOverview, setAgentOverview] = useState<OverviewSnapshot>({
@@ -253,15 +267,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
             openIdentity={openIdentity}
           />
         }
-        communities={
-          <Communities active={active} onOverview={setCommunityOverview} />
-        }
+        communities={(navigation) => (
+          <Communities
+            navigation={navigation}
+            active={active}
+            onOverview={setCommunityOverview}
+          />
+        )}
         agents={
           <RemoteAgents
             client={agents}
             session={session}
             active={active}
             onOverview={setAgentOverview}
+            savedAgents={saved?.agents ?? []}
+            openAgent={(pubkey) => {
+              if (active() && ctx.agents.find(pubkey))
+                void ctx.navigation.open(agentTarget(pubkey));
+            }}
             showHeading={false}
             openAgents={() => {
               if (active())

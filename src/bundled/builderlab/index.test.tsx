@@ -596,7 +596,18 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
           can_use_builderlab_decisions: true,
         },
       };
-    else if (path.endsWith("/list-agents")) result = { status: 1, agents: [] };
+    else if (path.endsWith("/list-agents"))
+      result = {
+        status: 1,
+        agents: [
+          {
+            agent_id: "helper",
+            agent_name: "Helper",
+            agent_pubkey: "ab".repeat(32),
+            status: 2,
+          },
+        ],
+      };
     else if (path.endsWith("/v1/buzz/communities/list"))
       result = { communities: [], can_create: true };
     else if (path.endsWith("/nostr-identities/current"))
@@ -620,7 +631,17 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
   const navigation = { open: vi.fn(async () => ({ status: "opened" })) };
   root.provide("navigation", navigation as never);
   provideKnownCommunities(root, community.viewer);
-  provideAgents(root, community);
+  const service = provideAgents(root, community);
+  // The native service owns inventory; this Settings test supplies its snapshot.
+  const saved = {
+    pubkey: "ab".repeat(32),
+    picture: "https://example.com/helper.png",
+  } as Agent;
+  const snapshot = { ...service.snapshot(), agents: [saved] };
+  vi.spyOn(service, "snapshot").mockReturnValue(snapshot);
+  vi.spyOn(service, "find").mockImplementation((key) =>
+    key === saved.pubkey ? saved : undefined,
+  );
   try {
     runtime.reconcile([
       {
@@ -642,6 +663,23 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
       screen.getByRole("button", { name: "Sign in with builderlab.example" }),
     );
     expect(identity.service.signIn).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "Open Remote agents" }),
+    );
+    const open = await screen.findByRole("button", {
+      name: "Open Helper in Agents",
+    });
+    expect(open.querySelector("img")).toHaveAttribute("src", saved.picture);
+    await user.click(open);
+    expect(navigation.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.agents",
+      pageId: "agents",
+      route: { version: 1, params: { agent: saved.pubkey } },
+    });
+    navigation.open.mockClear();
+    await settingsOverview();
     await user.click(
       within(screen.getByRole("region", { name: "Communities" })).getByRole(
         "button",

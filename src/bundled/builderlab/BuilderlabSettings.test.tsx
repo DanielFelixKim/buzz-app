@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { BuilderlabSettings } from "./BuilderlabSettings";
-import { Header } from "../../shared/design-system/ui/Header";
+import { BuilderlabSettings, ManagementHeader } from "./BuilderlabSettings";
 import { Login } from "./login/Login";
 import { createTestSession } from "./test-helpers";
 import type { Credential } from "./session";
@@ -15,11 +14,11 @@ afterEach(cleanup);
 
 it("opens sections by keyboard, restores card focus and preserves management drafts", async () => {
   const started = vi.fn();
-  function Communities() {
+  function Communities({ navigation }: { navigation: ReactNode }) {
     useEffect(started, []);
     return (
       <>
-        <Header title="Communities" />
+        <ManagementHeader title="Communities" navigation={navigation} />
         <input aria-label="Community address" />
       </>
     );
@@ -28,8 +27,12 @@ it("opens sections by keyboard, restores card focus and preserves management dra
     <BuilderlabSettings
       active={() => true}
       account={<p>Account sign-in</p>}
-      communities={<Communities />}
+      communities={(navigation) => <Communities navigation={navigation} />}
       agents={<p>Agent list</p>}
+      summaries={{
+        agents: { kind: "filled", items: [{ key: "one", label: "Helper" }] },
+        communities: { kind: "empty" },
+      }}
     />,
   );
   const user = userEvent.setup();
@@ -55,6 +58,9 @@ it("opens sections by keyboard, restores card focus and preserves management dra
   expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
     "Communities",
   );
+  expect(
+    screen.getByRole("button", { name: "Back to Builderlab" }),
+  ).toHaveTextContent(/^$/);
   await user.type(screen.getByRole("textbox"), "my-community");
   await user.click(screen.getByRole("button", { name: "Back to Builderlab" }));
   expect(communities).toHaveFocus();
@@ -69,6 +75,9 @@ it("opens sections by keyboard, restores card focus and preserves management dra
     "Remote agents",
   );
   expect(screen.getByText("Agent list")).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Remote agents (1)" }),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to Builderlab" }));
   expect(
     within(screen.getByRole("region", { name: "Remote agents" })).getByRole(
@@ -96,7 +105,7 @@ it("keeps a pending login mounted while navigating between management and overvi
           showHeading={false}
         />
       }
-      communities={<p>Community list</p>}
+      communities={() => <p>Community list</p>}
       agents={<p>Agent list</p>}
     />,
   );
@@ -136,7 +145,9 @@ it("ignores navigation from a revoked contribution", async () => {
     <BuilderlabSettings
       active={() => active}
       account={null}
-      communities={<Header title="Communities" />}
+      communities={(navigation) => (
+        <ManagementHeader title="Communities" navigation={navigation} />
+      )}
       agents={<p>Agent list</p>}
     />,
   );
@@ -167,7 +178,7 @@ it("shows request states, populated previews, empty and unavailable prompts", ()
   const props = {
     active: () => true,
     account: null,
-    communities: null,
+    communities: () => null,
     agents: null,
   };
   const view = render(

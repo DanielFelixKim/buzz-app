@@ -116,8 +116,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
 - **Settings → Plugins → Builderlab** shows previews of your hosted communities
-  and remote agents. Open either card to manage it, then choose **Back to
-  Builderlab** to return. Both lists load when the overview opens and refresh
+  and remote agents. Open either card to manage it, then use the left caret beside the title to return. Both lists load when the overview opens and refresh
   when the window regains focus; opening a section preserves its current draft.
   Hosted communities have Active/Archived filters, name/address search and row
   menus for copying addresses and available management actions. **Create**
@@ -125,7 +124,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
   **Refresh** checks communities again, including after a failed read. Automatic
   refresh keeps the current list usable and waits while a community dialog is open.
   Remote agents show model, setup state, creation date when available and a selectable
-  public key, with **Copy key** on each row. Load errors include **Try again**.
+  public key, with **Copy key** on each row. The title includes the agent count.
+  Agents saved in the current community show their avatar; click their row to open
+  their detail pane in **Agents**. Other rows stay informational. Load errors include **Try again**.
   Use **Open Agents** from the empty list to create one.
   In builds using a shared sign-in, Builderlab's account notice names the provider;
   **Manage account** opens Identity, where that sign-in is managed.

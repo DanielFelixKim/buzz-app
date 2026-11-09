@@ -85,7 +85,9 @@ it("loads automatically, refreshes and hides account data on sign-out", async ()
   );
   expect(overview).toHaveBeenLastCalledWith({ kind: "pending" });
   expect(await screen.findByText("Helper")).toBeInTheDocument();
-  expect(screen.getByText("Agents", { selector: "dt" })).toBeVisible();
+  expect(
+    screen.queryByText("Agents", { selector: "dt" }),
+  ).not.toBeInTheDocument();
   expect(overview).toHaveBeenLastCalledWith({
     kind: "filled",
     items: [{ key: "one", label: "Helper" }],
@@ -218,3 +220,47 @@ it.each([
     ).toBeVisible();
   },
 );
+
+it("uses saved avatars and opens a saved agent independently of key selection and copying", async () => {
+  const h = await fixture();
+  const openAgent = vi.fn();
+  const picture = "https://example.com/helper.png";
+  let active = true;
+  const props = { ...h, active: () => active, openAgent };
+  const view = render(
+    <RemoteAgents
+      {...props}
+      savedAgents={[{ pubkey: row.agent_pubkey, picture }]}
+    />,
+  );
+  const open = await screen.findByRole("button", {
+    name: "Open Helper in Agents",
+  });
+  const image = open.querySelector("img");
+  expect(image).toHaveAttribute("src", picture);
+  const user = userEvent.setup();
+  await user.click(screen.getByText(row.agent_pubkey));
+  await user.click(screen.getByRole("button", { name: "Copy Helper’s key" }));
+  expect(openAgent).not.toHaveBeenCalled();
+  await user.click(open);
+  open.focus();
+  await user.keyboard("{Enter}");
+  expect(openAgent.mock.calls).toEqual([
+    [row.agent_pubkey],
+    [row.agent_pubkey],
+  ]);
+  active = false;
+  await user.click(open);
+  expect(openAgent).toHaveBeenCalledTimes(2);
+  view.rerender(<RemoteAgents {...props} savedAgents={[]} />);
+  expect(
+    screen.queryByRole("button", { name: "Open Helper in Agents" }),
+  ).toBeNull();
+  expect(screen.getByText(row.agent_pubkey)).toHaveClass("select-all");
+  expect(
+    screen.getByRole("button", { name: "Copy Helper’s key" }),
+  ).toBeVisible();
+  expect(
+    view.container.querySelector("img[src='https://example.com/helper.png']"),
+  ).toBeNull();
+});
