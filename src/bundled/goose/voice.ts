@@ -11,6 +11,8 @@ export function openVoice(
   process: GooseProcess,
   sessionId: string,
   seat: AgentVoiceSeat,
+  /** Added after goose's own voice instructions, for this start only. */
+  instructions: string,
   start: <T>(run: () => Promise<T>) => Promise<T>,
 ) {
   let interactionId: string | undefined;
@@ -87,6 +89,7 @@ export function openVoice(
           {
             sessionId,
             offerSdp,
+            instructions,
           },
           REQUEST_TIMEOUT_MS,
         ),

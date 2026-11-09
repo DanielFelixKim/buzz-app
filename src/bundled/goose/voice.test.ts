@@ -50,7 +50,7 @@ function fixture() {
     return wire;
   });
   const admit = vi.fn();
-  openVoice(process, "session-1", seat, (run) => {
+  openVoice(process, "session-1", seat, "You are Gander.", (run) => {
     admit();
     return run();
   });
@@ -77,7 +77,11 @@ it("routes the actual start through admission and stops the returned interaction
   expect(f.admit).toHaveBeenCalledOnce();
   expect(f.request).toHaveBeenCalledWith(
     "_goose/unstable/session/live-voice/start",
-    { sessionId: "session-1", offerSdp: "offer" },
+    {
+      sessionId: "session-1",
+      offerSdp: "offer",
+      instructions: "You are Gander.",
+    },
     REQUEST_TIMEOUT_MS,
   );
   expect(f.answer).toHaveBeenCalledWith("answer");
@@ -156,6 +160,7 @@ it("releases admission after a silent live start times out", async () => {
         output: vi.fn(),
         ended: vi.fn(),
       } as unknown as AgentVoiceSeat,
+      "",
       (run) => settings.start(new AbortController().signal, run),
     );
     const failed = expect(wire.start("offer")).rejects.toThrow(

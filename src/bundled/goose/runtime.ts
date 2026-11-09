@@ -11,6 +11,7 @@ import { openVoice } from "./voice";
 // fails.
 import type { Context } from "../../buzz-mcp/client";
 import {
+  coreMemorySection,
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
@@ -276,6 +277,18 @@ export class GooseRuntime {
     };
     signal.addEventListener("abort", onAbort, { once: true });
     try {
+      // Who the agent is reaches the voice model too, not just delegated work.
+      const memory = await this.core(agent.key, signal);
+      const instructions = [
+        `You are ${agent.name}.`,
+        entry.config.instructions.trim()
+          ? `<agent-instructions>\n${entry.config.instructions.trim()}\n</agent-instructions>`
+          : "",
+        entry.team.trim(),
+        memory ? coreMemorySection(memory) : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       await abortable(held.idle(), signal);
       signal.throwIfAborted();
       held.reserve();
@@ -305,6 +318,7 @@ export class GooseRuntime {
             seat.ended(error);
           },
         },
+        instructions,
         (run) => this.voiceSettings.start(signal, run),
       );
       signal.throwIfAborted();

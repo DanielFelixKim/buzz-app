@@ -2406,7 +2406,7 @@ it("switching voice off closes its live seat and releases queued typed work", as
   let liveSignal!: AbortSignal;
   const stopped = vi.fn();
   vi.mocked(openVoice).mockImplementation(
-    async (process, sessionId, seat, start) => {
+    async (process, sessionId, seat, _instructions, start) => {
       liveSignal = seat.signal;
       const result = (await start(() =>
         process.request("_goose/unstable/session/live-voice/start", {
@@ -2497,6 +2497,43 @@ it("selects the agent's model and thinking level before opening voice", async ()
       f.agent as never,
     );
     expect(openVoice).toHaveBeenCalledOnce();
+  } finally {
+    await seat?.close();
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
+
+it("gives the voice model the agent's instructions, team and core memory", async () => {
+  const f = setup({ scope: "channel", core: "I am Gander." });
+  vi.mocked(openVoice).mockImplementation(async () => ({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  }));
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config: {
+          ...DEFAULT_CONFIG,
+          instructions: "Speak like a pirate.",
+          scope: "channel",
+        },
+        team: '<team name="Crew">\nSail.\n</team>',
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    expect(vi.mocked(openVoice).mock.calls[0]?.[3]).toBe(
+      "You are Gander.\n\n<agent-instructions>\nSpeak like a pirate.\n</agent-instructions>\n\n" +
+        '<team name="Crew">\nSail.\n</team>\n\n<core-memory>\nI am Gander.\n</core-memory>',
+    );
   } finally {
     await seat?.close();
     f.runtime.dispose();
