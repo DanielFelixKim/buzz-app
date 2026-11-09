@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
 import { expectAnchor, open, settle, wheel } from "./timeline.mjs";
+import { settlePanelMotion } from "./navigation.mjs";
 
 // Browser-only: real animation frames, each engine's scrollTop clamping and
 // rounding, Virtua's scroll handling, the floating toolbar's top-layer popover
@@ -35,7 +36,7 @@ const NOTCH_DOWN = 6554 * 31 * (40 / 65536); // about 124px
  */
 const dispatch = (target, ...deltas) =>
   target.evaluate((node, deltas) => {
-    const scroller = node.closest("[data-channel-timeline]");
+    const scroller = node.closest("[data-message-scroller]");
     const bounds = scroller.getBoundingClientRect();
     const inView = [...scroller.querySelectorAll("[data-message-id] p")].filter(
       (p) => {
@@ -210,4 +211,94 @@ test("leaves mouse wheels to WebKit while the setting is off", async ({
   await open(page, app);
   const result = await dispatch(prose(page).last(), NOTCH_UP);
   expect(result.prevented).toBe(false);
+});
+
+test.describe("thread panel", () => {
+  test.use({ readState: true, threadUnread: true, presenceThreadAuthors: 60 });
+
+  test("glides a mouse notch through thread replies and releases bottom follow", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const { root, replies } = app.presenceThread;
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    const thread = page.getByRole("region", {
+      name: "Thread messages",
+      exact: true,
+    });
+    await expect(
+      thread.locator(`[data-message-id="${replies.at(-1).id}"]`),
+    ).toBeVisible();
+    await settlePanelMotion(page);
+    await settle(page, thread);
+    const text = thread
+      .locator("[data-message-id] p")
+      .filter({ visible: true })
+      .last();
+
+    const trackpad = await dispatch(text, -3);
+    expect(trackpad.prevented).toBe(false);
+
+    const notch = await dispatch(text, NOTCH_UP);
+    expect(notch.prevented).toBe(true);
+    expect(notch.immediate, "no jump before the first frame").toBe(notch.start);
+    expect(notch.frame).toBeGreaterThan(notch.start);
+    expect(notch.frame, "partway after two frames").toBeLessThan(
+      notch.start - NOTCH_UP - 1,
+    );
+    // The reply moves opposite the wheel, by the whole notch.
+    await expect
+      .poll(() =>
+        thread.evaluate(
+          (element, { id, y }) =>
+            Math.abs(
+              element
+                .querySelector(`[data-message-id="${id}"] p`)
+                .getBoundingClientRect().top -
+                element.getBoundingClientRect().top -
+                y,
+            ),
+          { id: notch.id, y: notch.start - NOTCH_UP },
+        ),
+      )
+      .toBeLessThan(4);
+    // The glide is reader scrolling: the thread stops following the bottom.
+    await expect(
+      thread.getByRole("button", { name: /^Jump to latest/ }),
+    ).toBeVisible();
+
+    // A press in the thread is newer reader intent: the glide ends at once.
+    await settle(page, thread);
+    const pressed = await text.evaluate(
+      (node, deltaY) =>
+        new Promise((resolve) => {
+          const scroller = node.closest("[data-message-scroller]");
+          const start = scroller.scrollTop;
+          const event = new WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+            deltaY,
+          });
+          node.dispatchEvent(event);
+          node.dispatchEvent(
+            new PointerEvent("pointerdown", { bubbles: true }),
+          );
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() =>
+              resolve({
+                prevented: event.defaultPrevented,
+                moved: scroller.scrollTop - start,
+              }),
+            ),
+          );
+        }),
+      NOTCH_DOWN,
+    );
+    expect(pressed.prevented).toBe(true);
+    expect(pressed.moved).toBe(0);
+  });
 });
