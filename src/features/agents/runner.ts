@@ -1666,8 +1666,13 @@ export class AgentRunners {
                 `Agent ${name()} skipped the oldest events ${slug} missed: catch-up reads at most ${CATCH_UP_PAGES} pages`,
               );
             progress(stream.key, window.checkpoint);
-            const events = window.events.filter((event) =>
-              inStream(stream, event),
+            // A mention the owner's app would not hear for the owner wakes
+            // only watches, which their own pass reads: the mention pass
+            // passes it, so a full Interest cannot hold up the mentions.
+            const events = window.events.filter(
+              (event) =>
+                inStream(stream, event) &&
+                (!stream.mentions || !!this.readAddressable.get(event)),
             );
             let skipped = window.skipped;
             for (let index = 0; index < events.length; ) {

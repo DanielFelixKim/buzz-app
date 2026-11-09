@@ -9630,11 +9630,23 @@ it.each([
         identities: [echo],
       });
       if (learnedSince) {
-        // The owner's own lookup finds it right after the read asks.
+        // The owner's own lookup finds it right after the watch's read asks;
+        // the mention read before it leaves it to the watches.
+        let read = false;
+        const readRemote = vi.mocked(session.readRemote);
+        const original = readRemote.getMockImplementation() as NonNullable<
+          ReturnType<typeof readRemote.getMockImplementation>
+        >;
+        readRemote.mockImplementation(async (filters, options) => {
+          const events = await original(filters, options);
+          // The read of every channel, which finds it for the watch.
+          if (!filters[0]?.["#p"] && !filters[0]?.["#h"]) read = true;
+          return events;
+        });
         const unattended = session.unattended.bind(session);
         vi.spyOn(session, "unattended").mockImplementation((id, live) => {
           const result = unattended(id, live);
-          if (id === plaza && !live) learned.delete(plaza);
+          if (read && id === plaza && !live) learned.delete(plaza);
           return result;
         });
       }
@@ -9660,6 +9672,77 @@ it.each([
     }
   },
 );
+
+it("keeps reading mentions while a full Interest waits for a mention only its watches hear", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const watched: string[] = [];
+    const { service, run, history, emit, learned } = await setup({
+      identities: [echo],
+      runOnce: async ({ delivery }) => {
+        const { trigger } = delivery;
+        if (trigger.type === "watch" || trigger.type === "catch-up") {
+          watched.push(
+            ...(trigger.type === "watch"
+              ? [trigger.event.content]
+              : trigger.events.map(({ event }) => event.content)),
+          );
+          if (watched.length === 1) await blocked;
+        }
+        return { ok: true };
+      },
+    });
+    const mentions = () =>
+      run.mock.calls.flatMap(([input]) =>
+        input.trigger.type === "mention" ? [input.trigger.event.content] : [],
+      );
+    // Ten watches of one Interest, of every channel.
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: Object.fromEntries(
+        Array.from({ length: 10 }, (_, i) => [
+          `watch/all${i}`,
+          { ...chat["watch/chat"], channels: "all" },
+        ]),
+      ),
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    // One of them runs and holds its lane; the rest fill the Interest.
+    emit({ events: [message(author, channel, "fills", nowSeconds())] });
+    await vi.waitFor(() => expect(watched).toEqual(["fills"]));
+    await vi.advanceTimersByTimeAsync(60_000);
+    // Live loses one that names the agent in a public channel only agents'
+    // lookups know, which only the watches hear, and then an ordinary
+    // mention.
+    learned.add(plaza);
+    history.push(
+      eventDto(message(author, plaza, "watched", nowSeconds(), [["p", bot]])),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    history.push(
+      eventDto(
+        message(author, "other", "lost mention", nowSeconds(), [["p", bot]]),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    // The mention is answered while the Interest is still full.
+    await vi.waitFor(() => expect(mentions()).toEqual(["lost mention"]));
+    expect(watched).toEqual(["fills"]);
+    // Room opens, and the watches' own pass gives them the one only they hear.
+    release();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() =>
+      expect([...watched, ...heard(run)]).toContain("watched"),
+    );
+    expect(mentions()).toEqual(["lost mention"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("wakes nothing from the time no plugin showed its attention", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
