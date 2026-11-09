@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><title>Builderlab row fixture</title></head><body>
+<div id="root"></div><script type="module">
+import { createElement as h } from "react";
+import { createRoot } from "react-dom/client";
+import { ManagementRow } from "../../src/bundled/builderlab/ManagementRow.tsx";
+import { ManagementSection } from "../../src/bundled/builderlab/ManagementSection.tsx";
+import hero from "../../src/bundled/builderlab/assets/agents-hero.png";
+import { Button } from "../../src/shared/design-system/ui/Button.tsx";
+import { RobotIcon } from "../../src/shared/design-system/icons/index.ts";
+import "../../src/shared/styles/globals.css";
+createRoot(document.getElementById("root")).render(
+  h(ManagementSection, { hero, facts: [] }, h(ManagementRow, {
+    icon: h(RobotIcon), title: "Researcher", detail: "ab".repeat(32),
+    revealActions: true, actions: h(Button, { size: "sm" }, "Copy key"),
+  })),
+);
+</script></body></html>

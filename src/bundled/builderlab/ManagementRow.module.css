@@ -48,8 +48,14 @@
 }
 
 @media (hover: hover) {
-  .row[data-reveal-actions]:not(:hover, :focus-within, :has([data-popup-open]))
-    .actions {
-    opacity: 0;
+  @container (width > 24rem) {
+    .row[data-reveal-actions]:not(
+        :hover,
+        :focus-within,
+        :has([data-popup-open])
+      )
+      .actions {
+      opacity: 0;
+    }
   }
 }
