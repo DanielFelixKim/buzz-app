@@ -73,6 +73,9 @@ export const test = base.extend({
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
+  // Startup failure journeys inject one failure; its console and page errors
+  // contain this text, or come from a URL that does.
+  expectedStartupFailure: [false, { option: true }],
   expectedSidebarIconFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
@@ -107,6 +110,9 @@ export const test = base.extend({
   pluginFixtures: [false, { option: true, scope: "worker" }],
   localAgentActivity: [false, { option: true, scope: "worker" }],
   pairingFixture: [false, { option: true, scope: "worker" }],
+  // A build whose startup throws where `window.__buzzFixtureStartupFailure`
+  // says: "services" in createServices, "render" in App.
+  startupFailureFixture: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
@@ -152,6 +158,7 @@ export const test = base.extend({
       sidebarIcons,
       channelNames,
       expectedPageFailure,
+      expectedStartupFailure,
       expectedSidebarIconFailure,
       largeSidebar,
       iconCongestion,
@@ -3019,6 +3026,11 @@ export const test = base.extend({
               message.includes("Fixture page render failure")
             ) &&
             !(
+              expectedStartupFailure &&
+              (message.includes(expectedStartupFailure) ||
+                consoleLocations.get(index)?.includes(expectedStartupFailure))
+            ) &&
+            !(
               relay?.expectedHttpErrors() &&
               /^Failed to load resource: the server responded with a status of 429/.test(
                 message,
@@ -3026,8 +3038,14 @@ export const test = base.extend({
             ),
         ),
       ).toEqual([]);
-      // All page errors stay in the evidence; only known engine reports pass.
-      expect(unexplainedPageErrors()).toEqual([]);
+      // All page errors stay in the evidence; only known engine reports, and
+      // a startup journey's injected failure, pass.
+      expect(
+        unexplainedPageErrors().filter(
+          (error) =>
+            !(expectedStartupFailure && error.includes(expectedStartupFailure)),
+        ),
+      ).toEqual([]);
     } finally {
       for (const timer of olderPageTimers) clearTimeout(timer);
       if (iconCongestion)

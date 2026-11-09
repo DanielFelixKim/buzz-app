@@ -40,6 +40,12 @@ mention anyone. Explicit agent watches on that room can still receive them.
 
 ## Identity and getting connected
 
+- If Buzz can’t finish starting, the window says **Buzz couldn’t open**
+  instead of staying on the opening mark: **Reload** tries again, the desktop
+  app also offers **Restart Buzz**, and **Details** holds the error for
+  support. Your messages and settings are safe. A start that takes more than
+  about 20 seconds says **This is taking longer than usual.** with **Reload**,
+  and still opens by itself if it finishes.
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
   **Create account** and **Sign in**, which open the Builderlab account page;
   once this computer was set up through Builderlab, **Sign in** comes first.

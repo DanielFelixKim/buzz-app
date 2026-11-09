@@ -19,6 +19,7 @@ export async function buildApp(
     companionFixture,
     localAgentActivity,
     pairingFixture,
+    startupFailureFixture,
   },
   use,
 ) {
@@ -106,6 +107,35 @@ export async function buildApp(
         return code.replace(seam, "floor = () => 0,");
       },
     });
+    if (startupFailureFixture)
+      config.plugins.push({
+        name: "fixture-startup-failure",
+        // Before TypeScript is stripped, so the seams are the source's.
+        enforce: "pre",
+        transform(code, id) {
+          const seams = {
+            [join(root, "src/app/services.ts")]: [
+              "export function createServices() {",
+              "services",
+              "storage unavailable",
+            ],
+            [join(root, "src/app/App.tsx")]: [
+              "export function App({ services }: { services: AppServices }) {",
+              "render",
+              "render",
+            ],
+          };
+          const seam = seams[id];
+          if (!seam) return;
+          const [line, where, what] = seam;
+          if (!code.includes(line))
+            throw new Error(`Missing startup failure seam in ${id}`);
+          return code.replace(
+            line,
+            `${line}\n  if (window.__buzzFixtureStartupFailure === ${JSON.stringify(where)}) throw new Error(${JSON.stringify(`Fixture startup failure: ${what}`)});`,
+          );
+        },
+      });
     if (localAgentActivity)
       config.plugins.push({
         name: "fixture-local-agent",
