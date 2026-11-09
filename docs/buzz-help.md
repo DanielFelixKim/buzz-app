@@ -61,9 +61,11 @@ mention anyone. Explicit agent watches on that room can still receive them.
   automatically: Buzz creates a key (or uses the one already on this device)
   and links it to the signed-in account. Once a key is on this computer, Buzz
   opens straight to the app and reuses the saved Builderlab sign-in. If that
-  account turns out to be linked to a different key, Buzz asks over the open app:
-  **Replace** restarts Buzz to restore the account's key, and **Not now** keeps
-  this one. An existing private key can be entered from **Welcome back**.
+  account turns out to be linked to a different key, Buzz says so over the open
+  app. When Builderlab has a backup of the account's key, **Replace** removes
+  this computer's key and restarts Buzz to restore the account's; copy this
+  key from Settings → Identity first if it isn't backed up. **Not now** keeps
+  this key, and Buzz doesn't ask again about the same two keys. An existing private key can be entered from **Welcome back**.
   Its **Use a different account** signs Buzz out of that account; the next
   sign-in asks the browser to sign in again rather than reuse the account it
   remembers. Signing in to a different account than the one saved on this

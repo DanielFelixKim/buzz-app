@@ -8341,6 +8341,10 @@ const anotherKeyOnDevice = (
     if (command === "identity_restore") return atLaunch ? viewer : null;
     if (command === "identity_create" && !atLaunch) return viewer;
     if (command === "identity_legacy_available") return false;
+    // An idle uploader that backs up to Builderlab, so the account's backups are read.
+    if (command === "nsec_backup_watch") return undefined;
+    if (command === "nsec_backup_state")
+      return { seq: 1, pass: 0, builderlab: true, status: "idle" };
     if (command === "nsec_backup_confirmed") return confirmed;
     if (command === "sign_out") return signedOut();
     throw new Error(`Unexpected command ${command}`);
@@ -8644,42 +8648,119 @@ it("a failed setup with a key leaves through Use a different account to the land
   relaunched.dispose();
 });
 
-it("an account linked to another key asks over the open app, and Not now keeps this key and asks nothing more this run", async () => {
+/**
+ * kgoose's account check with `linked` linked, and its backup status listing
+ * `backups`, or failing.
+ */
+const accountAnswers =
+  (linked: string, backups: readonly string[] | "fails") =>
+  async ({ path }: { path: string }) =>
+    path.endsWith("/nostr-identities/current")
+      ? linkedAnswer(linked)
+      : path.endsWith("/nsec-backups/status") && backups !== "fails"
+        ? {
+            status: 200,
+            headers: {},
+            body: JSON.stringify({
+              current_nostr_pubkey: linked,
+              backup_nostr_pubkeys: backups,
+            }),
+          }
+        : { status: 503, headers: {}, body: "{}" };
+const replaceButton = (prompt: HTMLElement) =>
+  within(prompt).queryByRole("button", { name: "Replace" });
+
+it("an account linked to another backed-up key asks over the open app, saying Replace removes this key and to copy it first, and Not now stays quiet for that pair of keys", async () => {
   anotherKeyOnDevice(false, undefined, true);
   const fi = federatedFixture();
-  fi.request.mockResolvedValue(linkedAnswer(owned.pubkey));
+  fi.request.mockImplementation(accountAnswers(owned.pubkey, [owned.pubkey]));
   const identity = openWithSession(fi);
   const user = userEvent.setup();
   const prompt = await mismatchPrompt();
   // The app is already open behind it.
   expect(screen.getByText("Signed in")).toBeInTheDocument();
   expect(prompt).toHaveTextContent("a@example.com");
-  expect(prompt).toHaveTextContent("This key may not be backed up.");
+  expect(prompt).toHaveTextContent(
+    "Replacing removes this computer’s key and restarts Buzz to restore your account’s key.",
+  );
+  expect(prompt).toHaveTextContent(
+    "This computer’s key may not be backed up: copy its private key from Settings → Identity first, or you could lose it.",
+  );
+  expect(replaceButton(prompt)).toBeEnabled();
   expect(invoke).toHaveBeenCalledWith("nsec_backup_confirmed", {
     pubkey: viewer,
   });
   await user.click(within(prompt).getByRole("button", { name: "Not now" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(screen.getByText("Signed in")).toBeVisible();
-  // A renewal reads nothing again until the next launch.
+  // A renewal reads again, but this pair of keys is not asked about again.
   fi.publish({ revision: "user:renewed" });
+  await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(3));
   await act(settled);
-  expect(fi.request).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(signOuts()).toEqual([]);
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   identity.dispose();
+  cleanup();
+
+  // Nor at the next launch.
+  const again = federatedFixture();
+  again.request.mockImplementation(
+    accountAnswers(owned.pubkey, [owned.pubkey]),
+  );
+  const relaunched = openWithSession(again);
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  await waitFor(() => expect(again.request).toHaveBeenCalledTimes(1));
+  await act(settled);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  relaunched.dispose();
+  cleanup();
+
+  // The account linked to yet another key is a new pair, which asks.
+  const moved = keypair().pubkey;
+  const later = federatedFixture();
+  later.request.mockImplementation(accountAnswers(moved, [moved]));
+  const third = openWithSession(later);
+  expect(await mismatchPrompt()).toBeVisible();
+  third.dispose();
 });
+
+it.each([
+  ["has no backup of the account's key", [viewer] as const],
+  ["can't say what it backed up", "fails" as const],
+])(
+  "an account linked to another key when Builderlab %s offers no Replace, says where the key is, and OK stays quiet for that pair",
+  async (_, backups) => {
+    anotherKeyOnDevice(false, undefined, true);
+    const fi = federatedFixture();
+    fi.request.mockImplementation(accountAnswers(owned.pubkey, backups));
+    const identity = openWithSession(fi);
+    const user = userEvent.setup();
+    const prompt = await mismatchPrompt();
+    expect(prompt).toHaveTextContent(
+      "is linked to a key that lives on another device, and Builderlab has no backup of it. Buzz keeps using this computer’s key.",
+    );
+    expect(replaceButton(prompt)).toBeNull();
+    await user.click(within(prompt).getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(localStorage.getItem("buzz.linked-key-dismissed.v1")).toBe(
+      `${owned.pubkey}:${viewer}`,
+    );
+    expect(signOuts()).toEqual([]);
+    expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+    identity.dispose();
+  },
+);
 
 it("Replace on the open app's prompt signs this key out to restart and sign in again, saying a backed-up key can be restored", async () => {
   anotherKeyOnDevice(true, undefined, true);
   const fi = federatedFixture();
-  fi.request.mockResolvedValue(linkedAnswer(owned.pubkey));
+  fi.request.mockImplementation(accountAnswers(owned.pubkey, [owned.pubkey]));
   const identity = openWithSession(fi);
   const user = userEvent.setup();
   const prompt = await mismatchPrompt();
   expect(prompt).toHaveTextContent(
-    "This key was backed up in Builderlab: sign in to its account to restore it.",
+    "This computer’s key was backed up in Builderlab: sign in to its account to restore it.",
   );
   expect(signOuts()).toEqual([]);
   await user.click(within(prompt).getByRole("button", { name: "Replace" }));
@@ -8703,7 +8784,7 @@ it("a refused Replace from the open app fails setup, withdraws the sign-in after
     true,
   );
   const fi = federatedFixture();
-  fi.request.mockResolvedValue(linkedAnswer(owned.pubkey));
+  fi.request.mockImplementation(accountAnswers(owned.pubkey, [owned.pubkey]));
   const identity = openWithSession(fi);
   const user = userEvent.setup();
   const prompt = await mismatchPrompt();

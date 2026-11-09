@@ -22,6 +22,24 @@ import type { Identity } from "./service";
 type Session = Pick<FederatedIdentity, "snapshot" | "subscribe" | "request">;
 
 const noSession = () => () => {};
+
+/** The pair of keys a Not now was given for: `linked:viewer`. */
+const DISMISSED = "buzz.linked-key-dismissed.v1";
+const pair = (linked: string, viewer: string) => `${linked}:${viewer}`;
+function dismissedPair() {
+  try {
+    return localStorage.getItem(DISMISSED);
+  } catch {
+    return null;
+  }
+}
+function rememberDismissed(value: string) {
+  try {
+    localStorage.setItem(DISMISSED, value);
+  } catch {
+    // Storage refused: it stays quiet for this run only.
+  }
+}
 const noSnapshot = (): SessionSnapshot | undefined => undefined;
 
 /** The build's Builderlab session, or `undefined` for a build without one. */
@@ -39,9 +57,13 @@ export const useSession = (
  * saved session is signed in, it reads the account's linked key, the read
  * Settings makes, and asks only when that is another key. No linked key, a
  * refused or absent session, or a failed read leaves the app as it is.
- * Replace is setup's own replace step, which signs this key out and restarts
- * into the account's Welcome back. Not now keeps the key and asks again at
- * the next launch. While it asks, `children` (the backup prompt) waits.
+ *
+ * Replace is offered only when Builderlab holds a backup of the account's key,
+ * so the Welcome back it restarts into can restore it: it is setup's own
+ * replace step, which removes this key and restarts. Otherwise it only says
+ * where the account's key is. Not now is remembered for this pair of keys, so
+ * it asks again only when either changes. While it asks, `children` (the
+ * backup prompt) waits.
  */
 export function LinkedKeyCheck({
   federated,
@@ -72,25 +94,37 @@ export function LinkedKeyCheck({
   const [found, setFound] = useState<{
     revision: string;
     viewer: string;
+    linked: string;
+    /** Builderlab holds a backup of the account's key: Welcome back restores it. */
+    restorable: boolean;
+    /** This device confirmed a backup of its own key. */
     backedUp: boolean;
   }>();
-  const dismissed = useRef(false);
+  // Not now's pair, should storage refuse it.
+  const dismissed = useRef<string | null>(null);
   useEffect(() => {
-    if (!federated || !revision || dismissed.current) return;
+    if (!federated || !revision) return;
     let current = true;
     // A build that can't make the account (no Builderlab URL) has nothing to check.
     Promise.resolve()
-      .then(() =>
-        federatedBuilderlabAccount(
+      .then(async () => {
+        const account = federatedBuilderlabAccount(
           { revision },
           federated,
           identity,
-        ).linkedKey(),
-      )
-      .then(async (linked) => {
+        );
+        const linked = await account.linkedKey();
         if (!current || !linked || linked === viewer) return;
-        const backedUp = await identity.backedUp(viewer).catch(() => false);
-        if (current) setFound({ revision, viewer, backedUp });
+        const asked = pair(linked, viewer);
+        if (dismissed.current === asked || dismissedPair() === asked) return;
+        const [backups, backedUp] = await Promise.all([
+          account.backupStatus().catch(() => "unavailable" as const),
+          identity.backedUp(viewer).catch(() => false),
+        ]);
+        const restorable =
+          backups !== "unavailable" && backups.includes(linked);
+        if (current)
+          setFound({ revision, viewer, linked, restorable, backedUp });
       })
       .catch(() => {});
     return () => {
@@ -106,16 +140,19 @@ export function LinkedKeyCheck({
   )
     return children;
   const dismiss = () => {
-    dismissed.current = true;
+    const asked = pair(found.linked, found.viewer);
+    dismissed.current = asked;
+    rememberDismissed(asked);
     setFound(undefined);
   };
-  return (
+  const account = session?.email ?? "Your Builderlab account";
+  return found.restorable ? (
     <AlertDialog
       title="Your account uses a different key"
-      description={`${session?.email ?? "Your Builderlab account"} is linked to a different key than the one on this computer. Replace it to use your account’s key: Buzz restarts and signs you in again. ${
+      description={`${account} is linked to a different key than the one on this computer, and Builderlab has a backup of it. Replacing removes this computer’s key and restarts Buzz to restore your account’s key. ${
         found.backedUp
-          ? "This key was backed up in Builderlab: sign in to its account to restore it."
-          : "This key may not be backed up."
+          ? "This computer’s key was backed up in Builderlab: sign in to its account to restore it."
+          : "This computer’s key may not be backed up: copy its private key from Settings → Identity first, or you could lose it."
       }`}
       onClose={dismiss}
       actions={
@@ -126,6 +163,13 @@ export function LinkedKeyCheck({
           </Button>
         </>
       }
+    />
+  ) : (
+    <AlertDialog
+      title="Your account uses a different key"
+      description={`${account} is linked to a key that lives on another device, and Builderlab has no backup of it. Buzz keeps using this computer’s key. To use your account’s key here, turn on Identity sync in Settings → Identity on that device, or bring its private key here.`}
+      onClose={dismiss}
+      actions={<Button onClick={dismiss}>OK</Button>}
     />
   );
 }

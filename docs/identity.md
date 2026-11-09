@@ -65,14 +65,22 @@ disabled, so a returning user's click never starts a sign-up. With the app open,
 linked key with the same call Settings → Identity makes, one read per session
 revision. A matching key, an account with no key, a refused or absent session
 and a failed read change nothing. Another key opens **Your account uses a
-different key** over the app, which says whether this device confirmed a
-backup of its own key (as **A different account is saved on this computer**
-does). **Replace** runs that dialog's Replace: it signs this key out without
-erase and restarts, and the sign-in after the restart takes the lane for a
-device with no key, where Welcome back restores the account's key. **Not now**
-and Close keep the key and read nothing more until the next launch. The
-prompt waits while the launch screen shows or old Buzz's communities are being
-offered or added, and the backup consent prompt waits while it shows.
+different key** over the app, after a second read of the account's backup
+status (`backupStatus`). When Builderlab holds a backup of the account's key,
+it says that **Replace** removes this computer's key, and either that this
+device confirmed a backup of it (as **A different account is saved on this
+computer** does) or to copy its private key from Settings → Identity first.
+**Replace** runs that dialog's Replace: it signs this key out without erase
+and restarts, and the sign-in after the restart takes the lane for a device
+with no key, where Welcome back restores the account's key. With no backup of
+the account's key, or a backup status that can't be read, Replace is not
+offered, since Welcome back could not restore it: the dialog says the account's
+key lives on another device and offers only **OK**. **Not now**, **OK** and
+Close keep the key and are remembered for that pair of keys (the account's and
+this device's, `buzz.linked-key-dismissed.v1`), so it asks again only when
+either changes. The prompt waits while the launch screen shows or old Buzz's
+communities are being offered or added, and the backup consent prompt waits
+while it shows.
 
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Continue** opens the same **Finding community** page described
