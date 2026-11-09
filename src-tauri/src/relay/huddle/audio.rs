@@ -1500,6 +1500,8 @@ mod tests {
             header.seq
         };
         let mut seqs = Vec::new();
+        // The heartbeat's Ping, as the number of frames the relay read before it.
+        let mut ping = None;
         let recovered = async {
             // The relay reads nothing yet, so one send stays in flight and five
             // messages fill the queue. Sending frame k+1 waits until the loop
@@ -1530,6 +1532,7 @@ mod tests {
                 match relay.next().await.unwrap().unwrap() {
                     Message::Binary(frame) if frame.len() == 65536 => fillers += 1,
                     Message::Binary(frame) => seqs.push(wire(&frame)),
+                    Message::Ping(_) => ping = Some(seqs.len()),
                     Message::Pong(payload) => ponged |= &payload[..] == b"probe",
                     _ => {}
                 }
@@ -1539,8 +1542,10 @@ mod tests {
                 mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
             }
             while seqs.last() != Some(&12) {
-                if let Message::Binary(frame) = relay.next().await.unwrap().unwrap() {
-                    seqs.push(wire(&frame));
+                match relay.next().await.unwrap().unwrap() {
+                    Message::Binary(frame) => seqs.push(wire(&frame)),
+                    Message::Ping(_) => ping = Some(seqs.len()),
+                    _ => {}
                 }
             }
         };
@@ -1548,13 +1553,20 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(1500), recovered)
             .await
             .expect("outbound did not recover");
+        // The stall admits six messages: the send in flight and five queued.
         // The heartbeat's first tick is due at once, but its timer fires on a
-        // later driver turn. Its Ping is the send in flight, or takes a slot
-        // behind frame 0, or comes once the queue is full and is dropped: then
-        // frame 0 is in flight and frame 5 takes the last slot.
-        assert!(
-            seqs == [0, 1, 2, 3, 4, 10, 11, 12] || seqs == [0, 1, 2, 3, 4, 5, 10, 11, 12],
-            "accepted order, then the drop gap: {seqs:?}"
+        // later driver turn. A Ping read among the first six was one of them,
+        // beside frames 0-4. Otherwise it was dropped from the full queue, or
+        // came after the stall, and frames 0-5 were the six.
+        let admitted: u16 = if ping.is_some_and(|read| read < 6) {
+            5
+        } else {
+            6
+        };
+        assert_eq!(
+            seqs,
+            (0..admitted).chain(10..=12).collect::<Vec<_>>(),
+            "six admitted (the Ping after {ping:?} frames), then the drop gap"
         );
         // A clean stop, here with the queue already drained, closes in bound.
         stop.send(true).unwrap();
