@@ -232,9 +232,7 @@ it.each([
     );
     render(<RemoteAgents {...h} active={() => true} />);
     expect(await screen.findByText(new RegExp(`${label}$`))).toBeVisible();
-    expect(document.querySelectorAll(".buzz-avatar-status-dot")).toHaveLength(
-      label === "Active" ? 1 : 0,
-    );
+    expect(document.querySelector(".buzz-avatar-status-dot")).toBeNull();
   },
 );
 

@@ -495,11 +495,15 @@ fiBuild(
                   async () => {
                     const heading = await title.boundingBox();
                     const button = await create.boundingBox();
-                    if (!heading || !button) return false;
+                    const caret = await back.boundingBox();
+                    if (!heading || !button || !caret) return false;
+                    const center = heading.y + heading.height / 2;
                     return width === 390
                       ? button.y >= heading.y + heading.height
                       : button.x >= heading.x + heading.width &&
-                          button.y < heading.y + heading.height;
+                          Math.abs(button.y + button.height / 2 - center) <=
+                            0.5 &&
+                          Math.abs(caret.y + caret.height / 2 - center) <= 0.5;
                   },
                   { message: `Create placement at ${width}px/${scale}` },
                 )

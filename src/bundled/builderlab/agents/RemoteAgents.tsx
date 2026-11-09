@@ -305,7 +305,6 @@ function AgentRow({
             fallbackContent={<RobotIcon size={20} />}
             size="fill"
             shape="squircle"
-            statusBadge={state === "Active" ? "online" : undefined}
           />
         }
         title={agent.name}
@@ -318,12 +317,7 @@ function AgentRow({
         }
         detail={
           <>
-            {agent.modelId ?? "No model selected"}
-            {state === "Active" ? (
-              <span className="sr-only"> · Active</span>
-            ) : (
-              ` · ${state}`
-            )}
+            {agent.modelId ?? "No model selected"} · {state}
           </>
         }
         status={saved ? "In Agents" : undefined}

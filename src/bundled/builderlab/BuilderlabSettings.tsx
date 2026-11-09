@@ -40,13 +40,17 @@ type Section = (typeof sections)[number]["id"];
 /** A section keeps navigation beside its heading and outside the heading name. */
 export function ManagementHeader({
   navigation,
+  title,
   ...props
 }: ComponentProps<typeof Header> & { navigation?: ReactNode }) {
   return (
     <div className={styles.managementHeader}>
-      {navigation}
+      {navigation && <div className={styles.navigation}>{navigation}</div>}
       <div className={styles.heading}>
-        <Header {...props} />
+        <Header
+          {...props}
+          title={<span className={styles.managementTitle}>{title}</span>}
+        />
       </div>
     </div>
   );

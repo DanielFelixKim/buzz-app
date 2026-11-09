@@ -205,8 +205,8 @@ agents are not migrated into this type.
   returns to the overview. Remote agents show their count beside the title and
   reuse saved community avatars. Rows show model and an In Agents label when
   the current inventory has a matching record; absence makes no persistence claim.
-  The green avatar marker means Active with a valid model selection; other
-  readiness states appear beside the model.
+  Readiness appears beside the model. Active means a valid model selection and
+  provider Active status; avatar presence badges are not used for readiness.
   Saved rows open their Agents pane; their separate menus offer View Agent.
   Copy key is available in every row menu.
   Creation dates and full keys are omitted from this compact list.

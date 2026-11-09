@@ -10,6 +10,17 @@
   flex: 1;
 }
 
+.navigation {
+  display: flex;
+  min-block-size: var(--size-control);
+  align-items: center;
+}
+
+.managementTitle {
+  display: block;
+  padding-block: calc((var(--size-control) - 1lh) / 2);
+}
+
 .account {
   margin-block-end: var(--space-4);
 }
