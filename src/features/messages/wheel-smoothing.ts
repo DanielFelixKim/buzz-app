@@ -3,8 +3,8 @@ import { macWebKit } from "./mac-webkit";
 import { smoothWheelPreference } from "./smooth-wheel-preference";
 
 // Mac WebKit applies each mouse-wheel notch as one instant jump; Chromium
-// animates it. With Smooth mouse-wheel scrolling on, the channel timeline
-// glides each notch instead and leaves trackpad input to WebKit.
+// animates it. With Smooth mouse-wheel scrolling on, the channel timeline and
+// thread panels glide each notch instead and leave trackpad input to WebKit.
 //
 // Mouse vs trackpad: WebKit on macOS reports a mouse notch as a 16.16
 // fixed-point line count times 40px, so its deltaY is fractional
@@ -28,7 +28,7 @@ export function toPixels(event: WheelInput, element: Element) {
 }
 
 /** A dialog or open popover rendered within message DOM (an expanded
- * equation, a hover card) is outside the timeline's native scroll chain. */
+ * equation, a hover card) is outside the scroller's native scroll chain. */
 function insideOverlay(target: Element) {
   if (target.closest('dialog, [role="dialog"], [aria-modal="true"]'))
     return true;
@@ -63,7 +63,7 @@ type Glide = {
   remaining: number;
   last: number;
   frame: number;
-  /** The timeline's reader intent once this glide's latest notch was handled. */
+  /** The scroller's reader intent once this glide's latest notch was handled. */
   intent: number | undefined;
 };
 
@@ -71,7 +71,7 @@ const smoothers = new WeakMap<Element, (event: WheelEvent) => boolean>();
 
 /**
  * Glides mouse-wheel notches over `scroller` until the returned cleanup.
- * Glide writes are not reader intent: the wheel still reaches the timeline's
+ * Glide writes are not reader intent: the wheel still reaches the scroller's
  * own handlers, which release bottom follow, load older history and retire
  * held anchors and retained navigation. Any newer `intent()` than the glide's
  * own notches (other reader input, a send, Jump to latest or a reveal) ends it.
@@ -79,7 +79,7 @@ const smoothers = new WeakMap<Element, (event: WheelEvent) => boolean>();
 export function smoothWheel(scroller: HTMLElement, intent: () => number) {
   const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   let glide: Glide | undefined;
-  /** The accepted notch still on its way to the timeline's own handlers. */
+  /** The accepted notch still on its way to the scroller's own handlers. */
   let notch: Event | undefined;
   const stop = () => {
     if (glide) cancelAnimationFrame(glide.frame);
@@ -100,8 +100,8 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
     }
     const dt = Math.min(64, current.last ? now - current.last : 16);
     current.last = now;
-    // Carry the timeline's own corrections (Virtua's, scroll-correction.ts)
-    // instead of undoing them.
+    // Carry the scroller's own corrections (Virtua's and scroll-correction.ts
+    // in the timeline, reading corrections in a thread) instead of undoing them.
     const drift = scroller.scrollTop - current.written;
     if (Math.abs(drift) >= 1) current.position += drift;
     const fraction = 1 - Math.exp(-dt / (GLIDE_MS / 3));
