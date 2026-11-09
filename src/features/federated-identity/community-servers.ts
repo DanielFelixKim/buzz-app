@@ -6,10 +6,10 @@ import { coversCommunity } from "./community-hosts";
 import type { FederatedIdentity } from "./service";
 
 /** The joined communities whose access a server's session decides, by name,
- * in order: those its hosts cover that require NIP-FI. A community whose
- * discovery failed counts, since it may; one still being discovered does not
- * yet. Outside native, discovery rejects, so every covered community counts;
- * a session without discovery at all (a test fixture) counts them at once. */
+ * in order: those its hosts cover that require NIP-FI. Until discovery says a
+ * community doesn't, it counts: still being discovered or failed, it may, and
+ * a quick switch must not skip the warning. Outside native, discovery
+ * rejects, so every covered community counts, as it does without discovery. */
 export function useSignInCommunities(
   identity: FederatedIdentity | undefined,
   hosts: readonly string[],
@@ -44,9 +44,7 @@ export function useSignInCommunities(
     };
   }, [identity, key]);
   return covered
-    .filter(
-      ({ url }) => !identity?.communityRequiresSignIn || requires.get(url),
-    )
+    .filter(({ url }) => requires.get(url) !== false)
     .map(({ membership }) => communityName(membership));
 }
 

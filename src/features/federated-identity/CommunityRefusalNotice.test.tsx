@@ -182,11 +182,20 @@ it.each(["access", "sign-in"] as const)(
       email: "bob@personal.example",
       authority: { ...authority, communityHosts: ["*.relay.example"] },
     });
-    const communityRequiresSignIn = vi.fn(async (relay: string) => {
-      // A failed discovery counts: that community may rely on the account.
+    // B's discovery is held: until it answers, B counts, so a quick switch
+    // still warns about it.
+    let discoverB: ((requires: boolean) => void) | undefined;
+    const communityRequiresSignIn = vi.fn((relay: string) => {
+      if (relay === "https://b.relay.example")
+        return new Promise<boolean>((resolve) => {
+          discoverB = resolve;
+        });
+      // A failed discovery counts too: that community may rely on the account.
       if (relay === "https://c.relay.example")
-        throw new Error("Federated community discovery failed");
-      return relay === "https://a.relay.example";
+        return Promise.reject(
+          new Error("Federated community discovery failed"),
+        );
+      return Promise.resolve(relay === "https://a.relay.example");
     });
     render(
       <ToastProvider>
@@ -207,6 +216,15 @@ it.each(["access", "sign-in"] as const)(
     );
     if (refusal === "access") {
       const dialog = await notice("You don’t have access to this community");
+      try {
+        expect(
+          await within(dialog).findByText(
+            "A, B, and C also use this account. Switching may change your access there.",
+          ),
+        ).toBeVisible();
+      } finally {
+        discoverB?.(false);
+      }
       expect(
         await within(dialog).findByText(
           "A and C also use this account. Switching may change your access there.",
