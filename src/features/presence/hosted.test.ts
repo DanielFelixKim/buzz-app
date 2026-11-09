@@ -1,0 +1,186 @@
+import { afterEach, expect, it, vi } from "vitest";
+import type { EventData, ReadFilter } from "../relay/events";
+import { createHostedAgents, withHostedAgents } from "./hosted";
+import type { Presence } from "./presence";
+
+const key = (n: number) => n.toString(16).padStart(64, "0");
+const AGENT = key(10);
+const OWNER = key(20);
+const STRANGER = key(30);
+const REMOTE = "example.remote/hosted";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+let ids = 0;
+function record(
+  author: string,
+  agent: string,
+  runtime: string,
+  created_at = 100,
+): EventData {
+  return {
+    id: (++ids).toString(16).padStart(64, "0"),
+    pubkey: author,
+    kind: 30177,
+    created_at,
+    content: "{}",
+    tags: [
+      ["d", agent],
+      ["runtime", runtime],
+    ],
+    sig: "",
+  } as EventData;
+}
+
+function setup(events: EventData[], owners = new Map([[AGENT, OWNER]])) {
+  vi.useFakeTimers();
+  const ownerListeners = new Set<() => void>();
+  const read = vi.fn(
+    async (filters: readonly ReadFilter[], _signal: AbortSignal) =>
+      events.filter((event) =>
+        filters.some(
+          (filter) =>
+            filter.authors?.includes(event.pubkey) &&
+            filter["#d"]?.includes(
+              event.tags.find((tag) => tag[0] === "d")?.[1] ?? "",
+            ),
+        ),
+      ),
+  );
+  const observed = {
+    status: () => "offline" as const,
+    limited: () => false,
+    subscribe: () => () => {},
+    connected: () => {},
+    clear: () => {},
+    refresh: () => {},
+    dispose: () => {},
+  } satisfies Presence;
+  const presence = withHostedAgents(
+    observed,
+    createHostedAgents({
+      owner: (pubkey) => owners.get(pubkey),
+      subscribeOwners(listener) {
+        ownerListeners.add(listener);
+        return () => ownerListeners.delete(listener);
+      },
+      read,
+      notify: (listener) => listener(),
+    }),
+  );
+  presence.connected(true);
+  presence.remoteRuntimes?.([REMOTE]);
+  return {
+    presence,
+    read,
+    owners,
+    ownersChanged: () => {
+      for (const listener of ownerListeners) listener();
+    },
+  };
+}
+
+it("shows an agent its attested owner records as remote online, whatever presence says", async () => {
+  const t = setup([record(OWNER, AGENT, REMOTE)]);
+  const listener = vi.fn();
+  t.presence.subscribe(AGENT, listener);
+  expect(t.presence.status(AGENT)).toBe("offline");
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.read).toHaveBeenCalledWith(
+    [{ kinds: [30177], authors: [OWNER], "#d": [AGENT], limit: 1 }],
+    expect.any(AbortSignal),
+  );
+  expect(t.presence.status(AGENT)).toBe("online");
+  expect(listener).toHaveBeenCalled();
+});
+
+it("ignores a remote record signed by anyone but the attested owner", async () => {
+  const t = setup([record(STRANGER, AGENT, REMOTE)]);
+  // Even a read that returns the forged record must not count it.
+  t.read.mockResolvedValue([record(STRANGER, AGENT, REMOTE)]);
+  t.presence.subscribe(AGENT, () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.read).toHaveBeenCalled();
+  expect(t.presence.status(AGENT)).toBe("offline");
+});
+
+it("keeps observed presence for local agents and agents without an attested owner", async () => {
+  const human = key(40);
+  const t = setup([
+    record(OWNER, AGENT, "example.local/harness"),
+    record(OWNER, human, REMOTE),
+  ]);
+  t.presence.subscribe(AGENT, () => {});
+  t.presence.subscribe(human, () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.presence.status(AGENT)).toBe("offline");
+  expect(t.presence.status(human)).toBe("offline");
+});
+
+it("follows the owner's newest record of the agent", async () => {
+  const t = setup([
+    record(OWNER, AGENT, REMOTE, 100),
+    record(OWNER, AGENT, "example.local/harness", 200),
+  ]);
+  t.presence.subscribe(AGENT, () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.presence.status(AGENT)).toBe("offline");
+});
+
+it("reads once an owner is attested and again when the record is gone", async () => {
+  const events = [record(OWNER, AGENT, REMOTE)];
+  const t = setup(events, new Map());
+  t.presence.subscribe(AGENT, () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.read).not.toHaveBeenCalled();
+  t.owners.set(AGENT, OWNER);
+  t.ownersChanged();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.presence.status(AGENT)).toBe("online");
+  // Deleting the agent deletes its record; the next refresh drops it.
+  events.length = 0;
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  expect(t.presence.status(AGENT)).toBe("offline");
+});
+
+it("shows nothing remote before the runtimes are known or after the last view goes", async () => {
+  const t = setup([record(OWNER, AGENT, REMOTE)]);
+  t.presence.remoteRuntimes?.([]);
+  const stop = t.presence.subscribe(AGENT, () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.read).not.toHaveBeenCalled();
+  expect(t.presence.status(AGENT)).toBe("offline");
+  t.presence.remoteRuntimes?.([REMOTE]);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.presence.status(AGENT)).toBe("online");
+  stop();
+  expect(t.presence.status(AGENT)).toBe("offline");
+});
+
+it("keeps prior evidence when a refresh fails", async () => {
+  const t = setup([record(OWNER, AGENT, REMOTE)]);
+  t.presence.subscribe(AGENT, () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.presence.status(AGENT)).toBe("online");
+  t.read.mockRejectedValueOnce(new Error("offline"));
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  expect(t.read).toHaveBeenCalledTimes(2);
+  expect(t.presence.status(AGENT)).toBe("online");
+});
+
+it("retries a failed read only on the refresh, not on every profile change", async () => {
+  const t = setup([record(OWNER, AGENT, REMOTE)]);
+  t.read.mockRejectedValue(new Error("offline"));
+  t.presence.subscribe(AGENT, () => {});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(t.read).toHaveBeenCalledTimes(1);
+  for (let n = 0; n < 5; n++) {
+    t.ownersChanged();
+    await vi.advanceTimersByTimeAsync(100);
+  }
+  expect(t.read).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  expect(t.read).toHaveBeenCalledTimes(2);
+});

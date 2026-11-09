@@ -19,6 +19,24 @@ multiple devices are last-writer-wins, so an idle device can report Away even
 while another is active. A crashed connection's lease can remain for up to 180
 seconds; refreshing the snapshot does not prove that the session is still alive.
 
+## Hosted agents
+
+An agent a remote runtime runs (a Builderlab agent) holds no socket and sends
+no presence: it wakes when mentioned. Its badge shows Online, whatever relay
+presence says, while two signed records agree. The agent's winning kind 0 must
+carry a verified NIP-OA owner, and that owner's newest kind 30177 record for
+the agent (`d` = agent pubkey) must name a runtime that an installed agent type
+marks `remote`. A record signed by anyone else never counts. Agents tells each
+community session which type keys are remote. Deleting the agent deletes its
+record, and the next read drops the badge. This is display only: Online here
+means the owner set the agent up to run remotely, not that the runtime is up,
+and it grants nothing.
+
+`features/presence/hosted.ts` reads at most 100 agents per request, coalesced
+for 100ms, again when an attested owner changes and every five minutes while
+an agent is shown. A failed read keeps the last answer; disconnect clears it.
+Viewers without a remote agent type installed see relay presence only.
+
 ## Your status
 
 The account avatar, message/thread bylines and one-to-one DM avatars
