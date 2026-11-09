@@ -5,7 +5,7 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 ## Getting started
 
 1. Go to **Settings → Plugins → Builderlab** and choose **Sign in with Builderlab**.
-2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
+2. To host a community, choose **Create community** under **Communities**. Buzz opens the join for the new community at once; publish your profile there and it opens and appears in the community picker. **Copy address** shares the address with others.
 3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab** under **Remote** in the **Harness** menu. It can answer while your desktop is off, but cannot open files on your computer.
 4. If signed out, choose the small **Sign in** button beside Harness. Model, Thinking and Create agent stay disabled until sign-in completes. Choose a model and thinking level, optionally add instructions, then choose **Create agent**. Review the introduction and choose **Let’s go** to create it.
 5. Edit model settings and instructions later in **Identity**. Opening it attempts sign-in automatically if needed. The compact action beside Harness shows a spinner that cancels browser sign-in on click. The resting signed-out hint explains that sign-in enables editing while messaging still works. Cancellation, timeout and login failures wait for an explicit inline retry. Sheets are reserved for settings or account-access errors. Instructions appear after sign-in. Native account-access errors open **Identity → Organization sign-in** without ending the shared session. In live development, **Use another account** ends the broker session and opens `/logout` in your browser. A cancellable spinner then waits three seconds before showing **Retry** beside Harness. Sign in with the other account in the browser, return to Buzz, then click Retry to check broker access.
@@ -42,12 +42,11 @@ between everyone in the owner's workspace and only the owner, and
 `apps_community` grants or revokes a Buzz community at the grant revision it just
 read. `apps_visibility` keeps existing viewers and community grants.
 
-BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
-boundary: the server must grant Builderlab access to the current workspace/account.
-Existing workspace early-preview enablement can provide that access; these tools
-do not enable a workspace or bypass its policy. A denied request preserves the
-server's permission error. Check the contract before choosing a profile because
-BBPublic need not support static hosting.
+Every tenant uses the same authenticated control-plane boundary: the server must
+grant Builderlab access to the current workspace/account. These tools do not
+enable a workspace or bypass its policy. A denied request preserves the server's
+permission error. Check the contract before choosing a profile because a tenant
+need not support static hosting.
 
 After an accepted deployment, readiness errors preserve its app, version,
 deployment and rollout IDs. `apps_status` checks those exact IDs without uploading
@@ -235,9 +234,11 @@ access. Live development signs in through the development broker instead. A
 build with neither has no Builderlab: the plugin registers nothing.
 
 The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
-`true` enables remote agents. Otherwise, Settings and the Agents provider show
-“Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
-this capability.
+`true` enables remote agents. Otherwise, Harness defaults and Builderlab Settings
+show “Unavailable for this account”; the provider dialog explains the same
+restriction. The Harness defaults row has no action. Account management stays in
+Settings → Builderlab, and no Beekeeper requests are sent. Sign out and back in
+to refresh this capability.
 
 The plugin also offers Builderlab as a Decisions API provider. It reads
 `capabilities.can_use_builderlab_decisions` the same way, but only explicit

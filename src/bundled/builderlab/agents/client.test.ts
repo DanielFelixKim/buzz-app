@@ -65,12 +65,52 @@ async function fixture(subject = "user", canUseRemoteAgents = true) {
 }
 it("refuses remote reads and creation before sending requests or retaining replay state", async () => {
   const h = await fixture("user", false);
-  await expect(h.client.list(h.signal)).rejects.toThrow("coming soon");
+  await expect(h.client.list(h.signal)).rejects.toThrow(
+    "unavailable for this account",
+  );
   await expect(h.client.register("Helper", h.signal, h.retain)).rejects.toThrow(
-    "coming soon",
+    "unavailable for this account",
   );
   expect(h.host.request).not.toHaveBeenCalled();
   expect(h.retain).not.toHaveBeenCalled();
+});
+it("reads terminal task status only for the requested task IDs", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      outcomes: {
+        done: "completed",
+        failed: "failed",
+        stopped: "cancelled",
+        terminated: "terminated",
+      },
+    }),
+  );
+  expect(
+    await h.client.turnStatus(
+      "session",
+      ["done", "failed", "stopped", "terminated"],
+      h.signal,
+    ),
+  ).toEqual(
+    new Map([
+      ["done", "ended"],
+      ["failed", "error"],
+      ["stopped", "stopped"],
+      ["terminated", "error"],
+    ]),
+  );
+  for (const outcomes of [
+    { other: "completed" },
+    { done: "new-status" },
+    { done: null },
+    [],
+  ]) {
+    vi.mocked(h.host.request).mockResolvedValueOnce(response({ outcomes }));
+    await expect(
+      h.client.turnStatus("session", ["done"], h.signal),
+    ).rejects.toThrow("invalid turn status");
+  }
 });
 it("lists the authenticated account through the configured native host", async () => {
   const h = await fixture();
@@ -216,6 +256,12 @@ it("loads the standalone catalog with model-specific effort identifiers", async 
           display_name: "Friendly Model",
           supported_reasoning_efforts: ["none", "max"],
         },
+        {
+          id: "model-two",
+          display_name: "Fast Model",
+          supported_reasoning_efforts: ["low"],
+          fast: true,
+        },
       ],
     }),
   );
@@ -225,6 +271,13 @@ it("loads the standalone catalog with model-specific effort identifiers", async 
         id: "model-one",
         displayName: "Friendly Model",
         supportedReasoningEfforts: ["none", "max"],
+        fast: false,
+      },
+      {
+        id: "model-two",
+        displayName: "Fast Model",
+        supportedReasoningEfforts: ["low"],
+        fast: true,
       },
     ],
   });
