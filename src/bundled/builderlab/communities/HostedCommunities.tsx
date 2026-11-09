@@ -1,5 +1,6 @@
 import { ManagementRow } from "../ManagementRow";
 import type { OverviewObserver } from "../overview";
+import { managementDate } from "../management-date";
 import { ManagementSection } from "../ManagementSection";
 import communitiesHero from "../assets/communities-hero.png";
 import { Tabs } from "../../../shared/design-system/ui/Tabs";
@@ -101,6 +102,7 @@ export function HostedCommunities({
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [identityLoadFailed, setIdentityLoadFailed] = useState(false);
   const [communities, setCommunities] = useState<Community[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [listTab, setListTab] = useState<"active" | "archived">("active");
   const [listQuery, setListQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -151,6 +153,7 @@ export function HostedCommunities({
         setIdentity(null);
         setCommunities([]);
         setQuotaState(null);
+        setLoaded(false);
         setPendingDeletion(null);
         setBlockedOwner(null);
         setDeletionNotice("");
@@ -233,6 +236,7 @@ export function HostedCommunities({
       setIdentity(nextIdentity);
       setCommunities(nextCommunities);
       setQuotaState(nextQuota);
+      setLoaded(true);
       return { identity: nextIdentity, communities: nextCommunities };
     },
     [api],
@@ -391,14 +395,45 @@ export function HostedCommunities({
     <Button
       variant="ghost"
       size="sm"
+      loading={action === "refresh"}
       disabled={busy}
       onClick={() => void run("refresh", () => load(true))}
     >
       <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
     </Button>
   );
+  const focusRead = useRef(false);
   const refreshOnFocus = useEffectEvent(() => {
-    if (activeRef.current() && auth && !busy) void run("refresh", () => load());
+    if (
+      !activeRef.current() ||
+      !auth ||
+      busy ||
+      focusRead.current ||
+      createOpen ||
+      confirm ||
+      transfer ||
+      deleteTarget
+    )
+      return;
+    const at = generation.current;
+    focusRead.current = true;
+    void load()
+      .then(
+        (snapshot) => {
+          if (snapshot && at === generation.current && !loaded) setError("");
+        },
+        (reason) => {
+          if (
+            at === generation.current &&
+            (!loaded ||
+              (reason instanceof ApiFailure && reason.code === "unauthorized"))
+          )
+            setError(message(reason));
+        },
+      )
+      .finally(() => {
+        focusRead.current = false;
+      });
   });
   useEffect(() => {
     window.addEventListener("focus", refreshOnFocus);
@@ -412,12 +447,7 @@ export function HostedCommunities({
         aria-hidden="true"
         className="mt-0.5 shrink-0"
       />
-      <span className="min-w-0 wrap-anywhere">
-        {error}
-        {error.startsWith(
-          "The change was saved, but the list could not be refreshed.",
-        ) && refreshAction}
-      </span>
+      <span className="min-w-0 wrap-anywhere">{error}</span>
     </p>
   );
   const bound = boundKey(identity);
@@ -460,8 +490,7 @@ export function HostedCommunities({
     if (auth === undefined) return onOverview({ kind: "pending" });
     if (!auth)
       return onOverview({ kind: error || unsupported ? "failed" : "empty" });
-    if (quotaState === null)
-      return onOverview({ kind: error ? "failed" : "pending" });
+    if (!loaded) return onOverview({ kind: error ? "failed" : "pending" });
     const own = (community: Community) =>
       community.owner_pubkey === bound ? 0 : 1;
     const created = (community: Community) =>
@@ -480,7 +509,7 @@ export function HostedCommunities({
           }
         : { kind: "empty" },
     );
-  }, [onOverview, auth, error, unsupported, quotaState, communities, bound]);
+  }, [onOverview, auth, error, unsupported, loaded, communities, bound]);
   const mutate = async (
     kind: "archive" | "unarchive",
     community: Community,
@@ -528,6 +557,7 @@ export function HostedCommunities({
                   setIdentity(null);
                   setCommunities([]);
                   setQuotaState(null);
+                  setLoaded(false);
                 })
               }
             >
@@ -683,6 +713,7 @@ export function HostedCommunities({
           </>
         }
       >
+        {auth && <div className="flex justify-end">{refreshAction}</div>}
         {!createOpen && failure}
         {unsupported ? (
           <p className={`${sectionClassName} text-body-sm text-muted`}>
@@ -745,11 +776,6 @@ export function HostedCommunities({
           )
         ) : (
           <>
-            {(deletionNotice ||
-              pendingDeletion ||
-              blockedOwner ||
-              acceptedDeletions.current.size > 0) &&
-              refreshAction}
             {deletionNotice && (
               <p role="status" className={`${card} text-body-sm`}>
                 {deletionNotice}
@@ -892,7 +918,14 @@ export function HostedCommunities({
                                         ? "Address copied"
                                         : "Couldn’t copy the address"
                                       : community.archived_at
-                                        ? `Archived ${new Date(community.archived_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                                        ? [
+                                            "Archived",
+                                            managementDate(
+                                              community.archived_at,
+                                            ),
+                                          ]
+                                            .filter(Boolean)
+                                            .join(" ")
                                         : undefined
                                   }
                                   statusTone={

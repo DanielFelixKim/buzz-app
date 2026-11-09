@@ -378,6 +378,18 @@ it("archives and transfers after confirmation, surfacing friendly errors", async
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "That person needs a connected Buzz identity before you can transfer ownership to them. Correlation ID: corr-1",
   );
+  const reads = calls.filter(([url]) => url === "/api/builderlab/list").length;
+  fireEvent.focus(window);
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
+    reads,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent("Correlation ID: corr-1");
+  fireEvent.click(await communityAction("Transfer ownership"));
+  fireEvent.change(screen.getByPlaceholderText("npub1…"), {
+    target: { value: recipient },
+  });
   expect(calls).toContainEqual([
     "/api/builderlab/transfer",
     { communityId: "c1", transfereeNpub: recipient },
@@ -708,6 +720,7 @@ it("keeps the address visible when the clipboard rejects", async () => {
   writeText.mockResolvedValue(undefined);
   fireEvent.click(screen.getByRole("button", { name: "Try copying again" }));
   expect(await screen.findByText(/Address copied/)).toBeInTheDocument();
+  expect(screen.getAllByRole("status")).toHaveLength(1);
 });
 
 it.each([
@@ -1138,10 +1151,44 @@ it("shows the empty collection in its quota after a successful read", async () =
   expect(
     screen.getByRole("button", { name: "Create community" }),
   ).toBeEnabled();
-  expect(
-    screen.queryByRole("heading", { name: "No communities yet" }),
-  ).toBeNull();
 });
+
+it.each(["missing quota", "invalid quota", "setup needed"])(
+  "settles the overview after a completed %s read",
+  async (kind) => {
+    const overview = vi.fn();
+    routes["/api/builderlab/list"] = () =>
+      kind === "setup needed"
+        ? { error: { setup_needed: true } }
+        : {
+            communities: [],
+            quota_used: 0,
+            quota_limit: kind === "invalid quota" ? "invalid" : undefined,
+          };
+    if (kind === "setup needed")
+      routes["/api/builderlab/identity"] = () => ({
+        error: { setup_needed: true },
+      });
+    render(
+      <HostedCommunities
+        api={brokerApi}
+        active={() => true}
+        onOverview={overview}
+      />,
+    );
+    await waitFor(() =>
+      expect(overview).toHaveBeenLastCalledWith({ kind: "empty" }),
+    );
+    if (kind === "setup needed") {
+      expect(
+        screen.getByRole("button", { name: "Create community" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Connect Buzz identity" }),
+      ).toBeEnabled();
+    }
+  },
+);
 
 it("keeps a failed hosted collection read separate from an empty result", async () => {
   routes["/api/builderlab/list"] = () => ({
@@ -1152,9 +1199,15 @@ it("keeps a failed hosted collection read separate from an empty result", async 
     "List unavailable",
   );
   expect(screen.queryByText("0 of 5")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("heading", { name: "No communities yet" }),
-  ).toBeNull();
+  routes["/api/builderlab/list"] = () => ({
+    communities: [],
+    quota_used: 0,
+    quota_limit: 5,
+    can_create: true,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(await screen.findByText("0 of 5")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 const archived = {
@@ -2731,6 +2784,37 @@ it("shares owned/newer active previews and refreshes them on focus", async () =>
   expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
     1,
   );
+  let release!: (reply: unknown) => void;
+  routes["/api/builderlab/list"] = () =>
+    new Promise((resolve) => {
+      release = resolve;
+    });
+  fireEvent.focus(window);
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  try {
+    expect(
+      screen.getByRole("button", { name: "Create community" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("region", { name: "Communities" })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+    await openCreate();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  } finally {
+    await act(async () => {
+      release(Response.json({ error: "offline" }, { status: 503 }));
+    });
+  }
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByText("Newer")).toBeVisible();
+  await openCreate();
+  fireEvent.focus(window);
+  await userEvent.keyboard("{Escape}");
+  expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
+    2,
+  );
   routes["/api/builderlab/list"] = () => ({
     communities: [],
     quota_used: 0,
@@ -2742,6 +2826,6 @@ it("shares owned/newer active previews and refreshes them on focus", async () =>
     expect(overview).toHaveBeenLastCalledWith({ kind: "empty" }),
   );
   expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
-    2,
+    3,
   );
 });
