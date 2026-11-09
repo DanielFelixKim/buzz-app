@@ -117,23 +117,28 @@ export function useChannelPanels(
       activeOpening.current = undefined;
     };
   }, [selected]);
-  // A launcher under a floating dock is inert until the close commits, so it
-  // takes focus then. A dock that still covers it keeps focus instead.
-  const focusUncovered = useRef<HTMLElement>(undefined);
+  // A launcher under a floating dock is inert until the close commits, so its
+  // target resolves then. A dock that still covers it keeps focus instead.
+  const focusUncovered =
+    useRef<() => HTMLElement | null | undefined>(undefined);
   useLayoutEffect(() => {
-    const trigger = focusUncovered.current;
+    const resolve = focusUncovered.current;
     focusUncovered.current = undefined;
-    const cover = trigger?.isConnected && trigger.closest("[inert]");
+    const target = resolve?.();
+    const cover = target?.isConnected && target.closest("[inert]");
     if (cover) focusDock(cover.parentElement);
-    else if (trigger?.isConnected) trigger.focus();
+    else if (target?.isConnected) target.focus();
   });
   const hide = (opening: Opening) => {
     if (activeOpening.current !== opening) return;
     setOpened(undefined);
+    // A retained opening restored by a remounted page has no trigger.
     const trigger = opening.trigger ?? triggers.current.get(opening);
-    if (trigger?.closest("[inert]")) focusUncovered.current = trigger;
-    else if (trigger?.isConnected) trigger.focus();
-    else side?.fallbackFocus?.current?.focus();
+    const resolve = () =>
+      trigger?.isConnected ? trigger : side?.fallbackFocus?.current;
+    const target = resolve();
+    if (target?.closest("[inert]")) focusUncovered.current = resolve;
+    else target?.focus();
   };
   const openingContext = (opening: Opening): PanelContext => ({
     channelId: opening.context.channelId,

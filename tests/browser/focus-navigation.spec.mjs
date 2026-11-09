@@ -726,6 +726,25 @@ test.extend({ companionFixture: true })(
     // Its opener stays covered, so the companion takes focus.
     await expect(companion).toBeFocused();
     await expect(closeCompanion).not.toBeFocused();
+
+    // Collapsing the tab pane remounts its toggle in the conversation header,
+    // which the companion still covers, so the companion takes focus again.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(conversation).not.toHaveAttribute("inert");
+    await openChannelDetails(page);
+    const collapse = page.locator(
+      '[data-tab-pane-toggle][aria-expanded="true"]',
+    );
+    await expect(collapse).toBeVisible();
+    await page.setViewportSize({ width: 600, height: 900 });
+    await settlePanelMotion(page);
+    await expect(conversation).toHaveAttribute("inert", "");
+    await collapse.click();
+    // The companion keeps the dock, so the workspace hides rather than unmounts.
+    await expect(collapse).toBeHidden();
+    await expect(conversation).toHaveAttribute("inert", "");
+    await expect(companion).toBeFocused();
+    await expect(closeCompanion).not.toBeFocused();
   },
 );
 
@@ -761,6 +780,45 @@ test("escaping a side panel over the conversation returns focus to its launcher"
   await expect(todos).toHaveCount(0);
   await expect(conversation).not.toHaveAttribute("inert");
   await expect(launcher).toBeFocused();
+});
+
+// A side panel restored by a page remount has no launcher element to return
+// to, so Escape lands on the page's fallback once the close uncovers it.
+test("escaping a restored side panel over the conversation returns focus to the page", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "buzzodz.plugins.v1",
+      JSON.stringify({ version: 2, enabled: { "buzz.todos": true } }),
+    );
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, app);
+  const conversation = page.locator('article[aria-label="Conversation"]');
+  await page
+    .getByRole("button", { name: "Toggle channel todos", exact: true })
+    .click();
+  const todos = page.getByRole("region", { name: "Todos panel", exact: true });
+  await expect(todos).toBeVisible();
+  const dock = page.getByRole("navigation", { name: "Apps dock", exact: true });
+  await dock.getByRole("tab", { name: "Activity", exact: true }).click();
+  await expect(todos).toHaveCount(0);
+  await dock.getByRole("tab", { name: "Messages", exact: true }).click();
+  await expect(todos).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .click();
+  await page.setViewportSize({ width: 600, height: 900 });
+  await expect(todos).toBeFocused();
+  await expect(conversation).toHaveAttribute("inert", "");
+  await page.keyboard.press("Escape");
+  await expect(todos).toHaveCount(0);
+  await expect(conversation).not.toHaveAttribute("inert");
+  await expect(
+    page.getByRole("button", { name: "Channel actions", exact: true }),
+  ).toBeFocused();
 });
 
 // Panes that stay open keep focus in the dock, in page order: closing Todos

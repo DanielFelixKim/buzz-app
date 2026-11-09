@@ -168,20 +168,20 @@ export function useConversationTabs({
   // target resolves then. A pane that still covers it keeps focus instead.
   const focusUncovered =
     useRef<() => HTMLElement | null | undefined>(undefined);
-  // The opening control remounts in the main header when the pane closes.
+  // The opening control remounts in the main header when the pane closes,
+  // under a dock that stays open, such as the companion.
   useLayoutEffect(() => {
     const resolve = focusUncovered.current;
     focusUncovered.current = undefined;
-    const target = resolve?.();
-    const cover = target?.isConnected && target.closest("[inert]");
+    const uncovered = resolve?.();
+    if (resolve && !uncovered?.isConnected) focusSplit.current = true;
+    const target = focusSplit.current
+      ? (splitTrigger.current ?? fallbackFocus?.current)
+      : uncovered;
+    focusSplit.current = false;
+    const cover = target?.closest("[inert]");
     if (cover) focusDock(cover.parentElement);
-    else if (target?.isConnected) target.focus({ preventScroll: true });
-    else if (resolve) focusSplit.current = true;
-    if (focusSplit.current) {
-      const target = splitTrigger.current ?? fallbackFocus?.current;
-      target?.focus({ preventScroll: true });
-      focusSplit.current = false;
-    }
+    else target?.focus({ preventScroll: true });
   });
   const panelTrigger = useRef<HTMLElement | null>(null);
   const mounted = useRef(false);
