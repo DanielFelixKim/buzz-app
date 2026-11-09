@@ -149,6 +149,9 @@ export function NewWorkspace({
         inert={busy}
         onSubmit={(event) => {
           event.preventDefault();
+          // Opened from a composer, the dialog still sits in its React tree;
+          // creating a workspace must not also send the composer.
+          event.stopPropagation();
           void submit();
         }}
       >

@@ -3,12 +3,14 @@ import "@testing-library/jest-dom/vitest";
 import { webcrypto } from "node:crypto";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { FormEvent } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { WorkspaceControl } from "./WorkspaceControl";
@@ -88,22 +90,31 @@ it("keeps project recovery reachable after preferences fail", async () => {
   expect(refresh).toHaveBeenCalledOnce();
 });
 
-it.each([
-  { chat: "a new chat", trigger: "Add workspace", channelId: undefined },
-  { chat: "a saved chat", trigger: "Workspace: Buzz App", channelId: "chat" },
-])(
-  "creates a workspace from the composer and picks it for $chat",
-  async ({ trigger, channelId }) => {
+it.each(
+  [
+    { chat: "a new chat", trigger: "Add workspace", channelId: undefined },
+    { chat: "a saved chat", trigger: "Workspace: Buzz App", channelId: "chat" },
+  ].flatMap((chat) => [
+    { ...chat, submit: "Create" },
+    { ...chat, submit: "Enter" },
+  ]),
+)(
+  "creates a workspace from the composer and picks it for $chat ($submit)",
+  async ({ trigger, channelId, submit }) => {
     vi.stubGlobal("crypto", webcrypto);
     const { session, assign, createSection } = fixture();
     const change = vi.fn();
+    // The control sits in the composer's form; the dialog's submit is its own.
+    const composerSubmit = vi.fn((event: FormEvent) => event.preventDefault());
     const user = userEvent.setup();
     render(
-      channelId ? (
-        <WorkspaceControl session={session} channelId={channelId} />
-      ) : (
-        <WorkspaceControl session={session} value="" onChange={change} />
-      ),
+      <form onSubmit={composerSubmit}>
+        {channelId ? (
+          <WorkspaceControl session={session} channelId={channelId} />
+        ) : (
+          <WorkspaceControl session={session} value="" onChange={change} />
+        )}
+      </form>,
     );
     const control = screen.getByRole("button", { name: trigger });
     const open = async () => {
@@ -117,12 +128,15 @@ it.each([
     await user.keyboard("{Escape}");
     await waitFor(() => expect(control).toHaveFocus());
     const dialog = await open();
-    await user.type(
-      within(dialog).getByRole("textbox", { name: "Name" }),
-      "Planning",
-    );
-    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    const name = within(dialog).getByRole("textbox", { name: "Name" });
+    await user.type(name, "Planning");
+    // A browser's Enter submits through the form-associated Create button;
+    // jsdom has no implicit submission for it, so send that submit directly.
+    if (submit === "Enter") fireEvent.submit(name.closest("form") as Element);
+    else
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(composerSubmit).not.toHaveBeenCalled();
     expect(createSection).toHaveBeenCalledWith({
       id: expect.any(String),
       name: "Planning",
