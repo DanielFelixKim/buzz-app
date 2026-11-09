@@ -1451,6 +1451,63 @@ it("drops a review another panel on the pull request sent", async () => {
   expect(within(popup).getByRole("textbox")).toHaveValue("");
 });
 
+it("keeps a review going in out of memory when a push lands meanwhile", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let pushed = false;
+    let release!: () => void;
+    const gh = vi.fn(async (query: string, _variables?: unknown) => {
+      if (!query.startsWith("mutation"))
+        return pullData(
+          pushed ? { headRefOid: "def456", title: "Pushed again" } : {},
+        );
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return {};
+    });
+    const memory = createPanelMemory();
+    const panel = () => (
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+        memory={memory}
+      />
+    );
+    const first = render(panel(), { wrapper: ToastProvider });
+    await screen.findByRole("heading", { name: "Private change #9" });
+    await user.click(screen.getByRole("button", { name: "Submit review" }));
+    let popup = await screen.findByRole("dialog", { name: "Submit review" });
+    await user.type(within(popup).getByRole("textbox"), "Looks right");
+    await user.click(
+      within(popup).getByRole("button", { name: "Submit review" }),
+    );
+    await vi.waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
+    // A push lands while it goes in. Taking it then changes nothing, so the
+    // review stays out of memory however this panel ends.
+    pushed = true;
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await screen.findByRole("heading", { name: "Pushed again #9" });
+    await user.click(
+      within(popup).getByRole("button", { name: "Use latest commit" }),
+    );
+    first.unmount();
+    render(panel(), { wrapper: ToastProvider });
+    await screen.findByRole("heading", { name: "Pushed again #9" });
+    await user.click(screen.getByRole("button", { name: "Submit review" }));
+    popup = await screen.findByRole("dialog", { name: "Submit review" });
+    expect(
+      within(popup).getByRole("radio", { name: /^Comment/ }),
+    ).toBeChecked();
+    expect(within(popup).getByRole("textbox")).toHaveValue("");
+    release();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("asks about a newer push only for a remembered review with text", async () => {
   const user = userEvent.setup();
   let head = "abc123";

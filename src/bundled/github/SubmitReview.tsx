@@ -95,7 +95,9 @@ export function SubmitReview({
         notify("Review submitted", "success");
       }
     } catch (failure) {
-      // Back for the next panel, unless one has started another since.
+      // Back for the next panel, unless another panel has started a draft
+      // since. That check only matters once this panel has unmounted: while
+      // mounted, its write effect saves this draft again when busy ends.
       if (!isEmptyDraft(body) && !memory.get(url).review)
         memory.setReview(url, draft);
       if (alive.current) setError(readable(failure).message);
