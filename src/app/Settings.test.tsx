@@ -1335,13 +1335,12 @@ it("opens Builderlab from Identity sync only while its card is registered", asyn
     vi.unstubAllEnvs();
   });
   const user = userEvent.setup();
-  const { cards, set } = registry([
-    {
-      ...card("login", "Builderlab", "Plugins"),
-      key: "block.builderlab/login",
-      pluginId: "block.builderlab",
-    },
-  ]);
+  const builderlab = {
+    ...card("login", "Builderlab", "Plugins"),
+    key: "block.builderlab/login",
+    pluginId: "block.builderlab",
+  };
+  const { cards, set } = registry([builderlab]);
   const status = {
     seq: 1,
     pass: 1,
@@ -1378,12 +1377,26 @@ it("opens Builderlab from Identity sync only while its card is registered", asyn
   );
   const identitySection = () =>
     screen.getByRole("region", { name: "Identity" });
+  const link = () =>
+    within(identitySection()).queryByRole("button", { name: "Builderlab" });
+  const sentence = () =>
+    within(identitySection())
+      .getAllByRole("status")
+      .find(
+        (region) =>
+          region.textContent ===
+          "This key isn’t linked to your Builderlab account yet, so it can’t be backed up.",
+      );
   const { rerender } = render(view("identity"));
-  await user.click(
-    await within(identitySection()).findByRole("button", {
-      name: "Builderlab",
-    }),
-  );
+  await within(identitySection()).findByRole("button", { name: "Builderlab" });
+  const shown = sentence();
+  expect(shown).toBeDefined();
+  // Turning the plugin off while Identity is open unlinks the name in place.
+  act(() => set([]));
+  expect(link()).toBeNull();
+  expect(sentence()).toBe(shown);
+  act(() => set([builderlab]));
+  await user.click(link() as HTMLElement);
   expect(onSection).toHaveBeenCalledExactlyOnceWith("block.builderlab/login");
   // The link goes with Identity, so focus moves into the section it opened.
   rerender(view("block.builderlab/login"));
@@ -1394,16 +1407,8 @@ it("opens Builderlab from Identity sync only while its card is registered", asyn
   act(() => set([]));
   rerender(view("identity"));
   await within(identitySection()).findByText("Identity sync");
-  expect(
-    within(identitySection()).queryByRole("button", { name: "Builderlab" }),
-  ).toBeNull();
-  expect(
-    within(identitySection())
-      .getAllByRole("status")
-      .map((region) => region.textContent),
-  ).toContain(
-    "This key isn’t linked to your Builderlab account yet, so it can’t be backed up.",
-  );
+  expect(link()).toBeNull();
+  expect(sentence()).toBeDefined();
 });
 
 function pluginSectionsFixture(

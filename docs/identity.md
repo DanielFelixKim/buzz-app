@@ -974,10 +974,10 @@ below the description. While it waits for consent, **Sync with Builderlab**
 opens the same prompt, which closes if the wait settles without its answer.
 When the key isn’t linked to the account, or the account holds a different
 key, both of which native reports only after consent, the sentence’s
-**Builderlab** opens Settings → Builderlab, whose **Connect Buzz identity** or
-**Switch to this device’s identity** is the next step. The sign-in wait stays
-plain text: Organization sign-in is on Identity itself. Settings does not turn
-automatic backup off. A successful restore, and a
+**Builderlab** opens Settings → Plugins → Builderlab, whose **Connect Buzz
+identity** or **Switch to this device’s identity** is the next step. The
+sign-in wait stays plain text: Organization sign-in is on Identity itself.
+Settings does not turn automatic backup off. A successful restore, and a
 welcome-back import of a key the account already backs up, save automatic
 backup the same way, only when the key has no saved choice.
 
