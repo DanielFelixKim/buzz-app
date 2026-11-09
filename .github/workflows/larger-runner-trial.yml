@@ -1,24 +1,189 @@
+# Temporary branch-only comparison; production CI remains unchanged.
 name: Larger runner trial
 on:
   push:
-    branches: [jameskraus/larger-runner-trial]
-    paths: [.github/workflows/larger-runner-trial.yml]
+    branches:
+      - jameskraus/larger-runner-trial
+    paths:
+      - .github/workflows/larger-runner-trial.yml
 permissions:
   contents: read
 concurrency:
   group: larger-runner-trial
   cancel-in-progress: false
 jobs:
-  probe:
-    runs-on:
-      group: ubuntu-x86-runners
-    timeout-minutes: 5
+  native:
+    name: Rust (${{ matrix.size }})
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 30
     steps:
-      - name: Inspect allocated hardware
+      - &a1
+        name: Record hardware
         run: |
           uname -a
-          cat /etc/os-release
-          lscpu
+          nproc
           free -h
           df -h /
-          printf 'runner=%s os=%s arch=%s\n' "$RUNNER_NAME" "$RUNNER_OS" "$RUNNER_ARCH"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Tauri system libraries
+        run: |
+          # Azure package downloads can stall until the whole job expires:
+          # https://github.com/actions/runner-images/issues/14594
+          # Keep the image's official HTTPS archive and security fallbacks.
+          sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y dbus-daemon libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: native
+          save-if: "false"
+      - name: Dependency policy
+        run: ./bin/cargo-deny --locked check
+      - name: Rust formatting
+        run: ./bin/cargo fmt --all --check
+      - name: Rust lint
+        run: ./bin/cargo clippy --workspace --locked --all-targets -- -D warnings
+      - name: All Rust tests and doctests
+        run: ./bin/cargo test --workspace --locked
+      - name: FI Builderlab build and grant tests
+        env:
+          BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: '{"version":1,"id":"ci-fi","identityOrigin":"https://identity.example.test","communityHosts":["relay.example.test"],"adapterBase":"https://identity.example.test/api/goose/nip-fa","apiBasePath":"/api/goose/"}'
+          BUZZ_BUILDERLAB_URL: ""
+        run: |
+          ./bin/cargo test -p buzzodz-plugins --lib --locked
+          ./bin/cargo test -p Buzz --lib --locked host_request
+          ./bin/pnpm exec vite build
+      - name: FI opt-out build and grant tests
+        env:
+          BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: ""
+        run: |
+          ./bin/cargo test -p buzzodz-plugins --lib --locked
+          ./bin/cargo test -p Buzz --lib --locked host_request
+      - name: Scheduled agent command identity
+        run: ./bin/node scripts/test-agent-command.mjs
+      - name: Bundled buzz CLI
+        run: ./bin/node scripts/test-buzz-cli.mjs
+      - name: All Node integration tests
+        run: ./bin/node --test tests/integration/*.test.mjs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - size: standard
+            runner: '"ubuntu-24.04"'
+          - size: larger
+            runner: '{"group":"ubuntu-x86-runners"}'
+  browser_fixture:
+    name: Native browser fixture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      artifact-id: ${{ steps.fixture-upload.outputs.artifact-id }}
+    steps:
+      - *a1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: browser-fixture
+          save-if: "false"
+      - name: Build native browser fixture
+        timeout-minutes: 8
+        run: ./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --bin buzzodz --target-dir target/browser-fixture
+      - name: Package same-revision native fixture
+        run: |
+          mkdir -p target/browser-artifact
+          cp target/browser-fixture/debug/examples/fixture-bridge target/browser-fixture/debug/buzzodz target/browser-artifact/
+          git rev-parse HEAD > target/browser-artifact/revision
+          cd target/browser-artifact
+          sha256sum fixture-bridge buzzodz > SHA256SUMS
+          tar -cf ../browser-fixture.tar fixture-bridge buzzodz revision SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: fixture-upload
+        with:
+          name: browser-fixture-${{ github.sha }}-${{ github.run_attempt }}
+          path: target/browser-fixture.tar
+          if-no-files-found: error
+          retention-days: 7
+  browser:
+    name: Browser (${{ matrix.size }}, ${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})
+    needs:
+      - browser_fixture
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --ipc=host
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOME: /root
+      BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - size: standard
+            runner: '"ubuntu-24.04"'
+            engine: chromium
+            shard: 7
+            shards: 9
+          - size: standard
+            runner: '"ubuntu-24.04"'
+            engine: webkit
+            shard: 10
+            shards: 14
+          - size: larger
+            runner: '{"group":"ubuntu-x86-runners"}'
+            engine: chromium
+            shard: 7
+            shards: 9
+          - size: larger
+            runner: '{"group":"ubuntu-x86-runners"}'
+            engine: webkit
+            shard: 10
+            shards: 14
+    steps:
+      - *a1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Trust this container workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/setup
+        with:
+          browsers: "true"
+          browser-engine: ${{ matrix.engine }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.browser_fixture.outputs.artifact-id }}
+          merge-multiple: true
+          path: target/ci-browser-fixture
+      - name: Verify native browser fixture
+        run: |
+          cd target/ci-browser-fixture
+          tar -xf browser-fixture.tar
+          test "$(cat revision)" = "$(git rev-parse HEAD)"
+          sha256sum --check SHA256SUMS
+          test -x fixture-bridge
+          test -x buzzodz
+      - name: Functional journeys
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
+        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/${{ matrix.shards }} --reporter=list,json
+      - name: Browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: browser-journeys-${{ matrix.engine }}-${{ matrix.shard }}-${{ matrix.size }}
+          path: test-results/browser
+          retention-days: 7
+env:
+  CI: "true"
+  CARGO_TERM_COLOR: always
