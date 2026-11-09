@@ -2030,8 +2030,12 @@ it("a page withholds one pane's thread content and hosts it again afterwards", (
   // Only the side thread leaves; the main-pane thread keeps rendering.
   h.rerender({ hostPanes: ["main"] });
   expect(hosted()).toEqual(["thread:alpha:r2"]);
-  // Back in the same visit, the side thread is hosted again without being shown.
+  // Withholding the side thread must not forget that this visit showed it.
+  // Close the pane so r1 is no longer active, then drop hostPanes: r1 comes
+  // back only if the visit still remembers showing it before the withholding.
+  act(() => h.result.current.state.setPaneOpen(false));
   h.rerender({});
+  expect(h.result.current.state.paneOpen).toBe(false);
   expect(hosted()).toEqual(["thread:alpha:r1", "thread:alpha:r2"]);
 });
 
