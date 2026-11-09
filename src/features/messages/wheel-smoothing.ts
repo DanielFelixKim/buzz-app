@@ -63,7 +63,7 @@ type Glide = {
   remaining: number;
   last: number;
   frame: number;
-  /** The timeline's reader intent after this glide's latest notch. */
+  /** The timeline's reader intent once this glide's latest notch was handled. */
   intent: number | undefined;
 };
 
@@ -79,22 +79,25 @@ const smoothers = new WeakMap<Element, (event: WheelEvent) => boolean>();
 export function smoothWheel(scroller: HTMLElement, intent: () => number) {
   const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   let glide: Glide | undefined;
+  /** The accepted notch still on its way to the timeline's own handlers. */
+  let notch: Event | undefined;
   const stop = () => {
     if (glide) cancelAnimationFrame(glide.frame);
     glide = undefined;
   };
+  /** Newer reader intent than the glide's notches retires its motion. A notch
+   * whose propagation was stopped never reached `handled`; adopt it now. */
+  const superseded = (current: Glide) => {
+    current.intent ??= intent();
+    return current.intent !== intent();
+  };
   const step = (now: number) => {
     const current = glide;
     if (!current) return;
-    // The notch's own handler bumps intent after it is queued; adopt that.
-    if (
-      reducedMotion?.matches ||
-      (current.intent !== undefined && current.intent !== intent())
-    ) {
+    if (reducedMotion?.matches || superseded(current)) {
       glide = undefined;
       return;
     }
-    current.intent = intent();
     const dt = Math.min(64, current.last ? now - current.last : 16);
     current.last = now;
     // Carry the timeline's own corrections (Virtua's, scroll-correction.ts)
@@ -142,7 +145,11 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
     // At an edge, the wheel keeps its native behavior.
     if (delta < 0 ? top <= 0 : top >= max - 1) return false;
     event.preventDefault();
-    if (glide && Math.sign(delta) !== Math.sign(glide.remaining)) stop();
+    if (
+      glide &&
+      (Math.sign(delta) !== Math.sign(glide.remaining) || superseded(glide))
+    )
+      stop();
     glide ??= {
       position: top,
       written: top,
@@ -153,7 +160,14 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
     };
     glide.remaining += delta;
     glide.intent = undefined;
+    notch = event;
     return true;
+  };
+  /** After the app root's handlers, a notch has raised all its own intent. */
+  const handled = (event: Event) => {
+    if (event !== notch) return;
+    notch = undefined;
+    if (glide) glide.intent = intent();
   };
   const wheel = (event: WheelEvent) => {
     if (
@@ -167,8 +181,10 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
   };
   smoothers.set(scroller, take);
   scroller.addEventListener("wheel", wheel, { passive: false });
+  scroller.ownerDocument.addEventListener("wheel", handled, { passive: true });
   return () => {
     scroller.removeEventListener("wheel", wheel);
+    scroller.ownerDocument.removeEventListener("wheel", handled);
     if (smoothers.get(scroller) === take) smoothers.delete(scroller);
     stop();
   };
