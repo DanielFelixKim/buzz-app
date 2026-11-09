@@ -38,6 +38,18 @@ ignore = [
     # proc macro: tauri → gtk 0.18 → glib-macros/gtk3-macros.
     # Remove when tauri's Linux stack leaves gtk-rs 0.18.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error via tauri → gtk 0.18 → glib-macros/gtk3-macros; unmaintained, not vulnerable" },
+    # libsqlite3-sys 0.38.2 bundles SQLite 3.53 (CVE-2026-119375): opening a
+    # database beside a crafted `-wal` file of another page size can return
+    # uninitialized memory. Fixed in libsqlite3-sys 0.39 / rusqlite 0.41, but
+    # mesh-llm-log-store (mesh-llm-sdk rev 5d19ca6) pins rusqlite 0.40, and only
+    # one libsqlite3-sys may link sqlite3, so Buzz cannot move alone (#873).
+    # Exposure needs a database and `-wal` pair written by a less trusted party.
+    # Buzz opens only files under the user's own app data: the archive
+    # `events.sqlite3` it writes itself, old Buzz's `localstorage.sqlite3`
+    # read-only, and mesh-llm's `log_store.db` under a private root the log
+    # store prepares. It never opens a user-supplied or imported database.
+    # Remove when mesh-llm moves to rusqlite 0.41 and Buzz follows.
+    { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys 0.38.2 held by mesh-llm-log-store's rusqlite 0.40 pin (links = sqlite3); Buzz and mesh-llm open only their own app-data databases, never a user-supplied or imported file; remove when mesh-llm moves to rusqlite 0.41" },
 ]
 
 [licenses]
