@@ -86,6 +86,8 @@ export function WorkspaceControl({
           render={(props) => (
             <Button
               {...props}
+              // Focus that the menu or New workspace hands back during a move stays.
+              focusableWhenDisabled={busy}
               variant="ghost"
               size="sm"
               shape={project ? "capsule" : "icon"}
