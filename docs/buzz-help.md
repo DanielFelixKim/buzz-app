@@ -123,10 +123,14 @@ mention anyone. Explicit agent watches on that room can still receive them.
   opens the address form; quota and identity checks still govern creation.
   **Refresh** checks communities again, including after a failed read. Automatic
   refresh keeps the current list usable and waits while a community dialog is open.
-  Remote agents show model, setup state, creation date when available and a selectable
-  public key, with **Copy key** on each row. The title includes the agent count.
-  Agents saved in the current community show their avatar; click their row to open
-  their detail pane in **Agents**. Other rows stay informational. Load errors include **Try again**.
+  Remote agents show their model and setup state.
+  The title includes the count. Each row’s **…** menu offers **Copy key**.
+  Saved agents show their community avatar and open their **Agents** pane when
+  clicked, with **View Agent** also available in the menu. **In Agents** marks
+  these available panes. A green avatar dot means Builderlab reports Active
+  with a valid model selection.
+  Creation dates and full keys are not displayed in this compact list.
+  Load errors include **Try again**.
   Use **Open Agents** from the empty list to create one.
   In builds using a shared sign-in, Builderlab's account notice names the provider;
   **Manage account** opens Identity, where that sign-in is managed.

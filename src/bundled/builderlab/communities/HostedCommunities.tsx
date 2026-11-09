@@ -1,7 +1,6 @@
 import { ManagementRow } from "../ManagementRow";
 import { ManagementHeader } from "../BuilderlabSettings";
 import type { OverviewObserver } from "../overview";
-import { managementDate } from "../management-date";
 import { ManagementSection } from "../ManagementSection";
 import communitiesHero from "../assets/communities-hero.png";
 import { Tabs } from "../../../shared/design-system/ui/Tabs";
@@ -921,49 +920,34 @@ export function HostedCommunities({
                                 <ManagementRow
                                   icon={<GlobeIcon size={20} />}
                                   title={name}
-                                  status={
-                                    shown?.url === url
-                                      ? shown.copied
-                                        ? "Address copied"
-                                        : "Couldn’t copy the address"
-                                      : community.archived_at
-                                        ? [
-                                            "Archived",
-                                            managementDate(
-                                              community.archived_at,
-                                            ),
-                                          ]
-                                            .filter(Boolean)
-                                            .join(" ")
-                                        : undefined
-                                  }
-                                  statusTone={
-                                    shown?.url === url && !shown.copied
-                                      ? "warning"
-                                      : undefined
-                                  }
+                                  detail={url ?? undefined}
+                                  status={archived ? "Archived" : undefined}
                                   actions={
                                     <>
-                                      {!archived && url && ready && (
-                                        <Button
-                                          variant="subtle"
-                                          size="sm"
-                                          disabled={busy}
-                                          onClick={() => void copy(url)}
-                                        >
-                                          Copy address
-                                        </Button>
-                                      )}
                                       <MenuRoot>
                                         <MenuTrigger
                                           render={
                                             <IconButton
+                                              variant="bare"
+                                              size="sm"
+                                              shape="row-end"
                                               aria-label={`More actions for ${name}`}
-                                              icon={<DotsThreeIcon size={16} />}
+                                              icon={<DotsThreeIcon size={18} />}
                                             />
                                           }
                                         />
-                                        <MenuPopup size="compact" align="end">
+                                        <MenuPopup
+                                          align="end"
+                                          aria-label={`More actions for ${name}`}
+                                        >
+                                          {!archived && url && ready && (
+                                            <MenuItem
+                                              disabled={busy}
+                                              onClick={() => void copy(url)}
+                                            >
+                                              Copy address
+                                            </MenuItem>
+                                          )}
                                           {archived ? (
                                             <>
                                               <MenuItem

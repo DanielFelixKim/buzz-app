@@ -6,10 +6,18 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { RobotIcon } from "../../../shared/design-system/icons";
+import { DotsThreeIcon, RobotIcon } from "../../../shared/design-system/icons";
 import { Avatar } from "../../../shared/design-system/ui/Avatar";
 import type { Agent } from "../../../features/agents/service";
 import { Button } from "../../../shared/design-system/ui/Button";
+import { IconButton } from "../../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../../shared/design-system/ui/Menu";
+import { useToastNotification } from "../../../shared/design-system/ui/Toast";
 import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
 import { InlineHeader } from "../../../shared/design-system/ui/Header";
 import { writeClipboardText } from "../../../shared/clipboard";
@@ -17,7 +25,6 @@ import { ManagementRow } from "../ManagementRow";
 import { ManagementSection } from "../ManagementSection";
 import agentsHero from "../assets/agents-hero.png";
 import type { OverviewObserver } from "../overview";
-import { managementDate } from "../management-date";
 import type { BuilderlabSession } from "../session";
 import type { AgentClient, RemoteAgent } from "./client";
 
@@ -276,22 +283,20 @@ function AgentRow({
   saved?: Pick<Agent, "pubkey" | "picture"> | undefined;
   openAgent?: ((pubkey: string) => void) | undefined;
 }) {
-  const [copied, setCopied] = useState<"copied" | "failed">();
+  const notify = useToastNotification();
   const state = agentState(agent);
-  const created = managementDate(agent.createdAt);
   const copy = async () => {
     if (!active()) return;
     try {
       await writeClipboardText(agent.pubkey);
-      setCopied("copied");
+      if (active()) notify("Key copied", "success");
     } catch {
-      setCopied("failed");
+      if (active()) notify("Couldn’t copy the key", "error");
     }
   };
   return (
     <li>
       <ManagementRow
-        alignIcon="start"
         icon={
           <Avatar
             src={saved?.picture}
@@ -300,8 +305,10 @@ function AgentRow({
             fallbackContent={<RobotIcon size={20} />}
             size="fill"
             shape="squircle"
+            statusBadge={state === "Active" ? "online" : undefined}
           />
         }
+        title={agent.name}
         onOpen={
           saved && openAgent
             ? () => {
@@ -309,39 +316,46 @@ function AgentRow({
               }
             : undefined
         }
-        openLabel={`Open ${agent.name} in Agents`}
-        title={agent.name}
         detail={
           <>
-            {[agent.modelId, state, created ? `Created ${created}` : undefined]
-              .filter(Boolean)
-              .join(" · ")}
-            <span
-              data-agent-key=""
-              className="block select-all break-all text-mono"
-            >
-              {agent.pubkey}
-            </span>
+            {agent.modelId ?? "No model selected"}
+            {state === "Active" ? (
+              <span className="sr-only"> · Active</span>
+            ) : (
+              ` · ${state}`
+            )}
           </>
         }
-        status={
-          copied ? (
-            <span role="status">
-              {copied === "copied" ? "Key copied" : "Couldn’t copy the key"}
-            </span>
-          ) : undefined
-        }
-        statusTone={copied === "failed" ? "warning" : undefined}
-        revealActions
+        status={saved ? "In Agents" : undefined}
         actions={
-          <Button
-            variant="subtle"
-            size="sm"
-            aria-label={`Copy ${agent.name}’s key`}
-            onClick={() => void copy()}
-          >
-            Copy key
-          </Button>
+          <MenuRoot>
+            <MenuTrigger
+              render={
+                <IconButton
+                  variant="bare"
+                  size="sm"
+                  shape="row-end"
+                  aria-label={`More actions for ${agent.name}`}
+                  icon={<DotsThreeIcon size={18} />}
+                />
+              }
+            />
+            <MenuPopup
+              align="end"
+              aria-label={`More actions for ${agent.name}`}
+            >
+              {saved && openAgent && (
+                <MenuItem
+                  onClick={() => {
+                    if (active()) openAgent(agent.pubkey);
+                  }}
+                >
+                  View Agent
+                </MenuItem>
+              )}
+              <MenuItem onClick={() => void copy()}>Copy key</MenuItem>
+            </MenuPopup>
+          </MenuRoot>
         }
       />
     </li>

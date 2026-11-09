@@ -7,6 +7,7 @@ import type { HostRequest, HostResponse } from "../../../features/host/service";
 import { deferred, createTestSession } from "../test-helpers";
 import { createAgentClient } from "./client";
 import { RemoteAgents } from "./RemoteAgents";
+import { ToastProvider } from "../../../shared/design-system/ui/Toast";
 
 afterEach(() => {
   cleanup();
@@ -93,15 +94,14 @@ it("loads automatically, refreshes and hides account data on sign-out", async ()
     items: [{ key: "one", label: "Helper" }],
   });
   expect(h.request).toHaveBeenCalledTimes(1);
-  expect(screen.getByText("Active")).toBeInTheDocument();
-  expect(screen.getByText(row.agent_pubkey)).toHaveClass("select-all");
+  expect(screen.getByText(/Active$/)).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Copy Helper’s key" }),
+    screen.getByRole("button", { name: "More actions for Helper" }),
   ).toBeEnabled();
   expect(document.body).not.toHaveTextContent("secret");
   const held = deferred<HostResponse>();
   h.request.mockReturnValueOnce(held.promise);
-  const copy = screen.getByRole("button", { name: "Copy Helper’s key" });
+  const copy = screen.getByRole("button", { name: "More actions for Helper" });
   copy.focus();
   act(() => window.dispatchEvent(new Event("focus")));
   expect(copy).toHaveFocus();
@@ -173,15 +173,29 @@ it("copies the agent key and exposes a recoverable clipboard failure", async () 
     .mockRejectedValueOnce(new Error("denied"))
     .mockResolvedValue(undefined);
   vi.stubGlobal("navigator", { clipboard: { writeText } });
-  render(<RemoteAgents {...h} active={() => true} />);
-  const copy = await screen.findByRole("button", { name: "Copy Helper’s key" });
-  await userEvent.click(copy);
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "Couldn’t copy the key",
+  render(
+    <ToastProvider>
+      <RemoteAgents {...h} active={() => true} />
+    </ToastProvider>,
   );
-  expect(screen.getByText(row.agent_pubkey)).toBeVisible();
-  await userEvent.click(copy);
-  expect(screen.getByRole("status")).toHaveTextContent("Key copied");
+  const copy = await screen.findByRole("button", {
+    name: "More actions for Helper",
+  });
+  const copyKey = async () => {
+    await userEvent.click(copy);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Copy key" }),
+    );
+  };
+  await copyKey();
+  expect(
+    await screen.findByRole("dialog", { name: "Couldn’t copy the key" }),
+  ).toHaveTextContent("Couldn’t copy the key");
+  expect(screen.queryByText(row.agent_pubkey)).not.toBeInTheDocument();
+  await copyKey();
+  expect(screen.getByRole("dialog", { name: "Key copied" })).toHaveTextContent(
+    "Key copied",
+  );
   expect(writeText).toHaveBeenLastCalledWith(row.agent_pubkey);
   const held = deferred<HostResponse>();
   h.request.mockReturnValueOnce(held.promise);
@@ -189,7 +203,9 @@ it("copies the agent key and exposes a recoverable clipboard failure", async () 
   act(() => window.dispatchEvent(new Event("focus")));
   await act(async () => held.resolve(response([], 400)));
   await waitFor(() => expect(copy).toHaveFocus());
-  expect(screen.getByRole("status")).toHaveTextContent("Key copied");
+  expect(screen.getByRole("dialog", { name: "Key copied" })).toHaveTextContent(
+    "Key copied",
+  );
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
@@ -215,13 +231,14 @@ it.each([
       ]),
     );
     render(<RemoteAgents {...h} active={() => true} />);
-    expect(
-      await screen.findByText(new RegExp(`^${label} · Created .*2026`)),
-    ).toBeVisible();
+    expect(await screen.findByText(new RegExp(`${label}$`))).toBeVisible();
+    expect(document.querySelectorAll(".buzz-avatar-status-dot")).toHaveLength(
+      label === "Active" ? 1 : 0,
+    );
   },
 );
 
-it("uses saved avatars and opens a saved agent independently of key selection and copying", async () => {
+it("uses saved avatars and opens saved rows independently of their action menus", async () => {
   const h = await fixture();
   const openAgent = vi.fn();
   const picture = "https://example.com/helper.png";
@@ -234,13 +251,20 @@ it("uses saved avatars and opens a saved agent independently of key selection an
     />,
   );
   const open = await screen.findByRole("button", {
-    name: "Open Helper in Agents",
+    name: "View Helper",
   });
-  const image = open.querySelector("img");
+  const image = screen.getByText("Helper").closest("li")?.querySelector("img");
+  expect(open).toHaveAccessibleDescription(/Active/);
+  expect(screen.getByText("In Agents")).toBeVisible();
   expect(image).toHaveAttribute("src", picture);
   const user = userEvent.setup();
-  await user.click(screen.getByText(row.agent_pubkey));
-  await user.click(screen.getByRole("button", { name: "Copy Helper’s key" }));
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Helper" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "View Agent" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("menuitem", { name: "Copy key" }));
   expect(openAgent).not.toHaveBeenCalled();
   await user.click(open);
   open.focus();
@@ -253,13 +277,15 @@ it("uses saved avatars and opens a saved agent independently of key selection an
   await user.click(open);
   expect(openAgent).toHaveBeenCalledTimes(2);
   view.rerender(<RemoteAgents {...props} savedAgents={[]} />);
+  expect(screen.queryByRole("button", { name: "View Helper" })).toBeNull();
+  expect(screen.queryByText("In Agents")).not.toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Helper" }),
+  );
   expect(
-    screen.queryByRole("button", { name: "Open Helper in Agents" }),
-  ).toBeNull();
-  expect(screen.getByText(row.agent_pubkey)).toHaveClass("select-all");
-  expect(
-    screen.getByRole("button", { name: "Copy Helper’s key" }),
+    await screen.findByRole("menuitem", { name: "Copy key" }),
   ).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "View Agent" })).toBeNull();
   expect(
     view.container.querySelector("img[src='https://example.com/helper.png']"),
   ).toBeNull();

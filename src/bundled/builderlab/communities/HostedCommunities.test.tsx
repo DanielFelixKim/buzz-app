@@ -92,7 +92,7 @@ async function showArchived() {
   if (tab.getAttribute("aria-selected") !== "true") await userEvent.click(tab);
 }
 
-async function communityAction(name: string) {
+async function communityAction(name: string, index = 0) {
   if (name === "Delete" || name === "Unarchive") await showArchived();
   else {
     const tab = await screen.findByRole("tab", { name: "Active" });
@@ -104,7 +104,7 @@ async function communityAction(name: string) {
   const triggers = await screen.findAllByRole("button", {
     name: /^More actions for /,
   });
-  const trigger = triggers[0];
+  const trigger = triggers[index];
   if (!trigger) throw new Error("Missing community action menu");
   await userEvent.click(trigger);
   return screen.findByRole("menuitem", { name });
@@ -714,7 +714,9 @@ it("keeps the address visible when the clipboard rejects", async () => {
     "Couldn’t copy the address.",
   );
   expect(
-    screen.getByText("wss://north.communities.buzz.xyz"),
+    screen.getByText("wss://north.communities.buzz.xyz", {
+      selector: ".select-all",
+    }),
   ).toBeInTheDocument();
   expect(screen.queryByText(/Address copied/)).not.toBeInTheDocument();
   writeText.mockResolvedValue(undefined);
@@ -767,7 +769,7 @@ it("does not carry a failed copy handoff into the next sign-in", async () => {
     },
   });
   renderCard();
-  fireEvent.click(await screen.findByRole("button", { name: "Copy address" }));
+  fireEvent.click(await communityAction("Copy address"));
   await screen.findByRole("button", { name: "Try copying again" });
   fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
   routes["/api/builderlab/login"] = () => ({
@@ -777,7 +779,7 @@ it("does not carry a failed copy handoff into the next sign-in", async () => {
     await screen.findByRole("button", { name: /Sign in with Builderlab/ }),
   );
   expect(await screen.findByText("Bea")).toBeInTheDocument();
-  await screen.findByRole("button", { name: "Copy address" });
+  await communityAction("Copy address");
   expect(
     screen.queryByRole("button", { name: "Try copying again" }),
   ).not.toBeInTheDocument();
@@ -829,7 +831,9 @@ it("keeps a created community's address when the following refresh fails", async
     await screen.findByText(/The change was saved, but the list could not/),
   ).toBeInTheDocument();
   expect(
-    screen.getByText("wss://north.communities.buzz.xyz"),
+    screen.getByText("wss://north.communities.buzz.xyz", {
+      selector: ".select-all",
+    }),
   ).toBeInTheDocument();
   // Success closes the form, so the same create cannot be resubmitted.
   await waitFor(() =>
@@ -922,11 +926,11 @@ it.each([
     expect(
       screen.queryByRole("menuitem", { name: action }),
     ).not.toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
-    // Copy is offered only for an active community.
+    // Copy is offered only for an active community, in the same menu.
     expect(
-      Boolean(screen.queryByRole("button", { name: "Copy address" })),
+      Boolean(screen.queryByRole("menuitem", { name: "Copy address" })),
     ).toBe(kind === "unarchive");
+    await userEvent.keyboard("{Escape}");
     routes["/api/builderlab/list"] = () => row(after);
     refreshCommunities();
     await waitFor(() =>
@@ -963,9 +967,7 @@ it.each([
     });
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     renderCard();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Copy address" }),
-    );
+    fireEvent.click(await communityAction("Copy address"));
     if (schedule === "completed rejection")
       await screen.findByRole("button", { name: "Try copying again" });
     else await waitFor(() => expect(writeText).toHaveBeenCalled());
@@ -990,7 +992,9 @@ it.each([
     );
     expect(screen.queryByText(/Address copied/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText("wss://north.communities.buzz.xyz"),
+      screen.queryByText("wss://north.communities.buzz.xyz", {
+        selector: ".select-all",
+      }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Try copying again" }),
@@ -1008,7 +1012,7 @@ it("keeps a failed copy handoff across a same-identity refresh", async () => {
     },
   });
   renderCard();
-  fireEvent.click(await screen.findByRole("button", { name: "Copy address" }));
+  fireEvent.click(await communityAction("Copy address"));
   await screen.findByRole("button", { name: "Try copying again" });
   refreshCommunities();
   await waitFor(() =>
@@ -1017,7 +1021,9 @@ it("keeps a failed copy handoff across a same-identity refresh", async () => {
     ).not.toHaveAttribute("aria-busy", "true"),
   );
   expect(
-    screen.getByText("wss://north.communities.buzz.xyz"),
+    screen.getByText("wss://north.communities.buzz.xyz", {
+      selector: ".select-all",
+    }),
   ).toBeInTheDocument();
 });
 
@@ -1038,9 +1044,7 @@ it.each([
     });
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     renderCard();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Copy address" }),
-    );
+    fireEvent.click(await communityAction("Copy address"));
     if (schedule === "completed rejection")
       await screen.findByRole("button", { name: "Try copying again" });
     else await waitFor(() => expect(writeText).toHaveBeenCalled());
@@ -1067,7 +1071,9 @@ it.each([
     );
     expect(screen.queryByText(/Address copied/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText("wss://north.communities.buzz.xyz"),
+      screen.queryByText("wss://north.communities.buzz.xyz", {
+        selector: ".select-all",
+      }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Try copying again" }),
@@ -1098,9 +1104,7 @@ it("keeps a failed copy handoff for another address when a community is archived
     },
   });
   renderCard();
-  const [, south] = await screen.findAllByRole("button", {
-    name: "Copy address",
-  });
+  const south = await communityAction("Copy address", 1);
   fireEvent.click(south as HTMLElement);
   await screen.findByRole("button", { name: "Try copying again" });
   routes["/api/builderlab/list"] = () => ({
@@ -1521,7 +1525,9 @@ it("restores an accepted archived row only after its bound abort on Refresh", as
     "aria-disabled",
     "true",
   );
-  expect(screen.getByText(/^Archived /)).toBeVisible();
+  expect(
+    screen.getByText("Archived", { selector: "span.text-caption" }),
+  ).toBeVisible();
   expect(
     screen.getByText(
       `Deletion of ${archived.normalized_host} stopped. This community is not being deleted.`,

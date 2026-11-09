@@ -1,71 +1,59 @@
 .row {
   display: flex;
   min-inline-size: 0;
-  min-block-size: calc(var(--size-control) + 2 * var(--space-3));
+  min-block-size: calc(var(--size-control-lg) - var(--space-1));
   align-items: center;
-  gap: var(--space-3);
-  padding-block: var(--space-3);
-  border-block-end: 1px solid var(--border-standard);
+  gap: var(--space-row-gap);
+  padding: var(--space-2) var(--space-control-inset);
 }
 
-.icon {
-  display: grid;
-  inline-size: calc(var(--space-8) + var(--space-1));
-  block-size: calc(var(--space-8) + var(--space-1));
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: var(--radius-chip);
-  background: var(--surface-inset);
-  color: var(--text-subtle);
-}
-
-.row[data-align-icon="start"] .icon {
-  align-self: start;
-}
-
-.content {
-  display: grid;
+.identity {
+  position: relative;
   min-inline-size: 0;
   flex: 1;
-  gap: var(--space-2);
-  overflow-wrap: anywhere;
 }
 
 .primary {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.row[data-navigable] {
+  pointer-events: none;
+}
+
+.content {
+  display: flex;
   min-inline-size: 0;
   flex: 1;
-  grid-column: 1 / -1;
+  align-items: center;
+  gap: var(--space-row-gap);
+}
+
+@container (max-width: 18rem) {
+  .content {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-half);
+  }
 }
 
 .actions {
   display: flex;
-  max-inline-size: 100%;
-  flex: 0 0 auto;
+  align-self: stretch;
   align-items: center;
   gap: var(--space-2);
+  flex: 0 0 auto;
 }
 
-@container (max-width: 24rem) {
-  .row[data-reveal-actions] {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .row[data-reveal-actions] .actions {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
-}
-
-@media (hover: hover) {
-  @container (width > 24rem) {
-    .row[data-reveal-actions]:not(
-        :hover,
-        :focus-within,
-        :has([data-popup-open])
-      )
-      .actions {
-      opacity: 0;
-    }
-  }
+.icon {
+  display: flex;
+  inline-size: var(--size-control-sm);
+  block-size: var(--size-control-sm);
+  flex: 0 0 auto;
+  align-self: start;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-subtle);
 }

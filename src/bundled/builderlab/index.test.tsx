@@ -666,11 +666,16 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     await user.click(
       screen.getByRole("button", { name: "Open Remote agents" }),
     );
-    const open = await screen.findByRole("button", {
-      name: "Open Helper in Agents",
+    const actions = await screen.findByRole("button", {
+      name: "More actions for Helper",
     });
-    expect(open.querySelector("img")).toHaveAttribute("src", saved.picture);
-    await user.click(open);
+    expect(
+      screen.getByText("Helper").closest("li")?.querySelector("img"),
+    ).toHaveAttribute("src", saved.picture);
+    await user.click(actions);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "View Agent" }),
+    );
     expect(navigation.open).toHaveBeenCalledExactlyOnceWith({
       version: 1,
       kind: "page",
