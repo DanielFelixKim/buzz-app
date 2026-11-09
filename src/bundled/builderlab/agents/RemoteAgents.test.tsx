@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { HostRequest, HostResponse } from "../../../features/host/service";
@@ -92,11 +92,25 @@ it("loads automatically, refreshes and hides account data on sign-out", async ()
   });
   expect(h.request).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Active")).toBeInTheDocument();
+  expect(screen.getByText(row.agent_pubkey)).toHaveClass("select-all");
   expect(
     screen.getByRole("button", { name: "Copy Helper’s key" }),
   ).toBeEnabled();
   expect(document.body).not.toHaveTextContent("secret");
-  h.request.mockResolvedValue(response([]));
+  const held = deferred<HostResponse>();
+  h.request.mockReturnValueOnce(held.promise);
+  const copy = screen.getByRole("button", { name: "Copy Helper’s key" });
+  copy.focus();
+  act(() => window.dispatchEvent(new Event("focus")));
+  expect(copy).toHaveFocus();
+  expect(screen.queryByText("Loading agents…")).not.toBeInTheDocument();
+  expect(overview).toHaveBeenLastCalledWith({
+    kind: "filled",
+    items: [{ key: "one", label: "Helper" }],
+  });
+  await act(async () => held.resolve(response([row])));
+  expect(copy).toHaveFocus();
+  h.request.mockResolvedValueOnce(response([]));
   act(() => window.dispatchEvent(new Event("focus")));
   expect(await screen.findByText("No agents yet")).toBeInTheDocument();
   expect(overview).toHaveBeenLastCalledWith({ kind: "empty" });
@@ -120,7 +134,7 @@ it("shows a held loading state and retries a failed read", async () => {
   expect(
     screen.getByRole("heading", { name: "Couldn’t load agents" }),
   ).toBeVisible();
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Try again" }));
@@ -155,9 +169,18 @@ it("copies the agent key and exposes a recoverable clipboard failure", async () 
   expect(await screen.findByRole("status")).toHaveTextContent(
     "Couldn’t copy the key",
   );
+  expect(screen.getByText(row.agent_pubkey)).toBeVisible();
   await userEvent.click(copy);
   expect(screen.getByRole("status")).toHaveTextContent("Key copied");
   expect(writeText).toHaveBeenLastCalledWith(row.agent_pubkey);
+  const held = deferred<HostResponse>();
+  h.request.mockReturnValueOnce(held.promise);
+  copy.focus();
+  act(() => window.dispatchEvent(new Event("focus")));
+  await act(async () => held.resolve(response([], 400)));
+  await waitFor(() => expect(copy).toHaveFocus());
+  expect(screen.getByRole("status")).toHaveTextContent("Key copied");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it.each([
@@ -168,13 +191,22 @@ it.each([
   [3, 1, "Revoked"],
   [0, 1, "Unknown"],
 ])(
-  "matches Console status for agent %s and model %s",
+  "shows readiness for agent %s and model %s",
   async (status, model, label) => {
     const h = await fixture();
     h.request.mockResolvedValue(
-      response([{ ...row, status, model_selection_status: model }]),
+      response([
+        {
+          ...row,
+          status,
+          model_selection_status: model,
+          created_at: "2026-07-15T12:00:00Z",
+        },
+      ]),
     );
     render(<RemoteAgents {...h} active={() => true} />);
-    expect(await screen.findByText(label as string)).toBeVisible();
+    expect(
+      await screen.findByText(new RegExp(`^${label} · Created .*2026`)),
+    ).toBeVisible();
   },
 );

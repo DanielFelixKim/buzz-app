@@ -35,6 +35,18 @@
   gap: var(--space-2);
 }
 
+@container (max-width: 24rem) {
+  .row[data-reveal-actions] {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .row[data-reveal-actions] .actions {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
+
 @media (hover: hover) {
   .row[data-reveal-actions]:not(:hover, :focus-within, :has([data-popup-open]))
     .actions {

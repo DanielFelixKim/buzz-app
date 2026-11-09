@@ -1,7 +1,7 @@
 import {
   useEffect,
-  useEffectEvent,
   useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -15,6 +15,7 @@ import { ManagementRow } from "../ManagementRow";
 import { ManagementSection } from "../ManagementSection";
 import agentsHero from "../assets/agents-hero.png";
 import type { OverviewObserver } from "../overview";
+import { managementDate } from "../management-date";
 import type { BuilderlabSession } from "../session";
 import type { AgentClient, RemoteAgent } from "./client";
 
@@ -34,15 +35,6 @@ export function RemoteAgents({
   openAgents?: (() => void) | undefined;
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    const focus = () => {
-      if (active() && session.snapshot().status === "signed-in")
-        setRevision((value) => value + 1);
-    };
-    window.addEventListener("focus", focus);
-    return () => window.removeEventListener("focus", focus);
-  }, [active, session]);
   useLayoutEffect(() => {
     if (
       active() &&
@@ -69,15 +61,12 @@ export function RemoteAgents({
     );
   return login.status === "signed-in" ? (
     <AgentList
-      key={`${login.account?.subject}:${revision}`}
+      key={login.account?.subject}
       client={client}
       active={active}
       onOverview={onOverview}
       showHeading={showHeading}
       openAgents={openAgents}
-      refresh={() => {
-        if (active()) setRevision((value) => value + 1);
-      }}
     />
   ) : (
     <AgentSection count="—">
@@ -91,14 +80,12 @@ export function RemoteAgents({
 function AgentList({
   client,
   active,
-  refresh,
   onOverview,
   showHeading,
   openAgents,
 }: {
   client: AgentClient;
   active(): boolean;
-  refresh(): void;
   onOverview?: OverviewObserver | undefined;
   showHeading: boolean;
   openAgents?: (() => void) | undefined;
@@ -106,6 +93,9 @@ function AgentList({
   const [agents, setAgents] = useState<readonly RemoteAgent[]>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const refresh = useRef(() => {});
   useLayoutEffect(() => {
     if (!active() || !onOverview) return;
     onOverview(
@@ -127,30 +117,55 @@ function AgentList({
           : { kind: "failed" },
     );
   }, [active, onOverview, agents, loading]);
-  const isActive = useEffectEvent(active);
   useEffect(() => {
-    const controller = new AbortController();
-    const current = () => !controller.signal.aborted && isActive();
+    let request: AbortController | undefined;
+    let loaded = false;
     setLoading(true);
     setAgents(undefined);
     setError(undefined);
-    void client.list(controller.signal).then(
-      (rows) => {
-        if (current()) {
-          setAgents(rows);
-          setLoading(false);
-        }
-      },
-      (reason) => {
-        if (current()) {
-          setError(
-            reason instanceof Error ? reason.message : "Could not load agents.",
-          );
-          setLoading(false);
-        }
-      },
-    );
-    return () => controller.abort();
+    const load = (quiet: boolean) => {
+      if (request || !activeRef.current()) return;
+      const controller = new AbortController();
+      request = controller;
+      const current = () => !controller.signal.aborted && activeRef.current();
+      if (!quiet) setError(undefined);
+      if (!loaded) setLoading(true);
+      void client
+        .list(controller.signal)
+        .then(
+          (rows) => {
+            if (current()) {
+              loaded = true;
+              setAgents(rows);
+              setError(undefined);
+              setLoading(false);
+            }
+          },
+          (reason) => {
+            if (current()) {
+              if (!quiet || !loaded)
+                setError(
+                  reason instanceof Error
+                    ? reason.message
+                    : "Could not load agents.",
+                );
+              setLoading(false);
+            }
+          },
+        )
+        .finally(() => {
+          request = undefined;
+        });
+    };
+    refresh.current = () => load(false);
+    const focus = () => load(true);
+    load(false);
+    window.addEventListener("focus", focus);
+    return () => {
+      request?.abort();
+      refresh.current = () => {};
+      window.removeEventListener("focus", focus);
+    };
   }, [client]);
   return (
     <section
@@ -166,16 +181,18 @@ function AgentList({
           </p>
         )}
         {error && (
-          <EmptyState
-            icon={<RobotIcon />}
-            title="Couldn’t load agents"
-            description="Check your connection and try again."
-            action={
-              <Button variant="subtle" onClick={refresh}>
-                Try again
-              </Button>
-            }
-          />
+          <div role="alert">
+            <EmptyState
+              icon={<RobotIcon />}
+              title="Couldn’t load agents"
+              description={error}
+              action={
+                <Button variant="subtle" onClick={() => refresh.current()}>
+                  Try again
+                </Button>
+              }
+            />
+          </div>
         )}
         {agents?.length === 0 && (
           <EmptyState
@@ -235,6 +252,7 @@ function AgentRow({
 }) {
   const [copied, setCopied] = useState<"copied" | "failed">();
   const state = agentState(agent);
+  const created = managementDate(agent.createdAt);
   const copy = async () => {
     if (!active()) return;
     try {
@@ -249,21 +267,22 @@ function AgentRow({
       <ManagementRow
         icon={<RobotIcon size={20} />}
         title={agent.name}
-        detail={[
-          agent.modelId,
-          state,
-          agent.createdAt !== undefined
-            ? `Created ${new Date(agent.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
-            : undefined,
-        ]
-          .filter(Boolean)
-          .join(" · ")}
+        detail={
+          <>
+            {[agent.modelId, state, created ? `Created ${created}` : undefined]
+              .filter(Boolean)
+              .join(" · ")}
+            <span className="block select-all break-all text-mono">
+              {agent.pubkey}
+            </span>
+          </>
+        }
         status={
-          copied
-            ? copied === "copied"
-              ? "Key copied"
-              : "Couldn’t copy the key"
-            : undefined
+          copied ? (
+            <span role="status">
+              {copied === "copied" ? "Key copied" : "Couldn’t copy the key"}
+            </span>
+          ) : undefined
         }
         statusTone={copied === "failed" ? "warning" : undefined}
         revealActions

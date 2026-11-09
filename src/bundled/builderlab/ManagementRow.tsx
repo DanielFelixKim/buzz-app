@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import styles from "./ManagementRow.module.css";
 
-/** The Console's ListRow composition, using desktop roles and action owners. */
+/** A management row; the action owner supplies any live feedback. */
 export function ManagementRow({
   icon,
   title,
@@ -35,7 +35,6 @@ export function ManagementRow({
             {detail && status && <span aria-hidden="true"> · </span>}
             {status && (
               <span
-                role="status"
                 className={
                   statusTone === "warning" ? "text-warning" : undefined
                 }
