@@ -6,6 +6,8 @@ import {
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { Input } from "../../../shared/design-system/ui/Input";
+import { InputGroup } from "../../../shared/design-system/ui/InputGroup";
+import type { Ref } from "react";
 import { HOST_SUFFIX, VALID_NAME } from "./api";
 
 /**
@@ -77,10 +79,12 @@ export function CommunityAddressField({
   address,
   busy,
   refusal,
+  inputRef,
 }: {
   address: CommunityAddress;
   busy: boolean;
   refusal?: string | undefined;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   const suffixId = useId();
   const { name, enabled, valid, available, failed } = address;
@@ -101,28 +105,28 @@ export function CommunityAddressField({
           ) : undefined
         }
       >
-        <div className="flex min-w-0 max-w-xl flex-wrap items-center gap-2">
-          <div className="min-w-0 max-w-full flex-1 basis-48">
-            <Input
-              autoComplete="off"
-              spellCheck={false}
-              maxLength={63}
-              placeholder="north-star"
-              aria-describedby={suffixId}
-              disabled={!enabled || busy}
-              value={name}
-              onValueChange={(value) =>
-                address.setName(value.trim().toLowerCase())
-              }
-            />
-          </div>
+        <InputGroup wrap>
+          <Input
+            ref={inputRef}
+            textSize="large"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={63}
+            placeholder="north-star"
+            aria-describedby={suffixId}
+            disabled={!enabled || busy}
+            value={name}
+            onValueChange={(value) =>
+              address.setName(value.trim().toLowerCase())
+            }
+          />
           <span
             id={suffixId}
             className="min-w-0 wrap-anywhere text-body-lg text-primary"
           >
             .{HOST_SUFFIX}
           </span>
-        </div>
+        </InputGroup>
       </Field>
       {refusal ? (
         <p role="alert" className="m-0 break-words text-body-sm text-danger">

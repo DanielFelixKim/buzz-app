@@ -1420,6 +1420,7 @@ function CreateCommunity({
   onCreate(name: string): Promise<boolean>;
 }) {
   const formId = useId();
+  const addressInput = useRef<HTMLInputElement>(null);
   const availability = useCallback(
     async (name: string) =>
       Boolean(
@@ -1443,9 +1444,15 @@ function CreateCommunity({
       size="default"
       headerGap="compact"
       footerGap="compact"
+      initialFocus={addressInput}
       preventClose={creating}
       title="Create community"
-      description="Choose the Buzz address your team will use to connect."
+      description="Choose your community’s address."
+      leadingActions={
+        quotaLabel && (
+          <p className="m-0 text-body-sm text-muted">{quotaLabel}</p>
+        )
+      }
       actions={
         <>
           <Button
@@ -1462,10 +1469,11 @@ function CreateCommunity({
             type="submit"
             form={formId}
             variant="prominent"
+            aria-label="Create community"
             loading={creating}
             disabled={!address.ready || busy}
           >
-            Create community
+            Create
           </Button>
         </>
       }
@@ -1486,10 +1494,11 @@ function CreateCommunity({
         }}
       >
         {atLimit && <p className="m-0 text-body-sm text-muted">{atLimit}</p>}
-        <CommunityAddressField address={address} busy={busy} />
-        {quotaLabel && (
-          <p className="m-0 text-body-sm text-muted">{quotaLabel}</p>
-        )}
+        <CommunityAddressField
+          address={address}
+          busy={busy}
+          inputRef={addressInput}
+        />
       </form>
     </Dialog>
   );

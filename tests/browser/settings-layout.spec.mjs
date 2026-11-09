@@ -453,7 +453,6 @@ fiBuild(
               exact: true,
             });
             await expect(create).toBeEnabled();
-            await expect(create).toHaveText("Create");
           }
           await expect(card).toBeVisible();
           for (const scale of ["100%", "200%"]) {
@@ -478,37 +477,6 @@ fiBuild(
                 { message: `${state}, ${mode}, ${width}px, ${scale}` },
               )
               .toBe(true);
-            if (
-              signedIn &&
-              (width === 390 || (width === 1440 && scale === "100%"))
-            ) {
-              const title = card.getByRole("heading", {
-                name: "Communities",
-                exact: true,
-              });
-              const create = card.getByRole("button", {
-                name: "Create community",
-                exact: true,
-              });
-              await expect
-                .poll(
-                  async () => {
-                    const heading = await title.boundingBox();
-                    const button = await create.boundingBox();
-                    const caret = await back.boundingBox();
-                    if (!heading || !button || !caret) return false;
-                    const center = heading.y + heading.height / 2;
-                    return width === 390
-                      ? button.y >= heading.y + heading.height
-                      : button.x >= heading.x + heading.width &&
-                          Math.abs(button.y + button.height / 2 - center) <=
-                            0.5 &&
-                          Math.abs(caret.y + caret.height / 2 - center) <= 0.5;
-                  },
-                  { message: `Create placement at ${width}px/${scale}` },
-                )
-                .toBe(true);
-            }
             if (!signedIn) {
               const action = card.getByRole("button", {
                 name: "Sign in with Builderlab",

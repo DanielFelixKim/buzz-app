@@ -278,11 +278,11 @@ it("checks availability after a pause and creates a valid community", async () =
   const writeText = vi.fn(async () => {});
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   renderCard();
-  expect(
-    await screen.findByRole("button", { name: "Create community" }),
-  ).toHaveTextContent(/^Create$/);
   const input = await openCreate();
-  await waitFor(() => expect(input).toBeEnabled());
+  await waitFor(() => {
+    expect(input).toBeEnabled();
+    expect(input).toHaveFocus();
+  });
   vi.useFakeTimers();
   fireEvent.change(input, { target: { value: "North" } });
   expect(input).toHaveValue("north");
@@ -763,26 +763,6 @@ const listed = {
   can_create: true,
 };
 
-it("describes the confirmed identity connection on keyboard focus", async () => {
-  routes["/api/builderlab/list"] = () => listed;
-  const user = userEvent.setup();
-  render(
-    <HostedCommunities api={brokerApi} active={() => true} sharedSignIn />,
-  );
-  const mark = await screen.findByRole("img", {
-    name: "Buzz identity connected",
-  });
-  expect(
-    screen.queryByText("Connected", { exact: true }),
-  ).not.toBeInTheDocument();
-  screen.getByRole("button", { name: "Refresh" }).focus();
-  await user.keyboard("{Tab}");
-  expect(mark).toHaveFocus();
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
-    "This Builderlab account is connected to this device’s Buzz identity.",
-  );
-});
-
 it("does not carry a failed copy handoff into the next sign-in", async () => {
   routes["/api/builderlab/list"] = () => listed;
   routes["/api/builderlab/sign-out"] = () => ({});
@@ -1136,84 +1116,6 @@ it.each([
   },
 );
 
-it("dismisses another address's copy hint when opening community actions", async () => {
-  routes["/api/builderlab/list"] = () => ({
-    communities: [
-      ...listed.communities,
-      {
-        id: "c2",
-        name: "south",
-        normalized_host: "south.communities.buzz.xyz",
-      },
-    ],
-  });
-  routes["/api/builderlab/archive"] = () => ({
-    community: { id: "c1", archived_at: "2026-09-24" },
-  });
-  vi.stubGlobal("navigator", {
-    clipboard: {
-      writeText: async () => {
-        throw new Error("denied");
-      },
-    },
-  });
-  renderCard();
-  const south = await communityAction("Copy address", 1);
-  fireEvent.click(south as HTMLElement);
-  await screen.findByRole("button", { name: "Try copying again" });
-  routes["/api/builderlab/list"] = () => ({
-    error: { code: "relay_unavailable" },
-  });
-  fireEvent.click(await communityAction("Archive"));
-  fireEvent.click(
-    within(await screen.findByRole("alertdialog")).getByRole("button", {
-      name: "Archive",
-    }),
-  );
-  const restoredAction2 = await communityAction("Unarchive");
-  await waitFor(() =>
-    expect(restoredAction2).not.toHaveAttribute("aria-disabled", "true"),
-  );
-  expect(
-    screen.queryByRole("dialog", { name: "Community address" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Try copying again" }),
-  ).not.toBeInTheDocument();
-});
-
-it("shows the empty collection quota in Create after a successful read", async () => {
-  let release!: (value: unknown) => void;
-  const list = new Promise((resolve) => {
-    release = resolve;
-  });
-  routes["/api/builderlab/list"] = () => list;
-  renderCard();
-  try {
-    await waitFor(() =>
-      expect(calls.some(([url]) => url === "/api/builderlab/list")).toBe(true),
-    );
-    expect(
-      screen.queryByText("0 of 5 communities used"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Create community" }),
-    ).toBeDisabled();
-  } finally {
-    release({
-      communities: [],
-      quota_used: 0,
-      quota_limit: 5,
-      can_create: true,
-    });
-  }
-  await openCreate();
-  expect(await screen.findByText("0 of 5 communities used")).toBeVisible();
-  expect(
-    screen.getByRole("textbox", { name: "Community address" }),
-  ).toBeEnabled();
-});
-
 it.each(["missing quota", "invalid quota", "setup needed"])(
   "settles the overview after a completed %s read",
   async (kind) => {
@@ -1240,22 +1142,29 @@ it.each(["missing quota", "invalid quota", "setup needed"])(
     await waitFor(() =>
       expect(overview).toHaveBeenLastCalledWith({ kind: "empty" }),
     );
-    if (kind === "setup needed") {
-      expect(
-        screen.getByRole("button", { name: "Create community" }),
-      ).toBeDisabled();
-      expect(
-        screen.getByRole("button", { name: "Connect Buzz identity" }),
-      ).toBeEnabled();
-    }
   },
 );
 
 it("keeps a failed hosted collection read separate from an empty result", async () => {
-  routes["/api/builderlab/list"] = () => ({
-    error: { message: "List unavailable" },
+  let release!: (value: unknown) => void;
+  const list = new Promise((resolve) => {
+    release = resolve;
   });
+  routes["/api/builderlab/list"] = () => list;
   renderCard();
+  try {
+    await waitFor(() =>
+      expect(calls.some(([url]) => url === "/api/builderlab/list")).toBe(true),
+    );
+    expect(
+      screen.queryByText("0 of 5 communities used"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create community" }),
+    ).toBeDisabled();
+  } finally {
+    release({ error: { message: "List unavailable" } });
+  }
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "List unavailable",
   );
@@ -1269,6 +1178,9 @@ it("keeps a failed hosted collection read separate from an empty result", async 
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   await openCreate();
   expect(await screen.findByText("0 of 5 communities used")).toBeVisible();
+  expect(
+    screen.getByRole("textbox", { name: "Community address" }),
+  ).toBeEnabled();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 

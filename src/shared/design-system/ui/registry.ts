@@ -289,12 +289,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "A single-line text field. InputGroup owns the shared frame for leading and trailing content.",
     behavior:
-      "Base UI owns form and keyboard semantics. InputGroup supports inset and panel surfaces while its native input retains focus.",
+      "Base UI owns form and keyboard semantics. Large text highlights a composed value; InputGroup can wrap fixed text affixes within its shared frame while the input retains focus.",
     variants: [
       "default",
       "disabled",
       "invalid",
       "title",
+      "large text",
+      "InputGroup wrapping affix",
       "InputGroup panel surface",
     ],
     status: "proposed",

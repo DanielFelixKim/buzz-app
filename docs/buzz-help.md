@@ -127,8 +127,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   refresh keeps the current list usable and waits while a community dialog is open.
   A green check beside Refresh means the Builderlab account is linked to this
   device’s Buzz identity; hover or focus it for details. The creation dialog
-  shows community quota usage beneath the address. Archived communities still
-  count toward quota until deletion cleanup finishes.
+  focuses the address field and shows quota usage beside its actions. Archived
+  communities still count toward quota until deletion cleanup finishes.
   Remote agents show their model and setup state.
   The title includes the count. Each row’s **…** menu offers **Copy key**.
   Saved agents show their community avatar and open their **Agents** pane when

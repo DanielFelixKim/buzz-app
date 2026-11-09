@@ -158,94 +158,122 @@ const me = {
   body: JSON.stringify({ subject: "user", email: "a@example.com" }),
 };
 
-it.each([false, true])(
-  "keeps compact actions and progress with notice=%s",
-  async (notice) => {
-    const held = deferred<Credential>();
-    const acquire = vi.fn(() => held.promise);
-    const session = createTestSession(acquire);
+it("keeps compact actions and progress with the account notice", async () => {
+  const held = deferred<Credential>();
+  const acquire = vi.fn(() => held.promise);
+  const session = createTestSession(acquire);
+  render(
+    <Login
+      session={session}
+      available
+      active={() => true}
+      showHeading={false}
+      notice
+    />,
+  );
+  const user = userEvent.setup();
+  expect(screen.queryByText("Sign-in state")).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Sign in with Builderlab" }),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finish sign-in in your browser",
+  );
+  await act(async () => held.reject(new Error("Sign-in failed")));
+  expect(screen.getByRole("alert")).toHaveTextContent("Sign-in failed");
+  acquire.mockResolvedValueOnce(credential);
+  await user.click(
+    screen.getByRole("button", { name: "Sign in with Builderlab" }),
+  );
+  await screen.findByRole("button", { name: "Sign out" });
+  expect(screen.queryByText("a@example.com")).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(screen.queryByRole("status")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(
+    screen.getByRole("button", { name: "Sign in with Builderlab" }),
+  ).toBeVisible();
+  session.dispose();
+});
+
+it("shows the account email when the notice is omitted", async () => {
+  const session = createTestSession(async () => credential);
+  await session.signIn();
+  render(
+    <Login
+      session={session}
+      available
+      active={() => true}
+      showHeading={false}
+      notice={false}
+    />,
+  );
+  expect(screen.getByText("a@example.com")).toBeVisible();
+  session.dispose();
+});
+
+it("names the provider and preserves shared account management", async () => {
+  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
+  try {
+    const h = federatedFixture();
+    h.request.mockResolvedValue(me);
+    const authority = h.service.snapshot().authority;
+    if (!authority) throw new Error("Missing fixture authority");
+    h.publish({ authority: { ...authority, organization: "Example Org" } });
+    const session = createNativeSession(h.service);
+    const openIdentity = vi.fn();
     render(
       <Login
         session={session}
         available
         active={() => true}
         showHeading={false}
-        notice={notice}
+        notice
+        openIdentity={openIdentity}
       />,
     );
-    const user = userEvent.setup();
-    expect(screen.queryByText("Sign-in state")).toBeNull();
-    await user.click(
-      screen.getByRole("button", { name: "Sign in with Builderlab" }),
+    const provider = "Example Org";
+    await userEvent.click(
+      screen.getByRole("button", { name: `Sign in with ${provider}` }),
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Finish sign-in in your browser",
-    );
-    await act(async () => held.reject(new Error("Sign-in failed")));
-    expect(screen.getByRole("alert")).toHaveTextContent("Sign-in failed");
-    acquire.mockResolvedValueOnce(credential);
-    await user.click(
-      screen.getByRole("button", { name: "Sign in with Builderlab" }),
-    );
-    await screen.findByRole("button", { name: "Sign out" });
-    if (notice) expect(screen.queryByText("a@example.com")).toBeNull();
-    else expect(screen.getByText("a@example.com")).toBeVisible();
-    expect(screen.queryByText("Signed in")).toBeNull();
-    expect(screen.queryByRole("status")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(h.service.signIn).toHaveBeenCalledOnce();
+    await screen.findByRole("button", { name: "Manage account" });
+    expect(screen.queryByText("a@example.com")).toBeNull();
+    expect(screen.queryByText("Email", { selector: "dt" })).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Sign in with Builderlab" }),
+      screen.getByRole("button", { name: "Manage account" }).closest("p"),
+    ).toHaveTextContent(`Uses your ${provider} sign-in.`);
+    expect(screen.queryByText("Sign-in state")).toBeNull();
+    expect(screen.queryByText("Signed in")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Manage account" }),
+    );
+    expect(openIdentity).toHaveBeenCalledOnce();
+    expect(h.service.signOut).not.toHaveBeenCalled();
+    session.dispose();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it("uses the provider host when its organization label is absent", () => {
+  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
+  try {
+    const h = federatedFixture();
+    const authority = h.service.snapshot().authority;
+    if (!authority) throw new Error("Missing fixture authority");
+    h.publish({ authority: { ...authority, organization: null } });
+    const session = createNativeSession(h.service);
+    render(<Login session={session} available active={() => true} />);
+    expect(
+      screen.getByRole("button", { name: "Sign in with builderlab.example" }),
     ).toBeVisible();
     session.dispose();
-  },
-);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
 
-it.each(["Example Org", null])(
-  "names the provider and preserves shared account management (%s)",
-  async (organization) => {
-    vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
-    try {
-      const h = federatedFixture();
-      h.request.mockResolvedValue(me);
-      const authority = h.service.snapshot().authority;
-      if (!authority) throw new Error("Missing fixture authority");
-      h.publish({ authority: { ...authority, organization } });
-      const session = createNativeSession(h.service);
-      const openIdentity = vi.fn();
-      render(
-        <Login
-          session={session}
-          available
-          active={() => true}
-          showHeading={false}
-          notice
-          openIdentity={openIdentity}
-        />,
-      );
-      const provider = organization ?? "builderlab.example";
-      await userEvent.click(
-        screen.getByRole("button", { name: `Sign in with ${provider}` }),
-      );
-      expect(h.service.signIn).toHaveBeenCalledOnce();
-      await screen.findByRole("button", { name: "Manage account" });
-      expect(screen.queryByText("a@example.com")).toBeNull();
-      expect(screen.queryByText("Email", { selector: "dt" })).toBeNull();
-      expect(
-        screen.getByRole("button", { name: "Manage account" }).closest("p"),
-      ).toHaveTextContent(`Uses your ${provider} sign-in.`);
-      expect(screen.queryByText("Sign-in state")).toBeNull();
-      expect(screen.queryByText("Signed in")).toBeNull();
-      await userEvent.click(
-        screen.getByRole("button", { name: "Manage account" }),
-      );
-      expect(openIdentity).toHaveBeenCalledOnce();
-      expect(h.service.signOut).not.toHaveBeenCalled();
-      session.dispose();
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  },
-);
 it("shows a restore or account read as checking, without a browser step to cancel", async () => {
   const h = federatedFixture();
   h.publish({ status: "restoring" });

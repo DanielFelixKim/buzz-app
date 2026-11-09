@@ -1154,6 +1154,12 @@ read and copied; disabled actions cannot change a value. Search clear restores
 input focus. SearchField `trailing` places auxiliary actions after Clear inside
 the shared frame. Features still own filtering, custom values, and async recovery.
 
+For a prominent composed value, use `Input textSize="large"` for the complete
+20px body-lg role. `InputGroup wrap` keeps fixed text affixes inside the same
+frame, reserving twelve characters for editing before moving an affix to its
+own line. Keep the affix at the input's type size and connect it through
+`aria-describedby`; it remains readable when enlarged text wraps.
+
 SearchField, Combobox.Control, and code Textarea default to no autocorrection,
 capitalization, or spellcheck. Callers can override these defaults explicitly.
 Ordinary Input and prose Textarea retain platform defaults. Check the defaults in
