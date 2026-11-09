@@ -198,6 +198,9 @@ function ScopedPage({
     autoFocus: boolean;
     /** Sent, the draft left the list; nothing holds its place there. */
     sent?: true;
+    /** The receipt that retired the row. A draft written again after it
+     * leaves the list only for its own send. */
+    delivered?: string;
   };
   const [selected, setSelected] = useState<Visit>();
   const visit = useRef<Visit | undefined>(undefined);
@@ -560,11 +563,13 @@ function ScopedPage({
   /** A sent draft's preview stays open on its conversation, and focus stays
    * where the person left it: usually the emptied composer. Its row leaves the
    * list, so closing returns to the row that takes its place. A draft still
-   * listed (written again, or not cleared) keeps its row. */
-  function sentFrom(current: Visit) {
+   * listed (written again, or not cleaned up yet) keeps its row; the preview
+   * asks again once a retried cleanup clears it. */
+  function sentFrom(current: Visit, id: string) {
     if (
       visit.current !== current ||
       current.sent ||
+      current.delivered === id ||
       drafts.entries.some((entry) => entry.id === current.entry.id)
     )
       return;
@@ -575,6 +580,7 @@ function ScopedPage({
     visit.current = {
       ...current,
       sent: true,
+      delivered: id,
       trigger: neighbor ?? current.trigger,
     };
     setSelected(visit.current);
@@ -760,7 +766,7 @@ function ScopedPage({
           !byId.get(selected.entry.channelId) &&
           (channelListStatus === "idle" || channelListStatus === "loading")
         }
-        onSent={() => sentFrom(selected)}
+        onSent={(id) => sentFrom(selected, id)}
       />
     ) : null;
 

@@ -587,6 +587,133 @@ it.each([false, true])(
   },
 );
 
+it.each([false, true])(
+  "retires a delivered draft once its failed cleanup is retried (thread=%s)",
+  async (thread) => {
+    const h = fixture();
+    const key = thread ? `draft:room:thread:${h.root.id}` : "draft:room";
+    writeView(h.session.scope, key, "Cleanup later");
+    writeView(h.session.scope, "draft:other", "Other draft");
+    h.render();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Continue draft.*Cleanup later/,
+      }),
+    );
+    const region = screen.getByRole("region", { name: "Draft for #Design" });
+    const editor = await within(region).findByRole("textbox");
+    await waitFor(() => expect(editor).toHaveTextContent("Cleanup later"));
+    const stored = `buzz-view.v1:${JSON.stringify([h.session.scope, key])}`;
+    const setItem = Storage.prototype.setItem;
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, name, value) {
+        if (name === stored) throw Error("no space");
+        setItem.call(this, name, value);
+      });
+    try {
+      fireEvent.click(
+        within(region).getByRole("button", { name: "Send message" }),
+      );
+      await within(region).findByText("Sent to #Design.");
+      // Delivered, but still saved: the draft keeps its row until cleanup.
+      await within(region).findByRole("button", {
+        name: "Retry draft cleanup",
+      });
+      expect(draftButton("Cleanup later")).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+    } finally {
+      fail.mockRestore();
+    }
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Retry draft cleanup" }),
+    );
+    expect(mentionDraft(readView(h.session.scope, key, "")).text).toBe("");
+    expect(
+      screen.queryByRole("button", { name: /Continue draft.*Cleanup later/ }),
+    ).toBeNull();
+    expect(screen.queryByText("Empty draft")).toBeNull();
+    expect(region).toBeInTheDocument();
+    fireEvent.keyDown(editor, { key: "Escape" });
+    expect(draftButton("Other draft")).toHaveFocus();
+  },
+);
+
+it("keeps the row of a draft written again whose background send is cleaned up before it lands", async () => {
+  let release!: (value: UploadedAttachment) => void;
+  const gate = new Promise<UploadedAttachment>((resolve) => {
+    release = resolve;
+  });
+  const upload = vi.fn(() => gate);
+  const h = fixture(upload);
+  writeView(h.session.scope, "draft:room", "First");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  expect(mentionDraft(readView(h.session.scope, "draft:room", "")).text).toBe(
+    "",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+  await act(async () => h.session.channels.refreshList?.());
+  act(() => {
+    editor.value = "Again, with a file";
+    fireEvent.input(editor);
+  });
+  expect(draftButton("Again, with a file")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  const store = attachmentDraft(
+    h.session,
+    `${h.session.scope}:draft:room`,
+    "room",
+  );
+  act(() => {
+    store.add([new File(["checklist"], "notes.txt", { type: "text/plain" })]);
+  });
+  await waitFor(() => expect(upload).toHaveBeenCalled());
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() =>
+      expect(
+        mentionDraft(readView(h.session.scope, "draft:room", "")).text,
+      ).toBe(""),
+    );
+    // Cleaned up before its own receipt, the new draft still holds its place:
+    // the earlier receipt does not retire it.
+    expect(draftButton("Empty draft")).toHaveAttribute("aria-current", "true");
+  } finally {
+    await act(async () =>
+      release({
+        name: "notes.txt",
+        url: `https://relay.test/media/${"a".repeat(64)}.txt`,
+        type: "text/plain",
+        size: 9,
+        sha256: "a".repeat(64),
+      }),
+    );
+  }
+  await waitFor(() => expect(h.published).toHaveLength(2));
+  await waitFor(() => expect(screen.queryByText("Empty draft")).toBeNull());
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+});
+
 it("does not let a late send report into a newer selected draft", async () => {
   const h = fixture();
   const release = h.hold();
