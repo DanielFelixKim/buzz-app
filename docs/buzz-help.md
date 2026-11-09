@@ -689,10 +689,10 @@ confirmation.
   a notice again. Failed checks offer **Retry**. If the updated plugin cannot
   start, use **Retry activation** or its recovery menu to **Roll back**, when
   available. Checks, review, Later, and cancellation keep plugin work running.
-- **Notes reader** is no longer bundled. Install it from the Marketplace on
-  desktop to restore the **Shared notes** page, including after an upgrade that
-  previously had the reader enabled. The install review controls whether it is
-  enabled; the old bundled choice is not carried over. Browser installations
+- **Notes reader** is no longer bundled. When available in the Marketplace,
+  install it on desktop to restore the **Shared notes** page, including after an
+  upgrade that previously had the reader enabled. The install review controls
+  whether it is enabled; the old bundled choice is not carried over. Browser installations
   cannot load external plugins. Existing shared notes and the agents' built-in
   `notes_get`, `notes_set`, and `notes_rm` tools remain available without the reader.
 - **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
