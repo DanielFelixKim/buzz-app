@@ -715,6 +715,8 @@ available rather than silently discarding it.
   Instructions are optional. **Create agent** stays disabled until its name and
   required choices are complete; Builderlab also waits for sign-in and its model
   catalog.
+  A Builderlab agent runs on your Builderlab account; the creation form links
+  that Builderlab server's site, where the account's usage and billing are.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab

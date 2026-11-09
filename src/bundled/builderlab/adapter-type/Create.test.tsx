@@ -172,6 +172,18 @@ it("keeps the native missing-model message and forwards input focus to Model", a
   expect(h.submit).toHaveBeenCalledOnce();
 });
 
+it("says the agent runs on the Builderlab account and links its server's site", async () => {
+  await fixture(false);
+  expect(
+    screen.getByText(
+      /Runs on your Builderlab account\. Usage and billing are at/,
+    ),
+  ).toBeInTheDocument();
+  const link = screen.getByRole("link", { name: "builderlab.example" });
+  expect(link).toHaveAttribute("href", "https://builderlab.example");
+  expect(link).toHaveAttribute("target", "_blank");
+});
+
 it("loads the catalog and keeps instructions alongside explicit model and effort choices", async () => {
   const h = await fixture();
   expect(h.ready).toHaveBeenLastCalledWith(false);
