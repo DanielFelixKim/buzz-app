@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { HostedCommunities } from "./HostedCommunities";
+import { Dialog } from "../../../shared/design-system/ui/Dialog";
 import { brokerApi, DELETION_PENDING_KEY } from "./api";
 
 const local = "a".repeat(64);
@@ -1002,7 +1003,30 @@ it.each([
   },
 );
 
-it("keeps a failed copy handoff across a same-identity refresh", async () => {
+it("dismisses the copy hint with Escape without closing its parent", async () => {
+  routes["/api/builderlab/list"] = () => listed;
+  const user = userEvent.setup();
+  const closeSettings = vi.fn();
+  render(
+    <Dialog open title="Settings" onOpenChange={closeSettings}>
+      <HostedCommunities api={brokerApi} active={() => true} />
+    </Dialog>,
+  );
+  await user.click(await communityAction("Copy address"));
+  await screen.findByText(/Address copied/);
+  const trigger = screen.getByRole("button", {
+    name: "More actions for north",
+  });
+  trigger.focus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByText(/Address copied/)).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+  expect(closeSettings).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(closeSettings).toHaveBeenCalledWith(false);
+});
+
+it("keeps a failed copy hint across a same-identity background refresh", async () => {
   routes["/api/builderlab/list"] = () => listed;
   vi.stubGlobal("navigator", {
     clipboard: {
@@ -1014,7 +1038,7 @@ it("keeps a failed copy handoff across a same-identity refresh", async () => {
   renderCard();
   fireEvent.click(await communityAction("Copy address"));
   await screen.findByRole("button", { name: "Try copying again" });
-  refreshCommunities();
+  fireEvent(window, new Event("focus"));
   await waitFor(() =>
     expect(
       screen.getByRole("region", { name: "Communities" }),
@@ -1082,7 +1106,7 @@ it.each([
   },
 );
 
-it("keeps a failed copy handoff for another address when a community is archived", async () => {
+it("dismisses another address's copy hint when opening community actions", async () => {
   routes["/api/builderlab/list"] = () => ({
     communities: [
       ...listed.communities,
@@ -1121,11 +1145,11 @@ it("keeps a failed copy handoff for another address when a community is archived
     expect(restoredAction2).not.toHaveAttribute("aria-disabled", "true"),
   );
   expect(
-    screen.getByText("wss://south.communities.buzz.xyz"),
-  ).toBeInTheDocument();
+    screen.queryByRole("dialog", { name: "Community address" }),
+  ).not.toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Try copying again" }),
-  ).toBeEnabled();
+    screen.queryByRole("button", { name: "Try copying again" }),
+  ).not.toBeInTheDocument();
 });
 
 it("shows the empty collection in its quota after a successful read", async () => {

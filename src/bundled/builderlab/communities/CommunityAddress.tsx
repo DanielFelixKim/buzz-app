@@ -101,8 +101,8 @@ export function CommunityAddressField({
           ) : undefined
         }
       >
-        <div className="flex max-w-xl flex-wrap items-center gap-2">
-          <div className="min-w-0 flex-1 basis-48">
+        <div className="flex min-w-0 max-w-xl flex-wrap items-center gap-2">
+          <div className="min-w-0 max-w-full flex-1 basis-48">
             <Input
               autoComplete="off"
               spellCheck={false}
@@ -116,7 +116,10 @@ export function CommunityAddressField({
               }
             />
           </div>
-          <span id={suffixId} className="shrink-0 text-body-sm text-muted">
+          <span
+            id={suffixId}
+            className="min-w-0 wrap-anywhere text-body-sm text-muted"
+          >
             .{HOST_SUFFIX}
           </span>
         </div>

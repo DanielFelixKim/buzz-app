@@ -121,7 +121,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Hosted communities have Active/Archived filters, name/address search and row
   menus for copying addresses and available management actions. **Create**
   opens the address form; quota and identity checks still govern creation.
-  **Refresh** checks communities again, including after a failed read. Automatic
+  After **Copy address**, a hint appears above the row’s **…** menu without moving
+  the list; Escape dismisses it. The **Refresh** icon beside search checks
+  communities again, including after a failed read. Automatic
   refresh keeps the current list usable and waits while a community dialog is open.
   Remote agents show their model and setup state.
   The title includes the count. Each row’s **…** menu offers **Copy key**.

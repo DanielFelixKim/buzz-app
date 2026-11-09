@@ -7,6 +7,10 @@ import { Tabs } from "../../../shared/design-system/ui/Tabs";
 import { SearchField } from "../../../shared/design-system/ui/SearchField";
 import { IconButton } from "../../../shared/design-system/ui/IconButton";
 import {
+  PopoverRoot,
+  PopoverPopup,
+} from "../../../shared/design-system/ui/Popover";
+import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
@@ -132,6 +136,8 @@ export function HostedCommunities({
     copied: boolean;
   } | null>(null);
   const handoffOwner = useRef(0);
+  const rowActions = useRef(new Map<string, HTMLElement>());
+  const createTrigger = useRef<HTMLButtonElement>(null);
   const loginAbort = useRef<AbortController | null>(null);
   // Bumped by every operation and unmount; a read applies only if none happened since it began.
   const generation = useRef(0);
@@ -396,15 +402,16 @@ export function HostedCommunities({
     });
   const busy = action !== null;
   const refreshAction = (
-    <Button
+    <IconButton
       variant="ghost"
       size="sm"
+      aria-label="Refresh"
+      title="Refresh"
+      icon={<ArrowsClockwiseIcon aria-hidden="true" />}
       loading={action === "refresh"}
       disabled={busy}
       onClick={() => void run("refresh", () => load(true))}
-    >
-      <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
-    </Button>
+    />
   );
   const focusRead = useRef(false);
   const refreshOnFocus = useEffectEvent(() => {
@@ -668,7 +675,18 @@ export function HostedCommunities({
   ) : null;
 
   return (
-    <section aria-busy={busy} aria-labelledby="hosted-communities-title">
+    <section
+      aria-busy={busy}
+      aria-labelledby="hosted-communities-title"
+      onKeyDown={(event) => {
+        // The hint leaves focus on its action, outside the popup's key handler.
+        if (shown && event.key === "Escape" && !event.nativeEvent.isComposing) {
+          event.preventDefault();
+          event.stopPropagation();
+          setHandoff(null);
+        }
+      }}
+    >
       <ManagementHeader
         navigation={navigation}
         id="hosted-communities-title"
@@ -676,6 +694,7 @@ export function HostedCommunities({
         align="end"
         actions={
           <Button
+            ref={createTrigger}
             variant="prominent"
             aria-label="Create community"
             disabled={
@@ -721,7 +740,9 @@ export function HostedCommunities({
           </>
         }
       >
-        {auth && <div className="flex justify-end">{refreshAction}</div>}
+        {auth && communities.length === 0 && (
+          <div className="flex justify-end">{refreshAction}</div>
+        )}
         {!createOpen && failure}
         {unsupported ? (
           <p className={`${sectionClassName} text-body-sm text-muted`}>
@@ -850,16 +871,19 @@ export function HostedCommunities({
                   variant="capsule"
                   label="Community status"
                   trailingAction={
-                    <div className="w-full self-end sm:w-60">
-                      <SearchField
-                        variant="capsule"
-                        label="Search communities"
-                        placeholder="Search"
-                        value={listQuery}
-                        onValueChange={(value) => {
-                          if (active()) setListQuery(value);
-                        }}
-                      />
+                    <div className="flex w-full min-w-0 items-center gap-2 self-end sm:w-auto">
+                      {refreshAction}
+                      <div className="min-w-0 flex-1 sm:w-60">
+                        <SearchField
+                          variant="capsule"
+                          label="Search communities"
+                          placeholder="Search"
+                          value={listQuery}
+                          onValueChange={(value) => {
+                            if (active()) setListQuery(value);
+                          }}
+                        />
+                      </div>
                     </div>
                   }
                   items={[
@@ -928,6 +952,18 @@ export function HostedCommunities({
                                         <MenuTrigger
                                           render={
                                             <IconButton
+                                              ref={(button) => {
+                                                if (!url) return;
+                                                if (button)
+                                                  rowActions.current.set(
+                                                    url,
+                                                    button,
+                                                  );
+                                                else
+                                                  rowActions.current.delete(
+                                                    url,
+                                                  );
+                                              }}
                                               variant="bare"
                                               size="sm"
                                               shape="row-end"
@@ -1065,31 +1101,49 @@ export function HostedCommunities({
                 />
               </div>
             )}
-            {shown?.copied && (
-              <p role="status" className="text-body-sm text-muted">
-                Address copied. To join, open the community picker and choose
-                Join a community.
-              </p>
-            )}
-            {shown && !shown.copied && (
-              <div role="alert" className="text-body-sm">
-                <p className="m-0">
-                  Couldn’t copy the address. Copy it manually, then open the
-                  community picker and choose Join a community:
-                </p>
-                <p className="m-0 select-all break-all font-mono">
-                  {shown.url}
-                </p>
-                <div className="mt-2">
-                  <Button
-                    disabled={busy || !ready}
-                    onClick={() => void copy(shown.url)}
-                  >
-                    Try copying again
-                  </Button>
-                </div>
-              </div>
-            )}
+            <PopoverRoot
+              open={Boolean(shown)}
+              onOpenChange={(open) => !open && setHandoff(null)}
+            >
+              <PopoverPopup
+                side="top"
+                align="end"
+                size="compact"
+                anchor={() =>
+                  (shown && rowActions.current.get(shown.url)) ||
+                  createTrigger.current
+                }
+                initialFocus={false}
+                finalFocus={false}
+                aria-label="Community address"
+              >
+                {shown?.copied && (
+                  <p role="status" className="m-0 text-body-sm text-muted">
+                    Address copied. To join, open the community picker and
+                    choose Join a community.
+                  </p>
+                )}
+                {shown && !shown.copied && (
+                  <div role="alert" className="text-body-sm">
+                    <p className="m-0">
+                      Couldn’t copy the address. Copy it manually, then open the
+                      community picker and choose Join a community:
+                    </p>
+                    <p className="m-0 select-all break-all font-mono">
+                      {shown.url}
+                    </p>
+                    <div className="mt-2">
+                      <Button
+                        disabled={busy || !ready}
+                        onClick={() => void copy(shown.url)}
+                      >
+                        Try copying again
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </PopoverPopup>
+            </PopoverRoot>
             <CreateCommunity
               open={createOpen}
               close={() => setCreateOpen(false)}
@@ -1359,7 +1413,8 @@ function CreateCommunity({
           close();
         }
       }}
-      size="compact"
+      size="default"
+      headerGap="compact"
       preventClose={creating}
       title="Create community"
       description="Choose the Buzz address your team will use to connect."
