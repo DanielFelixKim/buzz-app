@@ -224,7 +224,9 @@ export function refusalReason(error: unknown): string | undefined {
   const timedOut = /\btimed out until (\d{9,11})\b/i.exec(text);
   if (timedOut) {
     const until = formatUntil(Number(timedOut[1]));
-    return until ? `You’re timed out until ${until}.` : "You’re timed out.";
+    return until
+      ? `You’re rate limited until ${until}.`
+      : "You’re rate limited.";
   }
   if (/\bnot allowed to add members\b/i.test(text))
     return "You don’t have permission to add people to this channel.";
