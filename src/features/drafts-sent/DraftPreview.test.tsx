@@ -38,8 +38,11 @@ import {
   roster,
   signed,
 } from "../relay/testing";
-import { composerDOMFixture } from "../messages/composer-testing";
+import { composerDOMFixture, typedDraft } from "../messages/composer-testing";
 import { readView, writeView } from "../../shared/view-state";
+import { relayPartition } from "../relay/partition";
+import { SOLO_LABEL } from "../solo/labels";
+import type { LocalWork, LocalWorkState } from "../agents/local-activity";
 
 // jsdom has no measured viewport. Keep real rows/composer/services, replacing
 // only virtualization geometry; browser acceptance covers actual layout.
@@ -63,6 +66,11 @@ vi.mock("virtua", async () => {
     }),
   };
 });
+// A Solo chat's saved model choices live in IndexedDB, which jsdom lacks.
+vi.mock(
+  "../messages/solo-model-picks-storage",
+  () => import("../messages/solo-model-picks-storage-testing"),
+);
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -72,13 +80,15 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(navigator, "locks");
 });
 function fixture(
   upload?: () => Promise<UploadedAttachment>,
   {
     privateRoom = false,
     dm = [],
-  }: { privateRoom?: boolean; dm?: readonly string[] } = {},
+    solo = false,
+  }: { privateRoom?: boolean; dm?: readonly string[]; solo?: boolean } = {},
 ) {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
@@ -93,8 +103,35 @@ function fixture(
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const viewer = keypair(),
     other = keypair(),
-    relayKey = keypair();
+    relayKey = keypair(),
+    agent = keypair();
   const root = message(other, "room", "Discuss launch", 20);
+  // The viewer's own Solo chat with one agent, whose local runs the test
+  // reports; the follow-up queue's window lock needs `navigator.locks`.
+  let work: readonly LocalWork[] = [];
+  const workListeners = new Set<() => void>();
+  const inventory = {
+    status: "ready" as const,
+    agents: [
+      {
+        pubkey: agent.pubkey,
+        name: "Honey",
+        relayUrl: "https://relay.test",
+        owner: viewer.pubkey,
+      },
+    ],
+  };
+  if (solo)
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: async (
+          _name: string,
+          options: unknown,
+          callback?: (lock: unknown) => unknown,
+        ) => (callback ? callback({}) : (options as () => unknown)()),
+      },
+    });
   // A DM with these people and a thread to reply in. Discovery orders
   // participants by key, so names follow key order: the page lists them so.
   const people = dm
@@ -103,6 +140,17 @@ function fixture(
     .map((key, index) => ({ key, name: dm[index] }));
   const dmRoot = message(people[0]?.key ?? other, "dm", "Lunch plans?", 20);
   const events: RelayEvent[] = [
+    ...(solo
+      ? [
+          metadata(relayKey, "solo", "Launch chat", 10, [
+            ["t", "stream"],
+            ["t", SOLO_LABEL],
+            ["P", viewer.pubkey],
+          ]),
+          roster(relayKey, "solo", [viewer.pubkey, agent.pubkey], 10),
+          profile(agent, { name: "Honey", is_agent: true }),
+        ]
+      : []),
     ...(people.length
       ? [
           metadata(relayKey, "dm", "dm", 10, [["t", "dm"]]),
@@ -235,7 +283,25 @@ function fixture(
         return { update() {}, retry() {}, dispose() {} };
       },
     },
-    { outboxStorage: { load: () => [], save: () => {} } },
+    {
+      outboxStorage: { load: () => [], save: () => {} },
+      ...(solo
+        ? {
+            agentChoices: {
+              snapshot: () => inventory,
+              subscribe: () => () => {},
+              refresh: async () => {},
+            },
+            localAgents: {
+              work: () => work,
+              subscribeWork(listener: () => void) {
+                workListeners.add(listener);
+                return () => workListeners.delete(listener);
+              },
+            },
+          }
+        : {}),
+    },
   );
   owners.push(owner);
   emit(events);
@@ -349,6 +415,23 @@ function fixture(
     },
     panels,
     host: { panels, relay, navigation: { open } as unknown as Navigation },
+    agent,
+    /** Honey's run on an earlier Solo message, as the app's local agents report it. */
+    agentWork: (state: LocalWorkState) => {
+      work = [
+        {
+          scope: relayPartition("https://relay.test", viewer.pubkey),
+          agent: agent.pubkey,
+          channelId: "solo",
+          messageId: "previous",
+          threadRootId: "",
+          soloChat: true,
+          state,
+          startedAt: 1,
+        },
+      ];
+      for (const listener of workListeners) listener();
+    },
     root,
     dmRoot,
     published,
@@ -862,6 +945,77 @@ it("retires a background attachment send whose failed cleanup is retried after i
   );
   expect(
     screen.queryByRole("button", { name: /Continue draft.*Attached later/ }),
+  ).toBeNull();
+  expect(screen.queryByText("Empty draft")).toBeNull();
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Other draft")).toHaveFocus();
+});
+
+it("retires a queued Solo send whose failed cleanup is retried after the queue publishes it", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = fixture(undefined, { solo: true });
+  h.agentWork("working");
+  writeView(
+    h.session.scope,
+    "draft:solo",
+    typedDraft(
+      mentionDraft({
+        text: "@Honey Follow up",
+        recipients: [
+          { pubkey: h.agent.pubkey, name: "Honey", start: 0, end: 6 },
+        ],
+      }),
+    ),
+  );
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*Follow up/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for Launch chat" });
+  const editor = await within(region).findByRole("textbox");
+  await waitFor(() => expect(editor).toHaveTextContent("Follow up"));
+  const stored = `buzz-view.v1:${JSON.stringify([h.session.scope, "draft:solo"])}`;
+  const setItem = Storage.prototype.setItem;
+  const fail = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name === stored) throw Error("no space");
+      setItem.call(this, name, value);
+    });
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    // Queued behind Honey's current run, with its cleared draft unsaved.
+    await within(region).findByRole("region", { name: "Queued follow-ups" });
+    await within(region).findByRole("button", { name: "Retry draft cleanup" });
+    expect(h.published).toHaveLength(0);
+    // The queue reports the send it published once its delivery record is
+    // written; the relay answers after that, as a real one does.
+    const release = h.hold();
+    act(() => h.agentWork("done"));
+    await waitFor(() =>
+      expect(
+        within(region).queryByRole("region", { name: "Queued follow-ups" }),
+      ).toBeNull(),
+    );
+    await act(async () => release());
+    await within(region).findByText("Sent to Launch chat.");
+    expect(h.published).toHaveLength(1);
+    // Delivered, but still saved: the draft keeps its row until cleanup.
+    expect(draftButton("Follow up")).toHaveAttribute("aria-current", "true");
+  } finally {
+    fail.mockRestore();
+  }
+  fireEvent.click(
+    within(region).getByRole("button", { name: "Retry draft cleanup" }),
+  );
+  expect(mentionDraft(readView(h.session.scope, "draft:solo", "")).text).toBe(
+    "",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Continue draft.*Follow up/ }),
   ).toBeNull();
   expect(screen.queryByText("Empty draft")).toBeNull();
   fireEvent.keyDown(editor, { key: "Escape" });
