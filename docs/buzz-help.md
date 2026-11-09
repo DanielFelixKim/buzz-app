@@ -78,7 +78,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
   otherwise Buzz asks **Sync your identity with Builderlab?**, again on the
   next launch or sign-in if the dialog is closed. **Settings → Buzz → Identity
   → Identity sync** shows the sync status and, while backup is off, offers
-  **Sync with Builderlab**. After signing in to the
+  **Sync with Builderlab**. When the key isn’t linked to your Builderlab
+  account, or the account holds a different key, its **Builderlab** link opens
+  **Settings → Plugins → Builderlab**, where **Connect Buzz identity** or
+  **Switch to this device’s identity** fixes it. After signing in to the
   public Builderlab, **Connect to a community** also offers **Create a
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,

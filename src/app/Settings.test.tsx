@@ -14,7 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { useSyncExternalStore } from "react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { createCommunityMembership } from "../bundled/moderation/membership";
 import {
   SettingsCardsService,
@@ -1327,6 +1327,83 @@ it("opens Manage plugins from the Decisions API hint", async () => {
   // The link is hidden with its section, so focus moves into the one it opened.
   rerender(view("plugins"));
   expect(screen.getByRole("region", { name: "Manage plugins" })).toHaveFocus();
+});
+
+it("opens Builderlab from Identity sync only while its card is registered", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  const user = userEvent.setup();
+  const { cards, set } = registry([
+    {
+      ...card("login", "Builderlab", "Plugins"),
+      key: "block.builderlab/login",
+      pluginId: "block.builderlab",
+    },
+  ]);
+  const status = {
+    seq: 1,
+    pass: 1,
+    builderlab: true,
+    status: "waiting",
+    reason: "not_linked",
+  };
+  const identity = {
+    exportKey: vi.fn(),
+    backup: {
+      subscribe: () => () => {},
+      snapshot: () => status,
+      ready: async () => status,
+    },
+  } as unknown as Parameters<typeof Settings>[0]["identity"];
+  const onSection = vi.fn();
+  const view = (section: string) => (
+    <ToastProvider>
+      <main id="main-content" tabIndex={-1}>
+        <Settings
+          {...host}
+          cards={cards}
+          identity={identity}
+          navigation={
+            {
+              target: { version: 1, kind: "settings", section },
+              complete: () => true,
+            } as never
+          }
+          onSection={onSection}
+        />
+      </main>
+    </ToastProvider>
+  );
+  const identitySection = () =>
+    screen.getByRole("region", { name: "Identity" });
+  const { rerender } = render(view("identity"));
+  await user.click(
+    await within(identitySection()).findByRole("button", {
+      name: "Builderlab",
+    }),
+  );
+  expect(onSection).toHaveBeenCalledExactlyOnceWith("block.builderlab/login");
+  // The link goes with Identity, so focus moves into the section it opened.
+  rerender(view("block.builderlab/login"));
+  expect(screen.getByText("Builderlab body")).toBeVisible();
+  expect(document.getElementById("main-content")).toHaveFocus();
+
+  // With the plugin off, the sentence still names Builderlab, unlinked.
+  act(() => set([]));
+  rerender(view("identity"));
+  await within(identitySection()).findByText("Identity sync");
+  expect(
+    within(identitySection()).queryByRole("button", { name: "Builderlab" }),
+  ).toBeNull();
+  expect(
+    within(identitySection())
+      .getAllByRole("status")
+      .map((region) => region.textContent),
+  ).toContain(
+    "This key isn’t linked to your Builderlab account yet, so it can’t be backed up.",
+  );
 });
 
 function pluginSectionsFixture(
