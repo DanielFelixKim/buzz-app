@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
   type ReactElement,
   type Ref,
+  type RefObject,
 } from "react";
 import {
   AnimatePresence,
@@ -207,6 +208,7 @@ export function RemindersPage({
               now={now}
               open={scope ? open : undefined}
               run={run}
+              page={page}
             />
           )}
         </div>
@@ -214,6 +216,16 @@ export function RemindersPage({
     </div>
   );
 }
+
+/**
+ * Whether Custom… may still save. Snooze writes the reminder back as pending,
+ * so saving one cancelled meanwhile, here or on another device, would restore
+ * it.
+ */
+const snoozable = (reminders: readonly Reminder[], id: string) =>
+  reminders.some(
+    (reminder) => reminder.id === id && reminder.status !== "cancelled",
+  );
 
 function ReminderSections({
   session,
@@ -223,6 +235,7 @@ function ReminderSections({
   now,
   open,
   run,
+  page,
 }: {
   session: RelaySession;
   reminders: Reminders;
@@ -231,6 +244,7 @@ function ReminderSections({
   now: number;
   open: ((reminder: Reminder, conversation?: boolean) => void) | undefined;
   run(action: Promise<unknown>): void;
+  page: RefObject<HTMLDivElement | null>;
 }) {
   const reducedMotion = useReducedMotion();
   const [pointerMotion, setPointerMotion] = useState(false);
@@ -295,7 +309,8 @@ function ReminderSections({
   const profiles = useProfiles(session, authorIds);
   const name = useIdentityNames(session.names);
   // Custom… outlives its row: a save, the clock or another device can move
-  // the reminder to another group, which mounts a new row.
+  // the reminder to another group, which mounts a new row. This is the
+  // reminder as it was when Custom… opened; the live one is looked up by id.
   const [snoozing, setSnoozing] = useState<Reminder>();
   const row = (reminder: Reminder) => {
     const target = reminder.target;
@@ -461,18 +476,27 @@ function ReminderSections({
               : "Remind me again"
           }
           due={snoozing.notBefore}
-          save={(notBefore) => reminders.snooze(snoozing.id, notBefore)}
+          cancelled={!snoozable(all, snoozing.id)}
+          // Checked again at Save: the store may have moved on since this
+          // render.
+          save={(notBefore) =>
+            snoozable(reminders.snapshot().reminders, snoozing.id)
+              ? reminders.snooze(snoozing.id, notBefore)
+              : Promise.reject(new Error("The reminder was cancelled."))
+          }
           close={() => setSnoozing(undefined)}
           // The reminder's trigger in whichever row shows it now, not one
           // leaving its old group. If the reminder left the page meanwhile,
-          // the list, whose first tabbable control Base UI focuses.
+          // the list, whose first tabbable control Base UI focuses. With no
+          // reminders left the list has none, so the page takes focus, as it
+          // does after Retry.
           finalFocus={() =>
             Array.from(
               sections.current?.querySelectorAll<HTMLElement>(
                 "li:not([inert]) [data-snooze]",
               ) ?? [],
             ).find((trigger) => trigger.dataset.snooze === snoozing.id) ??
-            sections.current
+            (active.length || done ? sections.current : page.current)
           }
         />
       )}
