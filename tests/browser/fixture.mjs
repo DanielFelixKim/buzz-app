@@ -111,7 +111,8 @@ export const test = base.extend({
   localAgentActivity: [false, { option: true, scope: "worker" }],
   pairingFixture: [false, { option: true, scope: "worker" }],
   // A build whose startup throws where `window.__buzzFixtureStartupFailure`
-  // says: "services" in createServices, "render" in App.
+  // says: "services" in createServices, "render" in App, and "running" in
+  // the app's content the next time it renders.
   startupFailureFixture: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],

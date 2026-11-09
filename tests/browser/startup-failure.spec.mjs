@@ -1,8 +1,9 @@
 import { test, expect } from "./fixture.mjs";
 
 // A startup that can't finish shows "Buzz couldn’t open" from launch-init.js,
-// which needs nothing from the app bundle; a slow one offers Reload. Each
-// journey injects one failure, named by `expectedStartupFailure`.
+// which needs nothing from the app bundle; a slow one offers Reload; an app
+// that stops after it opened shows "Buzz stopped working". Each journey
+// injects one failure, named by `expectedStartupFailure`.
 // The build throws only where a journey's `failAt` says.
 test.use({ launchAnimation: true, startupFailureFixture: true });
 
@@ -74,12 +75,13 @@ test.describe("when the app bundle doesn’t load", () => {
   });
 });
 
+const failAt = (page, where) =>
+  page.addInitScript((where) => {
+    window.__buzzFixtureStartupFailure = where;
+  }, where);
+
 test.describe("when startup throws", () => {
   test.use({ expectedStartupFailure: "Fixture startup failure" });
-  const failAt = (page, where) =>
-    page.addInitScript((where) => {
-      window.__buzzFixtureStartupFailure = where;
-    }, where);
 
   test("before React has the app, says Buzz couldn’t open", async ({
     page,
@@ -97,6 +99,54 @@ test.describe("when startup throws", () => {
     await failAt(page, "render");
     await page.goto(app.origin, { waitUntil: "domcontentloaded" });
     await expectFailure(page, "Fixture startup failure: render");
+  });
+});
+
+test.describe("when the app throws after it opened", () => {
+  test.use({ expectedStartupFailure: "Fixture crash after launch" });
+
+  test("says Buzz stopped working, and Reload opens it again", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await expect(history).toContainText("primary alpha message 0");
+    await expect(
+      page.getByRole("status", { name: "Opening Buzz" }),
+    ).toHaveCount(0);
+
+    // Opening another channel renders the app's content again, which throws.
+    await page.evaluate(() => {
+      window.__buzzFixtureStartupFailure = "running";
+    });
+    await page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .getByRole("button", { name: "Beta", exact: true })
+      .click();
+    const failure = page.getByRole("main", { name: "Buzz stopped working" });
+    await expect(failure).toBeVisible();
+    await expect(failure.getByRole("alert")).toHaveText(
+      "Buzz stopped workingSomething went wrong. Your messages and settings are safe.",
+    );
+    await expect(failurePage(page)).toHaveCount(0);
+    await expect(page.locator("#root")).toBeHidden();
+    await expect(failure.getByRole("button", { name: "Reload" })).toBeFocused();
+    await expect(
+      failure.getByRole("button", { name: "Restart Buzz" }),
+    ).toHaveCount(0);
+    const details = failure.locator("details");
+    await expect(details).not.toHaveAttribute("open");
+    await failure.getByText("Details", { exact: true }).click();
+    await expect(details).toContainText("Fixture crash after launch");
+
+    // The reloaded page starts without the injected crash, in the channel
+    // the user was opening.
+    await failure.getByRole("button", { name: "Reload" }).click();
+    await expect(history).toContainText("primary beta message 0");
+    await expect(failure).toHaveCount(0);
   });
 });
 

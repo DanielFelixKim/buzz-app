@@ -26,8 +26,9 @@ if (!container) {
 
 // Agent storage is read before any service, since its reads are synchronous.
 // It settles, with localStorage at worst, so the window always starts.
-// What stops startup, or later unmounts the whole app, shows "Buzz couldn’t
-// open" from public/launch-init.js instead of a stuck launch or empty window.
+// What stops startup shows "Buzz couldn’t open" from public/launch-init.js
+// instead of a stuck launch or empty window; what unmounts the whole app once
+// its launch has ended shows "Buzz stopped working" there.
 void loadAgentStorage().finally(() => {
   try {
     const services = createServices();

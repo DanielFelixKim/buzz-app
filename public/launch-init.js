@@ -17,10 +17,12 @@ if (launch && mark) {
   }
 }
 
-// What startup shows when it can't finish: the app bundle never loaded, threw
-// before React took over, or React unmounted the app after an error no
-// boundary caught. None of it may use the bundle, which is what failed. The
-// bundle reaches it as `window.__buzzStartup`; see src/app/launch.ts.
+// What shows when Buzz can't go on. "Buzz couldn’t open": the app bundle never
+// loaded, threw before React took over, or React unmounted the app before its
+// launch ended. "Buzz stopped working": React unmounted it, after an error no
+// boundary caught, once the launch had ended. None of it may use the bundle,
+// which is what failed. The bundle reaches it as `window.__buzzStartup`; see
+// src/app/launch.ts.
 (() => {
   // A slow start offers Reload; the launch still leaves by itself if it ends.
   const SLOW_MS = 20_000;
@@ -77,7 +79,10 @@ if (launch && mark) {
     }
     clearTimeout(slow);
     reveal();
-    document.getElementById("buzz-launch")?.remove();
+    // React had the app and the launch had ended: the user was using Buzz.
+    const launch = document.getElementById("buzz-launch");
+    const running = started && !launch;
+    launch?.remove();
     for (const id of ["root", "buzz-toast-root"]) {
       const root = document.getElementById(id);
       if (!root) continue;
@@ -91,14 +96,20 @@ if (launch && mark) {
     const content = element("div", "buzz-startup-content");
     const message = element("div", "buzz-startup-message");
     message.setAttribute("role", "alert");
-    const title = element("h1", "", "Buzz couldn’t open");
+    const title = element(
+      "h1",
+      "",
+      running ? "Buzz stopped working" : "Buzz couldn’t open",
+    );
     title.id = "buzz-startup-failure-title";
     message.append(
       title,
       element(
         "p",
         "",
-        "Something went wrong while starting. Your messages and settings are safe.",
+        running
+          ? "Something went wrong. Your messages and settings are safe."
+          : "Something went wrong while starting. Your messages and settings are safe.",
       ),
     );
     const actions = element("div", "buzz-startup-actions");

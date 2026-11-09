@@ -115,25 +115,37 @@ export async function buildApp(
         transform(code, id) {
           const seams = {
             [join(root, "src/app/services.ts")]: [
-              "export function createServices() {",
-              "services",
-              "storage unavailable",
+              [
+                "export function createServices() {",
+                "services",
+                "Fixture startup failure: storage unavailable",
+              ],
             ],
             [join(root, "src/app/App.tsx")]: [
-              "export function App({ services }: { services: AppServices }) {",
-              "render",
-              "render",
+              [
+                "export function App({ services }: { services: AppServices }) {",
+                "render",
+                "Fixture startup failure: render",
+              ],
+              // Renders again on each navigation, with no boundary above it.
+              [
+                "function ConnectedAppContent({ services }: { services: AppServices }) {",
+                "running",
+                "Fixture crash after launch",
+              ],
             ],
           };
-          const seam = seams[id];
-          if (!seam) return;
-          const [line, where, what] = seam;
-          if (!code.includes(line))
-            throw new Error(`Missing startup failure seam in ${id}`);
-          return code.replace(
-            line,
-            `${line}\n  if (window.__buzzFixtureStartupFailure === ${JSON.stringify(where)}) throw new Error(${JSON.stringify(`Fixture startup failure: ${what}`)});`,
-          );
+          const file = seams[id];
+          if (!file) return;
+          for (const [line, where, message] of file) {
+            if (!code.includes(line))
+              throw new Error(`Missing startup failure seam in ${id}`);
+            code = code.replace(
+              line,
+              `${line}\n  if (window.__buzzFixtureStartupFailure === ${JSON.stringify(where)}) throw new Error(${JSON.stringify(message)});`,
+            );
+          }
+          return code;
         },
       });
     if (localAgentActivity)

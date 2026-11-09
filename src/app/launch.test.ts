@@ -273,6 +273,32 @@ it("shows Buzz couldn’t open in place of the launch, with the error behind Det
   expect(details).toHaveTextContent("Error: render failed");
 });
 
+it("says Buzz stopped working when React unmounts the app after its launch ended", async () => {
+  const startup = await launchInit();
+  startup.started();
+  // The launch faded out, so the user was using Buzz.
+  launch.remove();
+  startup.failed(new Error("render failed"), "\n    at Sidebar");
+  const page = failurePage();
+  expect(page).toHaveAccessibleName("Buzz stopped working");
+  expect(page?.querySelector('[role="alert"]')).toHaveTextContent(
+    "Buzz stopped workingSomething went wrong. Your messages and settings are safe.",
+  );
+  expect(document.getElementById("root")).not.toBeVisible();
+  const buttons = [...(page?.querySelectorAll("button") ?? [])];
+  expect(buttons.map((button) => button.textContent)).toEqual(["Reload"]);
+  expect(buttons[0]).toHaveFocus();
+  expect(page?.querySelector("details")).toHaveTextContent("at Sidebar");
+});
+
+it("still says Buzz couldn’t open when React unmounts the app before its launch ended", async () => {
+  const startup = await launchInit();
+  startup.started();
+  startup.failed(new Error("render failed"));
+  expect(launch.isConnected).toBe(false);
+  expect(failurePage()).toHaveAccessibleName("Buzz couldn’t open");
+});
+
 it("offers Restart Buzz on the desktop, through its native restart", async () => {
   const invoke = vi.fn(async () => {});
   vi.stubGlobal("__TAURI_INTERNALS__", { invoke });

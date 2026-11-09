@@ -45,7 +45,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
   app also offers **Restart Buzz**, and **Details** holds the error for
   support. Your messages and settings are safe. A start that takes more than
   about 20 seconds says **This is taking longer than usual.** with **Reload**,
-  and still opens by itself if it finishes.
+  and still opens by itself if it finishes. If Buzz hits an error it can’t
+  recover from after it has opened, the window says **Buzz stopped working**
+  with the same **Reload**, **Restart Buzz** and **Details**.
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
   **Create account** and **Sign in**, which open the Builderlab account page;
   once this computer was set up through Builderlab, **Sign in** comes first.

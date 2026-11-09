@@ -27,8 +27,9 @@ declare global {
 }
 
 /** Shows "Buzz couldn’t open", which needs nothing from this bundle, when
- * startup throws or React unmounts the app after an error no boundary
- * caught. */
+ * startup throws or React unmounts the app after an error no boundary caught
+ * before its launch ended; "Buzz stopped working" when React unmounts it after
+ * the launch ended. */
 export function showStartupFailure(error: unknown, detail?: string) {
   console.error("Buzz could not start or continue", error);
   window.__buzzStartup?.failed(error, detail);
