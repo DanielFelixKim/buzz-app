@@ -161,7 +161,7 @@ it("carries a refusal's status and the community's own reason without a parser e
     reason: "restricted: you are timed out until 1794000000",
   });
   expect(failureKind(error)).toBe("refused");
-  expect(refusalReason(error)).toMatch(/^You’re rate limited until .+\.$/);
+  expect(refusalReason(error)).toBe("You’re timed out in this community.");
 });
 
 it("keeps a 403 without a usable body a refusal with no reason", async () => {
@@ -215,7 +215,7 @@ it("types a relay OK false as refused and any other missing receipt as unconfirm
   ).catch((reason: unknown) => reason);
   expect(refused).toBeInstanceOf(PublishRejected);
   expect(failureKind(refused)).toBe("refused");
-  expect(refusalReason(refused)).toMatch(/^You’re rate limited until .+\.$/);
+  expect(refusalReason(refused)).toBe("You’re timed out in this community.");
   for (const receipt of [
     { accepted: true },
     { accepted: false, event_id: "" },

@@ -310,7 +310,7 @@ it.each([
   expect(/Try again/.test(shown)).toBe(text.startsWith("Couldn’t save"));
 });
 
-it("names the end of a timeout the community refused the profile change with", async () => {
+it("names a timeout the community refused the profile change with", async () => {
   setup();
   await editName();
   vi.mocked(api.publishProfile).mockRejectedValueOnce(
@@ -321,8 +321,8 @@ it("names the end of a timeout the community refused the profile change with", a
   );
   save();
   const alert = await screen.findByRole("alert");
-  expect(alert.textContent).toMatch(
-    /^This community didn’t accept your profile change\. You’re rate limited until .+\.$/,
+  expect(alert).toHaveTextContent(
+    "This community didn’t accept your profile change. You’re timed out in this community.",
   );
   expect(alert).not.toHaveTextContent(/1794000000|restricted/);
 });

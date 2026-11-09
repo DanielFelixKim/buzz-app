@@ -310,7 +310,7 @@ it("types a native profile failure as refused, not sent or not confirmed", async
     reason: "restricted: you are timed out until 1794000000",
   });
   expect(failureKind(refused)).toBe("refused");
-  expect(refusalReason(refused)).toMatch(/^You’re rate limited until .+\.$/);
+  expect(refusalReason(refused)).toBe("You’re timed out in this community.");
   // `OK false` answered with the relay's text is a refusal as well.
   respond = (_path, body) => ({
     body: {
