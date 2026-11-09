@@ -22,6 +22,7 @@ import {
   sessionTitle,
   standalonePrompt,
 } from "./runtime";
+import { explainTurn } from "./setup";
 
 describe("sessionTitle", () => {
   it("names the agent, the channel and a thread's root", () => {
@@ -1489,6 +1490,85 @@ it("reports a failed wake at its thread's root, never at the wake's own id", asy
   for (const event of f.published.filter(({ kind }) => kind === 9))
     expect(event.tags).toContainEqual(["e", root, "", "reply"]);
   expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});
+
+const GOOSE_SETTINGS =
+  "buzz://settings?section=agents&provider=buzz.goose%2Fgoose";
+const REFUSED = `⚠️ I couldn't finish that: Goose's provider rejected its API key or sign-in. Head to [Settings](${GOOSE_SETTINGS}) to check its provider.`;
+/** ACP's refusal for credentials, as goose 1.57 sends it. */
+const AUTH_REQUIRED = {
+  code: -32000,
+  message: "Authentication required",
+  data: { reason: "turn_failed" },
+};
+
+type FakeSpawn = ReturnType<typeof fakeSpawn>["spawn"];
+/** A goose that answers each `method` request with `error`. */
+const failing =
+  (
+    method: string,
+    error: Readonly<{ code: number; message: string; data?: unknown }>,
+  ) =>
+  (spawn: FakeSpawn) =>
+  async (id: string, options: NonNullable<Parameters<FakeSpawn>[1]> = {}) => {
+    const process = await spawn(id, options);
+    return {
+      ...process,
+      write: async (data: string) => {
+        if (id !== "goose" || !data.includes(`"method":"${method}"`))
+          return process.write(data);
+        options.onStdout?.(
+          `${JSON.stringify({ jsonrpc: "2.0", id: JSON.parse(data).id, error })}\n`,
+        );
+      },
+    };
+  };
+
+// As goose 1.57 fails a turn.
+it.each([
+  [
+    "lacks its provider's key, linking Goose's Settings and quoting goose",
+    "session/prompt",
+    {
+      code: -32603,
+      message: "Internal error",
+      data: "Error getting agent reply: Configuration value not found: ANTHROPIC_API_KEY",
+    },
+    `⚠️ I couldn't finish that: Goose is missing an API key (ANTHROPIC_API_KEY). Head to [Settings](${GOOSE_SETTINGS}) to add it.\n\ngoose said:\n> Internal error: Error getting agent reply: Configuration value not found: ANTHROPIC_API_KEY`,
+  ],
+  [
+    "had its key refused, linking Goose's Settings and quoting goose",
+    "session/prompt",
+    AUTH_REQUIRED,
+    `${REFUSED}\n\ngoose said:\n> Authentication required`,
+  ],
+  [
+    "had its key refused opening the session, linking Goose's Settings and quoting goose",
+    "session/new",
+    AUTH_REQUIRED,
+    `${REFUSED}\n\ngoose said:\n> goose could not start: Authentication required`,
+  ],
+  [
+    "failed otherwise, in goose's words",
+    "session/prompt",
+    {
+      code: -32603,
+      message: "Internal error",
+      data: "Error getting agent reply: Request failed: connection refused",
+    },
+    "⚠️ I couldn't finish that: Internal error: Error getting agent reply: Request failed: connection refused",
+  ],
+])("reports a turn whose goose %s", async (_, method, error, content) => {
+  const f = setup({ wrap: failing(method, error) });
+  f.runtime.explain = (failure) => explainTurn(failure, GOOSE_SETTINGS);
+  try {
+    await f.deliver(message("1", "@Gander hi"));
+    await vi.waitFor(() =>
+      expect(f.published.map((post) => post.content)).toEqual([content]),
+    );
+  } finally {
+    f.runtime.dispose();
+  }
 });
 
 it("takes a wake with no thread only in a Solo chat", async () => {

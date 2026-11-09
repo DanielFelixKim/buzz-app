@@ -320,6 +320,9 @@ export class CodexRuntime {
     { key: string; ready: Promise<Models> }
   >();
   private memoryReads = new MemoryReads();
+  /** A failed turn's notice as the thread reads it, such as where to sign
+   * Codex in again. */
+  explain: (notice: string) => string = (notice) => notice;
   constructor(
     private readonly spawn: Spawn,
     /** What each agent's turns read of its community, while it can be read. */
@@ -2153,7 +2156,7 @@ export class CodexRuntime {
   private publish(request: Request, content: string) {
     return request.agent.publish({
       kind: 9,
-      content,
+      content: this.explain(content),
       tags: [
         ["h", request.conversation.channelId],
         ...(request.replyRoot !== undefined
