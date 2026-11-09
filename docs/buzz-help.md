@@ -796,7 +796,8 @@ available rather than silently discarding it.
   Messages: threads open beside the chat (or in the main pane, following your
   thread placement setting), and can be moved, renamed, or closed. Collapsing
   the side pane keeps its open threads and reply drafts. On the Bestie page,
-  ⌘F (Ctrl+F elsewhere) searches the Bestie conversation.
+  ⌘F (Ctrl+F elsewhere) searches the Bestie conversation, and ⌘K (Ctrl+K
+  elsewhere) offers **Search conversation with** your Bestie.
   A verified existing DM stays available if
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie
