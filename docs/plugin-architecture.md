@@ -139,8 +139,10 @@ reference fields, so Find retries the same pinned source. Each of `repository`, 
 `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-url>&sha256=<64-hex>` names
 a single packed artifact (see `buzzodz plugin pack`) instead of a repository. Buzz
 downloads it, refuses it unless its SHA-256 and plugin ID match, and opens the same
-review as a recommended plugin. It never mixes with the Git keys, and each key may
-appear once.
+review as a recommended plugin. If the plugin is already installed from Git, a folder
+or an unknown source, Buzz says so before downloading anything and offers
+**Open plugin**, where it can be deleted first. It never mixes with the Git keys, and
+each key may appear once.
 
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
@@ -378,7 +380,9 @@ install and still resolves `updated`.
 Hosts that accept only Git leave it out, so check it before requesting a URL source.
 A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unless
 its SHA-256 and plugin ID match, and shows the access review for the owner to
-confirm. It can install a new plugin or update one installed from a URL.
+confirm. It can install a new plugin or update one installed from a URL. A plugin
+installed from Git, a folder or an unknown source is refused before the download,
+as a link is.
 
 A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,

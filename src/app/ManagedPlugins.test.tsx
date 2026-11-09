@@ -735,7 +735,11 @@ const artifact = {
   url: "https://cdn.example.com/example.managed.json",
   sha256: "c".repeat(64),
 };
-function showRequest(manager: unknown, plugins: Catalog["plugins"] = []) {
+function showRequest(
+  manager: unknown,
+  plugins: Catalog["plugins"] = [],
+  onOpenInstalled?: (id: string) => void,
+) {
   const requests = createPluginInstallRequests();
   const outcome = requests.request(artifact, market);
   const id = requests.snapshot()?.id ?? 0;
@@ -750,6 +754,7 @@ function showRequest(manager: unknown, plugins: Catalog["plugins"] = []) {
         holdReview={requests.holdReview}
         request={{ ...requests, id }}
         returnFocus={() => null}
+        onOpenInstalled={onOpenInstalled}
       />
     </StrictMode>,
   );
@@ -792,7 +797,12 @@ it("cancels a plugin's URL install request when its review closes", async () => 
       }),
     ),
   });
-  const { outcome } = showRequest(manager, [installed]);
+  const { outcome } = showRequest(manager, [
+    {
+      ...installed,
+      updateSource: { url: "https://cdn.example.com/old.json", sha256: "d" },
+    },
+  ]);
   const dialog = await screen.findByRole("dialog");
   await within(dialog).findByRole("button", { name: "Update" });
   fireEvent.keyDown(dialog, { key: "Escape" });
@@ -801,36 +811,44 @@ it("cancels a plugin's URL install request when its review closes", async () => 
   expect(manager.installImport).not.toHaveBeenCalled();
 });
 
-it("refuses a URL install request over a plugin installed from Git", async () => {
+it("refuses a URL install request over a plugin installed from Git before downloading it", async () => {
   const { manager } = harness();
-  Object.assign(manager.imports, {
-    url: vi.fn(async () =>
-      preview({
-        commit: null,
-        candidates: [{ path: ".", revision: artifact.sha256, manifest }],
-      }),
-    ),
-  });
-  const { outcome } = showRequest(manager, [
-    {
-      ...installed,
-      updateSource: {
-        repository: "https://example.com/plugins",
-        reference: "v1",
-        path: "dist",
-      },
-    },
-  ]);
-  const dialog = await screen.findByRole("dialog");
-  fireEvent.click(
-    await within(dialog).findByRole("button", { name: "Update" }),
+  const url = vi.fn(async () =>
+    preview({
+      commit: null,
+      candidates: [{ path: ".", revision: artifact.sha256, manifest }],
+    }),
   );
+  Object.assign(manager.imports, { url });
+  const onOpenInstalled = vi.fn();
+  const { outcome } = showRequest(
+    manager,
+    [
+      {
+        ...installed,
+        updateSource: {
+          repository: "https://example.com/plugins",
+          reference: "v1",
+          path: "dist",
+        },
+      },
+    ],
+    onOpenInstalled,
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Already installed",
+  });
+  expect(dialog).toHaveAccessibleDescription(
+    `Installed example is already installed from https://example.com/plugins; remove it first to install it from ${artifact.url}.`,
+  );
+  expect(within(dialog).queryByRole("button", { name: "Update" })).toBeNull();
   expect(
-    await within(dialog).findByText(
-      `Installed example is already installed from https://example.com/plugins; remove it first to install it from ${artifact.url}.`,
-    ),
-  ).toBeVisible();
-  expect(manager.installImport).not.toHaveBeenCalled();
-  fireEvent.keyDown(dialog, { key: "Escape" });
+    within(dialog).queryByRole("button", { name: "Try again" }),
+  ).toBeNull();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Open plugin" }));
+  expect(onOpenInstalled).toHaveBeenCalledExactlyOnceWith(manifest.id);
   await expect(outcome).resolves.toBe("cancelled");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(url).not.toHaveBeenCalled();
+  expect(manager.installImport).not.toHaveBeenCalled();
 });

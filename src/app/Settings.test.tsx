@@ -1445,7 +1445,9 @@ type Visit = {
   entryId?: string;
   traversal?: true;
   pluginId?: string;
-  pluginImport?: { repository: string; reference: string };
+  pluginImport?:
+    | { repository: string; reference: string }
+    | { id: string; url: string; sha256: string };
 };
 
 it("links a plugin's details to the Settings sections it adds", async () => {
@@ -1739,6 +1741,52 @@ it("records the plugin Open in Buzz shows on the visit replacing its import", as
   visit("appearance", { entryId: "s3" });
   visit("plugins", { entryId: "p2", traversal: true });
   expect(shown()).toBe("Codex");
+});
+
+it("keeps the plugin a URL link's Open plugin shows when its dismissal lands later", async () => {
+  const fromGit = {
+    manifest: { id: "example.artifact", name: "Artifact", apiVersion: 1 },
+    source: "external",
+    enabled: true,
+    revision: "git",
+    previous: null,
+    reloadable: false,
+    error: null,
+    updateSource: { ...imported, path: "." },
+  };
+  const snapshot = {
+    configuration: {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: { profile: "test", location: "test", plugins: [fromGit] },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const url = vi.fn();
+  const { visit, land, entry, shown, stored, onPluginImportClosed } =
+    pluginHost(
+      { snapshot: () => snapshot, imports: { url, discard: vi.fn() } },
+      { entryId: "p1" },
+    );
+  visit("plugins", {
+    entryId: "p2",
+    pluginImport: {
+      id: "example.artifact",
+      url: "https://plugins.example.org/artifact.json",
+      sha256: "a".repeat(64),
+    },
+  });
+  onPluginImportClosed.mockImplementation(() =>
+    setTimeout(() => land("plugins", { entryId: "p1", traversal: true })),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Open plugin" }));
+  await waitFor(() => expect(entry()).toBe("p1"));
+  expect(shown()).toBe("Artifact");
+  expect(stored("p1")).toBe("example.artifact");
+  expect(url).not.toHaveBeenCalled();
 });
 
 it("keeps an earlier visit's details when an import finishes after Back", async () => {
