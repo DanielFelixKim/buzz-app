@@ -203,7 +203,11 @@ it("keeps a store's link when its QR code can't be drawn", async () => {
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("qr_code", {
       value: "https://apps.example.com/ios",
+      variant: "dark",
     }),
+  );
+  await waitFor(() =>
+    expect(document.querySelector(".bg-surface-inset")).toBeNull(),
   );
   expect(screen.queryByRole("img")).toBeNull();
 });

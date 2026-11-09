@@ -119,27 +119,37 @@ function GetTheApp({
   );
 }
 
-/** A store's QR code to scan with the phone, and its link. Without the
- * native renderer (the browser host) only the link shows. */
+/** A store's QR code to scan with the phone, and its link, drawn light on
+ * black as invite codes are. A same-size placeholder holds the code's place
+ * while it renders. Without the native renderer (the browser host) only the
+ * link shows. */
 function StoreCode({ store }: { store: Store }) {
-  const [svg, setSvg] = useState<string>();
+  const [drawn, setDrawn] = useState<{ url: string; svg?: string }>();
   useEffect(() => {
     let current = true;
-    renderQrCode(store.url).then(
-      (next) => current && setSvg(next),
-      () => {},
+    renderQrCode(store.url, "dark").then(
+      (svg) => current && setDrawn({ url: store.url, svg }),
+      () => current && setDrawn({ url: store.url }),
     );
     return () => {
       current = false;
     };
   }, [store.url]);
+  const code = drawn?.url === store.url ? drawn : undefined;
   return (
     <li className="flex w-60 max-w-full flex-col items-center gap-3">
-      {svg && (
+      {code?.svg ? (
         <QrCode
-          svg={svg}
+          svg={code.svg}
           alt={`Scan with your phone to get Buzz from ${store.name}`}
         />
+      ) : (
+        !code && (
+          <div
+            aria-hidden="true"
+            className="size-60 max-w-full shrink-0 bg-surface-inset"
+          />
+        )
       )}
       <a
         className="text-body-sm text-link underline"
