@@ -1501,13 +1501,17 @@ mod tests {
         };
         let mut seqs = Vec::new();
         let recovered = async {
-            // The first heartbeat Ping is the send in flight and the relay reads
-            // nothing yet. Sending frame k+1 waits until the loop has taken frame
-            // k, so once frame 5 is sent, frames 0-4 fill all five slots. Frames
-            // 5-9 are encoded, spending sequence numbers, and dropped.
+            // The relay reads nothing yet, so one send stays in flight and five
+            // messages fill the queue. Sending frame k+1 waits until the loop
+            // has taken frame k. Frames after the queue fills are encoded,
+            // spending sequence numbers, and dropped.
             for _ in 0..10 {
                 mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
             }
+            // Frame 9 still waits in the channel. Once it is taken, the loop has
+            // offered it to the full queue; taken later, after the relay starts
+            // reading, it would find a free slot.
+            drop(mic.reserve().await.unwrap());
             // The socket is read in order, so the roster update proves the probe
             // was handled while the queue was still full: the explicit Pong was
             // dropped, and any probe Pong on the wire is tungstenite's own.
@@ -1534,7 +1538,7 @@ mod tests {
             for _ in 0..3 {
                 mic.send(vec![0.1; FRAME_SAMPLES]).await.unwrap();
             }
-            while seqs.len() < 8 {
+            while seqs.last() != Some(&12) {
                 if let Message::Binary(frame) = relay.next().await.unwrap().unwrap() {
                     seqs.push(wire(&frame));
                 }
@@ -1544,10 +1548,13 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(1500), recovered)
             .await
             .expect("outbound did not recover");
-        assert_eq!(
-            seqs,
-            [0, 1, 2, 3, 4, 10, 11, 12],
-            "accepted order, then the drop gap"
+        // The heartbeat's first tick is due at once, but its timer fires on a
+        // later driver turn. Its Ping is the send in flight, or takes a slot
+        // behind frame 0, or comes once the queue is full and is dropped: then
+        // frame 0 is in flight and frame 5 takes the last slot.
+        assert!(
+            seqs == [0, 1, 2, 3, 4, 10, 11, 12] || seqs == [0, 1, 2, 3, 4, 5, 10, 11, 12],
+            "accepted order, then the drop gap: {seqs:?}"
         );
         // A clean stop, here with the queue already drained, closes in bound.
         stop.send(true).unwrap();
