@@ -60,7 +60,8 @@ export const useSession = (
  * here is linked to this device's key. Launch never waits on it: once the
  * saved session is signed in, it reads the account's linked key, the read
  * Settings makes, and asks only when that is another key. No linked key, a
- * refused or absent session, or a failed read leaves the app as it is.
+ * refused or absent session, or a failed read (of the linked key or the
+ * account's backups) leaves the app as it is.
  *
  * Replace is offered only when Builderlab holds a backup of the account's key,
  * so the Welcome back it restarts into can restore it: it is setup's own
@@ -121,9 +122,11 @@ export function LinkedKeyCheck({
         const linked = await account.linkedKey();
         if (!current || !linked || linked === viewer) return;
         const [backups, backedUp] = await Promise.all([
-          account.backupStatus().catch(() => "unavailable" as const),
+          account.backupStatus().catch(() => "failed" as const),
           identity.backedUp(viewer).catch(() => false),
         ]);
+        // Without an answer it can't say whether Replace would restore it.
+        if (backups === "failed") return;
         const restorable =
           backups !== "unavailable" && backups.includes(linked);
         const question = asked(linked, viewer, restorable);

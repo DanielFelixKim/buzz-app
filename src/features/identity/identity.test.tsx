@@ -8650,23 +8650,25 @@ it("a failed setup with a key leaves through Use a different account to the land
 
 /**
  * kgoose's account check with `linked` linked, and its backup status listing
- * `backups`, or failing.
+ * `backups`, not offered (404), or failing.
  */
 const accountAnswers =
-  (linked: string, backups: readonly string[] | "fails") =>
+  (linked: string, backups: readonly string[] | "unavailable" | "fails") =>
   async ({ path }: { path: string }) =>
     path.endsWith("/nostr-identities/current")
       ? linkedAnswer(linked)
-      : path.endsWith("/nsec-backups/status") && backups !== "fails"
-        ? {
-            status: 200,
-            headers: {},
-            body: JSON.stringify({
-              current_nostr_pubkey: linked,
-              backup_nostr_pubkeys: backups,
-            }),
-          }
-        : { status: 503, headers: {}, body: "{}" };
+      : backups === "unavailable"
+        ? { status: 404, headers: {}, body: "{}" }
+        : path.endsWith("/nsec-backups/status") && backups !== "fails"
+          ? {
+              status: 200,
+              headers: {},
+              body: JSON.stringify({
+                current_nostr_pubkey: linked,
+                backup_nostr_pubkeys: backups,
+              }),
+            }
+          : { status: 503, headers: {}, body: "{}" };
 const replaceButton = (prompt: HTMLElement) =>
   within(prompt).queryByRole("button", { name: "Replace" });
 
@@ -8727,7 +8729,7 @@ it("an account linked to another backed-up key asks over the open app, saying Re
 
 it.each([
   ["has no backup of the account's key", [viewer] as const],
-  ["can't say what it backed up", "fails" as const],
+  ["doesn't back keys up", "unavailable" as const],
 ])(
   "an account linked to another key when Builderlab %s offers no Replace, says where the key is, and OK stays quiet for that pair",
   async (_, backups) => {
@@ -8751,6 +8753,43 @@ it.each([
     identity.dispose();
   },
 );
+
+it("a backup status that can't be read asks nothing, even after a Not now, and a later answer asks as usual", async () => {
+  anotherKeyOnDevice(false, undefined, true);
+  // Not now on the Replace prompt.
+  const fi = federatedFixture();
+  fi.request.mockImplementation(accountAnswers(owned.pubkey, [owned.pubkey]));
+  const identity = openWithSession(fi);
+  const user = userEvent.setup();
+  const prompt = await mismatchPrompt();
+  await user.click(within(prompt).getByRole("button", { name: "Not now" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  identity.dispose();
+  cleanup();
+  // Builderlab errors on the backup status: no claim that there is no backup.
+  const failing = federatedFixture();
+  failing.request.mockImplementation(accountAnswers(owned.pubkey, "fails"));
+  const quiet = openWithSession(failing);
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  await waitFor(() => expect(failing.request).toHaveBeenCalledTimes(2));
+  await act(settled);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(localStorage.getItem("buzz.linked-key-dismissed.v1")).toBe(
+    `${owned.pubkey}:${viewer}:true`,
+  );
+  quiet.dispose();
+  cleanup();
+  // Never dismissed, the same failure asks nothing either.
+  localStorage.clear();
+  const fresh = federatedFixture();
+  fresh.request.mockImplementation(accountAnswers(owned.pubkey, "fails"));
+  const unasked = openWithSession(fresh);
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  await waitFor(() => expect(fresh.request).toHaveBeenCalledTimes(2));
+  await act(settled);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  unasked.dispose();
+});
 
 it("after OK on the no-backup prompt, a relaunch stays quiet while the account's key has no backup, and offers Replace once it does", async () => {
   anotherKeyOnDevice(false, undefined, true);
