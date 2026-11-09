@@ -1442,6 +1442,7 @@ function CreateCommunity({
       }}
       size="default"
       headerGap="compact"
+      footerGap="compact"
       preventClose={creating}
       title="Create community"
       description="Choose the Buzz address your team will use to connect."
