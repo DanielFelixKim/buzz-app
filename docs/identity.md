@@ -77,8 +77,9 @@ the account's key, or a backup status that can't be read, Replace is not
 offered, since Welcome back could not restore it: the dialog says the account's
 key lives on another device and offers only **OK**. **Not now**, **OK** and
 Close keep the key and are remembered for that pair of keys (the account's and
-this device's, `buzz.linked-key-dismissed.v1`), so it asks again only when
-either changes. The prompt waits while the launch screen shows or old Buzz's
+this device's) and whether Replace was offered (`buzz.linked-key-dismissed.v1`),
+so it asks again only when either key changes or the account's key gets a
+backup. The prompt waits while the launch screen shows or old Buzz's
 communities are being offered or added, and the backup consent prompt waits
 while it shows.
 

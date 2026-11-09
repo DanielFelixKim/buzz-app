@@ -23,9 +23,13 @@ type Session = Pick<FederatedIdentity, "snapshot" | "subscribe" | "request">;
 
 const noSession = () => () => {};
 
-/** The pair of keys a Not now was given for: `linked:viewer`. */
+/**
+ * What a Not now or OK was given for: `linked:viewer:restorable`, so the
+ * no-backup OK asks again, with Replace, once the account's key is backed up.
+ */
 const DISMISSED = "buzz.linked-key-dismissed.v1";
-const pair = (linked: string, viewer: string) => `${linked}:${viewer}`;
+const asked = (linked: string, viewer: string, restorable: boolean) =>
+  `${linked}:${viewer}:${restorable}`;
 function dismissedPair() {
   try {
     return localStorage.getItem(DISMISSED);
@@ -61,8 +65,9 @@ export const useSession = (
  * Replace is offered only when Builderlab holds a backup of the account's key,
  * so the Welcome back it restarts into can restore it: it is setup's own
  * replace step, which removes this key and restarts. Otherwise it only says
- * where the account's key is. Not now is remembered for this pair of keys, so
- * it asks again only when either changes. While it asks, `children` (the
+ * where the account's key is. Not now (or OK) is remembered for this pair of
+ * keys and whether Replace was offered, so it asks again only when either key
+ * changes or the account's key gets a backup. While it asks, `children` (the
  * backup prompt) waits.
  */
 export function LinkedKeyCheck({
@@ -115,14 +120,15 @@ export function LinkedKeyCheck({
         );
         const linked = await account.linkedKey();
         if (!current || !linked || linked === viewer) return;
-        const asked = pair(linked, viewer);
-        if (dismissed.current === asked || dismissedPair() === asked) return;
         const [backups, backedUp] = await Promise.all([
           account.backupStatus().catch(() => "unavailable" as const),
           identity.backedUp(viewer).catch(() => false),
         ]);
         const restorable =
           backups !== "unavailable" && backups.includes(linked);
+        const question = asked(linked, viewer, restorable);
+        if (dismissed.current === question || dismissedPair() === question)
+          return;
         if (current)
           setFound({ revision, viewer, linked, restorable, backedUp });
       })
@@ -140,9 +146,9 @@ export function LinkedKeyCheck({
   )
     return children;
   const dismiss = () => {
-    const asked = pair(found.linked, found.viewer);
-    dismissed.current = asked;
-    rememberDismissed(asked);
+    const question = asked(found.linked, found.viewer, found.restorable);
+    dismissed.current = question;
+    rememberDismissed(question);
     setFound(undefined);
   };
   const account = session?.email ?? "Your Builderlab account";

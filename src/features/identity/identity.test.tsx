@@ -8695,7 +8695,7 @@ it("an account linked to another backed-up key asks over the open app, saying Re
   expect(screen.getByText("Signed in")).toBeVisible();
   // A renewal reads again, but this pair of keys is not asked about again.
   fi.publish({ revision: "user:renewed" });
-  await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(4));
   await act(settled);
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(signOuts()).toEqual([]);
@@ -8710,7 +8710,7 @@ it("an account linked to another backed-up key asks over the open app, saying Re
   );
   const relaunched = openWithSession(again);
   expect(await screen.findByText("Signed in")).toBeVisible();
-  await waitFor(() => expect(again.request).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(again.request).toHaveBeenCalledTimes(2));
   await act(settled);
   expect(screen.queryByRole("alertdialog")).toBeNull();
   relaunched.dispose();
@@ -8744,13 +8744,47 @@ it.each([
     await user.click(within(prompt).getByRole("button", { name: "OK" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(localStorage.getItem("buzz.linked-key-dismissed.v1")).toBe(
-      `${owned.pubkey}:${viewer}`,
+      `${owned.pubkey}:${viewer}:false`,
     );
     expect(signOuts()).toEqual([]);
     expect(identity.snapshot()).toEqual({ status: "ready", viewer });
     identity.dispose();
   },
 );
+
+it("after OK on the no-backup prompt, a relaunch stays quiet while the account's key has no backup, and offers Replace once it does", async () => {
+  anotherKeyOnDevice(false, undefined, true);
+  const fi = federatedFixture();
+  fi.request.mockImplementation(accountAnswers(owned.pubkey, []));
+  const identity = openWithSession(fi);
+  const user = userEvent.setup();
+  const prompt = await mismatchPrompt();
+  expect(replaceButton(prompt)).toBeNull();
+  await user.click(within(prompt).getByRole("button", { name: "OK" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  identity.dispose();
+  cleanup();
+
+  // Still no backup: the OK stands.
+  const still = federatedFixture();
+  still.request.mockImplementation(accountAnswers(owned.pubkey, []));
+  const quiet = openWithSession(still);
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  await waitFor(() => expect(still.request).toHaveBeenCalledTimes(2));
+  await act(settled);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  quiet.dispose();
+  cleanup();
+
+  // Identity sync on the other device backed it up: Replace is offered now.
+  const synced = federatedFixture();
+  synced.request.mockImplementation(
+    accountAnswers(owned.pubkey, [owned.pubkey]),
+  );
+  const asked = openWithSession(synced);
+  expect(replaceButton(await mismatchPrompt())).toBeEnabled();
+  asked.dispose();
+});
 
 it("Replace on the open app's prompt signs this key out to restart and sign in again, saying a backed-up key can be restored", async () => {
   anotherKeyOnDevice(true, undefined, true);
