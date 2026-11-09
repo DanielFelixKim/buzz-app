@@ -17,7 +17,8 @@ import {
   OutputTooLarge,
   type GitHubCli,
 } from "./gh";
-import { GitHubPanel, REFRESH_MS, type PanelMemory } from "./index";
+import { GitHubPanel, REFRESH_MS } from "./index";
+import { createPanelMemory } from "./panel-memory";
 import { createPullStates } from "./pull-states";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
@@ -1248,7 +1249,7 @@ it("opens a pull request again on the view and unsent review it was left with", 
   );
   const diff = vi.fn(async () => patch);
   // The plugin's, so it outlives a panel the channel unmounts on leaving.
-  const memory: PanelMemory = new Map();
+  const memory = createPanelMemory();
   const panel = () => (
     <GitHubPanel
       target={pull}
@@ -1302,48 +1303,151 @@ it("opens a pull request again on the view and unsent review it was left with", 
     },
   });
   // Once it is in, the next panel on it starts a fresh review.
-  expect(memory.get(pull)?.review).toBeUndefined();
+  expect(memory.get(pull)).toEqual({ view: "changes", review: undefined });
 });
 
-it("forgets a review that goes in after its panel unmounted", async () => {
+it("starts on Summary in another channel, with the pull request's unsent review", async () => {
   const user = userEvent.setup();
-  let release!: () => void;
-  const gh = vi.fn(async (query: string, _variables?: unknown) => {
-    if (!query.startsWith("mutation")) return pullData();
-    await new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    return {};
-  });
-  const memory: PanelMemory = new Map();
-  const panel = () => (
+  const gh = vi.fn(async () => pullData());
+  const memory = createPanelMemory();
+  const panel = (channelId: string) => (
     <GitHubPanel
       target={pull}
       close={() => {}}
+      context={{ channelId, canOpen: () => false, open: () => false }}
       gh={gh as unknown as GitHubCli}
+      diff={async () => patch}
       memory={memory}
     />
   );
-  const first = render(panel(), { wrapper: ToastProvider });
+  const alpha = render(panel("alpha"), { wrapper: ToastProvider });
   await screen.findByRole("heading", { name: "Private change #9" });
+  await user.click(screen.getByRole("tab", { name: /^Changes/ }));
   await user.click(screen.getByRole("button", { name: "Submit review" }));
   let popup = await screen.findByRole("dialog", { name: "Submit review" });
   await user.type(within(popup).getByRole("textbox"), "Looks right");
-  await user.click(
-    within(popup).getByRole("button", { name: "Submit review" }),
-  );
-  await waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
-  // Leaving the channel mid-submit doesn't stop the review going in.
-  first.unmount();
-  release();
-  await waitFor(() => expect(memory.get(pull)?.review).toBeUndefined());
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(popup).not.toBeInTheDocument());
+  alpha.unmount();
 
-  render(panel(), { wrapper: ToastProvider });
-  await screen.findByRole("heading", { name: "Private change #9" });
+  // A first look from elsewhere starts at the title; the review waits there.
+  const beta = render(panel("beta"), { wrapper: ToastProvider });
+  expect(await screen.findByRole("tab", { name: "Summary" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Private change #9" }),
+  ).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Submit review" }));
   popup = await screen.findByRole("dialog", { name: "Submit review" });
+  expect(within(popup).getByRole("textbox")).toHaveValue("Looks right");
+  beta.unmount();
+
+  render(panel("alpha"), { wrapper: ToastProvider });
+  expect(await screen.findByRole("tab", { name: /^Changes/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it.each([
+  ["goes in", false, ""],
+  ["is refused", true, "Looks right"],
+])(
+  "offers a review sent as its panel unmounted to the next panel only if it is refused: %s",
+  async (_, refused, offered) => {
+    const user = userEvent.setup();
+    let release!: () => void;
+    const gh = vi.fn(async (query: string, _variables?: unknown) => {
+      if (!query.startsWith("mutation")) return pullData();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (refused) throw new GitHubError("Pull request is locked");
+      return {};
+    });
+    const memory = createPanelMemory();
+    const panel = () => (
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+        memory={memory}
+      />
+    );
+    const first = render(panel(), { wrapper: ToastProvider });
+    await screen.findByRole("heading", { name: "Private change #9" });
+    await user.click(screen.getByRole("button", { name: "Submit review" }));
+    let popup = await screen.findByRole("dialog", { name: "Submit review" });
+    await user.type(within(popup).getByRole("textbox"), "Looks right");
+    await user.click(
+      within(popup).getByRole("button", { name: "Submit review" }),
+    );
+    await waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
+    // Leaving the channel and coming back before GitHub answers doesn't
+    // stop the review going in, so the panel there can't send it again.
+    first.unmount();
+    render(panel(), { wrapper: ToastProvider });
+    await screen.findByRole("heading", { name: "Private change #9" });
+    const trigger = screen.getByRole("button", { name: "Submit review" });
+    await user.click(trigger);
+    popup = await screen.findByRole("dialog", { name: "Submit review" });
+    expect(within(popup).getByRole("textbox")).toHaveValue("");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(popup).not.toBeInTheDocument());
+    release();
+    await waitFor(() =>
+      expect(memory.get(pull).review?.body ?? "").toBe(offered),
+    );
+    await user.click(trigger);
+    popup = await screen.findByRole("dialog", { name: "Submit review" });
+    expect(
+      within(popup).getByRole("radio", { name: /^Comment/ }),
+    ).toBeChecked();
+    expect(within(popup).getByRole("textbox")).toHaveValue(offered);
+  },
+);
+
+it("asks about a newer push only for a remembered review with text", async () => {
+  const user = userEvent.setup();
+  let head = "abc123";
+  const gh = vi.fn(async () => pullData({ headRefOid: head }));
+  const memory = createPanelMemory();
+  const reopen = async () => {
+    cleanup();
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+        memory={memory}
+      />,
+      { wrapper: ToastProvider },
+    );
+    await screen.findByRole("heading", { name: "Private change #9" });
+    await user.click(screen.getByRole("button", { name: "Submit review" }));
+    return screen.findByRole("dialog", { name: "Submit review" });
+  };
+  let popup = await reopen();
+  // A decision with only spaces is no draft, so it waits on no push.
+  await user.click(within(popup).getByRole("radio", { name: /^Request/ }));
+  await user.type(within(popup).getByRole("textbox"), "   ");
+  head = "def456";
+  popup = await reopen();
   expect(within(popup).getByRole("radio", { name: /^Comment/ })).toBeChecked();
   expect(within(popup).getByRole("textbox")).toHaveValue("");
+  expect(within(popup).queryByRole("status")).not.toBeInTheDocument();
+  await user.type(within(popup).getByRole("textbox"), "Looks right");
+  head = "0a1b2c3";
+  popup = await reopen();
+  expect(within(popup).getByRole("textbox")).toHaveValue("Looks right");
+  expect(within(popup).getByRole("status")).toHaveTextContent(
+    "New commits were pushed after you started this review.",
+  );
+  expect(
+    within(popup).getByRole("button", { name: "Submit review" }),
+  ).toHaveAttribute("aria-disabled", "true");
 });
 
 it("reads a merged pull request's changes by its number", async () => {

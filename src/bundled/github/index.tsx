@@ -56,22 +56,14 @@ import {
 } from "./SoloPull";
 import { watchPulls } from "./watcher";
 import { presentPull } from "./attention";
-import { SubmitReview, type ReviewDraft } from "./SubmitReview";
+import { SubmitReview } from "./SubmitReview";
+import { createPanelMemory, type PanelMemory } from "./panel-memory";
 import { PullFiles } from "./PullFiles";
 import { GitHubSettings } from "./GitHubSettings";
 import { openGitHubLinksInBuzz } from "./link-preference";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = PANEL_REFRESH_MS;
-
-/** What each pull request's panel was left showing, by URL, for the app
- * session. A channel unmounts its panels when you leave it, so the next panel
- * on that pull request, from any channel, starts on the same view and unsent
- * review: one per pull request, as GitHub keeps one pending review. */
-export type PanelMemory = Map<
-  string,
-  { view?: "summary" | "changes"; review?: ReviewDraft | undefined }
->;
 
 export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -81,7 +73,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // session's sidebar, every link in messages, the panel and agents, so one
   // shown in several places costs one read.
   const states = createPullStates(gh);
-  const memory: PanelMemory = new Map();
+  const memory = createPanelMemory();
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);
@@ -331,6 +323,7 @@ const icons = {
 
 export function GitHubPanel({
   target,
+  context,
   gh,
   diff,
   states: shared,
@@ -362,7 +355,7 @@ export function GitHubPanel({
     [shared, gh],
   );
   const states = shared ?? own;
-  const [ownMemory] = useState<PanelMemory>(() => new Map());
+  const [ownMemory] = useState(createPanelMemory);
   const memory = sharedMemory ?? ownMemory;
   return reference && states ? (
     <ObjectPanel
@@ -372,6 +365,7 @@ export function GitHubPanel({
       diff={diff}
       states={states}
       memory={memory}
+      channelId={context?.channelId}
       chatLink={chatLink}
       resolveActions={resolveActions}
       retry={() => retry(attempt + 1)}
@@ -387,6 +381,7 @@ function ObjectPanel({
   diff,
   states,
   memory,
+  channelId,
   chatLink,
   resolveActions,
   retry,
@@ -396,6 +391,8 @@ function ObjectPanel({
   diff: GitHubDiff | undefined;
   states: PullStates;
   memory: PanelMemory;
+  /** Where it was opened: each channel keeps its own view of a pull request. */
+  channelId: string | undefined;
   chatLink: ((url: string) => ReactNode) | undefined;
   resolveActions:
     | ((
@@ -408,13 +405,9 @@ function ObjectPanel({
 }) {
   const isPull = reference.kind === "pull";
   const pull = usePullPanel(states, reference.url, isPull);
-  // Shared with the panels opened on this pull request before and after.
-  const [remembered] = useState(() => {
-    const found = memory.get(reference.url) ?? {};
-    memory.set(reference.url, found);
-    return found;
-  });
-  const [view, setView] = useState(remembered.view ?? "summary");
+  const [view, setView] = useState(
+    () => memory.get(reference.url, channelId).view ?? "summary",
+  );
   // Files changed stays mounted once shown, so going back to it doesn't read
   // the diff again.
   const [changesShown, setChangesShown] = useState(view === "changes");
@@ -518,8 +511,9 @@ function ObjectPanel({
               <SubmitReview
                 pull={loaded.checklist}
                 gh={gh}
+                url={reference.url}
                 refresh={load}
-                remembered={remembered}
+                memory={memory}
               />
             </span>
           )}
@@ -549,7 +543,7 @@ function ObjectPanel({
               },
             ]}
             onValueChange={(next) => {
-              remembered.view = next;
+              memory.setView(reference.url, next, channelId);
               setView(next);
               if (next === "changes") setChangesShown(true);
             }}

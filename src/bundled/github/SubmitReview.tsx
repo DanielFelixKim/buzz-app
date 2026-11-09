@@ -13,6 +13,7 @@ import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import type { GitHubCli } from "./gh";
 import { readable } from "./object";
 import { changePull, type PullChecklist, type ReviewEvent } from "./pull";
+import type { PanelMemory } from "./panel-memory";
 import styles from "./GitHub.module.css";
 
 const decisions: readonly (readonly [ReviewEvent, string, string])[] = [
@@ -21,41 +22,41 @@ const decisions: readonly (readonly [ReviewEvent, string, string])[] = [
   ["REQUEST_CHANGES", "Request changes", "Ask for changes before merging"],
 ];
 
-/** A review not yet submitted, and the head it was written against. */
-export type ReviewDraft = Readonly<{
-  event: ReviewEvent;
-  body: string;
-  head: string;
-}>;
+/** A review is worth keeping once it has text; a decision alone is a click
+ * away, and a submitted review leaves none. */
+const isEmptyDraft = (body: string) => !body.trim();
 
 /** Reviews someone else's pull request. The draft outlasts dismissing the
- * popover, as GitHub's does, and clears once the review is in. */
+ * popover, as GitHub's does, and the panel, in the plugin's memory; it clears
+ * once the review is in. */
 export function SubmitReview({
   pull,
+  url,
   gh,
   refresh,
-  remembered,
+  memory,
 }: {
   pull: PullChecklist;
+  url: string;
   gh: GitHubCli;
   refresh(): Promise<void>;
-  /** Where the plugin keeps the draft, so it outlasts this panel too. */
-  remembered?: { review?: ReviewDraft | undefined } | undefined;
+  memory: PanelMemory;
 }) {
   const [open, setOpen] = useState(false);
+  const remembered = memory.get(url).review;
   // The head the draft is written against. As with the merge confirmation, a
   // newer push needs the person's say-so before the review goes in.
-  const [head, setHead] = useState(remembered?.review?.head ?? pull.head);
+  const [head, setHead] = useState(remembered?.head ?? pull.head);
   const [event, setEvent] = useState<ReviewEvent>(
-    remembered?.review?.event ?? "COMMENT",
+    remembered?.event ?? "COMMENT",
   );
-  const [body, setBody] = useState(remembered?.review?.body ?? "");
-  // An empty Comment, which a submitted review leaves too, is no draft.
+  const [body, setBody] = useState(remembered?.body ?? "");
   useEffect(() => {
-    if (!remembered) return;
-    remembered.review =
-      event === "COMMENT" && !body ? undefined : { event, body, head };
-  }, [remembered, event, body, head]);
+    memory.setReview(
+      url,
+      isEmptyDraft(body) ? undefined : { event, body, head },
+    );
+  }, [memory, url, event, body, head]);
   const notify = useToastNotification();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -74,14 +75,16 @@ export function SubmitReview({
     if (busy || !ready || pushed) return;
     setBusy(true);
     setError(undefined);
+    // Out of memory while it goes in, so no other panel on this pull request
+    // offers it again, even one opened before GitHub answers.
+    const draft = { event, body, head };
+    memory.setReview(url, undefined);
     try {
       await changePull(
         gh,
         { id: pull.id, head },
         { type: "review", event, body },
       );
-      // In, even if this panel closed meanwhile: the next one starts afresh.
-      if (remembered) remembered.review = undefined;
       if (alive.current) await refresh();
       if (alive.current) {
         setOpen(false);
@@ -90,6 +93,9 @@ export function SubmitReview({
         notify("Review submitted", "success");
       }
     } catch (failure) {
+      // Back for the next panel, unless one has started another since.
+      if (!isEmptyDraft(body) && !memory.get(url).review)
+        memory.setReview(url, draft);
       if (alive.current) setError(readable(failure).message);
     } finally {
       if (alive.current) setBusy(false);
@@ -106,7 +112,14 @@ export function SubmitReview({
         setOpen(next);
         if (next) {
           setError(undefined);
-          if (event === "COMMENT" && !body) setHead(pull.head);
+          // Closed, the draft is memory's: another panel on this pull request
+          // may have changed it, or sent it. A decision without text stays.
+          const saved = memory.get(url).review;
+          if (saved || !isEmptyDraft(body)) {
+            setEvent(saved?.event ?? "COMMENT");
+            setBody(saved?.body ?? "");
+          }
+          setHead(saved?.head ?? pull.head);
         }
       }}
     >
