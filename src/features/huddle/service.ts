@@ -135,8 +135,9 @@ export function createHuddles(
     }
     if (!error && snapshot.phase === "connecting" && snapshot.room)
       requests?.dismiss(snapshot.room);
-    // Keep the destination and phase with the error so its notice can offer
-    // Join again and say whether the call failed to join or dropped.
+    // Keep the room, destination and phase with the error so its notice can
+    // offer Join again (to that room while it is live) and say whether the
+    // call failed to join or dropped.
     const failed = (reason: string): HuddleSnapshot => ({
       ...idle,
       phase: "error",

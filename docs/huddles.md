@@ -84,7 +84,9 @@ in the shared app toast stack without showing the compact player. The notice is
 titled by phase (Couldn’t join the Huddle before the call connects, Huddle
 disconnected after), maps each known native or service cause to one sentence,
 offers Join again where joining again can work, and keeps unrecognized native text
-behind Details. Dismissing the notice clears the failed call.
+behind Details. Join again returns to the failed call's room while it is still live
+in its conversation. With no room to return to, it asks Start a huddle? as the header
+button does, naming the voice agent a new call in its DM would invite. Dismissing the notice clears the failed call.
 
 Disabling the plugin, losing channel access, replacing the relay session, or
 switching community ends the local call. If the UI disappears, the native call

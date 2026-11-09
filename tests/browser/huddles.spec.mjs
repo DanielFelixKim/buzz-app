@@ -240,7 +240,12 @@ test("connected Huddles keep compact controls beside the default window", async 
   await expect(joinFailure).not.toContainText("You can join again");
   await expect(joinFailure.getByText("Details")).toHaveCount(0);
   await expect(capsule).toHaveCount(0);
+  // It never reached a room, so a new call asks first, as the header does.
   await joinFailure.getByRole("button", { name: "Join again" }).click();
+  await page
+    .getByRole("alertdialog", { name: "Start a huddle?" })
+    .getByRole("button", { name: "Start huddle" })
+    .click();
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
     .toBe(3);
@@ -294,6 +299,44 @@ test("connected Huddles keep compact controls beside the default window", async 
   await expect(
     notifications.getByText("Huddle audio unavailable", { exact: true }),
   ).toHaveCount(0);
+});
+
+test("Join again returns to a dropped call’s room while someone else keeps it live", async ({
+  page,
+}) => {
+  await page.goto(
+    `${origin}/tests/fixtures/huddles.html?chrome&deferConnection`,
+  );
+  await page
+    .getByRole("button", { name: "Simulate incoming DM Huddle" })
+    .click();
+  await page
+    .getByRole("group", { name: "Huddle request", exact: true })
+    .getByRole("button", { name: "Join", exact: true })
+    .click();
+  await page.evaluate(() => window.huddleFixture.connect());
+  const capsule = page.getByRole("group", {
+    name: "Active Huddle",
+    exact: true,
+  });
+  await expect(capsule).toBeVisible();
+  await page.evaluate(() => window.huddleFixture.disconnect());
+  const notifications = page.getByRole("region", { name: "App notifications" });
+  const dropped = notifications.getByRole("dialog", {
+    name: "Huddle disconnected",
+  });
+  await expect(dropped).toContainText("The connection dropped.");
+  await dropped.getByRole("button", { name: "Join again" }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.huddleFixture.stats.rooms))
+    .toEqual([
+      "00000000-0000-4000-8000-000000000002",
+      "00000000-0000-4000-8000-000000000002",
+    ]);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(notifications.getByRole("dialog")).toHaveCount(0);
+  await page.evaluate(() => window.huddleFixture.connect());
+  await expect(capsule).toBeVisible();
 });
 
 test("real capture emits 20ms frames and stops on mute and plugin disposal", async ({

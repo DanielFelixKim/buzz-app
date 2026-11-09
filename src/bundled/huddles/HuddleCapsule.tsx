@@ -5,10 +5,18 @@ import { useId } from "react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { useState, useSyncExternalStore } from "react";
 import type { RelayData } from "../../features/relay/service";
+import { useRelayConnection } from "../../features/relay/react";
+import type { Agents } from "../../features/agents/service";
+import { useAgentsSnapshot } from "../../features/agents/react";
+import { useAgentChoices } from "../../features/agents/use-choices";
 import { HuddleAvatarStack } from "./HuddleAvatarStack";
+import { dmVoiceAgent } from "../../features/huddle/dm-agent";
 import { huddleFailure } from "../../features/huddle/failure";
+import { useIncomingHuddle } from "../../features/huddle/use-incoming";
+import type { HuddleDestination } from "../../features/huddle/bridge";
 import type { HuddleWindow } from "../../features/huddle/window";
-import type { Huddles } from "../../features/huddle/service";
+import type { HuddleSnapshot, Huddles } from "../../features/huddle/service";
+import { StartHuddleDialog } from "./StartHuddleDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
@@ -42,6 +50,7 @@ export function HuddleCapsule(props: {
   huddles: Huddles;
   relay: RelayData;
   companion: HuddleWindow;
+  agents?: Agents | undefined;
 }) {
   return (
     <LayoutGroup id={useId()}>
@@ -49,17 +58,63 @@ export function HuddleCapsule(props: {
     </LayoutGroup>
   );
 }
+/** The header launcher's confirmation, for a Join again with no room left to
+ * join: it names the voice agent a new call in its DM invites. */
+function StartAgain({
+  relay,
+  agents,
+  destination,
+  onClose,
+  onStart,
+}: {
+  relay: RelayData;
+  agents?: Agents | undefined;
+  destination: HuddleDestination;
+  onClose(): void;
+  onStart(): void;
+}) {
+  const connection = useRelayConnection(relay);
+  useAgentsSnapshot(agents);
+  // Load archive evidence so an archived agent is never named or invited.
+  useAgentChoices(connection.session, false, true);
+  const voiceAgent = agents && dmVoiceAgent(connection, destination, agents);
+  return (
+    <StartHuddleDialog
+      voiceAgent={voiceAgent?.name}
+      onClose={onClose}
+      onStart={onStart}
+    />
+  );
+}
 function HuddleCapsuleContent({
   huddles,
   relay,
   companion,
+  agents,
 }: {
   huddles: Huddles;
   relay: RelayData;
   companion: HuddleWindow;
+  agents?: Agents | undefined;
 }) {
   const call = useSyncExternalStore(huddles.subscribe, huddles.snapshot);
-  const { session } = useSyncExternalStore(relay.subscribe, relay.snapshot);
+  const connection = useRelayConnection(relay);
+  const { session } = connection;
+  // Whether a failed call's room is still live in its conversation, so Join
+  // again can return to it.
+  const live = useIncomingHuddle(
+    call.phase === "error" &&
+      call.room &&
+      call.destination &&
+      call.destination.scope === connection.scope &&
+      call.destination.viewer === connection.viewer
+      ? session
+      : undefined,
+    call.destination?.channelId ?? "",
+  );
+  // Bound to the failed call it was asked for, so it never starts another.
+  const [confirming, setConfirming] = useState<HuddleSnapshot>();
+  if (confirming && confirming !== call) setConfirming(undefined);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -73,28 +128,53 @@ function HuddleCapsuleContent({
   if (call.phase === "error") {
     const failure = huddleFailure(call.error, !!call.dropped);
     const { destination } = call;
+    // Join again returns to the failed call's room while it is live. With no
+    // room to return to, a new call turns the microphone on and may invite a
+    // voice agent, so it asks first, as the header launcher does.
+    const room =
+      destination &&
+      call.room &&
+      live?.id === call.room &&
+      huddles.canJoin(destination.scope, call.room)
+        ? call.room
+        : undefined;
     return (
-      <ToastNotice
-        title={failure.title}
-        description={failure.description}
-        closeLabel="Dismiss Huddle error"
-        onDismiss={() => void huddles.leave()}
-      >
-        {failure.rejoin && destination && (
-          <Button
-            size="compact"
-            onClick={() => void huddles.start(destination)}
-          >
-            Join again
-          </Button>
+      <>
+        <ToastNotice
+          title={failure.title}
+          description={failure.description}
+          closeLabel="Dismiss Huddle error"
+          onDismiss={() => void huddles.leave()}
+        >
+          {failure.rejoin && destination && (
+            <Button
+              size="compact"
+              onClick={() =>
+                room
+                  ? void huddles.join(destination, room)
+                  : setConfirming(call)
+              }
+            >
+              Join again
+            </Button>
+          )}
+          {failure.details && (
+            <details>
+              <summary>Details</summary>
+              {failure.details}
+            </details>
+          )}
+        </ToastNotice>
+        {confirming === call && destination && (
+          <StartAgain
+            relay={relay}
+            agents={agents}
+            destination={destination}
+            onClose={() => setConfirming(undefined)}
+            onStart={() => void huddles.start(destination)}
+          />
         )}
-        {failure.details && (
-          <details>
-            <summary>Details</summary>
-            {failure.details}
-          </details>
-        )}
-      </ToastNotice>
+      </>
     );
   }
   if (
