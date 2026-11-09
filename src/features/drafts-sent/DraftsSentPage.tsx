@@ -18,6 +18,7 @@ import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import { messageAuthor } from "../../features/relay/fold";
 import type { Navigation } from "../../features/navigation/controller";
 import { useIdentityNames } from "../../features/identity-names/react";
+import { dmLabel } from "../../bundled/inbox/dm-label";
 import { channelIcon } from "../channels/channel-icon";
 import { avatarMedia } from "../../shared/avatar-source";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
@@ -468,6 +469,13 @@ function ScopedPage({
     for (const key of row.activity?.people.slice(0, 4) ??
       row.place.members.slice(0, 3))
       people.add(key);
+  // A DM thread's link sorts everyone's names before naming three, so it
+  // needs all of them, not only those its row shows.
+  const selectedChannel = selected?.entry.threadRootId
+    ? byId.get(selected.entry.channelId)
+    : undefined;
+  if (selectedChannel?.channelType === "dm")
+    for (const key of selectedChannel.participants ?? []) people.add(key);
   const missing = [...people]
     .sort()
     .filter((key) => !profiles.has(key))
@@ -516,6 +524,14 @@ function ScopedPage({
     }
   }
 
+  /** Names a thread's conversation as thread tabs do; its link opens it. */
+  function threadParent(channelId: string) {
+    const channel = byId.get(channelId);
+    if (channel?.channelType !== "dm")
+      return channel ? `#${channel.name}` : place(channelId).title;
+    return `DM · ${dmLabel(channel.participants, profiles, resolveName, channel.name)}`;
+  }
+
   /** The row after this one, else the one before. */
   function neighborOf(trigger: HTMLElement) {
     const row = trigger.closest("li");
@@ -546,10 +562,14 @@ function ScopedPage({
       drafts.entries.some((entry) => entry.id === current.entry.id)
     )
       return;
+    const neighbor = neighborOf(current.trigger);
+    // Focus on the leaving row, or its clear button, goes where closing would.
+    if (current.trigger.closest("li")?.contains(document.activeElement))
+      (neighbor ?? searchInput.current)?.focus();
     visit.current = {
       ...current,
       sent: true,
-      trigger: neighborOf(current.trigger) ?? current.trigger,
+      trigger: neighbor ?? current.trigger,
     };
     setSelected(visit.current);
   }
@@ -718,6 +738,7 @@ function ScopedPage({
         entry={selected.entry}
         mode={selected.draft ? "draft" : "sent"}
         title={place(selected.entry.channelId).title}
+        parentLabel={threadParent(selected.entry.channelId)}
         channel={byId.get(selected.entry.channelId)}
         session={session}
         host={host}

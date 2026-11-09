@@ -37,6 +37,7 @@ export function DraftPreview({
   entry,
   mode = "draft",
   title,
+  parentLabel,
   channel,
   loading = false,
   session,
@@ -51,6 +52,8 @@ export function DraftPreview({
   entry: Entry;
   mode?: "draft" | "sent";
   title: string;
+  /** A thread's conversation, named as thread tabs name it. */
+  parentLabel: string;
   channel: ChannelSummary | undefined;
   loading?: boolean;
   session: RelaySession;
@@ -217,14 +220,7 @@ export function DraftPreview({
               autoFocus={autoFocus && mode === "draft"}
               onSend={sentMessage}
               active={mode === "sent"}
-              // Named as thread tabs name their conversation; opens it there.
-              parent={{
-                label:
-                  channel.channelType === "dm"
-                    ? `DM · ${title}`
-                    : `#${channel.name}`,
-                open: onOpenChannel,
-              }}
+              parent={{ label: parentLabel, open: onOpenChannel }}
             />
           ) : (
             <DraftChannel
