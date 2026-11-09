@@ -821,6 +821,61 @@ test("escaping a restored side panel over the conversation returns focus to the 
   ).toBeFocused();
 });
 
+// Close-all keeps a launcher's side panel open, so at a narrow width the dock
+// still covers the conversation and the closed tab's focus lands in it.
+test.extend({ readState: true, threadUnread: true })(
+  "closing all tabs under a side panel that stays keeps focus in the dock",
+  async ({ page, app }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "buzzodz.plugins.v1",
+        JSON.stringify({ version: 2, enabled: { "buzz.todos": true } }),
+      );
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, app);
+    const conversation = page.locator('article[aria-label="Conversation"]');
+    await page
+      .getByRole("button", { name: "Toggle channel todos", exact: true })
+      .click();
+    const todos = page.getByRole("region", {
+      name: "Todos panel",
+      exact: true,
+    });
+    await expect(todos).toBeVisible();
+    const root = app.histories
+      .get("primary/alpha")
+      .find((event) => event.content === "Thread root 1");
+    await clickRow(
+      page,
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ }),
+    );
+    const tab = page
+      .locator("[data-panel-workspace]")
+      .getByRole("tab", { name: "Thread root 1", exact: true });
+    await expect(tab).toBeVisible();
+    await expect(todos).toBeVisible();
+    await page.setViewportSize({ width: 600, height: 900 });
+    await settlePanelMotion(page);
+    await expect(conversation).toHaveAttribute("inert", "");
+    await tab.focus();
+    await expect(tab).toBeFocused();
+    expect(
+      await page.evaluate(() => {
+        const event = new Event("buzz:close-all-tabs", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }),
+    ).toBe(true);
+    await expect(tab).toHaveCount(0);
+    await expect(todos).toBeVisible();
+    await expect(conversation).toHaveAttribute("inert", "");
+    await expect(todos).toBeFocused();
+  },
+);
+
 // Panes that stay open keep focus in the dock, in page order: closing Todos
 // under the companion hands focus to the companion, and a thread tab above the
 // companion takes it first.

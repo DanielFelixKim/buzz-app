@@ -17,7 +17,7 @@ import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloSuccessor } from "../../features/channel-navigation/solo-successor";
 import { historyPanel, useConversationTabs } from "./useConversationTabs";
-import { useCoveredByDock } from "./useCoveredByDock";
+import { focusDock, useCoveredByDock } from "./useCoveredByDock";
 import tabStyles from "./ChannelTabs.module.css";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -1397,7 +1397,11 @@ function ChannelWorkspace({
             ?.querySelector<HTMLElement>(
               '[role="tab"][data-tab-value="conversation"], [data-workspace-identity] button',
             ) ?? (solo ? historyContainer.current : settingsTrigger.current);
-        target?.focus({ preventScroll: true });
+        // A dock that outlives the close, as a launcher's side panel does,
+        // still covers that target, so the dock takes focus instead.
+        const cover = target?.closest("[inert]");
+        if (cover) focusDock(cover.parentElement);
+        else target?.focus({ preventScroll: true });
       }
     }
     // A pane whose selected tab closed refocuses its new selection; the kept
