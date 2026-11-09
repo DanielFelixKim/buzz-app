@@ -32,10 +32,16 @@ record, and the next read drops the badge. This is display only: Online here
 means the owner set the agent up to run remotely, not that the runtime is up,
 and it grants nothing.
 
-`features/presence/hosted.ts` reads at most 100 agents per request, coalesced
-for 100ms, again when an attested owner changes and every five minutes while
-an agent is shown. A failed read keeps the last answer; disconnect clears it.
-Viewers without a remote agent type installed see relay presence only.
+`features/presence/hosted.ts` reads only shown agents whose evidence is
+missing or was read for another owner: one filter per owner, at most 100
+agents each and four filters per read, coalesced for 100ms. A read under way is
+not cancelled; agents shown meanwhile are read next. Evidence for up to 1024
+agents outlives their views, so a remount reads nothing. Every shown agent is
+read again every five to six minutes; a reconnect keeps evidence and spreads its
+reads over one to five seconds. A failed read keeps the last answer and waits
+60–65 seconds before any retry. Disconnect hides the badge until reconnection.
+A hosted agent is never marked past the demand limit. Viewers without a remote
+agent type installed see relay presence only.
 
 ## Your status
 
