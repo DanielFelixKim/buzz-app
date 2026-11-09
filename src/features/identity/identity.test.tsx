@@ -8754,7 +8754,7 @@ it.each([
   },
 );
 
-it("a backup status that can't be read asks nothing, even after a Not now, and a later answer asks as usual", async () => {
+it("a backup status that can't be read asks nothing, after a saved Not now or with nothing saved", async () => {
   anotherKeyOnDevice(false, undefined, true);
   // Not now on the Replace prompt.
   const fi = federatedFixture();
