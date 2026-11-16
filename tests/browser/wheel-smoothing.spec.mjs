@@ -19,6 +19,20 @@ test.beforeEach(async ({ page }) => {
       value: "Apple Computer, Inc.",
     });
     Object.defineProperty(navigator, "maxTouchPoints", { value: 0 });
+    // The glide reads wheels less than 200ms apart as one device's gesture.
+    // Each dispatch below starts its own gesture, stamped at least that long
+    // after the last wheel, real or dispatched.
+    let last = -Infinity;
+    addEventListener(
+      "wheel",
+      (event) => {
+        last = Math.max(last, event.timeStamp);
+      },
+      { capture: true, passive: true },
+    );
+    window.__wheelGesture = () =>
+      (last = Math.max(performance.now(), last + 200));
+    window.__sinceWheel = () => performance.now() - last;
   });
 });
 
@@ -51,12 +65,14 @@ const dispatch = (target, ...deltas) =>
         .querySelector(`[data-message-id="${id}"] p`)
         .getBoundingClientRect().top - bounds.top;
     const start = top();
+    const timeStamp = window.__wheelGesture();
     const events = deltas.map((deltaY) => {
       const event = new WheelEvent("wheel", {
         bubbles: true,
         cancelable: true,
         deltaY,
       });
+      Object.defineProperty(event, "timeStamp", { value: timeStamp });
       node.dispatchEvent(event);
       return event;
     });
@@ -114,8 +130,12 @@ test("glides a mouse notch, releases bottom follow, and leaves trackpad deltas a
   expect(down.prevented).toBe(true);
   await arrives(page, down, NOTCH_DOWN);
 
-  // Real integer wheel input still scrolls natively past the wheel listener.
+  // Real integer wheel input still scrolls natively past the wheel listener,
+  // as a new gesture once the last notch is a pause behind it.
   await settle(page);
+  await expect
+    .poll(() => page.evaluate(() => window.__sinceWheel()))
+    .toBeGreaterThan(200);
   const before = await top(page);
   await history(page).hover();
   await wheel(page, -150);
@@ -282,6 +302,9 @@ test.describe("thread panel", () => {
             bubbles: true,
             cancelable: true,
             deltaY,
+          });
+          Object.defineProperty(event, "timeStamp", {
+            value: window.__wheelGesture(),
           });
           node.dispatchEvent(event);
           node.dispatchEvent(

@@ -9,10 +9,15 @@ import { smoothWheelPreference } from "./smooth-wheel-preference";
 // Mouse vs trackpad: WebKit on macOS reports a mouse notch as a 16.16
 // fixed-point line count times 40px, so its deltaY is fractional
 // (4.000244140625 is 6554/65536 x 40). Trackpad deltas are whole pixels.
-// Line and page delta modes are always a wheel.
+// Line and page delta modes are always a wheel. A gesture's first event
+// decides for the whole gesture, so one device never alternates between
+// gliding and native scrolling mid-gesture.
 
 export const LINE_PX = 40;
 export const GLIDE_MS = 140;
+/** Longer than any pause inside one gesture: trackpad scrolling and its
+ * momentum send an event every frame, a spinning wheel about as often. */
+export const GESTURE_GAP_MS = 200;
 
 type WheelInput = Pick<WheelEvent, "deltaMode" | "deltaX" | "deltaY">;
 
@@ -91,10 +96,24 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
     current.intent ??= intent();
     return current.intent !== intent();
   };
+  /** The current gesture's device, decided by its first event. */
+  let gesture: { mouse: boolean; last: number } | undefined;
+  const fromMouse = (event: WheelEvent) => {
+    if (!gesture || event.timeStamp - gesture.last >= GESTURE_GAP_MS)
+      gesture = { mouse: isMouseWheel(event), last: event.timeStamp };
+    gesture.last = event.timeStamp;
+    return gesture.mouse;
+  };
   const step = (now: number) => {
     const current = glide;
     if (!current) return;
-    if (reducedMotion?.matches || superseded(current)) {
+    if (superseded(current)) {
+      glide = undefined;
+      return;
+    }
+    if (reducedMotion?.matches) {
+      // The notches still arrive, just without the motion.
+      scroller.scrollTop += current.remaining;
       glide = undefined;
       return;
     }
@@ -127,9 +146,10 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
   };
   /** Glides `event` when it is a mouse notch the scroller can move for. */
   const take = (event: WheelEvent) => {
+    const mouse = fromMouse(event);
     if (
       !event.cancelable ||
-      !isMouseWheel(event) ||
+      !mouse ||
       reducedMotion?.matches ||
       event.ctrlKey ||
       event.metaKey ||

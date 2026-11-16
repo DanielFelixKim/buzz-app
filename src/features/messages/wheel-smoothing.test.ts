@@ -3,6 +3,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { smoothWheelPreference } from "./smooth-wheel-preference";
 import {
+  GESTURE_GAP_MS,
   LINE_PX,
   forwardWheel,
   isMouseWheel,
@@ -51,6 +52,11 @@ function fakeFrames() {
 }
 
 let frames: ReturnType<typeof fakeFrames>;
+/** Wheel event time: events share one gesture until `pause()` ends it. */
+let eventTime = 0;
+const pause = () => {
+  eventTime += GESTURE_GAP_MS;
+};
 /** The timeline's reader intent; its own wheel handler bumps it per wheel. */
 let intent = 0;
 let uninstall: (() => void) | undefined;
@@ -107,6 +113,7 @@ function wheel(target: Element, options: WheelOptions) {
     cancelable: true,
     ...options,
   });
+  Object.defineProperty(event, "timeStamp", { value: eventTime });
   target.dispatchEvent(event);
   return event.defaultPrevented;
 }
@@ -120,6 +127,7 @@ function reducedMotion(matches: boolean) {
 beforeEach(() => {
   frames = fakeFrames();
   intent = 0;
+  eventTime = 0;
 });
 
 afterEach(() => {
@@ -159,6 +167,34 @@ describe("telling a mouse from a trackpad", () => {
     expect(toPixels({ deltaMode: 0, deltaX: 0, deltaY: NOTCH }, element)).toBe(
       NOTCH,
     );
+  });
+});
+
+describe("one device per gesture", () => {
+  it("keeps gliding a wheel whose later notch lands on a whole pixel", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    expect(wheel(text, { deltaY: NOTCH })).toBe(true);
+    // A notch of exactly one line, as a fractional count can round to.
+    expect(wheel(text, { deltaY: LINE_PX })).toBe(true);
+    frames.settle();
+    expect(timeline.scrollTop).toBeCloseTo(1000 + NOTCH + LINE_PX);
+  });
+
+  it("leaves a trackpad gesture native even if a delta comes through fractional", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    for (const deltaY of [...TRACKPAD, 2.5, 3])
+      expect(wheel(text, { deltaY })).toBe(false);
+    expect(frames.pending()).toBe(0);
+  });
+
+  it("decides afresh after a pause", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    expect(wheel(text, { deltaY: 3 })).toBe(false);
+    pause();
+    expect(wheel(text, { deltaY: NOTCH })).toBe(true);
   });
 });
 
@@ -252,6 +288,7 @@ describe("ending a glide", () => {
     wheel(text, { deltaY: 200.5 });
     frames.tick();
     const at = timeline.scrollTop;
+    pause();
     expect(wheel(text, { deltaY: 2 })).toBe(false);
     frames.tick();
     expect(frames.pending()).toBe(0);
@@ -311,17 +348,17 @@ describe("ending a glide", () => {
     expect(timeline.scrollTop).toBeCloseTo(1100.25);
   });
 
-  it("stops when Reduce motion comes on", () => {
+  it("finishes the notches at once when Reduce motion comes on", () => {
     const motion = reducedMotion(false);
     const { timeline, text } = fakeTimeline();
     install(timeline);
     wheel(text, { deltaY: 200.5 });
     frames.tick();
+    expect(timeline.scrollTop).toBeLessThan(1200);
     motion.matches = true;
-    const at = timeline.scrollTop;
     frames.tick();
     expect(frames.pending()).toBe(0);
-    expect(timeline.scrollTop).toBe(at);
+    expect(timeline.scrollTop).toBe(1200.5);
   });
 
   it("stops and stops handling wheels once removed", () => {
