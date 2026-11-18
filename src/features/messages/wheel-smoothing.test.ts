@@ -212,14 +212,54 @@ describe("gliding", () => {
     expect(timeline.scrollTop).toBeCloseTo(1000 + NOTCH + 4 * 109.986572265625);
   });
 
+  it("eases a notch in over 190ms, and a long move over half that", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    wheel(text, { deltaY: 10 * NOTCH });
+    frames.tick();
+    const first = timeline.scrollTop - 1000;
+    frames.tick();
+    expect(timeline.scrollTop - 1000 - first).toBeGreaterThan(first);
+    // 12 frames of 16ms in all.
+    expect(frames.settle()).toBe(10);
+    pause();
+    wheel(text, { deltaY: 480.5 });
+    expect(frames.settle()).toBe(6);
+    expect(timeline.scrollTop).toBeCloseTo(1000 + 10 * NOTCH + 480.5);
+  });
+
+  it("keeps its speed through a notch that arrives mid-glide", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    wheel(text, { deltaY: 100.25 });
+    let last = timeline.scrollTop;
+    let before = 0;
+    // At 120 Hz, the next notch's curve starts from the last frame.
+    for (let frame = 0; frame < 8; frame++) {
+      frames.tick(8);
+      before = timeline.scrollTop - last;
+      last = timeline.scrollTop;
+    }
+    wheel(text, { deltaY: 100.25 });
+    frames.tick(8);
+    const after = timeline.scrollTop - last;
+    expect(after).toBeGreaterThanOrEqual(before);
+    expect(after).toBeLessThan(1.5 * before);
+    frames.settle();
+    expect(timeline.scrollTop).toBeCloseTo(1200.5);
+  });
+
   it("keeps the timeline's own scrollTop correction made during a glide", () => {
     const { timeline, text } = fakeTimeline();
     install(timeline);
     wheel(text, { deltaY: 200.5 });
     frames.tick();
     frames.tick();
+    const at = timeline.scrollTop;
     // Rows above the viewport grew, so the timeline moved itself to hold its place.
     timeline.scrollTop += 100;
+    frames.tick();
+    expect(timeline.scrollTop).toBeGreaterThan(at + 100);
     frames.settle();
     expect(timeline.scrollTop).toBeCloseTo(1300.5);
   });
@@ -228,19 +268,17 @@ describe("gliding", () => {
     const { timeline, text } = fakeTimeline({ scrollTop: 4300 });
     install(timeline);
     wheel(text, { deltaY: 200.5 });
-    while (timeline.scrollTop < 4400 && frames.pending()) frames.tick();
+    // It eases into the edge over a whole notch's 12 frames, ending there.
+    expect(frames.settle()).toBe(12);
     expect(timeline.scrollTop).toBe(4400);
-    // On the frame it arrives, not once the rest of the notch has run out.
-    expect(frames.pending()).toBe(0);
   });
 
   it("stops at the top edge", () => {
     const { timeline, text } = fakeTimeline({ scrollTop: 50 });
     install(timeline);
     wheel(text, { deltaY: -200.5 });
-    while (timeline.scrollTop > 0 && frames.pending()) frames.tick();
+    expect(frames.settle()).toBe(12);
     expect(timeline.scrollTop).toBe(0);
-    expect(frames.pending()).toBe(0);
   });
 
   it("restarts from where it is when the wheel turns the other way", () => {

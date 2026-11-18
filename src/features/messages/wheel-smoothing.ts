@@ -14,7 +14,8 @@ import { smoothWheelPreference } from "./smooth-wheel-preference";
 // gliding and native scrolling mid-gesture.
 
 export const LINE_PX = 40;
-export const GLIDE_MS = 140;
+/** One notch's glide. Bigger moves take less, down to half, as in Chromium. */
+export const NOTCH_MS = 190;
 /** Longer than any pause inside one gesture: trackpad scrolling and its
  * momentum send an event every frame, a spinning wheel about as often. */
 export const GESTURE_GAP_MS = 200;
@@ -60,17 +61,80 @@ function insideNestedScroller(target: Element, scroller: Element) {
   return false;
 }
 
+/** How long a glide of `distance` pixels takes: Chromium's wheel durations. */
+export const glideDuration = (distance: number) =>
+  (NOTCH_MS * Math.min(12, Math.max(6, 14 - Math.abs(distance) / 60))) / 12;
+
+/** The glide's ease, cubic-bezier(0.53, y1, 0.38, 0.65), from 0 to 1 over
+ * progress 0 to 1. A higher `y1` starts it faster. */
+function ease(y1: number) {
+  const curve = (a: number, b: number) => (t: number) =>
+    3 * a * t * (1 - t) ** 2 + 3 * b * t ** 2 * (1 - t) + t ** 3;
+  const x = curve(0.53, 0.38);
+  const y = curve(y1, 0.65);
+  return (progress: number) => {
+    if (!(progress > 0)) return 0;
+    if (progress >= 1) return 1;
+    // x rises monotonically from 0 to 1, so bisection finds its t.
+    let low = 0;
+    let high = 1;
+    for (let i = 0; i < 30; i++) {
+      const t = (low + high) / 2;
+      if (x(t) < progress) low = t;
+      else high = t;
+    }
+    return y((low + high) / 2);
+  };
+}
+const EASE_Y1 = 0.21;
+const EASE_X1 = 0.53;
+/** A new glide's first frame counts as one frame in, so it moves at once. */
+const FRAME_MS = 16;
+
 type Glide = {
+  /** The segment being eased, from `from` to `to` in scroll positions. */
+  from: number;
+  to: number;
+  /** The frame time it began, set by the first frame of a new glide. */
+  start: number | undefined;
+  duration: number;
+  ease: (progress: number) => number;
   /** Where the glide has got to, as a float so sub-pixel steps add up. */
   position: number;
   /** The scrollTop read back after the last write, to spot corrections. */
   written: number;
-  remaining: number;
-  last: number;
+  /** The last frame's time. */
+  last: number | undefined;
   frame: number;
   /** The scroller's reader intent once this glide's latest notch was handled. */
   intent: number | undefined;
 };
+
+function positionAt(glide: Glide, time: number) {
+  if (glide.start === undefined) return glide.from;
+  const progress = (time - glide.start) / glide.duration;
+  return glide.from + (glide.to - glide.from) * glide.ease(progress);
+}
+
+/** Eases from where the last frame left the glide to its new `to`, starting
+ * at the glide's speed then, so a run of notches never slows between them. */
+function retarget(glide: Glide, to: number) {
+  const now = glide.last;
+  const speed =
+    now === undefined ? 0 : positionAt(glide, now) - positionAt(glide, now - 1);
+  const from = glide.position;
+  const distance = to - from;
+  const duration = glideDuration(distance);
+  // The curve's starting slope is y1 / x1 times the segment's average speed.
+  const ratio = distance
+    ? Math.min(20, Math.max(0, (speed * duration) / distance))
+    : 0;
+  glide.ease = ease(Math.max(EASE_Y1, ratio * EASE_X1));
+  glide.from = from;
+  glide.to = to;
+  glide.duration = duration;
+  glide.start = now;
+}
 
 const targets = new WeakMap<Element, () => number | undefined>();
 
@@ -119,32 +183,25 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
     }
     if (reducedMotion?.matches) {
       // The notches still arrive, just without the motion.
-      scroller.scrollTop += current.remaining;
+      scroller.scrollTop += current.to - current.position;
       glide = undefined;
       return;
     }
-    const dt = Math.min(64, current.last ? now - current.last : 16);
-    current.last = now;
     // Carry the scroller's own corrections (Virtua's and scroll-correction.ts
     // in the timeline, reading corrections in a thread) instead of undoing them.
     const drift = scroller.scrollTop - current.written;
-    if (Math.abs(drift) >= 1) current.position += drift;
-    const fraction = 1 - Math.exp(-dt / (GLIDE_MS / 3));
-    // The last step takes the sub-pixel rest, so a glide covers the distance.
-    const move =
-      Math.abs(current.remaining * (1 - fraction)) < 0.5
-        ? current.remaining
-        : current.remaining * fraction;
-    current.position += move;
-    current.remaining -= move;
+    if (Math.abs(drift) >= 1) {
+      current.position += drift;
+      current.from += drift;
+      current.to += drift;
+    }
+    current.start ??= now - FRAME_MS;
+    current.last = now;
+    const progress = (now - current.start) / current.duration;
+    current.position = positionAt(current, now);
     scroller.scrollTop = current.position;
     current.written = scroller.scrollTop;
-    const max = scroller.scrollHeight - scroller.clientHeight;
-    if (
-      (current.position <= 0 && current.remaining < 0) ||
-      (current.position >= max && current.remaining > 0) ||
-      Math.abs(current.remaining) < 0.5
-    ) {
+    if (progress >= 1) {
       glide = undefined;
       return;
     }
@@ -156,7 +213,7 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
     // Under Reduce motion a wheel goes native, and its reader intent would
     // retire the glide before its next frame lands the rest of the notch.
     if (reducedMotion?.matches && glide) {
-      if (!superseded(glide)) scroller.scrollTop += glide.remaining;
+      if (!superseded(glide)) scroller.scrollTop += glide.to - glide.position;
       stop();
     }
     if (
@@ -179,18 +236,26 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
     event.preventDefault();
     if (
       glide &&
-      (Math.sign(delta) !== Math.sign(glide.remaining) || superseded(glide))
+      (Math.sign(delta) !== Math.sign(glide.to - glide.position) ||
+        superseded(glide))
     )
       stop();
-    glide ??= {
-      position: top,
-      written: top,
-      remaining: 0,
-      last: 0,
-      frame: requestAnimationFrame(step),
-      intent: undefined,
-    };
-    glide.remaining += delta;
+    // The notch lands within the scroll range, easing into an edge.
+    const to = Math.max(0, Math.min(max, (glide?.to ?? top) + delta));
+    if (glide) retarget(glide, to);
+    else
+      glide = {
+        from: top,
+        to,
+        start: undefined,
+        duration: glideDuration(to - top),
+        ease: ease(EASE_Y1),
+        position: top,
+        written: top,
+        last: undefined,
+        frame: requestAnimationFrame(step),
+        intent: undefined,
+      };
     glide.intent = undefined;
     notch = event;
     return true;
@@ -211,7 +276,7 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
       return;
     take(event);
   };
-  const target = () => glide && glide.position + glide.remaining;
+  const target = () => glide?.to;
   targets.set(scroller, target);
   scroller.addEventListener("wheel", wheel, { passive: false });
   scroller.ownerDocument.addEventListener("wheel", handled, { passive: true });
