@@ -2,6 +2,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { expectAnchor, open, settle, wheel } from "./timeline.mjs";
 import { settlePanelMotion } from "./navigation.mjs";
+import { markAllRead } from "./reading.mjs";
 
 // Browser-only: real animation frames, each engine's scrollTop clamping and
 // rounding, Virtua's scroll handling, and the panels' own bottom follow. The
@@ -207,13 +208,22 @@ test("a message during an upward glide leaves the timeline where the notch lands
 });
 
 test.describe("thread panel", () => {
-  test.use({ readState: true, threadUnread: true, presenceThreadAuthors: 60 });
+  test.use({
+    productionBroker: true,
+    readState: true,
+    threadUnread: true,
+    presenceThreadAuthors: 60,
+  });
+  // A thread with unread replies opens at the first one; these start at the end.
+  test.beforeEach(async ({ page, app }) => {
+    await open(page, app);
+    await markAllRead(page);
+  });
 
   test("glides a mouse notch through thread replies and releases bottom follow", async ({
     page,
     app,
   }) => {
-    await open(page, app);
     const { root, replies } = app.presenceThread;
     await page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -298,76 +308,68 @@ test.describe("thread panel", () => {
     expect(pressed.moved).toBe(0);
   });
 
-  test.describe("with live replies", () => {
-    test.use({ productionBroker: true });
-    test("a reply during an upward glide leaves the thread where the notch lands", async ({
-      page,
-      app,
-    }) => {
-      await open(page, app);
-      const { root, replies } = app.presenceThread;
-      await page
-        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ })
-        .click();
-      const thread = page.getByRole("region", {
-        name: "Thread messages",
-        exact: true,
-      });
-      await expect(
-        thread.locator(`[data-message-id="${replies.at(-1).id}"]`),
-      ).toBeVisible();
-      await settlePanelMotion(page);
-      await settle(page, thread);
-      const peer = generateSecretKey();
-      let time = replies.at(-1).created_at;
-      const reply = (content) => {
-        const event = finalizeEvent(
-          {
-            kind: 9,
-            content,
-            created_at: ++time,
-            tags: [
-              ["h", "alpha"],
-              ["e", root.id, "", "reply"],
-            ],
-          },
-          peer,
-        );
-        app.histories.get("primary/alpha").push(event);
-        app.relay.publish("primary", event);
-        return thread.locator(`[data-message-id="${event.id}"]`);
-      };
-      const y = (id) => paragraphY(thread, id);
-      const anchor = replies.at(-1).id;
-      const start = await y(anchor);
-      expect(
-        await holdGlide(
-          thread.locator("[data-message-id] p").first(),
-          NOTCH_UP,
-        ),
-      ).toBe(true);
-      const moved = (await y(anchor)) - start;
-      expect(moved, "partway, within bottom follow").toBeGreaterThan(0);
-      expect(moved).toBeLessThan(80);
-
-      await expect(reply("Live reply during the glide")).toBeAttached();
-      await thread.evaluate(() => window.__releaseFrames());
-      await settle(page, thread);
-      // The notch lands in full, as a native one would, and follow is released.
-      const landed = async () =>
-        Math.abs((await y(anchor)) - (start - NOTCH_UP));
-      await expect.poll(landed).toBeLessThan(4);
-      await expect(
-        thread.getByRole("button", { name: "1 new message", exact: true }),
-      ).toBeVisible();
-      // The next reply does not pull the reader back down.
-      await expect(reply("A later reply")).toBeAttached();
-      await expect(
-        thread.getByRole("button", { name: "2 new messages", exact: true }),
-      ).toBeVisible();
-      await settle(page, thread);
-      expect(await landed()).toBeLessThan(4);
+  test("a reply during an upward glide leaves the thread where the notch lands", async ({
+    page,
+    app,
+  }) => {
+    const { root, replies } = app.presenceThread;
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    const thread = page.getByRole("region", {
+      name: "Thread messages",
+      exact: true,
     });
+    await expect(
+      thread.locator(`[data-message-id="${replies.at(-1).id}"]`),
+    ).toBeVisible();
+    await settlePanelMotion(page);
+    await settle(page, thread);
+    const peer = generateSecretKey();
+    let time = replies.at(-1).created_at;
+    const reply = (content) => {
+      const event = finalizeEvent(
+        {
+          kind: 9,
+          content,
+          created_at: ++time,
+          tags: [
+            ["h", "alpha"],
+            ["e", root.id, "", "reply"],
+          ],
+        },
+        peer,
+      );
+      app.histories.get("primary/alpha").push(event);
+      app.relay.publish("primary", event);
+      return thread.locator(`[data-message-id="${event.id}"]`);
+    };
+    const y = (id) => paragraphY(thread, id);
+    const anchor = replies.at(-1).id;
+    const start = await y(anchor);
+    expect(
+      await holdGlide(thread.locator("[data-message-id] p").first(), NOTCH_UP),
+    ).toBe(true);
+    const moved = (await y(anchor)) - start;
+    expect(moved, "partway, within bottom follow").toBeGreaterThan(0);
+    expect(moved).toBeLessThan(80);
+
+    await expect(reply("Live reply during the glide")).toBeAttached();
+    await thread.evaluate(() => window.__releaseFrames());
+    await settle(page, thread);
+    // The notch lands in full, as a native one would, and follow is released.
+    const landed = async () => Math.abs((await y(anchor)) - (start - NOTCH_UP));
+    await expect.poll(landed).toBeLessThan(4);
+    await expect(
+      thread.getByRole("button", { name: "1 new message", exact: true }),
+    ).toBeVisible();
+    // The next reply does not pull the reader back down.
+    await expect(reply("A later reply")).toBeAttached();
+    await expect(
+      thread.getByRole("button", { name: "2 new messages", exact: true }),
+    ).toBeVisible();
+    await settle(page, thread);
+    expect(await landed()).toBeLessThan(4);
   });
 });
