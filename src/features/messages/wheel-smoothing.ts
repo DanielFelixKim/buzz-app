@@ -126,10 +126,12 @@ function retarget(glide: Glide, to: number) {
   const distance = to - from;
   const duration = glideDuration(distance);
   // The curve's starting slope is y1 / x1 times the segment's average speed.
+  // With y1 at most 1 it never passes `to`, so a fast glide gaining a small
+  // notch starts a little slower instead of overshooting and coming back.
   const ratio = distance
     ? Math.min(20, Math.max(0, (speed * duration) / distance))
     : 0;
-  glide.ease = ease(Math.max(EASE_Y1, ratio * EASE_X1));
+  glide.ease = ease(Math.max(EASE_Y1, Math.min(1, ratio * EASE_X1)));
   glide.from = from;
   glide.to = to;
   glide.duration = duration;
@@ -276,7 +278,11 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
       return;
     take(event);
   };
-  const target = () => glide?.to;
+  // Not once newer intent (Jump to latest, a send) has ended the glide.
+  const target = () =>
+    glide && (glide.intent === undefined || glide.intent === intent())
+      ? glide.to
+      : undefined;
   targets.set(scroller, target);
   scroller.addEventListener("wheel", wheel, { passive: false });
   scroller.ownerDocument.addEventListener("wheel", handled, { passive: true });

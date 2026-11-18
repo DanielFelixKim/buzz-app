@@ -5,6 +5,7 @@ import { smoothWheelPreference } from "./smooth-wheel-preference";
 import {
   GESTURE_GAP_MS,
   LINE_PX,
+  glideTarget,
   isMouseWheel,
   smoothWheel,
   toPixels,
@@ -247,6 +248,34 @@ describe("gliding", () => {
     expect(after).toBeLessThan(1.5 * before);
     frames.settle();
     expect(timeline.scrollTop).toBeCloseTo(1200.5);
+  });
+
+  it("never passes a small notch added at full speed", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    wheel(text, { deltaY: 480.5 });
+    frames.tick();
+    frames.tick();
+    frames.tick();
+    wheel(text, { deltaY: NOTCH });
+    let furthest = 0;
+    while (frames.pending()) {
+      frames.tick();
+      furthest = Math.max(furthest, timeline.scrollTop);
+    }
+    expect(furthest).toBeCloseTo(1000 + 480.5 + NOTCH);
+  });
+
+  it("reports where it will rest until newer intent ends it", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    expect(glideTarget(timeline)).toBeUndefined();
+    wheel(text, { deltaY: 200.5 });
+    frames.tick();
+    expect(glideTarget(timeline)).toBeCloseTo(1200.5);
+    // Jump to latest, say, before the glide's next frame retires it.
+    intent++;
+    expect(glideTarget(timeline)).toBeUndefined();
   });
 
   it("keeps the timeline's own scrollTop correction made during a glide", () => {

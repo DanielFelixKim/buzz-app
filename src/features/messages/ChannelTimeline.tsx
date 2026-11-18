@@ -61,7 +61,7 @@ import {
   useReading,
 } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
-import { useWheelSmoothing } from "./wheel-smoothing";
+import { glideTarget, useWheelSmoothing } from "./wheel-smoothing";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -156,6 +156,12 @@ function subscribeDocumentActive(listener: () => void) {
 const TIMELINE_PLACE = "timeline";
 // Older pages a visit reads unasked to fill a screen its head leaves empty.
 const FILL_PAGES = 5;
+/** Within the reach of bottom follow. A mouse-wheel glide is judged where it
+ * will come to rest, as its native notch would have landed in one frame. */
+function nearBottom(element: HTMLElement) {
+  const top = glideTarget(element) ?? element.scrollTop;
+  return element.scrollHeight - element.clientHeight - top < 80;
+}
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
@@ -185,8 +191,7 @@ function positionAt(
     }) ??
     mounted.find((row) => row.getBoundingClientRect().bottom > top);
   return {
-    bottom:
-      element.scrollHeight - element.clientHeight - element.scrollTop < 80,
+    bottom: nearBottom(element),
     ...(row?.dataset.messageId
       ? {
           anchor: {
@@ -1061,8 +1066,7 @@ function Timeline({
     [rows],
   );
   const updateJumpToLatest = useCallback((element: HTMLElement) => {
-    const bottom =
-      element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+    const bottom = nearBottom(element);
     setShowJumpToLatest(!bottom);
     if (bottom) setNewMessageCount(0);
   }, []);

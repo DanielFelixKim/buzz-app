@@ -91,6 +91,42 @@ const dispatch = (target, ...deltas) =>
       ),
     );
   }, deltas);
+/**
+ * Dispatches one notch at `target` and runs only the glide's first frame. Later
+ * frames wait for `window.__releaseFrames()`, so input lands mid-glide, still
+ * within bottom follow's 80px, on every run. True when the notch was prevented.
+ */
+const holdGlide = (target, deltaY) =>
+  target.evaluate((node, deltaY) => {
+    const held = [];
+    const raf = window.requestAnimationFrame;
+    window.__releaseFrames = () => {
+      window.requestAnimationFrame = raf;
+      for (const callback of held.splice(0)) raf(callback);
+    };
+    window.requestAnimationFrame = (callback) => held.push(callback);
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY,
+    });
+    Object.defineProperty(event, "timeStamp", {
+      value: window.__wheelGesture(),
+    });
+    node.dispatchEvent(event);
+    const now = performance.now();
+    for (const callback of held.splice(0)) callback(now + 16);
+    return event.defaultPrevented;
+  }, deltaY);
+/** The viewport Y of message `id`'s paragraph within `scroller`. */
+const paragraphY = (scroller, id) =>
+  scroller.evaluate(
+    (element, id) =>
+      element
+        .querySelector(`[data-message-id="${id}"] p`)
+        .getBoundingClientRect().top - element.getBoundingClientRect().top,
+    id,
+  );
 const top = (page) => history(page).evaluate((node) => node.scrollTop);
 /** The message moves opposite the wheel, by the whole of `delta`. */
 const arrives = (page, { id, start }, delta) =>
@@ -140,6 +176,34 @@ test("glides a mouse notch, releases bottom follow, and leaves trackpad deltas a
   await history(page).hover();
   await wheel(page, -150);
   expect(await top(page)).toBeLessThan(before - 100);
+});
+
+test("a message during an upward glide leaves the timeline where the notch lands", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const text = prose(page).last();
+  const id = await text.evaluate(
+    (node) => node.closest("[data-message-id]").dataset.messageId,
+  );
+  const start = await paragraphY(history(page), id);
+  expect(await holdGlide(text, NOTCH_UP)).toBe(true);
+  const moved = (await paragraphY(history(page), id)) - start;
+  expect(moved, "partway, within bottom follow").toBeGreaterThan(0);
+  expect(moved).toBeLessThan(80);
+
+  app.append("primary", "alpha", "Arrived mid-glide", true, false);
+  await expect(
+    page.getByRole("button", { name: "1 new message", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => window.__releaseFrames());
+  await settle(page);
+  // The notch lands in full, as a native one would, and follow is released.
+  await expectAnchor(page, { id, y: start - NOTCH_UP });
+  await expect(
+    page.getByRole("button", { name: "1 new message", exact: true }),
+  ).toBeVisible();
 });
 
 test.describe("thread panel", () => {
@@ -274,43 +338,15 @@ test.describe("thread panel", () => {
         app.relay.publish("primary", event);
         return thread.locator(`[data-message-id="${event.id}"]`);
       };
-      /** The viewport Y of the reply `id`'s paragraph. */
-      const y = (id) =>
-        thread.evaluate(
-          (element, id) =>
-            element
-              .querySelector(`[data-message-id="${id}"] p`)
-              .getBoundingClientRect().top -
-            element.getBoundingClientRect().top,
-          id,
-        );
-
-      // Hold the glide after its first frame, still within bottom follow's
-      // 80px, so a reply lands mid-glide on every run.
+      const y = (id) => paragraphY(thread, id);
       const anchor = replies.at(-1).id;
       const start = await y(anchor);
-      const prevented = await thread.evaluate((element, deltaY) => {
-        const held = [];
-        window.__releaseFrames = () => {
-          window.requestAnimationFrame = raf;
-          for (const callback of held.splice(0)) raf(callback);
-        };
-        const raf = window.requestAnimationFrame;
-        window.requestAnimationFrame = (callback) => held.push(callback);
-        const event = new WheelEvent("wheel", {
-          bubbles: true,
-          cancelable: true,
-          deltaY,
-        });
-        Object.defineProperty(event, "timeStamp", {
-          value: window.__wheelGesture(),
-        });
-        element.querySelector("[data-message-id] p").dispatchEvent(event);
-        const now = performance.now();
-        for (const callback of held.splice(0)) callback(now + 16);
-        return event.defaultPrevented;
-      }, NOTCH_UP);
-      expect(prevented).toBe(true);
+      expect(
+        await holdGlide(
+          thread.locator("[data-message-id] p").first(),
+          NOTCH_UP,
+        ),
+      ).toBe(true);
       const moved = (await y(anchor)) - start;
       expect(moved, "partway, within bottom follow").toBeGreaterThan(0);
       expect(moved).toBeLessThan(80);
