@@ -72,7 +72,13 @@ type Glide = {
   intent: number | undefined;
 };
 
-const smoothers = new WeakMap<Element, (event: WheelEvent) => boolean>();
+const targets = new WeakMap<Element, () => number | undefined>();
+
+/** Where a glide in progress over `scroller` will come to rest, which is where
+ * a native notch would already be; undefined when nothing is gliding. */
+export function glideTarget(scroller: Element) {
+  return targets.get(scroller)?.();
+}
 
 /**
  * Glides mouse-wheel notches over `scroller` until the returned cleanup.
@@ -147,6 +153,12 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
   /** Glides `event` when it is a mouse notch the scroller can move for. */
   const take = (event: WheelEvent) => {
     const mouse = fromMouse(event);
+    // Under Reduce motion a wheel goes native, and its reader intent would
+    // retire the glide before its next frame lands the rest of the notch.
+    if (reducedMotion?.matches && glide) {
+      if (!superseded(glide)) scroller.scrollTop += glide.remaining;
+      stop();
+    }
     if (
       !event.cancelable ||
       !mouse ||
@@ -199,24 +211,16 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
       return;
     take(event);
   };
-  smoothers.set(scroller, take);
+  const target = () => glide && glide.position + glide.remaining;
+  targets.set(scroller, target);
   scroller.addEventListener("wheel", wheel, { passive: false });
   scroller.ownerDocument.addEventListener("wheel", handled, { passive: true });
   return () => {
     scroller.removeEventListener("wheel", wheel);
     scroller.ownerDocument.removeEventListener("wheel", handled);
-    if (smoothers.get(scroller) === take) smoothers.delete(scroller);
+    if (targets.get(scroller) === target) targets.delete(scroller);
     stop();
   };
-}
-
-/**
- * For top-layer controls inside `scroller`, which are outside its native
- * scroll chain: glides `event` as a wheel over the scroller itself would.
- * False when the caller should scroll for it.
- */
-export function forwardWheel(scroller: Element, event: WheelEvent) {
-  return smoothers.get(scroller)?.(event) ?? false;
 }
 
 /** Smooths mouse wheels over `scroller` on Mac WebKit while the setting is on.

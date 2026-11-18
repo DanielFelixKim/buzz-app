@@ -807,9 +807,9 @@ and are asked to sign in again in Buzz.
   screen-reader dates remain.
 - **Smooth mouse-wheel scrolling**: in the Mac app and Safari, a mouse wheel
   glides through a conversation's messages and thread replies instead of
-  jumping a notch at a time. It is on by default, applies at once in every
-  window, and is set in **Settings → Appearance**. Trackpad scrolling is
-  unchanged, and Reduce motion turns it off.
+  jumping a notch at a time. It is on by default and is set in **Settings →
+  Appearance**; in the Mac app a change applies at once in every window.
+  Trackpad scrolling is unchanged, and Reduce motion turns it off.
 - **Back and Forward**: after following a channel or message link to another
   channel, Back and Forward restore the thread tab you last selected in the
   channel you left.

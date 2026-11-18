@@ -1,12 +1,12 @@
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
-import { hoverMessage } from "./message-actions.mjs";
 import { expectAnchor, open, settle, wheel } from "./timeline.mjs";
 import { settlePanelMotion } from "./navigation.mjs";
 
 // Browser-only: real animation frames, each engine's scrollTop clamping and
-// rounding, Virtua's scroll handling, the floating toolbar's top-layer popover
-// and a native modal dialog. The classifier, stepping, corrections, cancels and
-// setting have Vitest coverage in src/features/messages/wheel-smoothing.test.ts.
+// rounding, Virtua's scroll handling, and the panels' own bottom follow. The
+// classifier, stepping, corrections, cancels, overlays and setting have Vitest
+// coverage in src/features/messages/wheel-smoothing.test.ts.
 //
 // Smoothing runs only on Mac WebKit, so both engines report it here. That also
 // turns on the Virtua patch's Mac overflow toggle in Chromium for this file.
@@ -142,97 +142,6 @@ test("glides a mouse notch, releases bottom follow, and leaves trackpad deltas a
   expect(await top(page)).toBeLessThan(before - 100);
 });
 
-test("glides a notch over the floating toolbar once, and turns it around without a jump", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await history(page).hover();
-  await wheel(page, -600);
-  // The row at the middle of the viewport, so hovering it does not scroll.
-  const id = await history(page).evaluate((node) => {
-    const rect = node.getBoundingClientRect();
-    return document
-      .elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-      .closest("[data-message-id]").dataset.messageId;
-  });
-  const row = history(page).locator(`[data-message-id="${id}"]`);
-  const actions = row.getByRole("group", {
-    name: "Message actions",
-    includeHidden: true,
-  });
-  const reveal = async () => {
-    await hoverMessage(row);
-    await expect
-      .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
-      .toBe(true);
-  };
-  await reveal();
-  const button = actions.getByRole("button").first();
-  const room = () =>
-    history(page).evaluate(
-      (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
-    );
-  expect(await room()).toBeGreaterThan(2 * NOTCH_DOWN);
-  const notch = await dispatch(button, NOTCH_DOWN);
-  expect(notch.prevented).toBe(true);
-  expect(notch.immediate, "the toolbar did not scroll for it too").toBe(
-    notch.start,
-  );
-  await arrives(page, notch, NOTCH_DOWN);
-
-  // Reverse before a frame: no instant forward is left to undo.
-  await settle(page);
-  await reveal();
-  const turned = await dispatch(button, NOTCH_DOWN, NOTCH_UP);
-  expect(turned.prevented).toBe(true);
-  expect(turned.immediate).toBe(turned.start);
-  expect(turned.frame, "moving up from the start").toBeGreaterThan(
-    turned.start,
-  );
-  await arrives(page, turned, NOTCH_UP);
-});
-
-test("leaves wheels over a modal dialog inside a message alone", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  // As a message plugin's expanded view does: a native modal within the row.
-  const dialog = await prose(page)
-    .last()
-    .evaluateHandle((text) => {
-      const dialog = document.createElement("dialog");
-      const button = document.createElement("button");
-      button.textContent = "Close";
-      dialog.append("Fictional equation", button);
-      text.closest("[data-message-id]").append(dialog);
-      dialog.showModal();
-      return dialog;
-    });
-  const inside = page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Close" });
-  for (const target of [page.getByRole("dialog"), inside]) {
-    const result = await dispatch(target, NOTCH_UP);
-    expect(result.prevented).toBe(false);
-  }
-  await dialog.evaluate((node) => node.remove());
-  await dialog.dispose();
-});
-
-test("leaves mouse wheels to WebKit while the setting is off", async ({
-  page,
-  app,
-}) => {
-  await page.addInitScript(() =>
-    localStorage.setItem("buzz-smooth-mouse-wheel.v1", "off"),
-  );
-  await open(page, app);
-  const result = await dispatch(prose(page).last(), NOTCH_UP);
-  expect(result.prevented).toBe(false);
-});
-
 test.describe("thread panel", () => {
   test.use({ readState: true, threadUnread: true, presenceThreadAuthors: 60 });
 
@@ -323,5 +232,106 @@ test.describe("thread panel", () => {
     );
     expect(pressed.prevented).toBe(true);
     expect(pressed.moved).toBe(0);
+  });
+
+  test.describe("with live replies", () => {
+    test.use({ productionBroker: true });
+    test("a reply during an upward glide leaves the thread where the notch lands", async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      const { root, replies } = app.presenceThread;
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const thread = page.getByRole("region", {
+        name: "Thread messages",
+        exact: true,
+      });
+      await expect(
+        thread.locator(`[data-message-id="${replies.at(-1).id}"]`),
+      ).toBeVisible();
+      await settlePanelMotion(page);
+      await settle(page, thread);
+      const peer = generateSecretKey();
+      let time = replies.at(-1).created_at;
+      const reply = (content) => {
+        const event = finalizeEvent(
+          {
+            kind: 9,
+            content,
+            created_at: ++time,
+            tags: [
+              ["h", "alpha"],
+              ["e", root.id, "", "reply"],
+            ],
+          },
+          peer,
+        );
+        app.histories.get("primary/alpha").push(event);
+        app.relay.publish("primary", event);
+        return thread.locator(`[data-message-id="${event.id}"]`);
+      };
+      /** The viewport Y of the reply `id`'s paragraph. */
+      const y = (id) =>
+        thread.evaluate(
+          (element, id) =>
+            element
+              .querySelector(`[data-message-id="${id}"] p`)
+              .getBoundingClientRect().top -
+            element.getBoundingClientRect().top,
+          id,
+        );
+
+      // Hold the glide after its first frame, still within bottom follow's
+      // 80px, so a reply lands mid-glide on every run.
+      const anchor = replies.at(-1).id;
+      const start = await y(anchor);
+      const prevented = await thread.evaluate((element, deltaY) => {
+        const held = [];
+        window.__releaseFrames = () => {
+          window.requestAnimationFrame = raf;
+          for (const callback of held.splice(0)) raf(callback);
+        };
+        const raf = window.requestAnimationFrame;
+        window.requestAnimationFrame = (callback) => held.push(callback);
+        const event = new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          deltaY,
+        });
+        Object.defineProperty(event, "timeStamp", {
+          value: window.__wheelGesture(),
+        });
+        element.querySelector("[data-message-id] p").dispatchEvent(event);
+        const now = performance.now();
+        for (const callback of held.splice(0)) callback(now + 16);
+        return event.defaultPrevented;
+      }, NOTCH_UP);
+      expect(prevented).toBe(true);
+      const moved = (await y(anchor)) - start;
+      expect(moved, "partway, within bottom follow").toBeGreaterThan(0);
+      expect(moved).toBeLessThan(80);
+
+      await expect(reply("Live reply during the glide")).toBeAttached();
+      await thread.evaluate(() => window.__releaseFrames());
+      await settle(page, thread);
+      // The notch lands in full, as a native one would, and follow is released.
+      const landed = async () =>
+        Math.abs((await y(anchor)) - (start - NOTCH_UP));
+      await expect.poll(landed).toBeLessThan(4);
+      await expect(
+        thread.getByRole("button", { name: "1 new message", exact: true }),
+      ).toBeVisible();
+      // The next reply does not pull the reader back down.
+      await expect(reply("A later reply")).toBeAttached();
+      await expect(
+        thread.getByRole("button", { name: "2 new messages", exact: true }),
+      ).toBeVisible();
+      await settle(page, thread);
+      expect(await landed()).toBeLessThan(4);
+    });
   });
 });

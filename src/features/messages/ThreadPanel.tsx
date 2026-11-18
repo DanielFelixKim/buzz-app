@@ -61,7 +61,7 @@ import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
-import { useWheelSmoothing } from "./wheel-smoothing";
+import { glideTarget, useWheelSmoothing } from "./wheel-smoothing";
 import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -1334,8 +1334,7 @@ function ThreadMessages({
     if (jumpingToLatest.current) {
       setShowJumpToLatest(false);
     } else {
-      const bottom =
-        element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+      const bottom = nearBottom(element);
       setShowJumpToLatest(!bottom);
       if (bottom) setNewMessageCount(0);
     }
@@ -1845,9 +1844,7 @@ function ThreadMessages({
               previous.contentHeight !== element.scrollHeight)
           )
             return;
-          const bottom =
-            element.scrollHeight - element.clientHeight - element.scrollTop <
-            80;
+          const bottom = nearBottom(element);
           if (jumpingToLatest.current) return;
           captureResizePosition();
           follow.current = bottom;
@@ -2149,6 +2146,12 @@ function ThreadMessages({
       )}
     </MessageEditScope>
   );
+}
+/** Within the reach of bottom follow. A mouse-wheel glide is judged where it
+ * will come to rest, as its native notch would have landed in one frame. */
+function nearBottom(element: HTMLElement) {
+  const top = glideTarget(element) ?? element.scrollTop;
+  return element.scrollHeight - element.clientHeight - top < 80;
 }
 /** Holds the thread's area with the Buzz mark until its first page can show. */
 // How far a saved reading row has moved from its saved viewport offset. WebKit

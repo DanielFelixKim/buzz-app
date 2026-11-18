@@ -618,36 +618,13 @@ it("offers smooth mouse-wheel scrolling only on Mac WebKit, on until this device
   expect(screen.queryByRole("switch", { name })).not.toBeInTheDocument();
   view.rerender(page(true));
   expect(screen.getByRole("switch", { name })).toBeChecked();
-  await user.click(screen.getByRole("switch", { name }));
-  expect(smoothWheelPreference.read()).toBe(false);
-  expect(localStorage.getItem("buzz-smooth-mouse-wheel.v1")).toBe("off");
-  cleanup();
-  render(page(true), { wrapper: ToastProvider });
-  expect(screen.getByRole("switch", { name })).not.toBeChecked();
-  act(() => {
-    localStorage.setItem("buzz-smooth-mouse-wheel.v1", "on");
-    window.dispatchEvent(
-      new StorageEvent("storage", { key: "buzz-smooth-mouse-wheel.v1" }),
-    );
-  });
-  expect(screen.getByRole("switch", { name })).toBeChecked();
-});
-
-it("keeps an unsaved smooth-scrolling choice active and retries the same choice", async () => {
-  const user = userEvent.setup();
-  const appearance = createAppearance();
-  preferenceAppearances.push(appearance);
-  render(<AppearanceSettings appearance={appearance} smoothWheelAvailable />, {
-    wrapper: ToastProvider,
-  });
+  // A choice that can't be saved stays active, and Retry saves the same one.
   const write = vi
     .spyOn(Storage.prototype, "setItem")
     .mockImplementation(() => {
       throw new Error("unavailable");
     });
-  await user.click(
-    screen.getByRole("switch", { name: "Smooth mouse-wheel scrolling" }),
-  );
+  await user.click(screen.getByRole("switch", { name }));
   expect(smoothWheelPreference.read()).toBe(false);
   expect(await screen.findByRole("dialog")).toHaveTextContent(
     "Scrolling preference wasn’t saved",
@@ -660,6 +637,9 @@ it("keeps an unsaved smooth-scrolling choice active and retries the same choice"
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
+  cleanup();
+  render(page(true), { wrapper: ToastProvider });
+  expect(screen.getByRole("switch", { name })).not.toBeChecked();
 });
 
 it("leads search with unread until this device turns it off", async () => {

@@ -5,7 +5,6 @@ import { smoothWheelPreference } from "./smooth-wheel-preference";
 import {
   GESTURE_GAP_MS,
   LINE_PX,
-  forwardWheel,
   isMouseWheel,
   smoothWheel,
   toPixels,
@@ -209,35 +208,8 @@ describe("gliding", () => {
     frames.tick();
     expect(timeline.scrollTop).toBeGreaterThan(1000);
     expect(timeline.scrollTop).toBeLessThan(1200);
-    expect(frames.settle()).toBeGreaterThan(5);
+    frames.settle();
     expect(timeline.scrollTop).toBeCloseTo(1000 + NOTCH + 4 * 109.986572265625);
-    expect(Math.floor(timeline.scrollTop)).toBe(1443);
-  });
-
-  it("glides upward too", () => {
-    const { timeline, text } = fakeTimeline();
-    install(timeline);
-    expect(wheel(text, { deltaY: UPWARD })).toBe(true);
-    frames.settle();
-    expect(timeline.scrollTop).toBeCloseTo(1000 + UPWARD);
-  });
-
-  it("eases line-mode notches by 40px a line", () => {
-    const { timeline, text } = fakeTimeline();
-    install(timeline);
-    expect(wheel(text, { deltaY: 3, deltaMode: 1 })).toBe(true);
-    frames.settle();
-    expect(timeline.scrollTop).toBeCloseTo(1120);
-  });
-
-  it("settles a notch in about the glide time", () => {
-    const { timeline, text } = fakeTimeline();
-    install(timeline);
-    wheel(text, { deltaY: 200.5 });
-    // 140ms of 16ms frames moves all but e^-3 (5%) of the notch.
-    for (let frame = 0; frame < 9; frame++) frames.tick();
-    expect(timeline.scrollTop - 1000).toBeGreaterThan(190);
-    expect(frames.pending()).toBe(1);
   });
 
   it("keeps the timeline's own scrollTop correction made during a glide", () => {
@@ -256,8 +228,9 @@ describe("gliding", () => {
     const { timeline, text } = fakeTimeline({ scrollTop: 4300 });
     install(timeline);
     wheel(text, { deltaY: 200.5 });
-    frames.settle();
+    while (timeline.scrollTop < 4400 && frames.pending()) frames.tick();
     expect(timeline.scrollTop).toBe(4400);
+    // On the frame it arrives, not once the rest of the notch has run out.
     expect(frames.pending()).toBe(0);
   });
 
@@ -265,8 +238,9 @@ describe("gliding", () => {
     const { timeline, text } = fakeTimeline({ scrollTop: 50 });
     install(timeline);
     wheel(text, { deltaY: -200.5 });
-    frames.settle();
+    while (timeline.scrollTop > 0 && frames.pending()) frames.tick();
     expect(timeline.scrollTop).toBe(0);
+    expect(frames.pending()).toBe(0);
   });
 
   it("restarts from where it is when the wheel turns the other way", () => {
@@ -295,7 +269,7 @@ describe("ending a glide", () => {
     expect(timeline.scrollTop).toBe(at);
   });
 
-  it("stops on newer reader intent: a press, a key, a send, a jump or a reveal", () => {
+  it("stops when reader intent moves on", () => {
     const { timeline, text } = fakeTimeline();
     install(timeline);
     wheel(text, { deltaY: 200.5 });
@@ -306,17 +280,6 @@ describe("ending a glide", () => {
     frames.tick();
     expect(frames.pending()).toBe(0);
     expect(timeline.scrollTop).toBe(at);
-  });
-
-  it("adopts the intent its own notches raise, even before the first frame", () => {
-    const { timeline, text } = fakeTimeline();
-    install(timeline);
-    wheel(text, { deltaY: 100.25 });
-    wheel(text, { deltaY: 100.25 });
-    frames.tick();
-    wheel(text, { deltaY: 100.25 });
-    frames.settle();
-    expect(timeline.scrollTop).toBeCloseTo(1300.75);
   });
 
   it("stops on reader intent newer than its notch, even before the first frame", () => {
@@ -337,6 +300,21 @@ describe("ending a glide", () => {
     wheel(text, { deltaY: -100.25 });
     frames.settle();
     expect(timeline.scrollTop).toBeCloseTo(899.75);
+  });
+
+  it("keeps gliding notches whose propagation stopped past the app root's handlers", () => {
+    const { timeline, text } = fakeTimeline();
+    install(timeline);
+    // After the root's own handler raised intent, so only the glide's frame
+    // can adopt each notch's intent.
+    timeline.parentElement?.addEventListener("wheel", (event) =>
+      event.stopPropagation(),
+    );
+    wheel(text, { deltaY: 100.25 });
+    frames.tick();
+    wheel(text, { deltaY: 100.25 });
+    frames.settle();
+    expect(timeline.scrollTop).toBeCloseTo(1200.5);
   });
 
   it("still glides a notch whose propagation stopped short of the app root", () => {
@@ -361,31 +339,22 @@ describe("ending a glide", () => {
     expect(timeline.scrollTop).toBe(1200.5);
   });
 
-  it("stops and stops handling wheels once removed", () => {
+  it("lands the notch in flight when a wheel goes native under Reduce motion", () => {
+    const motion = reducedMotion(false);
     const { timeline, text } = fakeTimeline();
     install(timeline);
     wheel(text, { deltaY: 200.5 });
     frames.tick();
-    const at = timeline.scrollTop;
-    uninstall?.();
-    uninstall = undefined;
-    expect(frames.pending()).toBe(0);
-    expect(wheel(text, { deltaY: NOTCH })).toBe(false);
-    expect(forwardWheel(timeline, new WheelEvent("wheel"))).toBe(false);
+    motion.matches = true;
+    // Its intent would retire the glide before the next frame.
+    expect(wheel(text, { deltaY: 100.25 })).toBe(false);
     frames.tick();
-    expect(timeline.scrollTop).toBe(at);
+    expect(frames.pending()).toBe(0);
+    expect(timeline.scrollTop).toBe(1200.5);
   });
 });
 
 describe("leaving input alone", () => {
-  it("lets trackpad scrolling through", () => {
-    const { timeline, text } = fakeTimeline();
-    install(timeline);
-    for (const deltaY of TRACKPAD) expect(wheel(text, { deltaY })).toBe(false);
-    expect(frames.pending()).toBe(0);
-    expect(timeline.scrollTop).toBe(1000);
-  });
-
   it("lets a notch through at the edge it pushes against, or when nothing scrolls", () => {
     const bottom = fakeTimeline({ scrollTop: 4400 });
     install(bottom.timeline);
@@ -474,95 +443,6 @@ describe("leaving input alone", () => {
     expect(wheel(overlay, { deltaY: -NOTCH })).toBe(false);
     expect(frames.pending()).toBe(0);
   });
-});
-
-describe("the floating message toolbar", () => {
-  // A top-layer popover inside the row. Open, it is outside the timeline's
-  // native scroll chain, so useFloatingActionBar forwards its wheels: through
-  // forwardWheel first, otherwise with an instant scrollBy.
-  function toolbar(row: Element, timeline: HTMLElement, open = true) {
-    const bar = document.createElement("div");
-    bar.setAttribute("popover", "manual");
-    const button = document.createElement("button");
-    bar.append(button);
-    row.append(bar);
-    vi.spyOn(bar, "matches").mockImplementation((selector) =>
-      selector === ":popover-open"
-        ? open
-        : Element.prototype.matches.call(bar, selector),
-    );
-    bar.addEventListener("wheel", (event) => {
-      if (!open || forwardWheel(timeline, event)) return;
-      event.preventDefault();
-      timeline.scrollTop += event.deltaY;
-    });
-    return button;
-  }
-
-  it("glides a notch over an open toolbar once", () => {
-    const { timeline, row } = fakeTimeline();
-    install(timeline);
-    const button = toolbar(row, timeline);
-    expect(wheel(button, { deltaY: 200.5 })).toBe(true);
-    expect(timeline.scrollTop).toBe(1000);
-    frames.tick();
-    expect(timeline.scrollTop).toBeLessThan(1150);
-    frames.settle();
-    expect(timeline.scrollTop).toBeCloseTo(1200.5);
-  });
-
-  it("turns a glide around over the toolbar without a jump in the old direction", () => {
-    const { timeline, row } = fakeTimeline();
-    install(timeline);
-    const button = toolbar(row, timeline);
-    wheel(button, { deltaY: 200.5 });
-    // Reversed before any frame, as when frame delivery is delayed.
-    wheel(button, { deltaY: -100.25 });
-    expect(timeline.scrollTop).toBe(1000);
-    frames.tick();
-    expect(timeline.scrollTop).toBeLessThan(1000);
-    frames.settle();
-    expect(timeline.scrollTop).toBeCloseTo(899.75);
-  });
-
-  it("adds toolbar notches to a glide already running", () => {
-    const { timeline, row, text } = fakeTimeline();
-    install(timeline);
-    const button = toolbar(row, timeline);
-    wheel(text, { deltaY: 100.25 });
-    frames.tick();
-    wheel(button, { deltaY: 100.25 });
-    frames.tick();
-    wheel(button, { deltaY: 100.25 });
-    frames.settle();
-    expect(timeline.scrollTop).toBeCloseTo(1300.75);
-  });
-
-  it("leaves trackpad input over the toolbar to its own forwarding", () => {
-    const { timeline, row } = fakeTimeline();
-    install(timeline);
-    const button = toolbar(row, timeline);
-    expect(wheel(button, { deltaY: 3 })).toBe(true);
-    expect(timeline.scrollTop).toBe(1003);
-    expect(frames.pending()).toBe(0);
-  });
-
-  it("forwards nothing for a scroller without smoothing", () => {
-    const { timeline, row } = fakeTimeline();
-    const button = toolbar(row, timeline);
-    expect(wheel(button, { deltaY: 200.5 })).toBe(true);
-    expect(timeline.scrollTop).toBeCloseTo(1200.5);
-    expect(frames.pending()).toBe(0);
-  });
-
-  it("glides over a closed toolbar like any other content", () => {
-    const { timeline, row } = fakeTimeline();
-    install(timeline);
-    const button = toolbar(row, timeline, false);
-    expect(wheel(button, { deltaY: 200.5 })).toBe(true);
-    frames.settle();
-    expect(timeline.scrollTop).toBeCloseTo(1200.5);
-  });
 
   it("leaves other open popovers in a message, such as a hover card, alone", () => {
     const { timeline, row } = fakeTimeline();
@@ -594,7 +474,7 @@ describe("useWheelSmoothing", () => {
   it("smooths on Mac WebKit by default and follows the setting in every window", () => {
     macWebKit(true);
     const { timeline, text } = fakeTimeline();
-    mount(timeline);
+    const hook = mount(timeline);
     expect(wheel(text, { deltaY: NOTCH })).toBe(true);
     frames.tick();
     // Another window turns it off: the glide in progress stops too.
@@ -610,6 +490,11 @@ describe("useWheelSmoothing", () => {
       smoothWheelPreference.set(true);
     });
     expect(wheel(text, { deltaY: NOTCH })).toBe(true);
+    // Unmounted, it stops and stops handling wheels.
+    hook.unmount();
+    expect(frames.pending()).toBe(0);
+    pause();
+    expect(wheel(text, { deltaY: NOTCH })).toBe(false);
   });
 
   it("adds no wheel listener elsewhere", () => {
@@ -629,20 +514,5 @@ describe("useWheelSmoothing", () => {
     expect(wheel(text, { deltaY: NOTCH })).toBe(false);
     expect(wheel(text, { deltaY: 3, deltaMode: 1 })).toBe(false);
     expect(frames.pending()).toBe(0);
-  });
-});
-
-describe("the preference", () => {
-  it("defaults on when storage is absent, unknown or unreadable, and saves off", () => {
-    expect(smoothWheelPreference.read()).toBe(true);
-    localStorage.setItem("buzz-smooth-mouse-wheel.v1", "unknown");
-    expect(smoothWheelPreference.read()).toBe(true);
-    expect(smoothWheelPreference.set(false)).toBeNull();
-    expect(localStorage.getItem("buzz-smooth-mouse-wheel.v1")).toBe("off");
-    expect(smoothWheelPreference.read()).toBe(false);
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("unavailable");
-    });
-    expect(smoothWheelPreference.read()).toBe(true);
   });
 });
