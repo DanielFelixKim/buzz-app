@@ -250,6 +250,27 @@ describe("gliding", () => {
     expect(timeline.scrollTop).toBeCloseTo(1200.5);
   });
 
+  it("keeps its speed through notches that arrive in the same frame", () => {
+    // Free-spinning wheels and fast displays deliver several notches a frame.
+    const stepAfter = (notches: number) => {
+      const { timeline, text } = fakeTimeline();
+      install(timeline);
+      wheel(text, { deltaY: 100.25 });
+      for (let frame = 0; frame < 8; frame++) frames.tick(8);
+      const last = timeline.scrollTop;
+      for (let notch = 0; notch < notches; notch++)
+        wheel(text, { deltaY: 100.25 });
+      frames.tick(8);
+      const step = timeline.scrollTop - last;
+      uninstall?.();
+      uninstall = undefined;
+      return step;
+    };
+    // A farther target never starts slower.
+    const one = stepAfter(1);
+    expect(stepAfter(2)).toBeGreaterThanOrEqual(one);
+  });
+
   it("never passes a small notch added at full speed", () => {
     const { timeline, text } = fakeTimeline();
     install(timeline);

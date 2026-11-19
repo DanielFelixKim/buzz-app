@@ -105,6 +105,8 @@ type Glide = {
   written: number;
   /** The last frame's time. */
   last: number | undefined;
+  /** How far the glide moved in the last millisecond before that frame. */
+  speed: number;
   frame: number;
   /** The scroller's reader intent once this glide's latest notch was handled. */
   intent: number | undefined;
@@ -120,8 +122,7 @@ function positionAt(glide: Glide, time: number) {
  * at the glide's speed then, so a run of notches never slows between them. */
 function retarget(glide: Glide, to: number) {
   const now = glide.last;
-  const speed =
-    now === undefined ? 0 : positionAt(glide, now) - positionAt(glide, now - 1);
+  const speed = glide.speed;
   const from = glide.position;
   const distance = to - from;
   const duration = glideDuration(distance);
@@ -201,6 +202,8 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
     current.last = now;
     const progress = (now - current.start) / current.duration;
     current.position = positionAt(current, now);
+    // Measured here, so a second notch in the same frame keeps it too.
+    current.speed = current.position - positionAt(current, now - 1);
     scroller.scrollTop = current.position;
     current.written = scroller.scrollTop;
     if (progress >= 1) {
@@ -255,6 +258,7 @@ export function smoothWheel(scroller: HTMLElement, intent: () => number) {
         position: top,
         written: top,
         last: undefined,
+        speed: 0,
         frame: requestAnimationFrame(step),
         intent: undefined,
       };
