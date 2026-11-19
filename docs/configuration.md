@@ -137,16 +137,19 @@ object with these keys (`launcher_client` is optional):
 The descriptor is public routing data with no credential. Only
 `launcher_client` has a default. Both the frontend build and the
 plugin-manager native build read it from the process environment only, never
-from `.env` files. Only the frontend (Vite) build validates all of it, against
-the shared cases in `src/features/agents/gateway/descriptor-vectors.json`. The
-native build checks the version, the keys (with `launcher_client` optional)
-and the gateway origin, which is all its network grant needs, and nothing
-more. An invalid value, including
+from `.env` files. Both builds validate the whole descriptor against
+the shared cases in `src/features/agents/gateway/descriptor-vectors.json`.
+The native build compiles its canonical form, including the default
+`launcher_client`. An invalid value, including
 a version 1 descriptor, fails the build that rejects it with a fixed message
 that never echoes it. A descriptor that is still invalid at runtime fails
 open: no harness gets an upstream, so turns run unchanged, with no notice.
 Leave it unset or blank (the release default) to keep every membership on its
 existing behavior.
+
+Native goose forwarding removes `Authorization` before sending discovery or
+inference requests to the gateway. The gateway must authenticate callers
+separately; Buzz context headers supply attribution, not authentication.
 
 With it set, a local agent membership in a listed community routes through the
 gateway only when the relay's NIP-11 `read_state_snapshot.community_id` is
@@ -251,7 +254,9 @@ With it set:
 
 On a config channel, the mark syncs with the agent's settings: its
 `buzz.agent.settings` revision (kind 45010) carries `"preset": "recommended"`
-beside `settings`, not inside it, and leaves it out otherwise. The revision also carries a matching `["preset", "recommended"]` tag, so agents on Automatic can be counted from tags alone. Versions without
+beside `settings`, not inside it, and leaves it out otherwise. The revision also carries a matching `["preset", "recommended"]` tag, so agents on Automatic can be counted from tags alone. A bundled plugin's
+note on the agent (`pluginNotes`, see plugin-architecture.md) sits beside it
+too, and a tagged note adds a `["note", pluginId, tag]` tag. Versions without
 this feature ignore it there and keep it when they edit (NIP-AP "Editing"), so
 their strict settings check never rejects it. The synced revision decides on
 every device: one without the mark takes the agent off Recommended, and one
@@ -260,6 +265,16 @@ mark. Synced settings carry the agent's own model settings blank or not at all
 while it is on Recommended. Without a config channel, the mark is kept in the
 agent's local settings. Which harness an agent runs on is the `runtime` tag of
 its kind 30177 record.
+
+A bundled plugin, such as one in an organization's own build, can replace the
+setup for a launch with `ctx.agents.recommend(source)`,
+for example to choose candidates per person or team from the organization's
+own services; see [Plugin architecture](plugin-architecture.md). Its answer
+has this setting's object shape and is checked the same way. Buzz waits for it
+at most five seconds from start-up, and only before creating an agent or
+finding what one runs on. No answer, a failure, an invalid setup, or a late one
+keeps this setting's for that launch, so set `BUZZ_RECOMMENDED_AGENT` too, as
+the fallback.
 
 ## Mobile app links
 
