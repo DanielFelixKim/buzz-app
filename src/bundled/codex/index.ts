@@ -3,16 +3,17 @@ import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
-import { ownerReads } from "../../features/agents/reads";
+import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, defaults, validWorkspace } from "./config";
 import { codexRun, TYPE_ID } from "./run";
 import { CodexRuntime } from "./runtime";
-import { CodexSetup, reviewHome, withScript } from "./setup";
+import { CodexSetup, explainTurn, reviewHome, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
 import { readUsage } from "./usage";
 import { reviewModel } from "./security-review";
+import { followRecommended } from "../../features/agents/recommended";
 import { AppServer, listModels } from "./rpc";
 /** How often Buzz's copy of Codex looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
@@ -33,6 +34,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     start,
     ctx.agents.storage,
     setup,
+    {
+      request: (input) => ctx.host.request(input),
+      ...(ctx.host.requestBytes
+        ? { requestBytes: ctx.host.requestBytes.bind(ctx.host) }
+        : {}),
+    },
   );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   const runtime = new CodexRuntime(
@@ -70,7 +77,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     undefined,
     ctx.host,
     (pubkey) => ctx.agents.handle(pubkey),
+    ctx.host.resolveDirectory?.bind(ctx.host),
+    (agent, signal, channelId) =>
+      readyOwnerReads(ctx.agents.relay(agent.key), agent, signal, channelId),
   );
+  // Failed turns' notices link to where Codex signs in.
+  runtime.explain = (notice) =>
+    explainTurn(
+      notice,
+      `buzz://settings?section=agents&provider=${encodeURIComponent(typeKey)}`,
+    );
   ctx.agentProtection.registerModels({
     label: "Codex",
     models: async () => {
@@ -152,6 +168,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   ctx.agents.register<Config>({
     id: TYPE_ID,
+    conversationFolders: true,
     voice: async (seat) => {
       if (typeof RTCPeerConnection !== "function")
         throw new Error("Voice is unsupported on this device");
@@ -172,6 +189,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
+    readModelSettings: (saved, context) =>
+      providerController.readModelSettings(saved, context),
     Create,
     CreateModel,
     createModelReportsReadiness: true,
@@ -181,10 +200,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
       (!source.provider || source.provider === "openai")
         ? { ...defaults, model: source.model }
         : undefined,
-    exportShared: (saved) => ({ runtime: "codex", model: config(saved).model }),
+    exportShared: (saved) => ({
+      runtime: "codex",
+      model: followRecommended(
+        saved,
+        config(saved),
+        providerController.recommended(),
+      ).model,
+    }),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
+      scope: carry.sessionScope ?? saved.scope,
       // Codex runs only in an absolute or home workspace.
       workspace:
         carry.workspace && validWorkspace(carry.workspace)
@@ -192,14 +219,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
           : saved.workspace,
     }),
     carry: (saved) => {
-      const { instructions, workspace } = config(saved);
+      const { instructions, workspace, scope } = config(saved);
       return {
         ...(instructions.trim() && { instructions }),
         ...(workspace !== defaults.workspace && { workspace }),
+        ...(scope !== defaults.scope && { sessionScope: scope }),
       };
     },
     describeMigration: (saved) => {
-      const { model, effort, scope } = config(saved);
+      const { model, effort, voice } = config(saved);
       return [
         { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
         {
@@ -207,16 +235,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
           label: "Thinking",
           isOverride: Boolean(effort),
         },
-        {
-          id: "sessions",
-          label: "Sessions",
-          isOverride: scope !== defaults.scope,
-          unchangedKey: scope,
-        },
+        { id: "voice", label: "Voice", isOverride: Boolean(voice) },
       ];
     },
     migrationWarning: "Any commands Codex left running will stop.",
-    summary: (agent) => config(agent.config).model || "Codex",
+    summary: (agent) =>
+      followRecommended(
+        agent.config,
+        config(agent.config),
+        providerController.recommended(),
+      ).model || "Codex",
+    recommends: (candidate) => providerController.recommends(candidate),
     ...(spawn &&
       readFile && {
         usage: async (agent, { since, signal }) => {
@@ -239,10 +268,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         );
         return runtime
           .conversations(key)
-          .map(({ key, channelId, root, at }) => {
+          .map(({ key, channelId, root, community, at }) => {
             const status = views.get(key);
             return {
               channelId,
+              ...(community ? { community } : {}),
               ...(root && { root }),
               ...(at !== undefined && { at }),
               ...(status && { status }),

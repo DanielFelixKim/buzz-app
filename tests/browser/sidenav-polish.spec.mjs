@@ -1,4 +1,5 @@
 import {
+  activityRow,
   closeSettings,
   openPage,
   openSettings,
@@ -10,6 +11,7 @@ import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 
 import { open, wheel } from "./timeline.mjs";
+import { pauseClock } from "./clock.mjs";
 
 // These layout/navigation journeys exercise the opt-in Bestie surface.
 test.beforeEach(async ({ page }) => {
@@ -57,7 +59,7 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
     };
   });
   expect(geometry).toEqual({
-    rightInset: 2,
+    rightInset: 0,
     clipped: false,
     paddingTop: 8,
   });
@@ -72,7 +74,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const alpha = sidebar.getByRole("button", { name: "Alpha", exact: true });
-  const destinations = ["Activity", "Bestie"].map((name) =>
+  const destinations = ["Bestie", "Reminders"].map((name) =>
     page
       .getByRole("navigation", { name: "Apps dock" })
       .getByRole("tab", { name, exact: true }),
@@ -116,8 +118,9 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     });
     expect(visual.scrollbarWidth).toBe(visual.offsetWidth - visual.clientWidth);
     expect(visual.leftContentInset).toBe(0);
-    expect(visual.rightContentInset).toBe(0);
-    expect(visual.fillInset).toBe(10);
+    const unusedGutter = Math.max(0, 6 - visual.scrollbarWidth);
+    expect(visual.rightContentInset).toBe(unusedGutter);
+    expect(visual.fillInset).toBe(4 + unusedGutter);
     expect(Number.parseFloat(visual.radius)).toBeGreaterThan(0);
     expect(visual.overflow).toBe("visible");
   };
@@ -564,6 +567,50 @@ test("shell toggle restores the Messages sidebar", async ({ page, app }) => {
   await shellNavigation.evaluate((node) => node.removeAttribute("aria-hidden"));
 });
 
+// Native activation must survive a decorative artwork swap during a held press.
+// jsdom cannot establish the browser's pointerdown/pointerup click targeting.
+test("Bestie stays clickable while its invitation artwork rotates", async ({
+  page,
+  app,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.clock.install();
+  await open(page, app);
+  const dock = page.getByRole("navigation", { name: "Apps dock" });
+  const bestie = dock.getByRole("tab", {
+    name: "Create an agent",
+    exact: true,
+  });
+  const image = bestie.locator("img");
+  await expect
+    .poll(() => image.evaluate((element) => element.naturalWidth))
+    .toBeGreaterThan(0);
+  const source = await image.getAttribute("src");
+  const bounds = await image.boundingBox();
+  if (!bounds) throw new Error("Missing Bestie artwork bounds");
+  await pauseClock(page);
+  await page.mouse.move(
+    bounds.x + bounds.width / 2,
+    bounds.y + bounds.height / 2,
+  );
+  await page.mouse.down();
+  try {
+    await page.clock.runFor(5_000);
+    await expect(image).not.toHaveAttribute("src", source);
+  } finally {
+    await page.mouse.up();
+    await page.clock.resume();
+  }
+  await expect(bestie).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("region", { name: "Bestie", exact: true }),
+  ).toBeVisible();
+  await dock.getByRole("tab", { name: "Messages", exact: true }).click();
+  await bestie.focus();
+  await page.keyboard.press("Enter");
+  await expect(bestie).toHaveAttribute("aria-selected", "true");
+});
+
 // A real grid/overlay measurement is needed: DOM presence misses implicit columns.
 // Inbox and Bestie leave companion placement to the shell frame, unlike Messages.
 test.extend({ companionFixture: true })(
@@ -613,7 +660,18 @@ test.extend({ companionFixture: true })(
       await sidebar.getByRole("button", { name, exact: true }).click();
     };
     const openPage = async (name) => {
-      await pages.getByRole("tab", { name, exact: true }).click();
+      if (name === "Activity") {
+        // Activity is a row at the top of the Messages sidebar.
+        await pages.getByRole("tab", { name: "Messages", exact: true }).click();
+        await showNavigation();
+        await activityRow(page).click();
+      } else
+        await pages
+          .getByRole("tab", {
+            name: name === "Bestie" ? "Create an agent" : name,
+            exact: true,
+          })
+          .click();
       const body = page.getByRole("region", { name, exact: true });
       await expect(
         name === "Activity"
@@ -804,9 +862,7 @@ test("non-ready sidebar keeps Retry reachable while dock pages remain available"
   });
   await expect(status).toBeAttached();
   await scrollToBottom(status);
-  const inbox = page
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Activity", exact: true });
+  const inbox = activityRow(page);
   await inbox.scrollIntoViewIfNeeded();
   await expect(inbox).toBeInViewport();
   await inbox.click();
@@ -816,7 +872,7 @@ test("non-ready sidebar keeps Retry reachable while dock pages remain available"
 });
 
 // Pixel positions across two sidebar states need a real layout engine.
-test("Personal space preserves scope control and global-row geometry", async ({
+test("Personal space preserves the global sidebar row geometry", async ({
   page,
   app,
 }) => {
@@ -829,16 +885,19 @@ test("Personal space preserves scope control and global-row geometry", async ({
   const geometry = () =>
     sidebar.evaluate((frame) => {
       const bounds = frame.getBoundingClientRect();
-      const scope = frame.querySelector('[aria-label="Navigation scope"]');
       const rows = frame
         .querySelector('[aria-label="Pages"]')
         .querySelectorAll('[data-variant="row"]');
-      return [scope, ...rows].map((element) => {
+      // In a community, page rows sit under the orderable Plugins heading,
+      // so compare their tops relative to the first row.
+      const first = rows[0].getBoundingClientRect().top;
+      return [...rows].map((element) => {
         const box = element.getBoundingClientRect();
         return {
           left: box.left - bounds.left,
-          top: box.top - bounds.top,
+          top: box.top - first,
           width: box.width,
+          height: box.height,
         };
       });
     });

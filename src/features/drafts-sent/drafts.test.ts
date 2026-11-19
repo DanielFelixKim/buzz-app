@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   attachmentDraft,
   attachmentDraftCount,
 } from "../../features/messages/attachment-draft";
-import { viewRevision } from "../../shared/view-state";
-import { clearDraft, readDrafts } from "./drafts";
+import { viewRevision, writeView } from "../../shared/view-state";
+import { clearDraft, readDrafts, rereadDraft, useDrafts } from "./drafts";
 
 const viewer = "a".repeat(64);
 const root = "b".repeat(64);
@@ -153,6 +154,61 @@ it("remembers when drafts change, without storing their text", () => {
   expect(localStorage.getItem(activity[0] ?? "")).not.toContain("draft:dm");
 });
 
+it("re-reads one edited draft exactly as a full read would", () => {
+  saved("draft:team", "Older draft");
+  saved("draft:dm", { text: "Second" });
+  const before = readDrafts(session, NOW);
+  saved("draft:team", "Older draft, edited");
+  const next = rereadDraft(session, before, "draft:team", NOW + 60);
+  const activity = Object.fromEntries(Object.entries(localStorage));
+  expect(next).toEqual(readDrafts(session, NOW + 60));
+  expect(Object.fromEntries(Object.entries(localStorage))).toEqual(activity);
+  // Changes that can add, drop or hide a draft need the full read.
+  saved("draft:team", " ");
+  expect(rereadDraft(session, before, "draft:team", NOW)).toBeUndefined();
+  saved("draft:new", "New");
+  expect(rereadDraft(session, before, "draft:new", NOW)).toBeUndefined();
+  expect(
+    rereadDraft(session, { ...before, limited: true }, "draft:dm", NOW),
+  ).toBeUndefined();
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([scope, "draft:dm"])}`,
+    "{not json",
+  );
+  expect(rereadDraft(session, before, "draft:dm", NOW)).toBeUndefined();
+  // A full read re-stamps rows whose times the record lost; so must this.
+  saved("draft:dm", { text: "Second" });
+  saved("draft:team", "Older draft");
+  const fresh = readDrafts(session, NOW);
+  localStorage.removeItem(`buzz-drafts-sent-activity.v1:${scope}`);
+  saved("draft:team", "Older draft, again");
+  expect(rereadDraft(session, fresh, "draft:team", NOW + 60)).toBeUndefined();
+  // ...and prunes records of drafts it no longer lists.
+  const stamped = readDrafts(session, NOW);
+  const record = `buzz-drafts-sent-activity.v1:${scope}`;
+  localStorage.setItem(
+    record,
+    JSON.stringify({
+      ...JSON.parse(localStorage.getItem(record) ?? "{}"),
+      "draft:gone": ["x", NOW],
+    }),
+  );
+  expect(rereadDraft(session, stamped, "draft:team", NOW)).toBeUndefined();
+});
+
+it("re-reads only the edited draft on a keystroke", () => {
+  saved("draft:team", { text: "Older draft" });
+  const { result } = renderHook(() => useDrafts(session));
+  const scans = vi.spyOn(Storage.prototype, "key");
+  act(() => void writeView(scope, "draft:team", { text: "Older draft!" }));
+  expect(scans).not.toHaveBeenCalled();
+  expect(result.current.entries.map((entry) => entry.text)).toEqual([
+    "Older draft!",
+  ]);
+  act(() => void writeView(scope, "draft:dm", { text: "New" }));
+  expect(result.current.entries).toHaveLength(2);
+});
+
 it("clears one draft's text and files, and keeps both when storage can't forget it", () => {
   const files = {
     scope,
@@ -173,6 +229,7 @@ it("clears one draft's text and files, and keeps both when storage can't forget 
   saved(`draft:team:thread:${root}`, { text: "Thread caption" });
   attach("draft:team");
   attach(`draft:team:thread:${root}`);
+  writeView(scope, "draft:team:files", [{ name: "notes.txt" }]);
 
   const remove = vi
     .spyOn(Storage.prototype, "removeItem")
@@ -185,6 +242,30 @@ it("clears one draft's text and files, and keeps both when storage can't forget 
   clearDraft(files, "draft:team");
   expect(count("draft:team")).toBe(0);
   expect(viewRevision(scope, "draft:team")).toBeNull();
+  expect(viewRevision(scope, "draft:team:files")).toBeNull();
   expect(count(`draft:team:thread:${root}`)).toBe(1);
   expect(viewRevision(scope, `draft:team:thread:${root}`)).not.toBeNull();
+});
+
+it("labels forward-only drafts and tracks locator changes in full and incremental reads", () => {
+  const key = "draft:team";
+  const forward = {
+    version: 1,
+    origin: "https://demo.invalid",
+    channelId: "source",
+    id: "c".repeat(64),
+  };
+  saved(key, { text: "", forward });
+  const before = readDrafts(session, NOW);
+  expect(before.entries[0]).toMatchObject({
+    text: "Forwarded message",
+    placeholder: true,
+    createdAt: NOW,
+  });
+  expect(readDrafts(session, NOW + 10)).toEqual(before);
+  saved(key, { text: "", forward: { ...forward, id: "d".repeat(64) } });
+  const next = rereadDraft(session, before, key, NOW + 60);
+  expect(next?.entries[0]?.signature).not.toBe(before.entries[0]?.signature);
+  expect(next?.entries[0]?.createdAt).toBe(NOW + 60);
+  expect(next).toEqual(readDrafts(session, NOW + 60));
 });

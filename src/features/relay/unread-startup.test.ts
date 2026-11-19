@@ -82,6 +82,7 @@ function setup(count = 1, snapshot = false) {
     {
       readStateFloor: () => 0,
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         async update(change) {
           journal = readJournal(change(journal), viewer.pubkey);
           return journal;
@@ -843,7 +844,7 @@ it.each(["clear", "dispose", "revoke", "join"])(
     else h.receive([roster(h.relay, "other", [], 20)]);
     held.release();
     await repair;
-    if (boundary === "clear" || boundary === "dispose") {
+    if (boundary === "dispose") {
       expect(batches).toHaveLength(1);
       expect(h.snapshot().observedCount).toBeNull();
       return;
@@ -851,11 +852,17 @@ it.each(["clear", "dispose", "revoke", "join"])(
     // The abandoned read starts over against the current membership.
     await vi.waitFor(() => expect(batches).toHaveLength(2));
     expect(h.snapshot().observedCount).toBeNull();
+    // A cleared cache keeps membership, so the restart reads the first batch
+    // again rather than the abandoned read's later chunk.
+    if (boundary === "clear") expect(batches[1]).toEqual(batches[0]);
     fresh.release();
     await h.session.unread.ensure();
     const reread = batches.slice(1).flat();
     if (boundary === "join") {
       expect(reread).toContain("new-room");
+      expect(h.snapshot().observedCount).toBe(1);
+    } else if (boundary === "clear") {
+      expect(reread).toEqual([...h.ids].sort());
       expect(h.snapshot().observedCount).toBe(1);
     } else {
       expect(reread).toHaveLength(128);
@@ -1089,6 +1096,9 @@ function tickReads(h: ReturnType<typeof setup>) {
   };
 }
 
+/** One message larger than the whole evidence window: eviction cannot make room. */
+const OVERSIZED = "x".repeat(9 * 1024 * 1024);
+
 it("an evidence overflow is repaired on the next recovery tick", async () => {
   vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
   try {
@@ -1109,14 +1119,15 @@ it("an evidence overflow is repaired on the next recovery tick", async () => {
     await vi.waitFor(() =>
       expect(tickReads(h)).toEqual({ evidence: 2, snapshots: 2 }),
     );
-    h.receive(
-      Array.from({ length: 19 }, (_, i) =>
-        message(h.peer, "other", "x".repeat(450000), i + 20),
-      ),
-    );
+    await vi.waitFor(() => expect(h.snapshot().sampled).toBe(true));
+    h.receive([message(h.peer, "other", OVERSIZED, 20)]);
     expect(h.snapshot()).toMatchObject({
       error: "Unread observation capacity reached; refresh available",
     });
+    // The overflow emptied the sample; live evidence after it is not one.
+    h.receive([message(h.peer, "other", "after the overflow", 40)]);
+    expect(h.snapshot()).toMatchObject({ observedCount: 1 });
+    expect(h.snapshot().sampled).toBeUndefined();
     const before = tickReads(h).evidence;
     vi.setSystemTime(Date.now() + 60_000);
     h.recover();
@@ -1124,6 +1135,75 @@ it("an evidence overflow is repaired on the next recovery tick", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("a channel snapshot is sampling only while a repair that can sample it is owed or reading", async () => {
+  const h = setup();
+  let fail = true;
+  let gate: Promise<void> | undefined;
+  h.query.mockImplementation(async (filters) => {
+    if (filters[0]?.kinds?.includes(39002))
+      return [
+        roster(h.relay, "other", [h.viewer.pubkey], 10),
+        metadata(h.relay, "other", "other", 10),
+      ];
+    if (!filters[0]?.kinds?.includes(9)) return [];
+    await gate;
+    if (fail) throw new Error("Transient evidence failure");
+    return [h.row];
+  });
+  // Live evidence before anything asked: `ensure` would start the repair.
+  h.receive([message(h.peer, "other", "before any repair", 12)]);
+  expect(h.snapshot()).toMatchObject({
+    coverage: "observed",
+    sampling: true,
+  });
+
+  // The first repair fails. Live traffic marks the evidence observed again
+  // but samples nothing, and no repair is reading until the recovery tick.
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    freshness: "stale",
+    error: "Transient evidence failure",
+  });
+  expect(h.snapshot().sampling).toBeUndefined();
+  h.receive([message(h.peer, "other", "after the failure", 13)]);
+  expect(h.snapshot()).toMatchObject({
+    freshness: "observed",
+    error: "Transient evidence failure",
+  });
+  expect(h.snapshot().sampled).toBeUndefined();
+  expect(h.snapshot().sampling).toBeUndefined();
+
+  // A retry is sampling while it reads, and sampled once it returns.
+  fail = false;
+  const retry = deferred();
+  gate = retry.promise;
+  const reads = h.query.mock.calls.length;
+  const repair = h.session.unread.refresh();
+  await vi.waitFor(() =>
+    expect(
+      h.query.mock.calls
+        .slice(reads)
+        .some(([filters]) => filters[0]?.include_aux),
+    ).toBe(true),
+  );
+  expect(h.snapshot().sampling).toBe(true);
+  retry.release();
+  await repair;
+  expect(h.snapshot()).toMatchObject({ sampled: true, freshness: "observed" });
+  expect(h.snapshot().sampling).toBeUndefined();
+  gate = undefined;
+
+  // An overflow empties the sample; until the next tick nothing reads.
+  h.receive([message(h.peer, "other", OVERSIZED, 20)]);
+  h.receive([message(h.peer, "other", "after the overflow", 40)]);
+  expect(h.snapshot()).toMatchObject({
+    freshness: "observed",
+    error: "Unread observation capacity reached; refresh available",
+  });
+  expect(h.snapshot().sampled).toBeUndefined();
+  expect(h.snapshot().sampling).toBeUndefined();
 });
 
 it("a covered reconnect pays the drop's debt: the next recovery tick reads nothing", async () => {
@@ -1197,7 +1277,7 @@ it("a covered reconnect does not postpone the recovery tick's full unread repair
   }
 });
 
-it("capacity failure stops batching and remains visible rather than becoming success", async () => {
+it("a repair that fills the evidence window keeps batching and samples", async () => {
   const h = setup(129);
   h.receive(
     Array.from({ length: 18 }, (_, i) =>
@@ -1205,20 +1285,21 @@ it("capacity failure stops batching and remains visible rather than becoming suc
     ),
   );
   expect(h.snapshot().observedCount).toBe(18);
-  const overflow = message(h.peer, "other", "x".repeat(450000), 40);
   let batches = 0;
   h.query.mockImplementation(async (filters) => {
     if (!filters[0]?.kinds?.includes(9)) return [];
     batches++;
-    return [overflow];
+    return [message(h.peer, "other", "x".repeat(450000), 40 + batches)];
   });
   await h.session.unread.ensure();
-  expect(batches).toBe(1);
+  expect(batches).toBe(2);
+  // The first batch's row narrows the window to 13; the second adds one.
   expect(h.snapshot()).toMatchObject({
-    observedCount: null,
-    freshness: "stale",
-    error: "Unread observation capacity reached; refresh available",
+    observedCount: 14,
+    freshness: "observed",
+    sampled: true,
   });
+  expect(h.snapshot().error).toBeUndefined();
 });
 
 it.each(["clear", "dispose", "revoke"])(
@@ -1235,15 +1316,22 @@ it.each(["clear", "dispose", "revoke"])(
     else h.receive([roster(h.relay, "other", [], 20)]);
     release();
     await repair;
-    if (boundary !== "revoke") {
+    if (boundary === "dispose") {
       expect(h.trace.map(({ kind }) => kind)).toEqual([30078]);
       return;
     }
-    // Only a fresh observation without the revoked channel is dispatched.
+    // Only a fresh observation is dispatched: after a clear it reads every
+    // channel once, after a revoke it leaves the revoked channel out.
     await h.session.unread.ensure();
     const evidence = h.query.mock.calls
       .map(([filters]) => filters[0])
       .filter((filter) => filter?.kinds?.includes(9));
+    if (boundary === "clear") {
+      expect(evidence.flatMap((filter) => filter?.["#h"] ?? [])).toEqual(
+        [...h.ids].sort(),
+      );
+      return;
+    }
     expect(evidence).toHaveLength(1);
     expect(evidence[0]?.["#h"]).not.toContain("other");
   },
@@ -1253,12 +1341,19 @@ it("a subscriber clearing cache during progressive publication stops later chunk
   const h = setup(129);
   let cleared: Promise<void> | undefined;
   h.session.unread.subscribe({ kind: "channel", channelId: "other" }, () => {
-    if (h.snapshot().observedCount === 1) cleared = h.clearCache();
+    if (!cleared && h.snapshot().observedCount === 1) cleared = h.clearCache();
   });
   await h.session.unread.ensure();
   await cleared;
-  expect(h.trace.map(({ kind }) => kind)).toEqual([30078, 9]);
-  expect(h.snapshot().observedCount).toBeNull();
+  // The abandoned observation never dispatches its later chunk; the clear
+  // starts a fresh one from the first batch.
+  await h.session.unread.ensure();
+  const batches = h.query.mock.calls
+    .map(([filters]) => filters[0])
+    .filter((filter) => filter?.kinds?.includes(9))
+    .map((filter) => filter?.["#h"]?.length);
+  expect(batches).toEqual([128, 128, 1]);
+  expect(h.snapshot().observedCount).toBe(1);
 });
 
 it("explicit refresh bypasses optional profiles for both markers and evidence", async () => {
@@ -1417,32 +1512,84 @@ it("clearing the cache re-observes unbounded", async () => {
   expect(evidenceReads(h)[1]?.since).toBeUndefined();
 });
 
+it("a full evidence window drops its oldest rows, keeping the rest and the batch mark", async () => {
+  const h = setup();
+  const recent = nowSeconds() - 1000;
+  const row = message(h.peer, "other", "recent", recent);
+  serve(h, () => [row]);
+  await discovered(h);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, sampled: true });
+  h.receive(
+    Array.from({ length: 19 }, (_, i) =>
+      message(h.peer, "other", "x".repeat(450000), recent + 1 + i),
+    ),
+  );
+  // 8 MiB holds 18; the 19th narrows the window to the 13 newest.
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 13,
+    freshness: "observed",
+    sampled: true,
+  });
+  expect(h.snapshot().error).toBeUndefined();
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  expect(evidenceReads(h)[1]?.since).toBe(recent - 960);
+});
+
+it("evicting a deletion also evicts the message it deleted", async () => {
+  const h = setup();
+  const deleted = message(h.peer, "other", "deleted", 100);
+  // A skewed clock dates the deletion before every other row.
+  const removal = signed(h.peer, {
+    kind: 5,
+    content: "",
+    created_at: 1,
+    tags: [
+      ["e", deleted.id],
+      ["h", "other"],
+    ],
+  });
+  h.receive([deleted, removal]);
+  expect(h.snapshot().observedCount).toBe(0);
+  h.receive(
+    Array.from({ length: 19 }, (_, i) =>
+      message(h.peer, "other", "x".repeat(450000), 10 + i),
+    ),
+  );
+  // Kept alone, the deleted message would count as the 14th.
+  expect(h.snapshot().observedCount).toBe(13);
+});
+
+it("a busy channel filling the evidence window keeps a quiet channel's older unread", async () => {
+  const h = setup(2);
+  h.receive([message(h.peer, "room-1", "quiet", 5)]);
+  h.receive(
+    Array.from({ length: 19 }, (_, i) =>
+      message(h.peer, "other", "x".repeat(450000), 10 + i),
+    ),
+  );
+  expect(h.snapshot().observedCount).toBe(13);
+  expect(
+    h.session.unread.snapshot({ kind: "channel", channelId: "room-1" })
+      .observedCount,
+  ).toBe(1);
+});
+
 it("capacity overflow discards the mark with the evidence it described", async () => {
   const h = setup();
   const recent = nowSeconds() - 1000;
   const row = message(h.peer, "other", "recent", recent);
-  let rows: readonly RelayEvent[] = [row];
-  serve(h, () => rows);
+  serve(h, () => [row]);
   await discovered(h);
   await h.session.unread.ensure();
-  h.receive(
-    Array.from({ length: 18 }, (_, i) =>
-      message(h.peer, "other", "x".repeat(450000), i + 11),
-    ),
+  h.receive([message(h.peer, "other", OVERSIZED, recent + 1)]);
+  expect(h.snapshot().error).toBe(
+    "Unread observation capacity reached; refresh available",
   );
-  rows = [message(h.peer, "other", "x".repeat(450000), recent + 1)];
   h.reconnect();
   await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
-  await vi.waitFor(() =>
-    expect(h.snapshot().error).toBe(
-      "Unread observation capacity reached; refresh available",
-    ),
-  );
-  rows = [row];
-  h.reconnect();
-  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(3));
-  expect(evidenceReads(h)[1]?.since).toBe(recent - 960);
-  expect(evidenceReads(h)[2]?.since).toBeUndefined();
+  expect(evidenceReads(h)[1]?.since).toBeUndefined();
 });
 
 /** A relay that honors `limit` (newest first) and `since` on evidence reads, and
@@ -1556,11 +1703,7 @@ it("a bounded repair answered after a live overflow restores no mark and keeps t
   expect(evidenceReads(h)[1]?.since).toBe(recent - 960);
   const running = h.session.unread.ensure();
   // Live traffic overflows the evidence while the bounded read is out.
-  h.receive(
-    Array.from({ length: 19 }, (_, i) =>
-      message(h.peer, "other", "x".repeat(450000), i + 11),
-    ),
-  );
+  h.receive([message(h.peer, "other", OVERSIZED, 11)]);
   const overflowed = {
     observedCount: null,
     freshness: "stale",

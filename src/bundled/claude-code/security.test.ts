@@ -49,6 +49,9 @@ function fixture(initialization: "success" | "error" | "held" = "success") {
         throw new Error("Unused protected runtime");
       },
       assertAvailable() {},
+      checkEvidence: async () => {
+        throw new Error("Unexpected streamed check in this fixture");
+      },
       check,
     },
     history: async () => [{ role: "user", content: "authorized task" }],
@@ -424,6 +427,22 @@ it.each([
   },
 );
 
+it("never compacts a protected session, whatever its threshold", async () => {
+  const f = fixture();
+  const process = await ClaudeProcess.start(f.spawn, {
+    ...f.launch,
+    compactAt: 200000,
+  });
+  try {
+    expect(f.processes[0]?.options.env).toMatchObject({ DISABLE_COMPACT: "1" });
+    expect(f.processes[0]?.options.env).not.toHaveProperty(
+      "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    );
+  } finally {
+    await process.kill();
+  }
+});
+
 it("reviews exact tool input with full native metadata and preceding evidence", async () => {
   const f = fixture();
   const process = await ClaudeProcess.start(f.spawn, f.launch);
@@ -533,6 +552,72 @@ it("checks a long history four at a time and a denial cancels the rest", async (
     await vi.waitFor(() => expect(worker.killed).toBe(true));
     expect(held.every(({ signal }) => signal.aborted)).toBe(true);
     expect(f.check).toHaveBeenCalledTimes(4);
+  } finally {
+    await process.kill();
+  }
+});
+
+it("checks a streamed history once per phase, as a small history routes its records", async () => {
+  const f = fixture();
+  const phases = {
+    context: { read: vi.fn() },
+    "tool-result": { read: vi.fn() },
+  };
+  Object.assign(f.protection, {
+    history: async () => ({
+      read: vi.fn(),
+      retain: () => () => {},
+      dispose() {},
+      phase: (kind: keyof typeof phases) => phases[kind],
+    }),
+  });
+  const process = await ClaudeProcess.start(f.spawn, f.launch);
+  const worker = f.processes[0];
+  if (!worker) throw new Error("Claude did not start");
+  worker.emit({
+    type: "control_request",
+    request_id: "incoming-review",
+    request: {
+      subtype: "hook_callback",
+      callback_id: "security-incoming",
+      input: {
+        session_id: "native-session",
+        transcript_path: "/native/transcript",
+        cwd: "/work",
+        permission_mode: "bypassPermissions",
+        hook_event_name: "UserPromptSubmit",
+        prompt: "Howzit",
+      },
+    },
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(worker.received).toContainEqual({
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: "incoming-review",
+          response: {},
+        },
+      }),
+    );
+    const streams: unknown[] = Object.values(phases);
+    expect(
+      f.check.mock.calls
+        .map(([action]) => action)
+        .filter((action) =>
+          streams.includes((action.content as { value?: unknown }).value),
+        ),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "context",
+        content: { source: "message", value: phases.context },
+      }),
+      expect.objectContaining({
+        kind: "tool-result",
+        content: { source: "message", value: phases["tool-result"] },
+      }),
+    ]);
   } finally {
     await process.kill();
   }

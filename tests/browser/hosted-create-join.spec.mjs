@@ -37,6 +37,8 @@ test("creating a hosted community joins it and lists it in the picker", async ({
     normalized_host: "secondary.example",
   };
   let communities = [];
+  let listStarted = false;
+  const listReady = Promise.withResolvers();
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     if (action === "auth")
@@ -45,7 +47,9 @@ test("creating a hosted community joins it and lists it in the picker", async ({
       });
     if (action === "identity")
       return route.fulfill({ json: { identity: { pubkey_hex: viewer } } });
-    if (action === "list")
+    if (action === "list") {
+      listStarted = true;
+      await listReady.promise;
       return route.fulfill({
         json: {
           communities,
@@ -54,6 +58,7 @@ test("creating a hosted community joins it and lists it in the picker", async ({
           can_create: true,
         },
       });
+    }
     if (action === "availability")
       return route.fulfill({ json: { available: true } });
     if (action === "create") {
@@ -73,10 +78,52 @@ test("creating a hosted community joins it and lists it in the picker", async ({
   ).toHaveCount(0);
   await settleDialogMotion(picker);
   await shot("1-picker-before.png");
-  await picker.getByRole("button", { name: "Create community" }).click();
-
   const address = page.getByPlaceholder("north-star");
+  const create = page.getByRole("dialog", {
+    name: "Create community",
+    exact: true,
+  });
+  try {
+    await picker.getByRole("button", { name: "Create community" }).click();
+    await expect.poll(() => listStarted).toBe(true);
+    await expect(address).toBeDisabled();
+    await settleDialogMotion(create);
+  } finally {
+    listReady.resolve();
+  }
   await expect(address).toBeEnabled();
+  await expect(address).toBeFocused();
+  await button(page, "Cancel").click();
+  await expect(create).toHaveCount(0);
+  await page.goBack();
+  const settings = page.getByRole("dialog", {
+    name: "Settings",
+    exact: true,
+    includeHidden: true,
+  });
+  await expect(settings).toHaveCount(0);
+  await page.goForward();
+  await expect(settings).toBeVisible();
+  // Include hidden controls so the readiness barrier works even if the bug
+  // reopens Create and makes the parent Settings dialog inert.
+  await expect(
+    page
+      .getByRole("button", {
+        name: "Create community",
+        exact: true,
+        includeHidden: true,
+      })
+      .first(),
+  ).toBeEnabled();
+  await expect(create).toHaveCount(0);
+
+  // A fresh picker visit still opens the form after the earlier dismissal.
+  await button(page, "Close Settings").click();
+  await expect(settings).toHaveCount(0);
+  const again = await openCommunityPicker(page);
+  await again.getByRole("button", { name: "Create community" }).click();
+  await expect(address).toBeEnabled();
+  await expect(address).toBeFocused();
   await address.fill("secondary");
   await expect(page.getByText("That address is available.")).toBeVisible();
   await shot("2-create-form.png");
@@ -94,7 +141,70 @@ test("creating a hosted community joins it and lists it in the picker", async ({
   ).toHaveCount(0);
   await settleDialogMotion(setup);
   await shot("3-join-profile.png");
-  await setup.getByRole("button", { name: "Continue", exact: true }).click();
+
+  // Reload restores the join over Settings, not the Create form it came from.
+  await page.reload();
+  const joining = page.getByRole("dialog", { name: "Join a community" });
+  await expect(
+    joining.getByRole("textbox", { name: "Community URL", exact: true }),
+  ).toHaveValue("https://secondary.example");
+  await expect(settings).toHaveCount(1);
+  await expect(create).toHaveCount(0);
+  // Back from the restored join reaches Settings, not the spent Create form.
+  await page.goBack();
+  await expect(joining).toHaveCount(0);
+  await expect(settings).toBeVisible();
+  // The card shows its overview, listing the new community, not the form.
+  await expect(
+    settings.getByText("secondary", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(create).toHaveCount(0);
+  await page.goForward();
+  await joining.getByRole("button", { name: "Continue", exact: true }).click();
+  const name = setup.getByRole("textbox", {
+    name: "Display name",
+    exact: true,
+  });
+  await expect(name).toHaveValue("Fixture Reader");
+
+  // While the profile publishes, Escape cannot close Settings beneath the
+  // join: a refusal must leave the join and its draft to retry.
+  await name.fill("Fixture Owner");
+  const publish = setup.getByRole("button", {
+    name: "Publish profile & open",
+    exact: true,
+  });
+  const published = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  await page.route("**/api/relay/secondary/profile", async (route) => {
+    published.resolve();
+    await release.promise;
+    // The relay answers but does not accept the profile.
+    await route.fulfill({
+      json: { accepted: false, event_id: "", message: "Profile refused" },
+    });
+  });
+  try {
+    await publish.click();
+    await published.promise;
+    // Back is refused while the join writes, as its Close is.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          addEventListener("popstate", resolve, { once: true });
+          history.back();
+        }),
+    );
+    await expect(name).toHaveValue("Fixture Owner");
+    await page.keyboard.press("Escape");
+  } finally {
+    release.resolve();
+  }
+  await expect(setup.getByText("Profile refused")).toBeVisible();
+  await expect(name).toHaveValue("Fixture Owner");
+  await expect(settings).toHaveCount(1);
+  await page.unroute("**/api/relay/secondary/profile");
+  await publish.click();
   await expect(setup).toHaveCount(0);
 
   await expect(

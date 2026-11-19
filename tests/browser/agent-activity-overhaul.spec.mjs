@@ -5,6 +5,7 @@ import {
 } from "./message-actions.mjs";
 import { open, end, wheel, settle } from "./timeline.mjs";
 import { generateSecretKey, finalizeEvent, getPublicKey } from "nostr-tools";
+import { chooseDefaultSkinTone } from "./skin-tone.mjs";
 
 test.use({
   productionBroker: true,
@@ -19,6 +20,7 @@ test("removing a reaction from a tall message preserves the reading position", a
   page,
   app,
 }) => {
+  await chooseDefaultSkinTone(page);
   await open(page, app);
   const event = app.append("primary", "alpha", "Reaction scroll target");
   const row = page.locator(
@@ -443,7 +445,11 @@ test("message activity opens a grouped preview and the agent's profile without l
   const channelActivity = row.getByRole("region", {
     name: "Agent activity on this message",
   });
-  await channelActivity.getByRole("button").click();
+  const remainingActivity = channelActivity.getByRole("button", {
+    name: /^View agent activity: Agent 2/,
+  });
+  await expect(remainingActivity).toBeVisible();
+  await expect(remainingActivity).not.toHaveAttribute("aria-haspopup");
   const mixedActivity = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,
@@ -456,8 +462,8 @@ test("message activity opens a grouped preview and the agent's profile without l
     name: "View activity for Agent 2",
     exact: true,
   });
-  await expect(secondActivity).toBeVisible();
-  await expect(secondActivity).not.toContainText(
+  await expect(mixedActivity).toHaveCount(0);
+  await expect(remainingActivity).not.toContainText(
     "Activity interrupted or out of date",
   );
   await expect(firstActivity).toHaveCount(0);
@@ -466,6 +472,10 @@ test("message activity opens a grouped preview and the agent's profile without l
   // Uncertainty is retained internally: fresh evidence restores the same agent.
   telemetryTime = await page.evaluate(() => new Date().toISOString());
   send(0, "turn_liveness", ++livenessSeq);
+  await channelActivity
+    .getByRole("button", { name: /^View agent activity:/ })
+    .click();
+  await expect(secondActivity).toBeVisible();
   await expect(firstActivity).toBeVisible();
   await expect(firstActivity).not.toContainText(
     "Activity interrupted or out of date",

@@ -80,6 +80,9 @@ test("a remote failure shares its expandable history and preserves its message a
     history.locator('[data-message-activity] [data-state="working"]'),
   ).toHaveCount(0);
   await page.clock.resume();
+  // The jump froze wall time while the broker kept real time; if it ran long,
+  // signed read-state events would now exceed the broker's 60 s clock skew.
+  await page.clock.setSystemTime(Date.now());
   await toggle.focus();
   await page.keyboard.press("Enter");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -88,6 +91,9 @@ test("a remote failure shares its expandable history and preserves its message a
   ).toBeVisible();
   await expect(history.getByRole("button", { name: /Retry/ })).toHaveCount(0);
   await toggle.click();
+  // 120 s of browser time outran the broker's real 15 s keepalive, so the live
+  // stream's 45 s heartbeat restarted it; publish once a channel REQ is back.
+  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
   const publish = (content, tags, offset) => {
     const event = finalizeEvent(
       {
@@ -124,6 +130,13 @@ test("a remote failure shares its expandable history and preserves its message a
   toggle = thread.getByRole("button", {
     name: /^(Show|Collapse) activity history:/,
   });
+  // The thread holds the geometry that moves here. At 800 px the thread
+  // covers the conversation, whose history is inert and hidden from role
+  // queries, so the default channel scroller would match nothing.
+  const threadHistory = thread.getByRole("region", {
+    name: "Thread messages",
+    exact: true,
+  });
   await expect(toggle).toHaveCount(1);
   await expect(thread.locator("[data-message-activity]")).toHaveCount(0);
   await expect(toggle).toContainText("Couldn’t finish");
@@ -158,7 +171,7 @@ test("a remote failure shares its expandable history and preserves its message a
       const box = await group.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
-      await settle(page);
+      await settle(page, threadHistory);
       await toggle.click();
       await expect(
         group.getByText(failure.content, { exact: true }),

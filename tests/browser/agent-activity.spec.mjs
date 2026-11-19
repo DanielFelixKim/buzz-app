@@ -226,11 +226,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
     await expect(agentRow(popup, agent)).toHaveAccessibleName(
       /^View .+ activity$/,
     );
-    await expect(agentRow(popup, agent)).toContainText(
-      "No current step details received.",
-    );
-    await expect(agentRow(popup, agent)).toContainText(
-      "Work with unconfirmed thread",
+    // Unscoped work has no conversation to name, so the status ends the row.
+    await expect(agentRow(popup, agent)).toHaveText(
+      /No current step details received\.$/,
     );
     await expect(agentActivityAction(popup, agent)).toHaveCount(1);
   }
@@ -269,7 +267,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
     .click();
   await expect(trigger).toBeFocused();
 
-  const sockets = app.relay.sockets.length;
+  const sockets = app.relay.sockets.filter(
+    (s) => s.community === "primary",
+  ).length;
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page
@@ -289,7 +289,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await expect
     .poll(() => app.relay.hasRoute("primary", "observer"))
     .toBe(false);
-  expect(app.relay.sockets).toHaveLength(sockets);
+  expect(
+    app.relay.sockets.filter((s) => s.community === "primary"),
+  ).toHaveLength(sockets);
   await closeSettings(page);
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(
@@ -599,8 +601,8 @@ test.describe("thread activity", () => {
     app.observer(activity("turn_liveness", "alpha", "parallel-two"), key);
     sendTyping(root.id);
     await openWorkingNow(page, composer);
-    await expect(agentRow(popup, agent)).toContainText(
-      "Work with unconfirmed thread",
+    await expect(agentRow(popup, agent)).toHaveText(
+      /No current step details received\.$/,
     );
     await expect(agentRow(popup, agent)).not.toContainText("Thread ·");
     await expect(threadTrigger).toHaveAccessibleName(onlyAgent);
@@ -679,8 +681,12 @@ test.describe("thread activity", () => {
     app.observer(activity("turn_completed", "alpha", "parallel-two"), key);
     sendEvent(9, root.id, key, "Thread work finished");
     await expect(threadTrigger).toHaveCount(0);
-    sendTyping();
-    await expect(marker).toBeVisible();
+    // A thread reply also quiets the agent's channel-level typing for two
+    // seconds, so channel work shows from its first pulse after that.
+    await expect(async () => {
+      sendTyping();
+      await expect(marker).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 10_000 });
     const workingBox = await marker.boundingBox();
     expect(workingBox).toEqual(
       expect.objectContaining({ width: 26, height: 15 }),
@@ -894,16 +900,24 @@ test.describe("thread activity", () => {
       .click();
     // The channel composer uses the same floating control and popup rows.
     const channelStatus = composer.locator("[data-agent-working-status]");
-    publish(keys[0]);
-    await expect(channelTrigger).toHaveAccessibleName(
-      "Activity: Worker 1 working",
-    );
+    // Their thread replies also quieted the agents' channel-level typing for
+    // two seconds, so channel work shows from the first pulse after that.
+    await expect(async () => {
+      publish(keys[0]);
+      await expect(channelTrigger).toHaveAccessibleName(
+        "Activity: Worker 1 working",
+        { timeout: 1000 },
+      );
+    }).toPass({ timeout: 10_000 });
     await expect(channelStatus).toHaveText("Worker 1 is working");
     await expect(humanTyping(composer)).toHaveCount(0);
-    publish(keys[1]);
-    await expect(channelTrigger).toHaveAccessibleName(
-      "Activity: 2 agents working",
-    );
+    await expect(async () => {
+      publish(keys[1]);
+      await expect(channelTrigger).toHaveAccessibleName(
+        "Activity: 2 agents working",
+        { timeout: 1000 },
+      );
+    }).toPass({ timeout: 10_000 });
     await expect(channelStatus).toHaveText(
       /^Worker [12], Worker [12] are working$/,
     );

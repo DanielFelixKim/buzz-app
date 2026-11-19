@@ -8,6 +8,7 @@ import {
 } from "motion/react";
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import {
+  type ComponentProps,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -23,6 +24,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { avatarMedia } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import type {
   WorkflowCapability,
@@ -55,6 +57,7 @@ import {
   TimerIcon,
   WebhooksLogoIcon,
 } from "../../shared/design-system/icons";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -79,6 +82,7 @@ import { Header } from "../../shared/design-system/ui/Header";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { WorkflowDeletionNotices } from "./WorkflowDeletionNotices";
@@ -142,6 +146,10 @@ export function workflowOperationLocked(
   }
   return !!newestSave && saveAwaitsReadback(newestSave, definition);
 }
+
+/** The relay still accepts saves and runs there, but every run fails. */
+export const ARCHIVED_REASON =
+  "This channel is archived, so its workflows can't run.";
 
 /** A save is resolved once its exact revision, or a newer head, is read. */
 export function saveAwaitsReadback(
@@ -440,16 +448,53 @@ function WorkflowIcon({ kind }: { kind: WorkflowCardIcon }) {
   return <Icon size={20} strokeWidth={2.5} aria-hidden="true" />;
 }
 
+/** "panel" on an inset surface, as in the detail hero. */
+type OwnerFallbackSurface = NonNullable<
+  ComponentProps<typeof Avatar>["fallbackSurface"]
+>;
+
+/** The owner's avatar, then their name. The avatar is decorative, so the name
+ * is read once. Sighted users read the avatar as "owned by"; assistive
+ * technology gets that from a label that is never drawn. */
+function WorkflowOwnerLabel({
+  name,
+  src,
+  isAgent,
+  fallbackSurface,
+}: {
+  name: string;
+  src?: string | undefined;
+  isAgent?: boolean | undefined;
+  fallbackSurface: OwnerFallbackSurface;
+}) {
+  return (
+    <span className="workflow-owner">
+      <Avatar
+        size="tiny"
+        alt=""
+        fallback={name}
+        src={src}
+        shape={isAgent ? "squircle" : "circle"}
+        fallbackSurface={fallbackSurface}
+      />
+      <span className="sr-only">Owner: </span>
+      <span>{name}</span>
+    </span>
+  );
+}
+
 function WorkflowOwner({
   session,
   owner,
   channelId,
   keyLabel,
+  fallbackSurface,
 }: {
   session: RelaySession;
   owner: string;
   channelId: string;
   keyLabel: string;
+  fallbackSurface: OwnerFallbackSurface;
 }) {
   const selection = useMemo(
     () => selectProfiles(session.profiles, [owner]),
@@ -463,7 +508,14 @@ function WorkflowOwner({
   const name = useChannelIdentityNames(session, channelId);
   const profile = profiles.get(owner);
   const fallback = profile && !profile.nameIsFallback ? profile.name : keyLabel;
-  return <>Owner: {name(owner, fallback)}</>;
+  return (
+    <WorkflowOwnerLabel
+      name={name(owner, fallback)}
+      src={avatarMedia(profile?.picture, session.media)}
+      isAgent={profile?.isAgent}
+      fallbackSurface={fallbackSurface}
+    />
+  );
 }
 
 function WorkflowCard({
@@ -555,16 +607,21 @@ function WorkflowCard({
   const awaitingReadback =
     submitted?.revision === definition.revision &&
     submittedOperation?.outcome !== "rejected";
-  const toggleReason = readonly
-    ? "Only the author can change this workflow."
-    : locked || awaitingReadback
-      ? "Waiting for the submitted change to be resolved."
-      : !fields.editable
-        ? "Correct the YAML before changing the configured state."
-        : !capability.availability.save
-          ? "Saving is unavailable from this host."
-          : undefined;
+  // An enabled workflow can still be turned off, so it stops failing.
+  const archivedOff = !!channel.archived && !enabled;
+  const toggleReason = archivedOff
+    ? ARCHIVED_REASON
+    : readonly
+      ? "Only the author can change this workflow."
+      : locked || awaitingReadback
+        ? "Waiting for the submitted change to be resolved."
+        : !fields.editable
+          ? "Correct the YAML before changing the configured state."
+          : !capability.availability.save
+            ? "Saving is unavailable from this host."
+            : undefined;
   const reasonId = useId();
+  const archivedReasonId = useId();
   const deleteReasonId = useId();
   const descriptionId = useId();
   const statusId = useId();
@@ -572,17 +629,8 @@ function WorkflowCard({
   const name = fields.name || "Unnamed or malformed workflow";
   const keyLabel =
     ownerKeyLabels.get(definition.owner.toLowerCase()) ?? "Unknown owner";
-  const owner = session ? (
-    <WorkflowOwner
-      session={session}
-      owner={definition.owner}
-      channelId={definition.channelId}
-      keyLabel={keyLabel}
-    />
-  ) : (
-    <>Owner: {keyLabel}</>
-  );
   const runDisabled =
+    !!channel.archived ||
     readonly ||
     locked ||
     awaitingReadback ||
@@ -600,6 +648,11 @@ function WorkflowCard({
     }
   };
   const toggle = (next: boolean) => {
+    // Like runNow: a confirmation can outlive the state that allowed it.
+    if (toggleReason) {
+      onError(toggleReason);
+      return;
+    }
     const yaml = yamlWithWorkflowEnabled(definition.yaml, next);
     if (yaml === null) {
       onError("This workflow cannot be changed from the landing page.");
@@ -635,23 +688,45 @@ function WorkflowCard({
         size="sm"
         variant="ghost"
         aria-label={`Run now: ${name}`}
-        title="Run now"
+        title={channel.archived ? ARCHIVED_REASON : "Run now"}
+        aria-describedby={channel.archived ? archivedReasonId : undefined}
         disabled={runDisabled}
+        // A natively disabled button gets no hover, so its reason would never show.
+        focusableWhenDisabled={channel.archived}
         icon={<PlayIcon size="1rem" aria-hidden="true" />}
         onClick={runNow}
       />
       {fields.editable && (
-        <Switch
-          aria-label={`Enabled in configuration: ${name}`}
-          aria-describedby={toggleReason ? reasonId : undefined}
-          checked={enabled}
-          disabled={!!toggleReason}
-          onCheckedChange={(next) => {
-            if (next === enabled) return;
-            if (next && warning) setConfirmEnable(true);
-            else toggle(next);
-          }}
-        />
+        // Like Run now, the archived reason shows on hover and keyboard focus.
+        <Tooltip
+          content={ARCHIVED_REASON}
+          {...(archivedOff ? {} : { open: false })}
+          disableHoverablePopup
+        >
+          <Switch
+            aria-label={`Enabled in configuration: ${name}`}
+            aria-describedby={toggleReason ? reasonId : undefined}
+            checked={enabled}
+            disabled={!!toggleReason}
+            // Base UI's Switch has no focusableWhenDisabled; a disabled one
+            // leaves the tab order unless given a tabIndex.
+            {...(archivedOff
+              ? {
+                  tabIndex: 0,
+                  // Space would otherwise scroll the list. useButton drops a
+                  // plain onKeyDown while disabled, so this uses capture.
+                  onKeyDownCapture: (event) => {
+                    if (event.key === " ") event.preventDefault();
+                  },
+                }
+              : {})}
+            onCheckedChange={(next) => {
+              if (next === enabled) return;
+              if (next && warning) setConfirmEnable(true);
+              else toggle(next);
+            }}
+          />
+        </Tooltip>
       )}
       <MenuRoot>
         <MenuTrigger
@@ -719,12 +794,32 @@ function WorkflowCard({
           {toggleReason}
         </span>
       )}
+      {channel.archived && (
+        <span id={archivedReasonId} hidden>
+          {ARCHIVED_REASON}
+        </span>
+      )}
     </>
   );
-  const updated = (
-    <time dateTime={new Date(definition.createdAt * 1000).toISOString()}>
-      {new Date(definition.createdAt * 1000).toLocaleDateString()}
-    </time>
+  // One line in the card and the detail: who owns it, then when it was saved.
+  // The line's gap separates the two, so a wrapped date leaves nothing behind.
+  const ownership = (fallbackSurface: OwnerFallbackSurface) => (
+    <>
+      {session ? (
+        <WorkflowOwner
+          session={session}
+          owner={definition.owner}
+          channelId={definition.channelId}
+          keyLabel={keyLabel}
+          fallbackSurface={fallbackSurface}
+        />
+      ) : (
+        <WorkflowOwnerLabel name={keyLabel} fallbackSurface={fallbackSurface} />
+      )}
+      <time dateTime={new Date(definition.createdAt * 1000).toISOString()}>
+        {new Date(definition.createdAt * 1000).toLocaleDateString()}
+      </time>
+    </>
   );
   const detail = (
     <section className="workflow-detail" aria-label={name}>
@@ -745,11 +840,21 @@ function WorkflowCard({
           {presentation.description}
         </p>
         <p className="text-caption text-subtle">
-          #{channel.name} · {updated}
+          #{channel.name}
+          {channel.archived && " · Archived"}
         </p>
-        <p className="text-caption text-subtle">{owner}</p>
+        <p className="workflow-detail-owner text-caption text-subtle">
+          {ownership("panel")}
+        </p>
         <div className="workflow-detail-actions">
-          <Button variant="primary" disabled={runDisabled} onClick={runNow}>
+          <Button
+            variant="primary"
+            title={channel.archived ? ARCHIVED_REASON : undefined}
+            aria-describedby={channel.archived ? archivedReasonId : undefined}
+            disabled={runDisabled}
+            focusableWhenDisabled={channel.archived}
+            onClick={runNow}
+          >
             <PlayIcon size="1rem" aria-hidden="true" />
             Run now
           </Button>
@@ -878,19 +983,23 @@ function WorkflowCard({
                   <span className="workflow-card-name" title={name}>
                     {name}
                   </span>
-                  <span aria-hidden="true">·</span>
                   {showChannel && (
                     <>
+                      <span aria-hidden="true">·</span>
                       <span className="workflow-card-name" title={channel.name}>
                         #{channel.name}
                       </span>
-                      <span aria-hidden="true">·</span>
+                      {channel.archived && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>Archived</span>
+                        </>
+                      )}
                     </>
                   )}
-                  {updated}
                 </span>
                 <span className="workflow-card-owner text-caption text-subtle">
-                  {owner}
+                  {ownership("subtle")}
                 </span>
               </span>
             }
@@ -1029,6 +1138,7 @@ function WorkflowCards({
           level={2}
           icon={<Icon size={24} />}
           title={channel.name}
+          subtitle={channel.archived && "Archived"}
         />
       )}
       <SettingsGroup>
@@ -1305,7 +1415,8 @@ export function WorkflowLanding({
   refreshRequest: number;
   saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
-  onCreate: () => void;
+  /** Absent when no channel can take a new workflow here. */
+  onCreate?: (() => void) | undefined;
   onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
 }) {
@@ -1700,7 +1811,7 @@ export function WorkflowLanding({
             ) : emptyFromFilters ? (
               <Button onClick={resetFilters}>Clear filters</Button>
             ) : (
-              capability.availability.save && (
+              onCreate && (
                 <Button onClick={onCreate}>
                   <PlusIcon size="1rem" aria-hidden="true" />
                   New workflow

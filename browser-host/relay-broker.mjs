@@ -1,4 +1,10 @@
-import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
+import {
+  isSidebarPreferencesBatch,
+  decodeLegacyWorkspaceEnvelope,
+  WORKSPACE_COORDINATE,
+  WORKSPACE_SORT_COORDINATE,
+  WORKSPACE_FILTER_COORDINATE,
+} from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
   MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
@@ -15,16 +21,19 @@ import { memoryResponseText } from "../src/features/agents/memory.ts";
 import { prepareMedia } from "./media-preparation.mjs";
 import {
   assertSidebarSortIntent,
-  mutateSidebarSort,
+  mutateWorkspaceSort,
   assertSidebarFilterIntent,
-  mutateSidebarFilter,
+  mutateWorkspaceFilter,
 } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import {
   communityGitRepository,
   parseGitRead,
 } from "../src/features/repos/git.ts";
-import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
+import {
+  isAdminAddition,
+  validateMemberAdministrationTemplate,
+} from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
@@ -52,6 +61,7 @@ import {
   directMessageEvent,
   directMessageReceipt,
 } from "./direct-messages.mjs";
+import { directMessageRefusal } from "../src/features/relay/direct-message-policy.ts";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import { CANVAS_MAX_EVENT_BYTES } from "../src/features/channel-templates/canvas-limits.ts";
 import {
@@ -147,13 +157,17 @@ import {
   mediaByteLimit,
   UPLOAD_TIMEOUT_MS,
 } from "../src/features/relay/attachment-limits.ts";
+import { legacyEmojiPicture } from "../src/shared/avatar-source.ts";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
+/** The app's profile save policy: an HTTPS URL, or old Buzz's emoji avatar
+ * that Buzz mobile still writes, never other inline or SVG data. */
 function validProfilePicture(value) {
-  if (!value) return true;
+  if (!value || legacyEmojiPicture(value.trim())) return true;
+  if (value.length > 2048) return false;
   try {
     const url = new URL(value);
     return url.protocol === "https:" && !url.username && !url.password;
@@ -848,6 +862,7 @@ const json = (res, code, body) => {
 /** @returns {import('vite').Plugin} */
 export function relayBrokerPlugin({
   authorizedViewer,
+  browserOrigin,
   relayUrl,
   communityAliases,
   identity = () => loadIdentity(authorizedViewer),
@@ -859,12 +874,41 @@ export function relayBrokerPlugin({
   archiveFile,
   // Tests that hold EOSE on purpose lengthen this real-time deadline.
   liveSetupTimeoutMs,
+  // Tests pin the live reconnect draw; production uses Math.random.
+  liveRandom,
 } = {}) {
+  const publicOrigin =
+    browserOrigin === undefined
+      ? undefined
+      : typeof browserOrigin === "string"
+        ? URL.parse(browserOrigin)
+        : null;
+  if (
+    browserOrigin !== undefined &&
+    (publicOrigin?.protocol !== "https:" ||
+      publicOrigin.username ||
+      publicOrigin.password ||
+      publicOrigin.pathname !== "/" ||
+      publicOrigin.search ||
+      publicOrigin.hash)
+  )
+    throw new Error(
+      "browserOrigin must be an HTTPS origin without credentials, path, query, or fragment.",
+    );
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
   return {
     name: "buzz-relay-broker",
     configResolved(config) {
+      if (
+        publicOrigin &&
+        (config.command !== "serve" ||
+          config.mode !== "development" ||
+          config.isProduction)
+      )
+        throw new Error(
+          "browserOrigin requires the Vite development server in development mode.",
+        );
       // Request headers express browser origin intent, not remote-client
       // authentication. Check the effective listener, including CLI overrides,
       // before configureServer loads the signing identity.
@@ -965,12 +1009,14 @@ export function relayBrokerPlugin({
         return gifSearchPaths.get(relay);
       };
       const stats = { queries: 0, errors: 0, media: 0, connects: 0 };
-      let inflight = 0;
+      // Queries in flight per community: one community's load must not refuse
+      // another's, as natively each has its own socket.
+      const inflight = new Map();
       let gitReads = 0;
       let presenceFlight = false;
       let sidebarUploads = 0;
       let attachmentUploads = 0;
-      let libraryRead;
+      const libraryReads = new Map();
       const sidebarMutations = new Map();
       const streams = new Map();
       const admissions = createHostAdmission();
@@ -1010,7 +1056,8 @@ export function relayBrokerPlugin({
           else if (res.statusCode >= 400) log.warn(line);
           else log.debug(line);
         });
-        const origin = `http://${req.headers.host ?? ""}`;
+        const origin =
+          publicOrigin?.origin ?? `http://${req.headers.host ?? ""}`;
         // Same-origin browser access only; trusted plugins/local processes are not sandboxed.
         if (!/^(localhost|127\.0\.0\.1):\d+$/.test(req.headers.host ?? ""))
           return json(res, 403, { error: "Host rejected" });
@@ -1367,22 +1414,22 @@ export function relayBrokerPlugin({
           ) {
             const [coordinate, assertIntent, mutate] = {
               "/api/relay/sidebar-section-removal": [
-                "channel-sections",
+                WORKSPACE_COORDINATE,
                 assertSidebarSectionRemovalIntent,
                 mutateSidebarSectionRemoval,
               ],
               "/api/relay/sidebar-section-rename": [
-                "channel-sections",
+                WORKSPACE_COORDINATE,
                 assertSidebarSectionRenameIntent,
                 mutateSidebarSectionRename,
               ],
               "/api/relay/sidebar-section-order": [
-                "channel-sections",
+                WORKSPACE_COORDINATE,
                 assertSidebarSectionOrderIntent,
                 mutateSidebarSectionOrder,
               ],
               "/api/relay/sidebar-assignment": [
-                "channel-sections",
+                WORKSPACE_COORDINATE,
                 assertSidebarAssignmentIntent,
                 mutateSidebarAssignment,
               ],
@@ -1392,14 +1439,14 @@ export function relayBrokerPlugin({
                 mutateSidebarStar,
               ],
               "/api/relay/sidebar-filter": [
-                "channel-filter",
+                WORKSPACE_FILTER_COORDINATE,
                 assertSidebarFilterIntent,
-                mutateSidebarFilter,
+                mutateWorkspaceFilter,
               ],
               "/api/relay/sidebar-sort": [
-                "channel-sort",
+                WORKSPACE_SORT_COORDINATE,
                 assertSidebarSortIntent,
-                mutateSidebarSort,
+                mutateWorkspaceSort,
               ],
               "/api/relay/sidebar-mute": [
                 "channel-mutes",
@@ -1408,24 +1455,46 @@ export function relayBrokerPlugin({
               ],
             }[route];
             const sorting =
-              coordinate === "channel-sort" || coordinate === "channel-filter";
+              coordinate === WORKSPACE_SORT_COORDINATE ||
+              coordinate === WORKSPACE_FILTER_COORDINATE;
             const muting = coordinate === "channel-mutes";
-            // Sort and order intents carry up to 100 section IDs.
+            // Sort, filter and order intents carry the workspace roster.
             const listing =
               sorting || route === "/api/relay/sidebar-section-order";
+            const workspace = coordinate === WORKSPACE_COORDINATE;
+            const limit = workspace ? 192 * 1024 : listing ? 64 * 1024 : 2048;
             const chunks = [];
             let bytes = 0;
             for await (const part of req) {
               bytes += part.length;
-              if (bytes > (listing ? 32 * 1024 : 2048))
+              if (bytes > limit)
                 return json(res, 413, {
                   error: `Sidebar preference intent is too large`,
                 });
               chunks.push(part);
             }
             let intent;
+            let legacy;
             try {
               intent = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              if (workspace && intent && Object.hasOwn(intent, "legacy")) {
+                if (
+                  Object.keys(intent).some(
+                    (key) => key !== "intent" && key !== "legacy",
+                  )
+                )
+                  throw new Error("Invalid workspace intent envelope");
+                ({ intent, legacy } = intent);
+                legacy = decodeLegacyWorkspaceEnvelope(legacy);
+              }
+              if (
+                workspace &&
+                Buffer.byteLength(JSON.stringify(intent) ?? "") >
+                  (listing ? 64 * 1024 : 2048)
+              )
+                return json(res, 413, {
+                  error: "Sidebar preference intent is too large",
+                });
               assertIntent(intent);
             } catch {
               return json(res, 400, {
@@ -1503,8 +1572,11 @@ export function relayBrokerPlugin({
                     },
                     requestSignal,
                   );
-                const readHead = async () => {
-                  const response = await dispatch("/query", filter);
+                const readHead = async (target = coordinate) => {
+                  const response = await dispatch(
+                    "/query",
+                    filter.map((entry) => ({ ...entry, "#d": [target] })),
+                  );
                   if (!response.ok)
                     throw new Error(
                       `Sidebar preference query failed (${response.status})`,
@@ -1536,8 +1608,9 @@ export function relayBrokerPlugin({
                   key,
                   readHead,
                   publishEvent,
+                  legacy,
                 );
-                return coordinate === "channel-filter"
+                return coordinate === WORKSPACE_FILTER_COORDINATE
                   ? {
                       groups: result.filters,
                       activeWindowSeconds: result.activeWindowSeconds,
@@ -1603,13 +1676,20 @@ export function relayBrokerPlugin({
 
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
-              // Share concurrent reads, never retain the local snapshot after completion.
-              libraryRead ??= Promise.resolve()
-                .then(() => agentLibrary())
-                .finally(() => {
-                  libraryRead = undefined;
-                });
-              return json(res, 200, await libraryRead);
+              // Share only same-community reads; never retain a completed snapshot.
+              if (!libraryReads.has(relay))
+                libraryReads.set(
+                  relay,
+                  Promise.resolve()
+                    .then(() =>
+                      agentLibrary(undefined, {
+                        community: relay,
+                        owner: viewer,
+                      }),
+                    )
+                    .finally(() => libraryReads.delete(relay)),
+                );
+              return json(res, 200, await libraryReads.get(relay));
             } catch {
               return json(res, 503, {
                 error:
@@ -1652,6 +1732,7 @@ export function relayBrokerPlugin({
               projectGit: true,
               attachmentUploads: true,
               sidebarPreferences: true,
+              sidebarWorkspaceMigration: true,
               sidebarSortWrites: true,
               sidebarFilterWrites: true,
               channelActivity: true,
@@ -2195,6 +2276,8 @@ export function relayBrokerPlugin({
               principal.live,
               undefined,
               liveSetupTimeoutMs,
+              undefined,
+              liveRandom,
             );
             principal.streams++;
             traffic.observe(observer);
@@ -2727,9 +2810,12 @@ export function relayBrokerPlugin({
           if (directMessage) {
             try {
               filters = directMessageEvent(filters, viewer, key);
-            } catch {
+            } catch (error) {
               return json(res, 400, {
-                error: "Choose between one and eight other people.",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Choose between one and eight other people.",
                 sent: false,
               });
             }
@@ -2749,7 +2835,13 @@ export function relayBrokerPlugin({
                 ? claimReason
                 : leave
                   ? leaveRefusal
-                  : undefined;
+                  : directMessage
+                    ? (body) =>
+                        directMessageRefusal(
+                          filters.tags.some(([name]) => name === "h"),
+                          body?.error,
+                        )
+                    : undefined;
           if (invite || member || leave) {
             // Community-bound only; the relay remains the authority for roles.
             if (!scoped)
@@ -2810,7 +2902,6 @@ export function relayBrokerPlugin({
               !filters.name.trim() ||
               filters.name.length > 100 ||
               typeof filters?.picture !== "string" ||
-              filters.picture.length > 2048 ||
               !validProfilePicture(filters.picture) ||
               (filters.about !== undefined &&
                 (typeof filters.about !== "string" ||
@@ -2922,7 +3013,8 @@ export function relayBrokerPlugin({
           if (signing || publishing) {
             if (administration) {
               try {
-                validateMemberAdministrationTemplate(filters, viewer);
+                if (!isAdminAddition(filters, viewer))
+                  validateMemberAdministrationTemplate(filters, viewer);
               } catch {
                 return json(res, 400, {
                   error: "Invalid member administration command",
@@ -3209,12 +3301,12 @@ export function relayBrokerPlugin({
             }
             presenceFlight = true;
           }
-          if (!presence && inflight >= MAX_INFLIGHT)
+          if (!presence && (inflight.get(relay) ?? 0) >= MAX_INFLIGHT)
             return json(res, 429, {
               error: "Query concurrency limit",
               sent: false,
             });
-          if (!presence) inflight++;
+          if (!presence) inflight.set(relay, (inflight.get(relay) ?? 0) + 1);
           try {
             const body = workflowPath ? undefined : JSON.stringify(filters);
             const admissionStart = performance.now();
@@ -3376,7 +3468,11 @@ export function relayBrokerPlugin({
             if (presence) {
               presenceFlight = false;
               releasePresence();
-            } else inflight--;
+            } else {
+              const left = inflight.get(relay) - 1;
+              if (left) inflight.set(relay, left);
+              else inflight.delete(relay);
+            }
           }
         } catch (error) {
           if (res.destroyed) return; // The browser gave up first; nothing to answer.

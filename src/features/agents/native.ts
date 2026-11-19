@@ -1,9 +1,12 @@
+import type { PublishOptions } from "../../buzz-mcp/client";
 import type {
   ProtectionBinding,
   ProtectionDefaults,
 } from "../agent-protection/service";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import type { SessionScope } from "../agent-harness/session-scope";
 import { eventsDto, type RelayEvent } from "../relay/events";
+import { effectiveEditDto, effectiveEditFilter } from "../relay/effective-edit";
 import { importedEmojiPicture } from "./import-picture";
 
 /** A plugin agent's identity in one community as native custody reports it;
@@ -76,6 +79,7 @@ export type Carry = Readonly<{
   instructions?: string;
   /** Its working directory, absolute or `~/…`. */
   workspace?: string;
+  sessionScope?: SessionScope;
 }>;
 export type PortableAgents = Readonly<{
   agents: readonly PortableAgent[];
@@ -186,9 +190,18 @@ export type AgentsNative = {
   /** Signs one event as the agent (deletions, reactions, messages, edits,
    * canvases and DM opens only) with its owner attestation and posts it to the
    * membership's community. */
-  publish(member: Membership, event: AgentEventTemplate): Promise<RelayEvent>;
+  publish(
+    member: Membership,
+    event: AgentEventTemplate,
+    options?: PublishOptions,
+  ): Promise<RelayEvent>;
   /** Reads the membership's community as the agent: one to eight filters. */
   query(member: Membership, filters: readonly object[]): Promise<RelayEvent[]>;
+  effectiveEdit(
+    member: Membership,
+    id: string,
+    channel: string,
+  ): Promise<RelayEvent>;
   /** Finds profiles by `name` or `display_name` in the agent's community, as
    * the agent, best match first. `undefined` when the community has no
    * profile name search. */
@@ -215,7 +228,8 @@ export type AgentsNative = {
   ): Promise<RelayEvent>;
   /** Publishes its name and picture as its profile in one community unless
    * that community already has it. */
-  publishProfile(member: Membership): Promise<void>;
+  /** `force` republishes it even when unchanged. */
+  publishProfile(member: Membership, force?: boolean): Promise<void>;
   /** Whether this app runs the agent: every copy of the app on this machine
    * shares the agent list, and one runs each agent. The installed app always
    * runs what it can; a dev build lets go while it does. */
@@ -295,10 +309,13 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_delete", { pubkey, relay }),
         forget: ({ pubkey, relay }) =>
           invoke("app_agent_forget", { pubkey, relay }),
-        publish: ({ pubkey, relay }, event) =>
+        publish: ({ pubkey, relay }, event, options) =>
           invoke("app_agent_publish", {
             pubkey,
             relay,
+            ...(options?.managedAttachments && {
+              managedAttachments: options.managedAttachments,
+            }),
             event: {
               kind: event.kind,
               content: event.content,
@@ -308,6 +325,16 @@ export const nativeAgents = (): AgentsNative | undefined =>
         query: async ({ pubkey, relay }, filters) =>
           eventsDto(
             await invoke("app_agent_query", { pubkey, relay, filters }),
+          ),
+        effectiveEdit: async ({ pubkey, relay }, id, channel) =>
+          effectiveEditDto(
+            await invoke("app_agent_query", {
+              pubkey,
+              relay,
+              filters: effectiveEditFilter(id, channel),
+            }),
+            id,
+            channel,
           ),
         searchProfiles: async ({ pubkey, relay }, query, limit) => {
           const found = await invoke("app_agent_search_profiles", {
@@ -326,8 +353,8 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_git_auth", { pubkey, relay, owner, repo }),
         remember: ({ pubkey, relay }, slug, body, after) =>
           invoke("app_agent_remember", { pubkey, relay, slug, body, after }),
-        publishProfile: ({ pubkey, relay }) =>
-          invoke("app_agent_publish_profile", { pubkey, relay }),
+        publishProfile: ({ pubkey, relay }, force) =>
+          invoke("app_agent_publish_profile", { pubkey, relay, force }),
         claim: (pubkey, revision) =>
           invoke("app_agent_claim", { pubkey, revision: revision ?? 0 }),
         release: (pubkey) => invoke("app_agent_release", { pubkey }),

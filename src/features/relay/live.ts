@@ -28,6 +28,12 @@ import {
 import { yieldToHost } from "./yield.ts";
 import { EMOJI_SET } from "./emoji.ts";
 import {
+  SIDEBAR_COORDINATES,
+  WORKSPACE_PREFERENCE_COORDINATES,
+} from "./sidebar-preferences.ts";
+import { legacyWorkspaceRecipeCoordinate } from "../channel-templates/model.ts";
+import { relayOrigin } from "../communities/destination.ts";
+import {
   ARTIFACT_SYNC_MAX_VIEWS,
   type ArtifactSyncFilter,
   type ArtifactSyncSink,
@@ -109,16 +115,19 @@ export type LiveCursor = Readonly<{ liveUntil: number }>;
 export function liveResumeSince(original: number, cursor: LiveCursor): number {
   return Math.max(original, cursor.liveUntil - LIVE_RESUME_LAG);
 }
-/** Delay before the next connection attempt. A restarting relay (1001/1012)
- * gets full jitter over the spread window, widening once repeated bounces have
- * grown the backoff past it. Anything else waits half to all of the backoff.
- * `random` is in [0, 1). */
+/** Delay before the next connection attempt. A restarting relay (1001/1012),
+ * or the drop of an `established` (authenticated) connection, gets full jitter
+ * over the spread window, widening once repeated bounces have grown the backoff
+ * past it: a draining proxy cuts a whole fleet at once, often without a close
+ * frame. Anything else waits half to all of the backoff. `random` is in [0, 1). */
 export function liveReconnectDelay(
   closeCode: number | undefined,
   backoff: number,
   random: () => number,
+  established = false,
 ): number {
-  return closeCode !== undefined && RESTART_CLOSE_CODES.includes(closeCode)
+  return established ||
+    (closeCode !== undefined && RESTART_CLOSE_CODES.includes(closeCode))
     ? random() * Math.max(LIVE_RESTART_SPREAD_MS, backoff)
     : backoff * (0.5 + random() / 2);
 }
@@ -531,21 +540,35 @@ export function subscribeRelayTraffic(
     const cursor = cursors.get(key);
     return !!cursor && route.since <= cursor.liveUntil - LIVE_RESUME_LAG;
   };
-  type SyncWire = {
-    filter: ArtifactSyncFilter | VerifiedProfileFilter;
-    sink: ArtifactSyncSink;
+  type SyncWire = (
+    | { filter: ArtifactSyncFilter; sink: ArtifactSyncSink; resumable?: never }
+    | {
+        filter: VerifiedProfileFilter;
+        sink: VerifiedProfileSink;
+        /** An ordinary REQ (NIP-FI), not a NIP-AR sync, which has no resume. */
+        resumable: true;
+      }
+  ) & {
     wire?: string;
+    /** EOSE arrived on `wire`. */
+    eose?: true;
   };
   const syncs = new Set<SyncWire>();
   // Artifact and verified-profile syncs share the wire budget but are admitted
   // from separate pools, so a large roster cannot refuse an artifact view.
   const profileSyncs = new Set<SyncWire>();
   const syncWires = new Map<string, SyncWire>();
-  function endSync(sync: SyncWire, reason: string) {
+  function endSync(
+    sync: SyncWire,
+    reason: string,
+    resume?: Readonly<{ since: number }>,
+  ) {
     profileSyncs.delete(sync);
     if (!syncs.delete(sync)) return;
     if (sync.wire) syncWires.delete(sync.wire);
-    sync.sink.closed(reason);
+    // A NIP-AR sink keeps its one-argument contract; only a resume adds one.
+    if (sync.resumable && resume) sync.sink.closed(reason, resume);
+    else sync.sink.closed(reason);
     syncInterests();
   }
   const replayQueue = new Map<string, number>();
@@ -1345,9 +1368,30 @@ export function subscribeRelayTraffic(
         ...(route.id === "membership"
           ? [
               {
+                kinds: [13534],
+                since: route.since,
+                limit: 1,
+              },
+              {
                 kinds: [30078],
                 authors: [viewer],
                 "#t": ["read-state"],
+                since: route.since,
+                limit: LIVE_REPLAY_LIMIT,
+              },
+              {
+                kinds: [30078],
+                authors: [viewer],
+                "#d": [
+                  ...SIDEBAR_COORDINATES,
+                  ...WORKSPACE_PREFERENCE_COORDINATES.filter(
+                    (coordinate) =>
+                      !SIDEBAR_COORDINATES.some(
+                        (legacy) => legacy === coordinate,
+                      ),
+                  ),
+                  legacyWorkspaceRecipeCoordinate(relayOrigin(url)),
+                ],
                 since: route.since,
                 limit: LIVE_REPLAY_LIMIT,
               },
@@ -1380,14 +1424,14 @@ export function subscribeRelayTraffic(
     }
   }
   function clearSocket() {
-    if (authenticated) {
+    // Receiving a frame is not delivery while its native check is pending.
+    const liveUntil = authenticated
+      ? Math.floor(Math.min(heardAt, pendingSince ?? heardAt) / 1000)
+      : undefined;
+    if (liveUntil !== undefined) {
       // EOSE on this connection is the only evidence a route was live. A
       // renewal, pending or failed, still streams through the established wire
       // it kept, but only for the channels the route still covers.
-      // Receiving a frame is not delivery while its native check is pending.
-      const liveUntil = Math.floor(
-        Math.min(heardAt, pendingSince ?? heardAt) / 1000,
-      );
       // A channel whose replay has not ended closed no gap on this connection,
       // so it keeps the cursor of the last connection that did.
       const unproven = new Set([...awaitingReplay, ...replayQueue.keys()]);
@@ -1428,11 +1472,19 @@ export function subscribeRelayTraffic(
     replayStopped = false;
     wires.clear();
     requests.clear();
-    // A sync has no resume: every sent one ends; unsent ones wait for the next socket.
+    // Every sent sync ends; unsent ones wait for the next socket. A NIP-AR
+    // sync has no resume. A resumable one that reached EOSE was delivered live
+    // until `liveUntil`, so its owner can resume it with the routes' overlap.
     const lost = [...syncs].filter((sync) => sync.wire);
     syncWires.clear();
     for (const sync of lost)
-      endSync(sync, "disconnected: live connection lost");
+      endSync(
+        sync,
+        "disconnected: live connection lost",
+        sync.resumable && sync.eose && liveUntil !== undefined
+          ? { since: Math.max(0, liveUntil - LIVE_RESUME_LAG) }
+          : undefined,
+      );
     if (socket) log.info(`${peer} disconnect`);
     socket?.close();
     socket = undefined;
@@ -1471,7 +1523,11 @@ export function subscribeRelayTraffic(
     const valid = () => !closed && current === generation;
     heard = false;
     probe = undefined;
-    const reconnect = (reason: string, closeCode?: number) => {
+    const reconnect = (
+      reason: string,
+      closeCode?: number,
+      established = false,
+    ) => {
       if (!valid()) return;
       log.warn(`${peer} ${reason}`);
       clearSocket();
@@ -1485,7 +1541,12 @@ export function subscribeRelayTraffic(
       notify();
       // Transient outages must recover without manual retry. Jitter spreads
       // reconnects while retaining a minimum delay under sustained failure.
-      const delay = liveReconnectDelay(closeCode, reconnectDelay, random);
+      const delay = liveReconnectDelay(
+        closeCode,
+        reconnectDelay,
+        random,
+        established,
+      );
       reconnectDelay = Math.min(MAX_RECONNECT_DELAY, reconnectDelay * 2);
       retryTimer = setTimeout(() => connect(), delay);
     };
@@ -1755,8 +1816,10 @@ export function subscribeRelayTraffic(
             return;
           }
           sync.sink.event(checked);
-        } else if (data[0] === "EOSE") sync.sink.eose();
-        else if (data[0] === "CLOSED") {
+        } else if (data[0] === "EOSE") {
+          sync.eose = true;
+          sync.sink.eose();
+        } else if (data[0] === "CLOSED") {
           // `disconnected:` is reserved for local socket loss.
           const reason =
             typeof data[2] === "string" && !data[2].startsWith("disconnected:")
@@ -2059,7 +2122,7 @@ export function subscribeRelayTraffic(
           // while signed out; signing in retries at once (onSignedIn).
           FEDERATED_SIGN_IN_REFUSALS.has(failure.message ?? ""),
         );
-      else reconnect("Live connection interrupted");
+      else reconnect("Live connection interrupted", undefined, authenticated);
     };
     // Keep the relay's close detail. A 1008 also ends a normally expired
     // assertion, so the first reconnects with fresh evidence. The relay denies
@@ -2077,7 +2140,8 @@ export function subscribeRelayTraffic(
       const reason = event?.code
         ? `Live connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`
         : "Live connection closed";
-      if (event?.code !== 1008) return reconnect(reason, event?.code);
+      if (event?.code !== 1008)
+        return reconnect(reason, event?.code, authenticated);
       if (!policyRecovery) return terminal(reason, false);
       policyRecovery = false;
       reconnect(reason);
@@ -2111,8 +2175,12 @@ export function subscribeRelayTraffic(
       };
     },
     syncVerifiedProfiles(filter, sink) {
-      const checked = verifiedProfileFilter(filter.authors[0], filter["#d"]);
-      const sync: SyncWire = { filter: checked, sink };
+      const checked = verifiedProfileFilter(
+        filter.authors[0],
+        filter["#d"],
+        filter.since,
+      );
+      const sync: SyncWire = { filter: checked, sink, resumable: true };
       if (closed) {
         queueMicrotask(() =>
           sink.closed("unsupported: relay session disposed"),

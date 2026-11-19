@@ -213,51 +213,6 @@ test("inline video controls follow playback, hover and keyboard focus", async ({
       "Browser project does not expose a hover-capable fine pointer.",
     );
     await expect(timeline).toBeEnabled();
-    // Diagnostic for an undetermined CI failure (run 41331319960): the Pause
-    // click below left `paused` false for 10 s. Its trace showed the media
-    // clock restarting from 0 twice off the 2 s loop boundary and stalling
-    // after the click. Keep recent media events so a recurrence reports them;
-    // load events and the source mark a reload, isConnected a remount. Remove
-    // this once the CI failure is diagnosed.
-    const instrumented = await video.elementHandle();
-    await instrumented.evaluate((element) => {
-      const events = [];
-      element.mediaEvents = events;
-      for (const type of [
-        "loadstart",
-        "abort",
-        "play",
-        "pause",
-        "playing",
-        "waiting",
-        "stalled",
-        "seeking",
-        "seeked",
-        "ended",
-        "emptied",
-        "error",
-      ])
-        element.addEventListener(type, () => {
-          events.push(`${type}@${element.currentTime.toFixed(3)}`);
-          if (events.length > 24) events.shift();
-        });
-    });
-    // Reads the live video without waiting, so a removal without a successor
-    // still reports the held element (`live: []`).
-    const mediaState = (elements, instrumented) => ({
-      live: elements.map((element) => ({
-        paused: element.paused,
-        currentTime: element.currentTime,
-        readyState: element.readyState,
-        seeking: element.seeking,
-        ended: element.ended,
-        networkState: element.networkState,
-        error: element.error?.code ?? null,
-        currentSrc: element.currentSrc,
-      })),
-      isConnected: instrumented.isConnected,
-      events: instrumented.mediaEvents,
-    });
     await page.mouse.move(1, 1);
     await expect(play).toHaveCSS("opacity", "1");
     await expect(expand).toHaveCSS("opacity", "0");
@@ -276,9 +231,13 @@ test("inline video controls follow playback, hover and keyboard focus", async ({
       .first()
       .focus();
     await expect(expand).toHaveCSS("opacity", "0");
-    // Keep playback active throughout the visibility assertions, independent of clip length.
+    // Keep playback active throughout the visibility assertions, independent
+    // of clip length: a zero rate plays without advancing the clock. Not
+    // `loop`: on Linux WebKit, a seek back to 0 during playback leaves this
+    // clip re-seeking to 0 and stalling, and in CI the Pause click then left
+    // the video playing.
     await video.evaluate((element) => {
-      element.loop = true;
+      element.playbackRate = 0;
     });
     await play.click();
     await expect(video).toHaveJSProperty("paused", false);
@@ -306,15 +265,7 @@ test("inline video controls follow playback, hover and keyboard focus", async ({
       await expect(control).toHaveCSS("opacity", "0");
     await preview.hover({ position: { x: 8, y: 8 } });
     await preview.getByRole("button", { name: "Pause video" }).click();
-    await expect
-      .poll(() => video.evaluateAll(mediaState, instrumented), {
-        message: "the video pauses after Pause video",
-      })
-      .toEqual(
-        expect.objectContaining({
-          live: [expect.objectContaining({ paused: true })],
-        }),
-      );
+    await expect(video).toHaveJSProperty("paused", true);
     await page.mouse.move(1, 1);
     await expect(play).toHaveCSS("opacity", "1");
     await expect(controlRow.locator(":scope > span").first()).toHaveCSS(
@@ -572,7 +523,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     for (const surface of [feed, history]) {
       const paragraph = surface
         .locator("p")
-        .filter({ hasText: /^first\s+second$/ });
+        .filter({ hasText: /^first\s*second$/ });
       await expect(paragraph.locator("br")).toHaveCount(1);
       const geometry = await paragraph.evaluate((element) => {
         const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -601,7 +552,14 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
         1,
       );
     }
-    await expect(history.locator("pre code")).toHaveCSS("white-space", "pre");
+    await expect(history.locator("pre code")).toHaveCSS(
+      "white-space",
+      "pre-wrap",
+    );
+    await expect(history.locator("pre code")).toHaveCSS(
+      "overflow-wrap",
+      "anywhere",
+    );
     await expect(history.locator("table")).toContainText("wide-column-one-");
     await expect(history.locator("pre code")).toContainText("wide-content-");
     // Exercise native popup navigation without depending on a public website.
@@ -667,10 +625,12 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
           element.getBoundingClientRect().right + 1
         )
           throw new Error(`${selector} overflows the thread`);
-        if (item.scrollWidth <= item.clientWidth)
+        if (selector === "table" && item.scrollWidth <= item.clientWidth)
           throw new Error(
             `${selector} does not provide local horizontal scrolling`,
           );
+        if (selector === "pre code" && item.scrollWidth > item.clientWidth)
+          throw new Error("Fenced code does not wrap inside the thread");
       }
     });
     await history.evaluate((el) => {
@@ -802,7 +762,7 @@ test("media review completions stay visible and preserve modal keyboard ownershi
         await expect(emoji).toContainText(":smile:");
         await expect.poll(() => topmost(emoji)).toBe(true);
         await input.press(key);
-        await expect(input).toHaveJSProperty("value", "😄");
+        await expect(input).toHaveJSProperty("value", "😄 ");
         await expect(input).toBeFocused();
         await expect(page.getByRole("listbox")).toHaveCount(0);
       }
@@ -1071,3 +1031,273 @@ test("a thread's long conversation name wraps inside its pane and opens from the
     "?threadParent=1",
   );
 });
+
+// Browser-only contract: real wrapped Markdown height, inline expansion/focus,
+// and attachment containment inside the sender's bubble in both themes.
+test("forwarded snapshots remain readable without their source and expand inline", async ({
+  page,
+}) => {
+  await withMessagesFixture(
+    page,
+    async () => {
+      const card = page
+        .getByRole("group", { name: /Forwarded message from Original Author/ })
+        .first();
+      await expect(card).toBeVisible();
+      await expect(card).toContainText("Private conversation");
+      const senderRow = card.locator("xpath=ancestor::*[@data-message-id][1]");
+      await expect(
+        senderRow.locator('img[src*="forwarder.png"]'),
+      ).toBeVisible();
+      await expect(card.locator('img[src*="forwarder.png"]')).toHaveCount(0);
+      await expect(card).toContainText("A*B*");
+      await expect(card.locator("em")).toHaveCount(0);
+      await page.evaluate(() =>
+        Object.assign(document.documentElement.dataset, {
+          colorMode: "light",
+          accent: "magenta",
+          colorLevel: "high",
+        }),
+      );
+      const link = card.getByRole("link", { name: "Reference", exact: true });
+      await expect(link).toBeVisible();
+      const colors = await link.evaluate((el) => {
+        const group = el.closest('[role="group"]');
+        return {
+          ink: getComputedStyle(el).color,
+          paper: getComputedStyle(group).backgroundColor,
+          selectionInk: getComputedStyle(el, "::selection").color,
+          selectionPaper: getComputedStyle(el, "::selection").backgroundColor,
+        };
+      });
+      expect(colors.ink).not.toBe(colors.paper);
+      expect(colors.selectionInk).not.toBe(colors.selectionPaper);
+
+      await expect(
+        card.getByRole("button", { name: "View original" }),
+      ).toHaveCount(0);
+      await expect(card).toContainText("Paragraph 30");
+      const expand = card.getByRole("button", { name: "Show full message" });
+      await expect(expand).toHaveAttribute("aria-expanded", "false");
+      await expand.focus();
+      await page.keyboard.press("Enter");
+      await expect(
+        card.getByRole("button", { name: "Show less" }),
+      ).toBeFocused();
+      await expect(
+        card.getByRole("button", { name: "Show less" }),
+      ).toHaveAttribute("aria-expanded", "true");
+      for (const dark of [false, true]) {
+        await page.evaluate(
+          (dark) => document.documentElement.classList.toggle("dark", dark),
+          dark,
+        );
+        for (const width of [1440, 480]) {
+          await page.setViewportSize({ width, height: 950 });
+          await page.evaluate(() => {
+            document.documentElement.style.fontSize = "20px";
+          });
+          const box = await card.boundingBox();
+          expect(box.width).toBeLessThanOrEqual(width);
+          expect(box.x).toBeGreaterThanOrEqual(0);
+          expect(box.x + box.width).toBeLessThanOrEqual(width);
+          await expect(card.locator("img").first()).toBeVisible();
+          for (const attachment of await card
+            .locator("[data-message-attachments] img")
+            .all()) {
+            const bounds = await attachment.boundingBox();
+            expect(bounds.x).toBeGreaterThanOrEqual(box.x);
+            expect(bounds.x + bounds.width).toBeLessThanOrEqual(
+              box.x + box.width,
+            );
+          }
+        }
+      }
+    },
+    "?forwarded",
+  );
+});
+
+for (const privateSource of [false, true]) {
+  test(`copies a forward into a thread composer and keeps the dialog compact (private=${privateSource})`, async ({
+    page,
+  }) => {
+    await withMessagesFixture(
+      page,
+      async () => {
+        await page.evaluate(() => window.messagesFixture.forwardClipboard());
+        const card = page
+          .getByRole("group", {
+            name: /Forwarded message from Original Author/,
+          })
+          .first();
+        await expect(card).toBeVisible();
+        const row = card.locator("xpath=ancestor::*[@data-message-id][1]");
+        await row.hover();
+        await row.getByRole("button", { name: "More message actions" }).click();
+        await expect(
+          page.getByRole("menuitem", { name: "Copy as forward", exact: true }),
+        ).toHaveCount(0);
+        await page
+          .getByRole("menuitem", { name: "Forward message", exact: true })
+          .click();
+        const dialog = page.getByRole("dialog", { name: "Forward message" });
+        await expect(dialog).toBeVisible();
+        const to = dialog.getByRole("combobox");
+        await expect(to).toBeFocused();
+        await expect(page.getByRole("listbox")).toHaveCount(0);
+        const description = dialog.getByText(
+          "Send a copy to people or a channel, with an optional note.",
+        );
+        const descBox = await description.boundingBox();
+        const toBox = await to.boundingBox();
+        expect(toBox.y - descBox.y - descBox.height).toBeLessThan(40);
+        await expect(
+          dialog.getByRole("textbox", { name: "Note (optional)" }),
+        ).toHaveAttribute("rows", "2");
+        const preview = dialog.getByRole("group", {
+          name: /Forwarded message from/,
+        });
+        const noteBox = await dialog
+          .getByRole("textbox", { name: "Note (optional)" })
+          .boundingBox();
+        const previewBox = await preview.boundingBox();
+        expect(Math.abs(previewBox.width - noteBox.width)).toBeLessThan(1);
+        await dialog
+          .getByRole("textbox", { name: "Note (optional)" })
+          .fill("Please keep my review note");
+        await dialog
+          .getByRole("button", { name: "Copy as forward", exact: true })
+          .click();
+        await expect(
+          page.getByText("Copied. Paste it in any message box to forward it."),
+        ).toBeVisible();
+        await dialog.getByRole("button", { name: "Cancel" }).click();
+        if (privateSource)
+          await page
+            .getByRole("button", { name: "Other channel root", exact: true })
+            .click();
+        const form = page.getByRole("form", { name: "Reply to thread" });
+        const editor = form.getByRole("textbox");
+        await editor.evaluate((el) => {
+          const data = new DataTransfer();
+          data.setData("text/html", window.messagesFixture.copiedForward.html);
+          data.setData("text/plain", window.messagesFixture.copiedForward.text);
+          el.dispatchEvent(
+            new ClipboardEvent("paste", {
+              clipboardData: data,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+        await expect(
+          form.getByRole("button", { name: "Remove forwarded message" }),
+        ).toBeVisible();
+        await expect(
+          form.getByRole("button", { name: "Send message" }),
+        ).toBeEnabled();
+        await expect(editor).toContainText("Please keep my review note");
+        const notice = form.getByText(/will be able to read this message/);
+        if (privateSource) {
+          await expect(notice).toBeVisible();
+          await expect(
+            form.getByRole("button", { name: "Send message" }),
+          ).toHaveAccessibleDescription(/will be able to read this message/);
+          await notice.evaluate((el) => {
+            window.messagesFixture.disclosureRegion = document.getElementById(
+              `${el.closest("form").querySelector("[contenteditable]").id}-forward-announcement`,
+            );
+          });
+          expect(
+            await notice.evaluate((el) =>
+              document
+                .getElementById(
+                  `${el.closest("form").querySelector("[contenteditable]").id}-forward-announcement`,
+                )
+                .getAttribute("aria-live"),
+            ),
+          ).toBe("polite");
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () => window.messagesFixture.disclosureRegion.textContent,
+              ),
+            )
+            .toContain("will be able to read this message");
+          await form
+            .getByRole("button", { name: "Remove forwarded message" })
+            .click();
+          await expect(notice).toHaveCount(0);
+          await editor.evaluate((el) => {
+            const data = new DataTransfer();
+            data.setData(
+              "text/html",
+              window.messagesFixture.copiedForward.html,
+            );
+            data.setData(
+              "text/plain",
+              window.messagesFixture.copiedForward.text,
+            );
+            el.dispatchEvent(
+              new ClipboardEvent("paste", {
+                clipboardData: data,
+                bubbles: true,
+                cancelable: true,
+              }),
+            );
+          });
+          await expect(notice).toBeVisible();
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () => window.messagesFixture.disclosureRegion.textContent,
+              ),
+            )
+            .toContain("will be able to read this message");
+          expect(
+            await notice.evaluate(
+              (el) =>
+                document.getElementById(
+                  `${el.closest("form").querySelector("[contenteditable]").id}-forward-announcement`,
+                ) === window.messagesFixture.disclosureRegion,
+            ),
+          ).toBe(true);
+        } else await expect(notice).toHaveCount(0);
+        for (const width of [1280, 480]) {
+          await page.setViewportSize({ width, height: 1000 });
+          const preview = form.getByRole("group", {
+            name: /Forwarded message/,
+          });
+          const box = await preview.boundingBox();
+          expect(box.width).toBeLessThanOrEqual(520);
+          expect(box.x + box.width).toBeLessThanOrEqual(width);
+        }
+        if (privateSource) {
+          for (const mode of ["light", "dark"]) {
+            await page.evaluate((value) => {
+              document.documentElement.dataset.colorMode = value;
+              document.documentElement.style.fontSize = "20px";
+            }, mode);
+            await expect(notice).toBeVisible();
+            const box = await notice.boundingBox();
+            expect(box.x + box.width).toBeLessThanOrEqual(480);
+            await form.screenshot({
+              path: test.info().outputPath(`paste-notice-${mode}.png`),
+            });
+          }
+        }
+        await form.getByRole("button", { name: "Send message" }).click();
+        await expect(
+          form.getByRole("button", { name: "Remove forwarded message" }),
+        ).toHaveCount(0);
+        await expect(
+          page.getByRole("group", {
+            name: /Forwarded message from Original Author/,
+          }),
+        ).toHaveCount(privateSource ? 1 : 2);
+      },
+      `?forwarded&threadWindow${privateSource ? "&privateForward" : ""}`,
+    );
+  });
+}

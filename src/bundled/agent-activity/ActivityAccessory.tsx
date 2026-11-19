@@ -3,6 +3,7 @@ import { useRecordedActivityAgents } from "../../features/conversation/typing-pr
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useProfileGeneration } from "../../features/relay/react";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -71,6 +72,15 @@ const noSubscribe = () => () => {};
 export type ActivityAgents = WorkStopAgents;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 const noWork: RequestWork[] = [];
+/** A settled request that stays under its message: an error, a stop, or a
+ * finished or superseded turn with a notice about how it ran. */
+const settledOutcome = ({
+  state,
+  notice,
+}: Pick<RequestWork, "state" | "notice">) =>
+  state === "error" ||
+  state === "stopped" ||
+  ((state === "done" || state === "superseded") && !!notice);
 /** Activity belongs to the exact triggering message, not the composer. Once an
  * agent has publicly replied, its outcome follows that reply instead. */
 export function ActivityAccessory(props: ActivityProps) {
@@ -133,7 +143,7 @@ function MessageActivity(
     [snapshot, channelId, messageId, hasWork],
   );
   const entries = [...work.live, ...work.stopped].filter((entry) => {
-    const outcome = entry.state === "error" || entry.state === "stopped";
+    const outcome = settledOutcome(entry);
     return stoppedAgent
       ? outcome && entry.agent === stoppedAgent
       : !outcome || !props.repliedAgents?.includes(entry.agent);
@@ -236,6 +246,7 @@ function MessageActivity(
         ...(entry.step ? { step: entry.step } : {}),
         ...(entry.stoppable ? { stoppable: true } : {}),
         ...(entry.retryable ? { retryable: true } : {}),
+        ...(entry.notice ? { notice: entry.notice } : {}),
         lifecycle: entry.lifecycle,
         records: entry.selected.records,
         turns: entry.turns,
@@ -291,9 +302,7 @@ function MessageActivity(
   if (!bubble.length) return null;
   const primary = bubble[0];
   if (!primary) return null;
-  const compact = bubble.every((entry) =>
-    ["error", "stopped"].includes(entry.state),
-  );
+  const compact = bubble.every(settledOutcome);
   return (
     <section
       ref={section}
@@ -324,7 +333,8 @@ function MessageActivity(
       >
         {shown.map((entry) => (
           <TypingReplacement
-            shared
+            // A settled outcome is not working, so it leaves the cue alone.
+            shared={entry.working || entry.state === "waiting"}
             key={entry.agent}
             {...props}
             agent={entry.agent}
@@ -355,6 +365,7 @@ type Entry = {
   step?: WorkStep;
   stoppable?: boolean;
   retryable?: boolean;
+  notice?: string;
   lifecycle: boolean;
   records: ReturnType<typeof activityRecords>;
   turns: readonly ActivityTurn[];
@@ -374,6 +385,9 @@ function ActivityBubble({
   onRetried: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  useLayoutEffect(() => {
+    if (entries.length === 1 && !compact) setExpanded(false);
+  }, [entries.length, compact]);
   const message = props.message;
   const controls = new Map(
     entries.flatMap((entry) => {
@@ -415,6 +429,14 @@ function ActivityBubble({
   };
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
+  const controlsRoot = useRef<HTMLDivElement>(null);
+  const restoreFocusOnRemoval = useCallback((node: HTMLElement | null) => {
+    if (!node) return;
+    return () => {
+      if (node.contains(node.ownerDocument.activeElement))
+        trigger.current?.focus({ preventScroll: true });
+    };
+  }, []);
   const stoppedFocus = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const source = stoppedFocus.current;
@@ -444,7 +466,9 @@ function ActivityBubble({
       const focused = trigger.current?.ownerDocument.activeElement;
       if (
         focused &&
-        (trigger.current?.contains(focused) || popup.current?.contains(focused))
+        (controlsRoot.current?.contains(focused) ||
+          trigger.current?.contains(focused) ||
+          popup.current?.contains(focused))
       )
         retirement.current.onFocusedRemoval?.();
     },
@@ -453,7 +477,7 @@ function ActivityBubble({
   useLayoutEffect(() => {
     if (interactive) return;
     const source = popup.current;
-    const button = trigger.current;
+    const button = controlsRoot.current ?? trigger.current;
     const document = (source ?? button)?.ownerDocument;
     const active = document?.activeElement;
     setExpanded(false);
@@ -491,6 +515,7 @@ function ActivityBubble({
                 : entry.state,
           ...(entry.reason ? { error: entry.reason } : {}),
           ...(entry.step ? { step: entry.step } : {}),
+          ...(entry.notice ? { notice: entry.notice } : {}),
         })
       : entry.state === "error"
         ? "failed"
@@ -516,7 +541,9 @@ function ActivityBubble({
       ? [currentPreview.title, currentPreview.detail]
           .filter(Boolean)
           .join(" · ")
-      : undefined;
+      : entries.length === 1
+        ? current?.remoteStatus
+        : undefined;
   const avatars = (group: Entry[]) => (
     <AvatarStack
       size="mini"
@@ -539,12 +566,13 @@ function ActivityBubble({
             />
           )}
           {entries
-            .filter((entry) => entry.state === "stopped")
+            .filter((entry) => entry.state !== "error" && settledOutcome(entry))
             .map((entry) => (
               <ActivityOutcome
                 key={entry.agent}
-                state="stopped"
+                state={entry.state}
                 name={entries.length > 1 ? entry.name : undefined}
+                notice={entry.notice}
               />
             ))}
         </span>
@@ -566,8 +594,46 @@ function ActivityBubble({
     </span>
   );
   if (!entries.length) return null;
+  const stopAction = (entry: Entry) => {
+    const control = controls.get(entry.agent);
+    if (!control) return null;
+    const stopping = stops.has(control.key);
+    return (
+      <Button
+        size="sm"
+        variant="plain"
+        aria-label={`Stop ${entry.name}`}
+        loading={stopping}
+        tabIndex={interactive ? undefined : -1}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (!interactive) return;
+          if (
+            event.currentTarget ===
+            event.currentTarget.ownerDocument.activeElement
+          )
+            stoppedFocus.current = event.currentTarget;
+          stop(control, entry.name);
+        }}
+      >
+        <OctagonIcon className={styles.stopIcon} aria-hidden="true" />
+        <span>Stop</span>
+      </Button>
+    );
+  };
+  const activityLabel = `View agent activity: ${entries
+    .map((entry) => {
+      const control = controls.get(entry.agent);
+      const status =
+        control && stops.has(control.key) ? "Stopping…" : label(entry);
+      return `${entry.name}, ${entry.remoteStatus ? "remote, " : ""}${status}`;
+    })
+    .join("; ")}`;
+  const single = entries.length === 1 ? entries[0] : undefined;
+  const singleControl = single && controls.get(single.agent);
+  const singleStopping = !!singleControl && stops.has(singleControl.key);
   const details = (
-    <div className={styles.previews}>
+    <div ref={restoreFocusOnRemoval} className={styles.previews}>
       {entries.map((entry) => {
         // Opens the agent's Activity on this message's transcript.
         const target = profileActivityViewTarget(entry.agent);
@@ -580,7 +646,15 @@ function ActivityBubble({
           <div key={entry.agent} className={styles.previews}>
             {compact && (
               <p className="text-body-sm">
-                {activityOutcomeReason(entry.state, entry.reason)}
+                {/* A notice says how the turn ran, kept beside its outcome. */}
+                {[
+                  entry.state === "done" || entry.state === "superseded"
+                    ? undefined
+                    : activityOutcomeReason(entry.state, entry.reason),
+                  entry.notice,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             )}
             <NavigationCard>
@@ -668,29 +742,7 @@ function ActivityBubble({
                   />
                 </span>
               ) : control ? (
-                <span className={styles.action}>
-                  <Button
-                    size="sm"
-                    variant="plain"
-                    aria-label={`Stop ${entry.name}`}
-                    loading={stopping}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (
-                        event.currentTarget ===
-                        event.currentTarget.ownerDocument.activeElement
-                      )
-                        stoppedFocus.current = event.currentTarget;
-                      stop(control, entry.name);
-                    }}
-                  >
-                    <OctagonIcon
-                      className={styles.stopIcon}
-                      aria-hidden="true"
-                    />
-                    <span>Stop</span>
-                  </Button>
-                </span>
+                <span className={styles.action}>{stopAction(entry)}</span>
               ) : undefined}
             </NavigationCard>
           </div>
@@ -715,43 +767,72 @@ function ActivityBubble({
     );
   return (
     <PopoverRoot
-      open={expanded}
-      onOpenChange={(open) => setExpanded(interactive && open)}
+      open={!single && expanded}
+      onOpenChange={(open) => setExpanded(!single && interactive && open)}
     >
-      <PopoverTrigger
-        openOnHover={interactive && "preview"}
-        {...(!interactive
-          ? {
-              "aria-haspopup": undefined,
-              "aria-expanded": undefined,
-              "aria-controls": undefined,
+      <div
+        ref={controlsRoot}
+        className={`${messageStyles.activityBubbleControls} ${singleControl ? styles.overlayControls : ""}`}
+        data-activity-controls=""
+      >
+        <PopoverTrigger
+          openOnHover={!single && interactive && "preview"}
+          {...(!interactive || single
+            ? {
+                "aria-haspopup": undefined,
+                "aria-expanded": undefined,
+                "aria-controls": undefined,
+              }
+            : {})}
+          onClick={(event) => {
+            if (!interactive) {
+              event.preventBaseUIHandler();
+              return;
             }
-          : {})}
-        onClick={(event) => {
-          if (!interactive) {
-            event.preventBaseUIHandler();
-            return;
+            if (single) {
+              event.preventBaseUIHandler();
+              const target = profileActivityViewTarget(single.agent);
+              if (target && props.canOpen(target))
+                openProfileTranscript(target, props.open);
+            }
+          }}
+          render={
+            <button
+              ref={trigger}
+              tabIndex={interactive ? undefined : -1}
+              type="button"
+              className={messageStyles.activityBubbleTrigger}
+              data-activity-summary=""
+              aria-label={activityLabel}
+            >
+              {singleControl ? (
+                <span className={styles.overlayContent}>
+                  {singleStopping ? (
+                    <ShimmerText active>Stopping…</ShimmerText>
+                  ) : (
+                    content
+                  )}
+                </span>
+              ) : (
+                content
+              )}
+            </button>
           }
-        }}
-        render={
-          <button
-            ref={trigger}
-            tabIndex={interactive ? undefined : -1}
-            type="button"
-            className={messageStyles.activityBubbleTrigger}
-            data-activity-summary=""
-            aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${entry.remoteStatus ? "remote, " : ""}${label(entry)}`).join("; ")}`}
+        />
+        {single && singleControl && (
+          <span
+            ref={restoreFocusOnRemoval}
+            className={styles.inlineStop}
+            data-stopping={singleStopping || undefined}
           >
-            {content}
-          </button>
-        }
-      />
+            {stopAction(single)}
+          </span>
+        )}
+      </div>
       <PopoverPopup
         ref={popup}
         finalFocus={() =>
-          retirement.current.interactive
-            ? trigger.current?.parentElement
-            : false
+          retirement.current.interactive ? trigger.current : false
         }
         side="top"
         padding="list"

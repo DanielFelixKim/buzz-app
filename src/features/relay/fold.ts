@@ -1,3 +1,4 @@
+import { readForward } from "./forwarded-message";
 import { workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
@@ -284,12 +285,10 @@ export function foldMessages(
   const replies = new Map<string, EventData[]>();
   for (const event of events) {
     if (channelRowKind(event.kind)) {
+      // Most callers pass no pending replies; skip the tag scan for them.
+      if (!pendingReplies?.has(event.id)) continue;
       const rootId = threadReference(event)?.rootId;
-      if (
-        rootId &&
-        pendingReplies?.has(event.id) &&
-        channelRowChannel(event) === channelId
-      ) {
+      if (rootId && channelRowChannel(event) === channelId) {
         const list = replies.get(rootId) ?? [];
         list.push(event);
         replies.set(rootId, list);
@@ -434,6 +433,7 @@ export function foldMessages(
         ? reply.pubkey
         : author;
     });
+    const forward = readForward({ ...event, content });
     rows.push(
       Object.freeze({
         id: event.id,
@@ -461,9 +461,22 @@ export function foldMessages(
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,
+        ...(forward ? { forward } : {}),
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(agentAudience(event) ? { audience: "agents" as const } : {}),
+        ...(() => {
+          // One exact id, or none: conflicting claims bind no request.
+          const ids = new Set(
+            event.tags
+              .filter(([name]) => name === "buzz:request")
+              .map(([, id]) => id),
+          );
+          const [request] = ids;
+          return ids.size === 1 && request && HEX64.test(request)
+            ? { request }
+            : {};
+        })(),
         ...(event.kind === 9 &&
         event.tags.some(
           (tag) =>

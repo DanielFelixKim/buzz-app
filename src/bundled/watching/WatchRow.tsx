@@ -16,6 +16,7 @@ import {
   CaretRightIcon,
   CircleIcon,
 } from "../../shared/design-system/icons";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   PopoverRoot,
@@ -82,28 +83,39 @@ export function createWatchComponents({
     );
     const [open, setOpen] = React.useState(false);
     const action = useAction();
+    const trigger = React.useRef<HTMLButtonElement>(null);
+    const cancel = React.useRef<HTMLButtonElement>(null);
+    // The watch as the open dialog reviewed it; a watch changed meanwhile
+    // is refused rather than deleted unseen.
+    const [confirming, setConfirming] =
+      React.useState<Agent["attention"][string]>();
+    const remove = (expected: Agent["attention"][string]) =>
+      action.run(async () => {
+        await agents.save(agent.key, {
+          attentionExpected: { [slug]: expected },
+          attention: { [slug]: null },
+        });
+        setConfirming(undefined);
+      });
     const detailsId = React.useId();
     const history = agent.attentionHistory?.[slug];
     const command =
       watch.type === "source" && watch.provider === "attention/command";
     const timer = agent.timers[slug];
-    const description = describe(
-      watch,
-      Date.now() / 1000,
-      watch.type === "timer" && timer?.armedAt === watch.armed_at
-        ? timer.used
-        : undefined,
-    );
-    const label = heading(
-      ("name" in watch && watch.name) ||
-        title(watch.interest_id ?? slug.slice(6)),
-    );
+    const paused = interestPaused(agent.attention, watch.interest_id);
+    const description = describe(watch, Date.now() / 1000, timer, paused);
+    // Timers have no name; a nameless watch is labelled by its Interest.
+    const ownName = "name" in watch && watch.name;
+    const label = heading(ownName || title(watch.interest_id ?? slug.slice(6)));
+    // Timers under one Interest share its label; their schedules tell them
+    // apart wherever a control names the row.
+    const rowName =
+      watch.type === "timer"
+        ? `${label.text}, ${description.title}`
+        : label.text;
     const completed = sourceCompleted(agent.sourceRuns, agent.attention[slug]);
     const state =
-      watch.enabled &&
-      !interestPaused(agent.attention, watch.interest_id) &&
-      !completed &&
-      !description.spent
+      watch.enabled && !paused && !completed && !description.spent
         ? "Active"
         : "Paused";
     const section = (label: string, content: React.ReactNode) => (
@@ -183,7 +195,7 @@ export function createWatchComponents({
           <button
             className="attention-heading"
             type="button"
-            aria-label={`Details for ${label.text}`}
+            aria-label={`Details for ${rowName}`}
             aria-expanded={open}
             aria-controls={detailsId}
             onClick={() => setOpen(!open)}
@@ -329,10 +341,11 @@ export function createWatchComponents({
               <MenuTrigger
                 render={
                   <Button
+                    ref={trigger}
                     variant="subtle"
                     size="xs"
                     style={{ paddingInlineStart: "var(--space-2)" }}
-                    aria-label={`Watch status for ${label.text}`}
+                    aria-label={`Watch status for ${rowName}`}
                   >
                     <span className="attention-pill-icon">
                       <CircleIcon
@@ -362,7 +375,7 @@ export function createWatchComponents({
                 size="compact"
                 align="end"
                 ref={popup}
-                aria-label={`Watch status for ${label.text}`}
+                aria-label={`Watch status for ${rowName}`}
                 finalFocus={() =>
                   row.current?.isConnected
                     ? true
@@ -396,13 +409,13 @@ export function createWatchComponents({
                   <MenuItem
                     tone="danger"
                     disabled={action.pending}
-                    closeOnClick={false}
-                    aria-label={`Delete ${label.text}`}
-                    onClick={() =>
-                      void action.run(() =>
-                        agents.save(agent.key, { attention: { [slug]: null } }),
-                      )
-                    }
+                    aria-label={`Delete ${rowName}`}
+                    onClick={() => {
+                      // Pause/Resume share this action; a refused Pause's
+                      // error must not open inside the dialog.
+                      action.reset();
+                      setConfirming(agent.attention[slug]);
+                    }}
                   >
                     {"Delete"}
                   </MenuItem>
@@ -419,13 +432,57 @@ export function createWatchComponents({
             </MenuRoot>
           </div>
         </div>
-        {problem(action.error)}
+        {confirming && (
+          <AlertDialog
+            // A nameless watch shares its Interest's label, and the Interest's
+            // own dialog is a few pixels away, so name the kind instead.
+            title={
+              ownName
+                ? `Delete ${label.text}?`
+                : watch.type === "timer"
+                  ? "Delete this timer?"
+                  : "Delete this watch?"
+            }
+            description={`This deletes the ${
+              watch.type === "timer" ? `“${description.title}” timer` : "watch"
+            }. The agent will stop watching for this trigger. This cannot be undone.`}
+            pending={action.pending}
+            initialFocus={cancel}
+            finalFocus={() =>
+              trigger.current?.isConnected
+                ? trigger.current
+                : (returnFocus.current ?? false)
+            }
+            onClose={() => setConfirming(undefined)}
+            actions={
+              <>
+                <Button
+                  ref={cancel}
+                  disabled={action.pending}
+                  onClick={() => setConfirming(undefined)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  loading={action.pending}
+                  onClick={() => void remove(confirming)}
+                >
+                  Delete
+                </Button>
+              </>
+            }
+          >
+            {problem(action.error)}
+          </AlertDialog>
+        )}
+        {!confirming && problem(action.error)}
         <ActivityExpansion open={open} className="attention-expansion">
           <div id={detailsId} className="attention-details">
             <details className="attention-watch-details">
               <summary
                 className="attention-disclosure text-body-sm text-subtle"
-                aria-label={`Watch details for ${label.text}`}
+                aria-label={`Watch details for ${rowName}`}
               >
                 <span className="attention-disclosure-icon">
                   <GearIcon size={16} aria-hidden={true} />
@@ -541,7 +598,7 @@ export function createWatchComponents({
             </details>
             <WatchActivity
               history={history}
-              label={label.text}
+              label={rowName}
               session={session}
               scope={scope}
               command={command}
